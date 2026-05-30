@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-analyser-config
+  namespace: <namespace>
+data:
+  MODEL: "claude-sonnet-4-6"
+  PORT: "8003"
+  AGENT_SLUG: "kafka-analyser"
+  AGENT_NAME: "Kafka Analyser"
