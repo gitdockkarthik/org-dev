@@ -83,6 +83,17 @@ cp "$MONOREPO/portal/css/style.css" \
 cp -r "$MONOREPO/portal/agents/" "portal/agents/"
 echo -e "${GREEN}✓ portal/agents/ pages${NC}"
 
+# Fix AgentsIQ branding in all portal agent pages
+echo ""
+echo "Fixing OPERATIVE branding in portal pages..."
+for f in portal/agents/*/**.html portal/chat.html; do
+  if [ -f "$f" ]; then
+    sed -i.bak "s|<img src='/assets/agentsiq-logo\.svg' alt='AgentsIQ' style='height:44px;'>|<span style=\"font-size:1.1rem;font-weight:700;color:#ffffff;letter-spacing:1px;font-family:inherit;\">OPERATIVE<\/span>|g" "$f"
+    rm -f "$f.bak"
+  fi
+done
+echo -e "${GREEN}✓ OPERATIVE branding applied to all portal pages${NC}"
+
 # DO NOT sync — these have Operative branding:
 echo -e "${YELLOW}⚠ Skipped (Operative branding):${NC}"
 echo "  portal/index.html"
