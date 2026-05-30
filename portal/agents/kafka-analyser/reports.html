@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kafka Reports — UAP</title>
+  <link rel="stylesheet" href="/css/style.css?v=3">
+  <style>
+    body { background: var(--bg); }
+    .subnav { display: flex; background: var(--navy-1); border-bottom: 1px solid var(--border); padding: 0 40px; }
+    .subnav__link { display: inline-flex; align-items: center; gap: 6px; padding: 13px 16px; font-size: .85rem; color: var(--text-muted); border-bottom: 2px solid transparent; margin-bottom: -1px; text-decoration: none; transition: color var(--t), border-color var(--t); }
+    .subnav__link:hover { color: var(--text); }
+    .subnav__link--active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+    .content { padding: 28px 40px; }
+    .page-heading { margin-bottom: 24px; }
+    .page-heading__title { font-size: 1.4rem; font-weight: 700; margin-bottom: 4px; }
+    .page-heading__sub { font-size: .88rem; color: var(--text-muted); }
+    .action-card { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); padding: 20px 24px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap; margin-bottom: 16px; }
+    .action-card__info { flex: 1; }
+    .action-card__title { font-weight: 600; margin-bottom: 4px; }
+    .action-card__sub { font-size: .83rem; color: var(--text-muted); }
+    .section-card { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; margin-bottom: 16px; }
+    .section-card__header { padding: 14px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; font-weight: 600; font-size: .9rem; }
+    .snapshot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0; }
+    .snapshot-item { padding: 18px 20px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+    .snapshot-item:last-child { border-right: none; }
+    .snapshot-item__label { font-size: .72rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); margin-bottom: 6px; }
+    .snapshot-item__value { font-size: 1.6rem; font-weight: 700; color: var(--text); line-height: 1; margin-bottom: 2px; }
+    .snapshot-item__sub { font-size: .75rem; color: var(--text-muted); }
+    .data-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+    .data-table th { padding: 10px 14px; text-align: left; font-size: .72rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-dim); background: var(--navy-2); border-bottom: 1px solid var(--border); }
+    .data-table td { padding: 11px 14px; border-bottom: 1px solid var(--border); color: var(--text); }
+    .data-table tr:last-child td { border-bottom: none; }
+    .data-table tr:hover td { background: var(--navy-3); }
+    @media (max-width: 768px) { .subnav { padding: 0 20px; } .content { padding: 20px; } }
+  </style>
+</head>
+<body>
+
+  <header class="topbar">
+    <a href="/" class="topbar__brand">
+      <img src='/assets/agentsiq-logo.svg' alt='AgentsIQ' style='height:44px;'>
+    </a>
+    <nav class="topbar__nav">
+      <a href="/" class="topbar__link">Agents</a>
+      <a href="/admin/" class="topbar__link">Admin</a>
+    </nav>
+    <div class="topbar__right" style="font-size:.85rem;color:var(--text-muted)">Kafka Analyser</div>
+  </header>
+
+  <nav class="subnav">
+    <a href="/chat?agent=kafka-analyser"              class="subnav__link">💬 Chat</a>
+    <a href="/agents/kafka-analyser/dashboard"        class="subnav__link">📊 Dashboard</a>
+    <a href="/agents/kafka-analyser/reports"          class="subnav__link subnav__link--active">📁 Reports</a>
+    <a href="/agents/kafka-analyser/settings"         class="subnav__link">⚙ Settings</a>
+  </nav>
+
+  <div class="content">
+    <div class="page-heading">
+      <div class="page-heading__title">Kafka Reports</div>
+      <div class="page-heading__sub">Generate synthetic cluster data or review current sync status</div>
+    </div>
+
+    <!-- Generate synthetic data -->
+    <div class="action-card">
+      <div class="action-card__info">
+        <div class="action-card__title">Synthetic Data</div>
+        <div class="action-card__sub">Generate a realistic prod-kafka-cluster snapshot with 3 brokers, 5 consumer groups, 10 topics and injected anomalies — no cluster required</div>
+      </div>
+      <button class="btn btn--primary" id="genBtn" onclick="generateSample()">⚡ Generate Synthetic Data</button>
+    </div>
+
+    <!-- Current snapshot -->
+    <div class="section-card" id="snapshotCard">
+      <div class="section-card__header">
+        Current Cluster Snapshot
+        <button class="btn btn--ghost btn--sm" onclick="loadSnapshot()">↻ Refresh</button>
+      </div>
+      <div id="snapshotBody">
+        <div class="empty-state"><div class="empty-state__icon">⏳</div><div class="empty-state__title">Loading…</div></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/config.js?v=3"></script>
+  <script src="/js/portal.js?v=3"></script>
+  <script>
+    const SLUG  = 'kafka-analyser';
+    const PROXY = `${BACKEND_URL}/api/agents/${SLUG}/proxy`;
+
+    async function api(path, opts = {}) {
+      await portalReady;
+      const res = await fetch(`${PROXY}${path}`, {
+        ...opts,
+        headers: { ..._authHeaders(), ...opts.headers },
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(e.detail || `HTTP ${res.status}`);
+      }
+      return res.json();
+    }
+
+    async function generateSample() {
+      const btn = document.getElementById('genBtn');
+      btn.disabled = true;
+      btn.textContent = '⏳ Generating…';
+      try {
+        const data = await api('/reports/generate-sample', { method: 'POST' });
+        showToast(data.message || 'Synthetic data generated', 'success');
+        loadSnapshot();
+      } catch (e) {
+        showToast('Generation failed: ' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '⚡ Generate Synthetic Data';
+      }
+    }
+
+    async function loadSnapshot() {
+      const el = document.getElementById('snapshotBody');
+      el.innerHTML = '<div class="empty-state"><div class="empty-state__icon">⏳</div><div class="empty-state__title">Loading…</div></div>';
+      try {
+        const d = await api('/reports');
+
+        if (!d.loaded) {
+          el.innerHTML = `
+            <div class="empty-state">
+              <div class="empty-state__icon">📡</div>
+              <div class="empty-state__title">No data loaded yet</div>
+              <div class="empty-state__sub">Click "Generate Synthetic Data" or configure a live data source in
+                <a href="/agents/kafka-analyser/settings" style="color:var(--accent)">Settings</a>.
+              </div>
+            </div>`;
+          return;
+        }
+
+        const lastSync = d.last_synced
+          ? new Date(d.last_synced).toLocaleString()
+          : 'Never';
+
+        el.innerHTML = `
+          <div class="snapshot-grid">
+            <div class="snapshot-item">
+              <div class="snapshot-item__label">Source</div>
+              <div class="snapshot-item__value" style="font-size:1rem;padding-top:4px">
+                <span class="badge badge--published">${d.source_type || '—'}</span>
+              </div>
+            </div>
+            <div class="snapshot-item">
+              <div class="snapshot-item__label">Brokers</div>
+              <div class="snapshot-item__value">${d.broker_count ?? '—'}</div>
+              <div class="snapshot-item__sub">online</div>
+            </div>
+            <div class="snapshot-item">
+              <div class="snapshot-item__label">Consumer Groups</div>
+              <div class="snapshot-item__value">${d.consumer_group_count ?? '—'}</div>
+              <div class="snapshot-item__sub">active</div>
+            </div>
+            <div class="snapshot-item">
+              <div class="snapshot-item__label">Topics</div>
+              <div class="snapshot-item__value">${d.topic_count ?? '—'}</div>
+              <div class="snapshot-item__sub">tracked</div>
+            </div>
+            <div class="snapshot-item">
+              <div class="snapshot-item__label">Connectors</div>
+              <div class="snapshot-item__value">${d.connector_count ?? '—'}</div>
+              <div class="snapshot-item__sub">configured</div>
+            </div>
+          </div>
+          <div style="padding:14px 20px;border-top:1px solid var(--border);font-size:.83rem;color:var(--text-muted)">
+            Last synced: <strong style="color:var(--text)">${lastSync}</strong>
+            &nbsp;·&nbsp;
+            <a href="/agents/kafka-analyser/dashboard" class="btn btn--ghost btn--sm">📊 View Dashboard</a>
+            &nbsp;
+            <a href="/chat?agent=kafka-analyser"       class="btn btn--ghost btn--sm">💬 Chat</a>
+          </div>`;
+      } catch (e) {
+        el.innerHTML = `<div class="empty-state"><div class="empty-state__icon">⚠</div><div class="empty-state__title">Failed to load</div><div class="empty-state__sub">${e.message}</div></div>`;
+      }
+    }
+
+    loadSnapshot();
+  </script>
+</body>
+</html>

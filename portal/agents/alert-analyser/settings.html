@@ -59,7 +59,7 @@
       cursor: pointer; white-space: nowrap; transition: color 0.15s, border-color 0.15s;
     }
     .tab-btn:hover { color: #334155; }
-    .tab-btn.active { color: #0EA5E9; border-bottom-color: #0EA5E9; }
+    .tab-btn.active { color: #6366f1; border-bottom-color: #6366f1; }
     .phase-badge {
       font-size: 0.65rem; font-weight: 600; padding: 1px 4px; vertical-align: middle;
       border-radius: 9999px; background: #dbeafe; color: #1d4ed8;
@@ -104,7 +104,7 @@
       transition: border-color 0.15s, box-shadow 0.15s;
     }
     .field input:focus, .field select:focus {
-      border-color: #0EA5E9; box-shadow: 0 0 0 3px rgba(14,165,233,0.1);
+      border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
     }
     .hint { margin-top: 0.3rem; font-size: 0.75rem; color: #94a3b8; }
 
@@ -121,8 +121,8 @@
       display: flex; align-items: flex-start; gap: 0.75rem;
     }
     .radio-card:hover { border-color: #a5b4fc; }
-    .radio-card.selected { border-color: #0EA5E9; background: #f0f9ff; }
-    .radio-card input[type="radio"] { margin-top: 0.125rem; accent-color: #0EA5E9; flex-shrink: 0; }
+    .radio-card.selected { border-color: #6366f1; background: #eef2ff; }
+    .radio-card input[type="radio"] { margin-top: 0.125rem; accent-color: #6366f1; flex-shrink: 0; }
     .radio-card-body { flex: 1; }
     .radio-card-label { font-size: 0.9375rem; font-weight: 600; color: #1e293b; }
     .radio-card-desc { margin-top: 0.2rem; font-size: 0.8125rem; color: #64748b; }
@@ -134,6 +134,20 @@
     }
     .opsfields.hidden { display: none; }
     .opsfields .field { margin-bottom: 0; }
+
+    /* ── OpsGenie type selector ── */
+    .ops-type-radios { display: flex; gap: 0.625rem; flex-wrap: wrap; margin-top: 0.25rem; }
+    .ops-type-radio {
+      border: 1.5px solid #e2e8f0; border-radius: 7px; padding: 0.625rem 0.875rem;
+      cursor: pointer; transition: border-color 0.15s, background 0.15s;
+      display: flex; align-items: flex-start; gap: 0.5rem; flex: 1 1 160px;
+    }
+    .ops-type-radio:hover { border-color: #a5b4fc; }
+    .ops-type-radio.selected { border-color: #6366f1; background: #eef2ff; }
+    .ops-type-radio input[type="radio"] { margin-top: 0.1rem; accent-color: #6366f1; flex-shrink: 0; }
+    .ops-type-body { flex: 1; }
+    .ops-type-label { font-size: 0.85rem; font-weight: 600; color: #1e293b; }
+    .ops-type-sub { font-size: 0.75rem; color: #64748b; margin-top: 0.125rem; }
 
     /* ── Sync row ── */
     .sync-row { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
@@ -149,14 +163,14 @@
       border-radius: 6px; font-size: 0.875rem; color: #1e293b;
       text-align: center; background: #ffffff; outline: none;
     }
-    .weight-field input:focus { border-color: #0EA5E9; box-shadow: 0 0 0 3px rgba(14,165,233,0.1); }
+    .weight-field input:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,0.1); }
 
     /* ── Buttons ── */
     .btn {
       padding: 0.5625rem 1.375rem; font-size: 0.875rem; font-weight: 500;
       border: none; border-radius: 6px; cursor: pointer; transition: background 0.15s;
     }
-    .btn-primary { background: #0EA5E9; color: #fff; }
+    .btn-primary { background: #6366f1; color: #fff; }
     .btn-primary:hover { background: #4f46e5; }
     .btn-primary:active { background: #4338ca; }
     .btn-secondary { background: #e2e8f0; color: #334155; }
@@ -188,7 +202,7 @@
       width: 40px; height: 22px; background: #cbd5e1; border-radius: 9999px;
       position: relative; transition: background 0.2s; flex-shrink: 0; cursor: pointer;
     }
-    .toggle-input:checked + .toggle-track { background: #0EA5E9; }
+    .toggle-input:checked + .toggle-track { background: #6366f1; }
     .toggle-track::after {
       content: ''; position: absolute; width: 16px; height: 16px;
       border-radius: 50%; background: #fff; top: 3px; left: 3px;
@@ -205,7 +219,7 @@
     .checkbox-group { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.375rem; }
     .checkbox-row { display: flex; align-items: center; gap: 0.5rem; }
     .checkbox-row label { font-size: 0.875rem; color: #334155; cursor: pointer; }
-    .checkbox-row input[type="checkbox"] { accent-color: #0EA5E9; }
+    .checkbox-row input[type="checkbox"] { accent-color: #6366f1; }
 
     @media (max-width: 500px) {
       .tab-btn { padding: 0.625rem 0.625rem; font-size: 0.8125rem; }
@@ -218,10 +232,7 @@
 
   <header class="topbar">
     <a href="/" class="topbar__brand">
-      <span style="font-size:1.3rem;
-   font-weight:700;color:#ffffff;
-   letter-spacing:1px;
-   font-family:inherit;">OPERATIVE</span>
+      <img src='/assets/agentsiq-logo.svg' alt='AgentsIQ' style='height:44px;'>
     </a>
     <nav class="topbar__nav">
       <a href="/" class="topbar__link">Agents</a>
@@ -306,20 +317,63 @@
               <div class="radio-card-label">OpsGenie / JSM API</div>
               <div class="radio-card-desc">Fetch alerts live from the Atlassian JSM Ops API using Basic Auth</div>
               <div class="opsfields hidden" id="opsfields">
+
+                <!-- API Type selector -->
                 <div class="field">
-                  <label for="cloud-id">Cloud ID</label>
-                  <input type="text" id="cloud-id" placeholder="e.g. abc12345-…" />
-                  <div class="hint">Found in Atlassian Admin → Products → JSM Ops → API settings</div>
+                  <label>OpsGenie API Type</label>
+                  <div class="ops-type-radios">
+                    <label class="ops-type-radio selected" id="ops-type-jsm-label">
+                      <input type="radio" name="opsgenie-type" id="type-jsm" value="jsm" checked />
+                      <div class="ops-type-body">
+                        <div class="ops-type-label">JSM OpsGenie (Atlassian)</div>
+                        <div class="ops-type-sub">Cloud ID + email + API token</div>
+                      </div>
+                    </label>
+                    <label class="ops-type-radio" id="ops-type-standalone-label">
+                      <input type="radio" name="opsgenie-type" id="type-standalone" value="standalone" />
+                      <div class="ops-type-body">
+                        <div class="ops-type-label">Standalone OpsGenie (Classic)</div>
+                        <div class="ops-type-sub">GenieKey authentication</div>
+                      </div>
+                    </label>
+                  </div>
                 </div>
+
+                <!-- JSM-only fields -->
+                <div id="jsm-fields">
+                  <div class="field">
+                    <label for="cloud-id">Cloud ID</label>
+                    <input type="text" id="cloud-id" placeholder="e.g. abc12345-…" />
+                    <div class="hint">Found in Atlassian Admin → Products → JSM Ops → API settings</div>
+                  </div>
+                  <div class="field">
+                    <label for="ds-email">Email</label>
+                    <input type="email" id="ds-email" placeholder="you@example.com" />
+                  </div>
+                  <div class="field">
+                    <label for="api-token">API Token</label>
+                    <input type="password" id="api-token" placeholder="API token" autocomplete="off" />
+                    <div class="hint">Generate at id.atlassian.com/manage-profile/security/api-tokens</div>
+                  </div>
+                </div>
+
+                <!-- Standalone-only fields -->
+                <div id="standalone-fields" style="display:none">
+                  <div class="field">
+                    <label for="genie-key-input">GenieKey</label>
+                    <input type="password" id="genie-key-input" placeholder="Enter your OpsGenie GenieKey" autocomplete="off" />
+                    <div id="genie-key-status" class="hint" style="display:none;color:#15803d">GenieKey configured</div>
+                    <div class="hint">Found in OpsGenie Settings → API Key Management</div>
+                  </div>
+                </div>
+
+                <!-- Custom API URL (both types) -->
                 <div class="field">
-                  <label for="ds-email">Email</label>
-                  <input type="email" id="ds-email" placeholder="you@example.com" />
+                  <label for="api-url-input">Custom API URL (optional)</label>
+                  <input type="text" id="api-url-input" placeholder="Leave blank to use default OpsGenie URL" />
+                  <div class="hint">For on-premise or mock testing</div>
                 </div>
-                <div class="field">
-                  <label for="api-token">API Token</label>
-                  <input type="password" id="api-token" placeholder="API token" autocomplete="off" />
-                  <div class="hint">Generate at id.atlassian.com/manage-profile/security/api-tokens</div>
-                </div>
+
               </div>
             </div>
           </label>
@@ -663,6 +717,19 @@
 
     const $ = id => document.getElementById(id);
 
+    // ── Portal detection — hide API key section when running inside portal ────────
+
+    const isStandaloneMode = window.location.pathname.startsWith('/ui/');
+    if (!isStandaloneMode) {
+      const banner = document.getElementById('no-key-banner');
+      if (banner) banner.style.display = 'none';
+      const apiKeyCard = document.getElementById('save-api-key');
+      if (apiKeyCard) {
+        const card = apiKeyCard.closest('.card, .settings-card, section, div[class*="card"]');
+        if (card) card.style.display = 'none';
+      }
+    }
+
     // ── Tab switching ────────────────────────────────────────────────────────────
 
     document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -718,6 +785,21 @@
       });
     });
 
+    // ── OpsGenie API type (JSM vs Standalone) ────────────────────────────────────
+
+    function selectOpsgenieType(type) {
+      document.querySelectorAll('input[name="opsgenie-type"]').forEach(r => {
+        r.checked = r.value === type;
+        r.closest('.ops-type-radio').classList.toggle('selected', r.value === type);
+      });
+      $('jsm-fields').style.display        = type === 'standalone' ? 'none' : '';
+      $('standalone-fields').style.display = type === 'standalone' ? '' : 'none';
+    }
+
+    document.querySelectorAll('input[name="opsgenie-type"]').forEach(radio => {
+      radio.addEventListener('change', () => selectOpsgenieType(radio.value));
+    });
+
     // ── Build payloads ───────────────────────────────────────────────────────────
 
     function buildSourcePayload() {
@@ -728,10 +810,19 @@
         sync_window_days:      parseInt($('sync-window').value, 10),
       };
       if (payload.source_type === 'opsgenie') {
-        payload.cloud_id = $('cloud-id').value.trim();
-        payload.email    = $('ds-email').value.trim();
-        const tok = $('api-token').value.trim();
-        if (tok) payload.api_token = tok;
+        const opsType = (document.querySelector('input[name="opsgenie-type"]:checked') || {}).value || 'jsm';
+        payload.opsgenie_type = opsType;
+        if (opsType === 'standalone') {
+          const gk = $('genie-key-input').value.trim();
+          if (gk) payload.genie_key = gk;
+        } else {
+          payload.cloud_id = $('cloud-id').value.trim();
+          payload.email    = $('ds-email').value.trim();
+          const tok = $('api-token').value.trim();
+          if (tok) payload.api_token = tok;
+        }
+        const apiUrl = $('api-url-input').value.trim();
+        if (apiUrl) payload.api_url = apiUrl;
       }
       return payload;
     }
@@ -874,8 +965,11 @@
         selectSource(cfg.source_type || 'synthetic');
 
         // Pre-fill non-secret fields
+        selectOpsgenieType(cfg.opsgenie_type || 'jsm');
         if (cfg.cloud_id) $('cloud-id').value = cfg.cloud_id;
         if (cfg.email)    $('ds-email').value  = cfg.email;
+        if (cfg.api_url)  $('api-url-input').value = cfg.api_url;
+        if (cfg.genie_key_configured) $('genie-key-status').style.display = '';
 
         // Sync interval
         const intEl = $('sync-interval');

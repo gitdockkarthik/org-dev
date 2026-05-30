@@ -12,7 +12,7 @@ from config import settings
 from encryption import decrypt, encrypt, is_secret_key
 from report_store import add_report
 from tools.noise_detector import classify_alerts
-from tools.source import OpsgenieAPISource
+from tools.source import AlertSource, JSMSource, OpsgenieAPISource, StandaloneOpsgenieSource
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,7 @@ _DEFAULTS: dict = {
     "sync_window_days": 7,
     "priority_weights": {"P1": -3, "P2": -2, "P3": 0, "P4": 1, "P5": 2},
     "noise_classification_threshold": 0,
+    "opsgenie_base_url": "",
 }
 
 # Write-through in-memory cache; populated from DB on startup.
@@ -121,21 +122,28 @@ async def load_config_from_db() -> dict:
         return {}
 
 
-async def _run_opsgenie_sync() -> dict:
+async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
     """Core sync logic — callable from HTTP handler or lifespan startup."""
-    source = OpsgenieAPISource(
-        cloud_id=_config["cloud_id"],
-        email=_config["email"],
-        api_token=_config["api_token"],
-    )
-    sync_window_days = _config.get("sync_window_days", 7)
+    source_type = _config.get("source_type", "opsgenie")
+    if source_type == "standalone":
+        source: AlertSource = StandaloneOpsgenieSource(
+            api_key=_config["api_token"],
+            base_url=_config.get("opsgenie_base_url") or "https://api.opsgenie.com",
+        )
+    else:
+        source = JSMSource(
+            cloud_id=_config["cloud_id"],
+            email=_config["email"],
+            api_token=_config["api_token"],
+        )
     last_synced = _config.get("last_synced")
 
-    if last_synced:
+    if last_synced and not full_sync:
         # Incremental — fetch only new alerts
         alerts = await source.load_alerts(created_after=last_synced)
     else:
         # Full window sync
+        sync_window_days = _config.get("sync_window_days", 7)
         alerts = await source.load_alerts(sync_window_days=sync_window_days)
 
     filename = f"opsgenie-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.json"
@@ -182,6 +190,7 @@ class SettingsPayload(BaseModel):
     sync_window_days: int = 7
     priority_weights: dict = {"P1": -3, "P2": -2, "P3": 0, "P4": 1, "P5": 2}
     noise_classification_threshold: int = 0
+    opsgenie_base_url: str = ""
 
 
 @router.get("")
@@ -215,9 +224,17 @@ async def save_settings(payload: SettingsPayload) -> dict:
 
 @router.post("/sync")
 async def sync_alerts() -> dict:
-    if _config.get("source_type") != "opsgenie":
-        raise HTTPException(status_code=400, detail="Source type must be 'opsgenie' to sync")
-    for field in ("cloud_id", "email", "api_token"):
-        if not _config.get(field):
-            raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
-    return await _run_opsgenie_sync()
+    source_type = _config.get("source_type")
+    if source_type == "standalone":
+        if not _config.get("api_token"):
+            raise HTTPException(status_code=400, detail="Missing required field: api_token (GenieKey)")
+    elif source_type == "opsgenie":
+        for field in ("cloud_id", "email", "api_token"):
+            if not _config.get(field):
+                raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Source type must be 'opsgenie' (JSM) or 'standalone' to sync",
+        )
+    return await _run_opsgenie_sync(full_sync=True)

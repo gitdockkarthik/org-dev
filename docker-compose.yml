@@ -83,6 +83,24 @@ services:
     depends_on:
       - backend
 
+  # ── Agent: Kafka Analyser ───────────────────────────────────────────────────
+  kafka-analyser:
+    build:
+      context: ./agents/kafka-analyser
+    restart: unless-stopped
+    ports:
+      - "${KAFKA_ANALYSER_PORT:-8003}:8003"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      REGISTRY_URL: http://backend:8000
+      BACKEND_API_KEY: ${BACKEND_API_KEY}
+      MODEL: ${MODEL:-claude-sonnet-4-6}
+      AGENT_SLUG: kafka-analyser
+    depends_on:
+      - backend
+      - postgres
+
   # ── Portal ──────────────────────────────────────────────────────────────────
   # Knows only BACKEND_URL and BACKEND_API_KEY — no DB, no Anthropic, no agents.
   portal:

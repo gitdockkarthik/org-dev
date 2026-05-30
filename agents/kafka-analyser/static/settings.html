@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Kafka Analyser — Settings</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f1f5f9;
+      color: #334155;
+      min-height: 100vh;
+      padding: 2rem 1rem 4rem;
+    }
+
+    .container { max-width: 720px; margin: 0 auto; }
+
+    /* ── Page header ── */
+    .page-header { margin-bottom: 1.75rem; }
+    .page-header h1 { font-size: 1.5rem; font-weight: 700; color: #1e293b; }
+    .page-header p { margin-top: 0.25rem; font-size: 0.9375rem; color: #64748b; }
+
+    /* ── Banners ── */
+    .banner-yellow {
+      background: #fefce8; border: 1px solid #fde68a; color: #92400e;
+      padding: 0.75rem 1rem; border-radius: 8px; font-size: 0.875rem;
+      margin-bottom: 1.25rem;
+    }
+    .banner-yellow.hidden { display: none; }
+
+    .banner-amber {
+      background: #fffbeb; border: 1px solid #fcd34d; color: #92400e;
+      padding: 0.875rem 1rem; border-radius: 8px; font-size: 0.875rem;
+      margin-bottom: 1.25rem;
+    }
+
+    /* ── Tab navigation ── */
+    .tab-nav {
+      display: flex; border-bottom: 2px solid #e2e8f0;
+      margin-bottom: 1.5rem; overflow: hidden; flex-wrap: nowrap; white-space: nowrap; gap: 0;
+    }
+    .tab-btn {
+      display: flex; align-items: center; gap: 0.4rem;
+      padding: 0.4rem 0.6rem; font-size: 0.8rem; font-weight: 500;
+      color: #64748b; background: none; border: none;
+      border-bottom: 2px solid transparent; margin-bottom: -2px; flex-shrink: 0;
+      cursor: pointer; white-space: nowrap; transition: color 0.15s, border-color 0.15s;
+    }
+    .tab-btn:hover { color: #334155; }
+    .tab-btn.active { color: #FF6B35; border-bottom-color: #FF6B35; }
+    .phase-badge {
+      font-size: 0.65rem; font-weight: 600; padding: 1px 4px; vertical-align: middle;
+      border-radius: 9999px; background: #dbeafe; color: #1d4ed8;
+    }
+    .phase-badge.red { background: #fee2e2; color: #b91c1c; }
+
+    /* ── Tab panels ── */
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ── Locked state ── */
+    .locked-info {
+      background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af;
+      padding: 0.875rem 1rem; border-radius: 8px; font-size: 0.875rem;
+      margin-bottom: 1.25rem; line-height: 1.5;
+    }
+    .locked-content { opacity: 0.5; pointer-events: none; }
+
+    /* ── Card ── */
+    .card {
+      background: #ffffff; border: 1px solid #e2e8f0;
+      border-radius: 10px; padding: 1.5rem; margin-bottom: 1.25rem;
+    }
+    .card-title { font-size: 1rem; font-weight: 600; color: #1e293b; }
+    .card-subtitle { font-size: 0.8125rem; color: #64748b; margin-top: 0.25rem; margin-bottom: 1.25rem; }
+
+    /* ── Form fields ── */
+    .field { margin-bottom: 1rem; }
+    .field:last-child { margin-bottom: 0; }
+    .field > label {
+      display: block; font-size: 0.875rem; font-weight: 500;
+      color: #475569; margin-bottom: 0.375rem;
+    }
+    .field input[type="text"],
+    .field input[type="email"],
+    .field input[type="password"],
+    .field input[type="number"],
+    .field select {
+      width: 100%; padding: 0.5rem 0.75rem; border: 1px solid #cbd5e1;
+      border-radius: 6px; font-size: 0.875rem; color: #1e293b;
+      background: #ffffff; outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .field input:focus, .field select:focus {
+      border-color: #FF6B35; box-shadow: 0 0 0 3px rgba(255,107,53,0.12);
+    }
+    .hint { margin-top: 0.3rem; font-size: 0.75rem; color: #94a3b8; }
+
+    /* ── API key status ── */
+    .key-status { font-size: 0.875rem; color: #15803d; margin-bottom: 0.75rem; }
+    .key-status.hidden { display: none; }
+
+    /* ── Radio cards ── */
+    .radio-cards { display: flex; flex-direction: column; gap: 0.75rem; }
+    .radio-card {
+      border: 2px solid #e2e8f0; border-radius: 8px;
+      padding: 0.875rem 1rem; cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      display: flex; align-items: flex-start; gap: 0.75rem;
+    }
+    .radio-card:hover { border-color: #ffb38a; }
+    .radio-card.selected { border-color: #FF6B35; background: #fff5f0; }
+    .radio-card.locked-card {
+      opacity: 0.55; cursor: not-allowed; pointer-events: none;
+    }
+    .radio-card input[type="radio"] { margin-top: 0.125rem; accent-color: #FF6B35; flex-shrink: 0; }
+    .radio-card-body { flex: 1; }
+    .radio-card-label {
+      font-size: 0.9375rem; font-weight: 600; color: #1e293b;
+      display: flex; align-items: center; gap: 0.5rem;
+    }
+    .radio-card-desc { margin-top: 0.2rem; font-size: 0.8125rem; color: #64748b; }
+
+    /* ── Redpanda sub-fields ── */
+    .redpanda-fields {
+      margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #e2e8f0;
+      display: flex; flex-direction: column; gap: 0.75rem;
+    }
+    .redpanda-fields.hidden { display: none; }
+    .redpanda-fields .field { margin-bottom: 0; }
+
+    /* ── TLS toggle (active, inline in card) ── */
+    .toggle-row { display: flex; align-items: center; gap: 0.75rem; }
+    .toggle-input { display: none; }
+    .toggle-track {
+      width: 38px; height: 20px; background: #cbd5e1; border-radius: 9999px;
+      position: relative; transition: background 0.2s; flex-shrink: 0; cursor: pointer;
+    }
+    .toggle-input:checked + .toggle-track { background: #FF6B35; }
+    .toggle-track::after {
+      content: ''; position: absolute; width: 14px; height: 14px;
+      border-radius: 50%; background: #fff; top: 3px; left: 3px;
+      transition: left 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+    .toggle-input:checked + .toggle-track::after { left: 21px; }
+    .toggle-label { font-size: 0.875rem; color: #475569; font-weight: 500; }
+
+    /* ── Toggle wrap (for locked tabs) ── */
+    .toggle-wrap { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; }
+    .toggle-wrap .toggle-label { font-size: 0.9rem; color: #334155; font-weight: 500; }
+
+    /* ── Sync row ── */
+    .sync-row { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+    .sync-row .field { margin-bottom: 0; flex: 0 0 220px; }
+    .last-synced { font-size: 0.8125rem; color: #94a3b8; }
+
+    /* ── Buttons ── */
+    .btn {
+      padding: 0.5625rem 1.375rem; font-size: 0.875rem; font-weight: 500;
+      border: none; border-radius: 6px; cursor: pointer; transition: background 0.15s;
+    }
+    .btn-primary { background: #FF6B35; color: #fff; }
+    .btn-primary:hover { background: #e55c29; }
+    .btn-primary:active { background: #cc5122; }
+    .btn-secondary { background: #e2e8f0; color: #334155; }
+    .btn-secondary:hover { background: #cbd5e1; }
+    .btn-secondary:active { background: #94a3b8; }
+    .actions { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+
+    .action-msg { margin-top: 0.75rem; font-size: 0.875rem; min-height: 1.25rem; line-height: 1.4; }
+    .action-msg.ok   { color: #15803d; }
+    .action-msg.err  { color: #b91c1c; }
+    .action-msg.info { color: #FF6B35; }
+    .action-msg.hidden { visibility: hidden; }
+
+    /* ── Sync status ── */
+    .status-rows { display: flex; flex-direction: column; gap: 0.625rem; }
+    .status-row { display: flex; align-items: center; justify-content: space-between; font-size: 0.875rem; }
+    .status-row-label { color: #64748b; font-weight: 500; }
+    .badge {
+      display: inline-block; padding: 0.2rem 0.625rem; border-radius: 9999px;
+      background: #fff0eb; color: #c2410c; font-size: 0.75rem;
+      font-weight: 600; text-transform: lowercase;
+    }
+    .status-value { color: #1e293b; }
+
+    /* ── Card sub-section ── */
+    .card-section { margin-top: 1.25rem; padding-top: 1.25rem; border-top: 1px solid #e2e8f0; }
+    .card-section-title { font-size: 0.875rem; font-weight: 600; color: #475569; margin-bottom: 0.75rem; }
+
+    /* ── Checkboxes ── */
+    .checkbox-group { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.375rem; }
+    .checkbox-row { display: flex; align-items: center; gap: 0.5rem; }
+    .checkbox-row label { font-size: 0.875rem; color: #334155; cursor: pointer; }
+    .checkbox-row input[type="checkbox"] { accent-color: #FF6B35; }
+
+    @media (max-width: 500px) {
+      .tab-btn { padding: 0.625rem 0.5rem; font-size: 0.75rem; }
+      .sync-row .field { flex: 1 1 100%; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Page header -->
+  <div class="page-header">
+    <h1>Kafka Analyser — Settings</h1>
+    <p>Configure Kafka data source and alert thresholds</p>
+  </div>
+
+  <!-- No-key banner -->
+  <div id="no-key-banner" class="banner-yellow hidden">
+    No Anthropic API key configured. Add your key to get started.
+  </div>
+
+  <!-- Tab navigation -->
+  <nav class="tab-nav" role="tablist">
+    <button class="tab-btn active" data-tab="data-source" role="tab">Data Source</button>
+    <button class="tab-btn" data-tab="thresholds" role="tab">Alert Thresholds</button>
+    <button class="tab-btn" data-tab="enterprise" role="tab">
+      Enterprise Kafka <span class="phase-badge">Phase 3</span>
+    </button>
+    <button class="tab-btn" data-tab="rag" role="tab">
+      RAG &amp; Intelligence <span class="phase-badge">Phase 4</span>
+    </button>
+    <button class="tab-btn" data-tab="autonomous" role="tab">
+      Autonomous <span class="phase-badge red">Phase 5</span>
+    </button>
+  </nav>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- TAB 1: Data Source                                        -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <div class="tab-panel active" id="panel-data-source">
+
+    <!-- A: Anthropic API Key -->
+    <div class="card">
+      <div class="card-title">Anthropic API Key</div>
+      <div id="key-status" class="key-status hidden" style="margin-top:0.5rem"></div>
+      <div class="field" style="margin-top:0.75rem">
+        <label for="api-key-input">API Key</label>
+        <input type="password" id="api-key-input" placeholder="sk-ant-…" autocomplete="off" />
+      </div>
+      <div class="actions" style="margin-top:0.75rem">
+        <button class="btn btn-primary" id="save-api-key">Save</button>
+      </div>
+      <div id="api-key-msg" class="action-msg hidden"></div>
+    </div>
+
+    <!-- B: Kafka Source -->
+    <div class="card">
+      <div class="card-title">Kafka Source</div>
+      <div class="card-subtitle">Select the source from which Kafka metrics will be collected</div>
+
+      <div class="radio-cards">
+
+        <label class="radio-card" id="card-synthetic">
+          <input type="radio" name="source" value="synthetic" />
+          <div class="radio-card-body">
+            <div class="radio-card-label">Synthetic Data</div>
+            <div class="radio-card-desc">Auto-generate realistic Kafka metrics — no cluster needed</div>
+          </div>
+        </label>
+
+        <label class="radio-card" id="card-redpanda">
+          <input type="radio" name="source" value="redpanda" />
+          <div class="radio-card-body">
+            <div class="radio-card-label">Redpanda Cloud</div>
+            <div class="radio-card-desc">Connect to Redpanda Cloud free tier — real Kafka protocol, zero cost</div>
+            <div class="redpanda-fields hidden" id="redpanda-fields">
+              <div class="field">
+                <label for="bootstrap-servers">Bootstrap Servers</label>
+                <input type="text" id="bootstrap-servers" placeholder="seed-abc123.redpanda.com:9092" />
+              </div>
+              <div class="field">
+                <label for="sasl-username">SASL Username</label>
+                <input type="text" id="sasl-username" placeholder="username" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="sasl-password">SASL Password</label>
+                <input type="password" id="sasl-password" placeholder="password" autocomplete="new-password" />
+              </div>
+              <div class="field">
+                <div class="toggle-row">
+                  <input type="checkbox" id="tls-enabled" class="toggle-input" />
+                  <label for="tls-enabled" class="toggle-track"></label>
+                  <span class="toggle-label">TLS enabled</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </label>
+
+        <label class="radio-card locked-card" id="card-kafka">
+          <input type="radio" name="source" value="kafka" disabled />
+          <div class="radio-card-body">
+            <div class="radio-card-label">
+              Apache Kafka / JMX
+              <span class="phase-badge">Phase 3</span>
+            </div>
+            <div class="radio-card-desc">Self-hosted Kafka via JMX Exporter</div>
+          </div>
+        </label>
+
+        <label class="radio-card locked-card" id="card-msk">
+          <input type="radio" name="source" value="msk" disabled />
+          <div class="radio-card-body">
+            <div class="radio-card-label">
+              AWS MSK
+              <span class="phase-badge">Phase 3</span>
+            </div>
+            <div class="radio-card-desc">AWS Managed Streaming for Kafka</div>
+          </div>
+        </label>
+
+      </div>
+    </div>
+
+    <!-- C: Collection Interval -->
+    <div class="card">
+      <div class="card-title">Collection Interval</div>
+      <div class="sync-row" style="margin-top:0.75rem">
+        <div class="field">
+          <select id="collection-interval">
+            <option value="0">Disabled</option>
+            <option value="30">Every 30 seconds</option>
+            <option value="60">Every 1 minute</option>
+            <option value="300">Every 5 minutes</option>
+          </select>
+        </div>
+        <span class="last-synced" id="last-synced-label">Loading…</span>
+      </div>
+    </div>
+
+    <!-- D: Action Buttons -->
+    <div class="card">
+      <div class="actions">
+        <button class="btn btn-primary" id="btn-save-sync">Save &amp; Sync</button>
+        <button class="btn btn-secondary" id="btn-save-only">Save Only</button>
+      </div>
+      <div id="action-msg" class="action-msg hidden"></div>
+    </div>
+
+    <!-- E: Sync Status -->
+    <div class="card">
+      <div class="card-title">Sync Status</div>
+      <div id="sync-status" class="status-rows" style="margin-top:0.75rem">
+        <span style="color:#94a3b8;font-style:italic;font-size:.875rem">Loading…</span>
+      </div>
+    </div>
+
+  </div><!-- /#panel-data-source -->
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- TAB 2: Alert Thresholds                                   -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <div class="tab-panel" id="panel-thresholds">
+
+    <div class="card">
+      <div class="card-title">Consumer Lag</div>
+      <div class="field" style="margin-top:0.75rem">
+        <label for="lag-threshold">Alert if consumer group lag exceeds X messages</label>
+        <input type="number" id="lag-threshold" min="1" value="10000" style="max-width:140px" />
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Broker Health</div>
+      <div style="display:flex;flex-direction:column;gap:1rem;margin-top:0.75rem">
+        <div class="field">
+          <label for="heap-threshold">Alert if broker heap usage exceeds X%</label>
+          <input type="number" id="heap-threshold" min="1" max="100" value="80" style="max-width:120px" />
+        </div>
+        <div class="field">
+          <label for="urp-threshold">Alert if under-replicated partition count exceeds X</label>
+          <input type="number" id="urp-threshold" min="0" value="0" style="max-width:120px" />
+          <div class="hint">0 means any URP triggers an alert</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Connectors &amp; Topics</div>
+      <div style="display:flex;flex-direction:column;gap:1rem;margin-top:0.75rem">
+        <div class="field">
+          <div class="toggle-row">
+            <input type="checkbox" id="connector-alert" class="toggle-input" checked />
+            <label for="connector-alert" class="toggle-track"></label>
+            <span class="toggle-label">Alert on any connector task failure</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="retention-threshold">Alert if topic retention usage exceeds X%</label>
+          <input type="number" id="retention-threshold" min="1" max="100" value="80" style="max-width:120px" />
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="actions">
+        <button class="btn btn-primary" id="btn-save-thresholds">Save</button>
+      </div>
+      <div id="threshold-msg" class="action-msg hidden"></div>
+    </div>
+
+  </div><!-- /#panel-thresholds -->
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- TAB 3: Enterprise Kafka (Phase 3, locked)                 -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <div class="tab-panel" id="panel-enterprise">
+    <div class="locked-info">
+      <strong>Phase 3</strong> — Self-hosted Apache Kafka via JMX Exporter and AWS MSK
+      connectivity. Configure once and metrics collect automatically on your schedule.
+      Available in Phase 3.
+    </div>
+    <div class="locked-content">
+      <div class="card">
+        <div class="field">
+          <label for="ent-cluster-name">Cluster Name</label>
+          <input type="text" id="ent-cluster-name" disabled placeholder="prod-kafka" />
+        </div>
+        <div class="field">
+          <label for="ent-bootstrap">Bootstrap Servers</label>
+          <input type="text" id="ent-bootstrap" disabled placeholder="broker1:9092,broker2:9092" />
+        </div>
+        <div class="field">
+          <label for="ent-jmx-urls">JMX Exporter URLs (one per broker)</label>
+          <input type="text" id="ent-jmx-urls" disabled placeholder="http://broker1:7071,http://broker2:7071" />
+        </div>
+        <div class="field">
+          <label for="ent-schema-url">Schema Registry URL</label>
+          <input type="text" id="ent-schema-url" disabled placeholder="http://schema-registry:8081" />
+        </div>
+        <div class="field">
+          <label for="ent-connect-url">Kafka Connect URL</label>
+          <input type="text" id="ent-connect-url" disabled placeholder="http://kafka-connect:8083" />
+        </div>
+        <div class="field">
+          <label for="ent-auth-type">Auth Type</label>
+          <select id="ent-auth-type" disabled>
+            <option>PLAINTEXT</option>
+            <option>SASL_PLAINTEXT</option>
+            <option>SASL_SSL</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="ent-sasl-user">SASL Username</label>
+          <input type="text" id="ent-sasl-user" disabled />
+        </div>
+        <div class="field">
+          <label for="ent-sasl-pass">SASL Password</label>
+          <input type="password" id="ent-sasl-pass" disabled />
+        </div>
+        <div class="field">
+          <label for="ent-zk">ZooKeeper Hosts</label>
+          <input type="text" id="ent-zk" disabled placeholder="zk1:2181,zk2:2181" />
+        </div>
+      </div>
+    </div>
+  </div><!-- /#panel-enterprise -->
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- TAB 4: RAG & Intelligence (Phase 4, locked)               -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <div class="tab-panel" id="panel-rag">
+    <div class="locked-info">
+      <strong>Phase 4</strong> — Incident history embeddings and runbook-grounded AI analysis
+      using pgvector and Qdrant. The agent will retrieve relevant runbooks and past incidents
+      to ground root cause analysis. Available in Phase 4.
+    </div>
+    <div class="locked-content">
+      <div class="card">
+        <div class="toggle-wrap">
+          <input type="checkbox" id="rag-enable" class="toggle-input" disabled />
+          <label for="rag-enable" class="toggle-track"></label>
+          <span class="toggle-label">Enable RAG &amp; Intelligence</span>
+        </div>
+        <div class="field">
+          <label for="rag-qdrant-host">Qdrant Host</label>
+          <input type="text" id="rag-qdrant-host" disabled value="localhost" />
+        </div>
+        <div class="field">
+          <label for="rag-qdrant-port">Qdrant Port</label>
+          <input type="number" id="rag-qdrant-port" disabled value="6333" style="max-width:120px" />
+        </div>
+        <div class="field">
+          <label for="rag-qdrant-collection">Qdrant Collection</label>
+          <input type="text" id="rag-qdrant-collection" disabled placeholder="kafka-incidents" />
+        </div>
+        <div class="field">
+          <label for="rag-chunks">RAG Context Chunks</label>
+          <input type="number" id="rag-chunks" disabled value="5" style="max-width:120px" />
+        </div>
+        <div class="field">
+          <label for="rag-retention-days">Incident History Retention (days)</label>
+          <input type="number" id="rag-retention-days" disabled value="90" style="max-width:120px" />
+        </div>
+        <div class="card-section">
+          <div class="field">
+            <label for="rag-model">Reasoning Model</label>
+            <select id="rag-model" disabled>
+              <option value="claude-sonnet-4-6" selected>claude-sonnet-4-6 (recommended)</option>
+              <option value="claude-opus-4-6">claude-opus-4-6 (higher quality, slower)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div><!-- /#panel-rag -->
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- TAB 5: Autonomous (Phase 5, locked)                       -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <div class="tab-panel" id="panel-autonomous">
+    <div class="banner-amber">
+      ⚠️ Autonomous mode executes Kafka remediation actions without human approval, including
+      restarting consumer groups, increasing partition counts, and triggering connector restarts.
+      Enable only after Phase 4 HITL workflows are validated and the scorecard consistently meets
+      the configured threshold. Some actions may cause temporary consumer rebalancing.
+    </div>
+    <div class="locked-content">
+      <div class="card">
+        <div class="toggle-wrap">
+          <input type="checkbox" id="auto-enable" class="toggle-input" disabled />
+          <label for="auto-enable" class="toggle-track"></label>
+          <span class="toggle-label">Enable Autonomous Remediation</span>
+        </div>
+        <div class="field">
+          <label for="auto-hitl-threshold">Minimum HITL success rate to activate autonomous mode (%)</label>
+          <input type="number" id="auto-hitl-threshold" disabled value="85" style="max-width:120px" />
+        </div>
+        <div class="field">
+          <label>Permitted autonomous actions</label>
+          <div class="checkbox-group">
+            <div class="checkbox-row">
+              <input type="checkbox" id="act-restart-cg" disabled />
+              <label for="act-restart-cg">Restart consumer groups</label>
+            </div>
+            <div class="checkbox-row">
+              <input type="checkbox" id="act-partitions" disabled />
+              <label for="act-partitions">Increase partition count</label>
+            </div>
+            <div class="checkbox-row">
+              <input type="checkbox" id="act-throttle" disabled />
+              <label for="act-throttle">Throttle producers</label>
+            </div>
+            <div class="checkbox-row">
+              <input type="checkbox" id="act-connector" disabled />
+              <label for="act-connector">Trigger connector restart</label>
+            </div>
+          </div>
+        </div>
+        <div class="field">
+          <label for="auto-blast-radius">Blast radius limit (max brokers affected per action)</label>
+          <input type="number" id="auto-blast-radius" disabled value="1" style="max-width:120px" />
+        </div>
+      </div>
+    </div>
+  </div><!-- /#panel-autonomous -->
+
+</div><!-- /.container -->
+
+<script>
+  const $ = id => document.getElementById(id);
+
+  // ── Tab switching ────────────────────────────────────────────────────────────
+
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      $('panel-' + btn.dataset.tab).classList.add('active');
+    });
+  });
+
+  // ── Helpers ──────────────────────────────────────────────────────────────────
+
+  function showMsg(el, text, type, durationMs = 5000) {
+    el.textContent = text;
+    el.className = 'action-msg ' + type;
+    clearTimeout(el._t);
+    el._t = setTimeout(() => { el.className = 'action-msg hidden'; el.textContent = ''; }, durationMs);
+  }
+
+  function fmtDatetime(iso) {
+    if (!iso) return 'Never';
+    try {
+      const d = new Date(iso);
+      return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
+        + ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    } catch { return iso; }
+  }
+
+  // ── Radio card selection ─────────────────────────────────────────────────────
+
+  function selectSource(value) {
+    document.querySelectorAll('.radio-card:not(.locked-card)').forEach(card => {
+      const radio = card.querySelector('input[type="radio"]');
+      if (!radio) return;
+      const selected = radio.value === value;
+      radio.checked = selected;
+      card.classList.toggle('selected', selected);
+    });
+    $('redpanda-fields').classList.toggle('hidden', value !== 'redpanda');
+  }
+
+  document.querySelectorAll('input[name="source"]:not([disabled])').forEach(radio => {
+    radio.addEventListener('change', () => selectSource(radio.value));
+  });
+
+  ['card-synthetic', 'card-redpanda'].forEach(id => {
+    const card = $(id);
+    if (!card) return;
+    card.addEventListener('click', () => {
+      const radio = card.querySelector('input[type="radio"]');
+      if (radio && !radio.disabled) selectSource(radio.value);
+    });
+  });
+
+  // ── Build payloads ───────────────────────────────────────────────────────────
+
+  function buildSourcePayload() {
+    const radio = document.querySelector('input[name="source"]:not([disabled]):checked');
+    const payload = {
+      source_type: radio ? radio.value : 'synthetic',
+      collection_interval_secs: parseInt($('collection-interval').value, 10),
+    };
+    if (payload.source_type === 'redpanda') {
+      payload.bootstrap_servers = $('bootstrap-servers').value.trim();
+      payload.sasl_username     = $('sasl-username').value.trim();
+      const pwd = $('sasl-password').value.trim();
+      if (pwd) payload.sasl_password = pwd;
+      payload.tls_enabled = $('tls-enabled').checked;
+    }
+    return payload;
+  }
+
+  function buildThresholdPayload() {
+    return {
+      lag_threshold:           parseInt($('lag-threshold').value, 10),
+      heap_threshold_pct:      parseInt($('heap-threshold').value, 10),
+      urp_threshold:           parseInt($('urp-threshold').value, 10),
+      connector_alert_enabled: $('connector-alert').checked,
+      retention_threshold_pct: parseInt($('retention-threshold').value, 10),
+    };
+  }
+
+  // ── API calls ────────────────────────────────────────────────────────────────
+
+  async function postSettings(payload) {
+    const res = await fetch('/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error('HTTP ' + res.status + (body ? ': ' + body : ''));
+    }
+    return res.json();
+  }
+
+  // ── Save API key ─────────────────────────────────────────────────────────────
+
+  $('save-api-key').addEventListener('click', async () => {
+    const key = $('api-key-input').value.trim();
+    const msgEl = $('api-key-msg');
+    if (!key) { showMsg(msgEl, 'Please enter an API key.', 'err'); return; }
+    try {
+      await postSettings({ api_key: key });
+      showMsg(msgEl, 'API key saved.', 'ok');
+      $('api-key-input').value = '';
+      await loadSettings();
+    } catch (err) {
+      showMsg(msgEl, 'Save failed: ' + err.message, 'err');
+    }
+  });
+
+  // ── Save & Sync ──────────────────────────────────────────────────────────────
+
+  $('btn-save-sync').addEventListener('click', async () => {
+    const msgEl = $('action-msg');
+    try {
+      await postSettings(buildSourcePayload());
+      showMsg(msgEl, 'Collecting Kafka metrics… please wait', 'info', 120000);
+      const syncRes = await fetch('/settings/sync', { method: 'POST' });
+      if (!syncRes.ok) {
+        const body = await syncRes.json().catch(() => ({}));
+        throw new Error(body.detail || 'Sync HTTP ' + syncRes.status);
+      }
+      const d = await syncRes.json();
+      showMsg(
+        msgEl,
+        `Sync complete — ${d.broker_count} brokers, ${d.consumer_group_count} consumer groups, ${d.topic_count} topics`,
+        'ok',
+      );
+      await loadSettings();
+    } catch (err) {
+      showMsg(msgEl, 'Failed: ' + err.message, 'err');
+    }
+  });
+
+  // ── Save Only ────────────────────────────────────────────────────────────────
+
+  $('btn-save-only').addEventListener('click', async () => {
+    const msgEl = $('action-msg');
+    try {
+      await postSettings(buildSourcePayload());
+      showMsg(msgEl, 'Settings saved.', 'ok');
+      await loadSettings();
+    } catch (err) {
+      showMsg(msgEl, 'Failed: ' + err.message, 'err');
+    }
+  });
+
+  // ── Save Thresholds ──────────────────────────────────────────────────────────
+
+  $('btn-save-thresholds').addEventListener('click', async () => {
+    const msgEl = $('threshold-msg');
+    try {
+      await postSettings(buildThresholdPayload());
+      showMsg(msgEl, 'Thresholds saved.', 'ok');
+    } catch (err) {
+      showMsg(msgEl, 'Failed: ' + err.message, 'err');
+    }
+  });
+
+  // ── Render sync status ───────────────────────────────────────────────────────
+
+  function renderSyncStatus(cfg) {
+    const el = $('sync-status');
+    el.innerHTML = '';
+
+    function addRow(label, valueHtml) {
+      const div = document.createElement('div');
+      div.className = 'status-row';
+      div.innerHTML =
+        '<span class="status-row-label">' + label + '</span>' +
+        '<span class="status-value">' + valueHtml + '</span>';
+      el.appendChild(div);
+    }
+
+    addRow('Source type', '<span class="badge">' + (cfg.source_type || 'synthetic') + '</span>');
+    addRow('Last synced', fmtDatetime(cfg.last_synced || null));
+    addRow('Brokers', cfg.broker_count != null ? String(cfg.broker_count) : '—');
+    addRow('Consumer groups', cfg.consumer_group_count != null ? String(cfg.consumer_group_count) : '—');
+    addRow('Topics', cfg.topic_count != null ? String(cfg.topic_count) : '—');
+    addRow('Connectors', cfg.connector_count != null ? String(cfg.connector_count) : '—');
+  }
+
+  // ── Load settings on page load ───────────────────────────────────────────────
+
+  async function loadSettings() {
+    try {
+      const res = await fetch('/settings');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const cfg = await res.json();
+
+      // API key banner + status line
+      const configured = cfg.api_key_configured === true;
+      $('no-key-banner').classList.toggle('hidden', configured);
+      const keyStatus = $('key-status');
+      if (configured && cfg.api_key_last4) {
+        keyStatus.textContent = 'API key configured (last 4: ...' + cfg.api_key_last4 + ')';
+        keyStatus.classList.remove('hidden');
+      } else {
+        keyStatus.classList.add('hidden');
+      }
+
+      // Source radio
+      selectSource(cfg.source_type || 'synthetic');
+
+      // Pre-fill non-secret connection fields
+      if (cfg.bootstrap_servers) $('bootstrap-servers').value = cfg.bootstrap_servers;
+      if (cfg.sasl_username)     $('sasl-username').value     = cfg.sasl_username;
+      if (cfg.tls_enabled != null) $('tls-enabled').checked   = cfg.tls_enabled;
+
+      // Collection interval
+      const intEl = $('collection-interval');
+      const intVal = String(cfg.collection_interval_secs ?? 0);
+      if (intEl.querySelector('option[value="' + intVal + '"]')) intEl.value = intVal;
+
+      // Last synced label
+      $('last-synced-label').textContent =
+        cfg.last_synced ? 'Last synced: ' + fmtDatetime(cfg.last_synced) : 'Never synced';
+
+      // Threshold fields
+      if (cfg.lag_threshold           != null) $('lag-threshold').value        = cfg.lag_threshold;
+      if (cfg.heap_threshold_pct       != null) $('heap-threshold').value       = cfg.heap_threshold_pct;
+      if (cfg.urp_threshold            != null) $('urp-threshold').value        = cfg.urp_threshold;
+      if (cfg.connector_alert_enabled  != null) $('connector-alert').checked    = cfg.connector_alert_enabled;
+      if (cfg.retention_threshold_pct  != null) $('retention-threshold').value  = cfg.retention_threshold_pct;
+
+      // Sync status
+      renderSyncStatus(cfg);
+
+    } catch (err) {
+      $('sync-status').innerHTML =
+        '<span style="color:#b91c1c;font-size:.875rem">Failed to load settings: ' + err.message + '</span>';
+      $('last-synced-label').textContent = '';
+    }
+  }
+
+  loadSettings();
+</script>
+</body>
+</html>

@@ -58,10 +58,7 @@
 
   <header class="topbar">
     <a href="/" class="topbar__brand">
-      <span style="font-size:1.3rem;
-   font-weight:700;color:#ffffff;
-   letter-spacing:1px;
-   font-family:inherit;">OPERATIVE</span>
+      <img src='/assets/agentsiq-logo.svg' alt='AgentsIQ' style='height:44px;'>
     </a>
     <nav class="topbar__nav">
       <a href="/" class="topbar__link">Agents</a>
@@ -229,7 +226,7 @@
         destroyChart('score');
         const sc = document.getElementById('scoreChart')?.getContext('2d');
         const sorted = [...s.service_noise_scores].sort((a,b)=>b.score-a.score).slice(0,10);
-        if (sc) charts['score'] = new Chart(sc, { type:'bar', data:{ labels:sorted.map(x=>x.service), datasets:[{label:'Noise %',data:sorted.map(x=>x.score),backgroundColor:'#0EA5E9'}] }, options:{indexAxis:'y',responsive:true,plugins:{legend:{display:false}},scales:{x:{max:100}}} });
+        if (sc) charts['score'] = new Chart(sc, { type:'bar', data:{ labels:sorted.map(x=>x.service), datasets:[{label:'Noise %',data:sorted.map(x=>x.score),backgroundColor:'#6366f1'}] }, options:{indexAxis:'y',responsive:true,plugins:{legend:{display:false}},scales:{x:{max:100}}} });
       }, 50);
     }
 
@@ -290,7 +287,7 @@
       setTimeout(() => {
         destroyChart('hour');
         const c = document.getElementById('hourChart')?.getContext('2d');
-        if (c) charts['hour'] = new Chart(c, { type:'bar', data:{ labels:hourly.map(h=>`${h.hour}:00`), datasets:[{label:'Alerts',data:hourly.map(h=>h.count),backgroundColor:hourly.map(h=>{ const i=h.count/maxH; return i>.7?'#dc2626':i>.4?'#b45309':'#0EA5E9'; })}] }, options:{responsive:true,plugins:{legend:{display:false}}} });
+        if (c) charts['hour'] = new Chart(c, { type:'bar', data:{ labels:hourly.map(h=>`${h.hour}:00`), datasets:[{label:'Alerts',data:hourly.map(h=>h.count),backgroundColor:hourly.map(h=>{ const i=h.count/maxH; return i>.7?'#dc2626':i>.4?'#b45309':'#6366f1'; })}] }, options:{responsive:true,plugins:{legend:{display:false}}} });
         destroyChart('health');
         const hc = document.getElementById('healthChart')?.getContext('2d');
         if (hc && s.daily_trend.length) {

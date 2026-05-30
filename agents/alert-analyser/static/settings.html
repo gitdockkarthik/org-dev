@@ -132,6 +132,20 @@
     .opsfields.hidden { display: none; }
     .opsfields .field { margin-bottom: 0; }
 
+    /* ── OpsGenie type selector (compact radio pair) ── */
+    .ops-type-radios { display: flex; gap: 0.625rem; flex-wrap: wrap; margin-top: 0.25rem; }
+    .ops-type-radio {
+      border: 1.5px solid #e2e8f0; border-radius: 7px; padding: 0.625rem 0.875rem;
+      cursor: pointer; transition: border-color 0.15s, background 0.15s;
+      display: flex; align-items: flex-start; gap: 0.5rem; flex: 1 1 160px;
+    }
+    .ops-type-radio:hover { border-color: #a5b4fc; }
+    .ops-type-radio.selected { border-color: #6366f1; background: #eef2ff; }
+    .ops-type-radio input[type="radio"] { margin-top: 0.1rem; accent-color: #6366f1; flex-shrink: 0; }
+    .ops-type-body { flex: 1; }
+    .ops-type-label { font-size: 0.85rem; font-weight: 600; color: #1e293b; }
+    .ops-type-sub { font-size: 0.75rem; color: #64748b; margin-top: 0.125rem; }
+
     /* ── Sync row ── */
     .sync-row { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
     .sync-row .field { margin-bottom: 0; flex: 0 0 220px; }
@@ -279,20 +293,63 @@
             <div class="radio-card-label">OpsGenie / JSM API</div>
             <div class="radio-card-desc">Fetch alerts live from the Atlassian JSM Ops API using Basic Auth</div>
             <div class="opsfields hidden" id="opsfields">
+
+              <!-- API Type selector -->
               <div class="field">
-                <label for="cloud-id">Cloud ID</label>
-                <input type="text" id="cloud-id" placeholder="e.g. abc12345-…" />
-                <div class="hint">Found in Atlassian Admin → Products → JSM Ops → API settings</div>
+                <label>OpsGenie API Type</label>
+                <div class="ops-type-radios">
+                  <label class="ops-type-radio selected" id="ops-type-jsm-label">
+                    <input type="radio" name="opsgenie-type" id="opsgenie-type-jsm" value="jsm" checked />
+                    <div class="ops-type-body">
+                      <div class="ops-type-label">JSM OpsGenie (Atlassian)</div>
+                      <div class="ops-type-sub">Cloud ID + email + API token</div>
+                    </div>
+                  </label>
+                  <label class="ops-type-radio" id="ops-type-standalone-label">
+                    <input type="radio" name="opsgenie-type" id="opsgenie-type-standalone" value="standalone" />
+                    <div class="ops-type-body">
+                      <div class="ops-type-label">Standalone OpsGenie (Classic)</div>
+                      <div class="ops-type-sub">GenieKey authentication</div>
+                    </div>
+                  </label>
+                </div>
               </div>
+
+              <!-- JSM-only fields -->
+              <div id="jsm-fields">
+                <div class="field">
+                  <label for="cloud-id">Cloud ID</label>
+                  <input type="text" id="cloud-id" placeholder="e.g. abc12345-…" />
+                  <div class="hint">Found in Atlassian Admin → Products → JSM Ops → API settings</div>
+                </div>
+                <div class="field">
+                  <label for="ds-email">Email</label>
+                  <input type="email" id="ds-email" placeholder="you@example.com" />
+                </div>
+                <div class="field">
+                  <label for="api-token">API Token</label>
+                  <input type="password" id="api-token" placeholder="API token" autocomplete="off" />
+                  <div class="hint">Generate at id.atlassian.com/manage-profile/security/api-tokens</div>
+                </div>
+              </div>
+
+              <!-- Standalone-only fields -->
+              <div id="standalone-fields" style="display:none">
+                <div class="field">
+                  <label for="genie-key">GenieKey</label>
+                  <input type="password" id="genie-key" placeholder="Enter your OpsGenie GenieKey" autocomplete="off" />
+                  <div id="genie-key-status" class="hint" style="display:none;color:#15803d">GenieKey configured</div>
+                  <div class="hint">Found in OpsGenie Settings → API Key Management</div>
+                </div>
+              </div>
+
+              <!-- Custom API URL (both types) -->
               <div class="field">
-                <label for="ds-email">Email</label>
-                <input type="email" id="ds-email" placeholder="you@example.com" />
+                <label for="api-url">Custom API URL (optional)</label>
+                <input type="text" id="api-url" placeholder="Leave blank to use default OpsGenie URL" />
+                <div class="hint">Use for on-premise OpsGenie or mock testing. Leave blank for cloud OpsGenie.</div>
               </div>
-              <div class="field">
-                <label for="api-token">API Token</label>
-                <input type="password" id="api-token" placeholder="API token" autocomplete="off" />
-                <div class="hint">Generate at id.atlassian.com/manage-profile/security/api-tokens</div>
-              </div>
+
             </div>
           </div>
         </label>
@@ -628,6 +685,19 @@
 <script>
   const $ = id => document.getElementById(id);
 
+  // ── Portal detection ─────────────────────────────────────────────────────────
+  // /ui/... is the standalone agent path; anything else is the portal.
+
+  const isStandaloneMode = window.location.pathname.startsWith('/ui/');
+
+  if (!isStandaloneMode) {
+    // Running inside portal — platform manages the Anthropic key, hide section.
+    const banner = $('no-key-banner');
+    if (banner) banner.style.display = 'none';
+    const apiKeyCard = $('save-api-key') && $('save-api-key').closest('.card');
+    if (apiKeyCard) apiKeyCard.style.display = 'none';
+  }
+
   // ── Tab switching ────────────────────────────────────────────────────────────
 
   document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -683,6 +753,21 @@
     });
   });
 
+  // ── OpsGenie API type (JSM vs Standalone) ────────────────────────────────────
+
+  function selectOpsgenieType(type) {
+    document.querySelectorAll('input[name="opsgenie-type"]').forEach(r => {
+      r.checked = r.value === type;
+      r.closest('.ops-type-radio').classList.toggle('selected', r.value === type);
+    });
+    $('jsm-fields').style.display        = type === 'standalone' ? 'none' : '';
+    $('standalone-fields').style.display = type === 'standalone' ? '' : 'none';
+  }
+
+  document.querySelectorAll('input[name="opsgenie-type"]').forEach(radio => {
+    radio.addEventListener('change', () => selectOpsgenieType(radio.value));
+  });
+
   // ── Build payloads ───────────────────────────────────────────────────────────
 
   function buildSourcePayload() {
@@ -693,10 +778,19 @@
       sync_window_days:      parseInt($('sync-window').value, 10),
     };
     if (payload.source_type === 'opsgenie') {
-      payload.cloud_id = $('cloud-id').value.trim();
-      payload.email    = $('ds-email').value.trim();
-      const tok = $('api-token').value.trim();
-      if (tok) payload.api_token = tok;
+      const opsType = (document.querySelector('input[name="opsgenie-type"]:checked') || {}).value || 'jsm';
+      payload.opsgenie_type = opsType;
+      if (opsType === 'standalone') {
+        const gk = $('genie-key').value.trim();
+        if (gk) payload.genie_key = gk;
+      } else {
+        payload.cloud_id = $('cloud-id').value.trim();
+        payload.email    = $('ds-email').value.trim();
+        const tok = $('api-token').value.trim();
+        if (tok) payload.api_token = tok;
+      }
+      const apiUrl = $('api-url').value.trim();
+      if (apiUrl) payload.api_url = apiUrl;
     }
     return payload;
   }
@@ -741,6 +835,11 @@
       await postSettings({ api_key: key });
       showMsg(msgEl, 'API key saved.', 'ok');
       $('api-key-input').value = '';
+      // Immediately hide banner and show confirmation — don't wait for loadSettings round-trip.
+      $('no-key-banner').classList.add('hidden');
+      const ks = $('key-status');
+      ks.textContent = 'API key configured';
+      ks.classList.remove('hidden');
       await loadSettings();
     } catch (err) {
       showMsg(msgEl, 'Save failed: ' + err.message, 'err');
@@ -835,8 +934,11 @@
       selectSource(cfg.source_type || 'synthetic');
 
       // Pre-fill non-secret fields
+      selectOpsgenieType(cfg.opsgenie_type || 'jsm');
       if (cfg.cloud_id) $('cloud-id').value = cfg.cloud_id;
       if (cfg.email)    $('ds-email').value  = cfg.email;
+      if (cfg.api_url)  $('api-url').value   = cfg.api_url;
+      if (cfg.genie_key_configured) $('genie-key-status').style.display = '';
 
       // Sync interval
       const intEl = $('sync-interval');

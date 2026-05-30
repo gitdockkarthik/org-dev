@@ -137,13 +137,24 @@
           'infra-health': [
             { label: 'Settings',  href: '/agents/infra-health/settings'  },
           ],
+          'kafka-analyser': [
+            { label: 'Dashboard', href: '/agents/kafka-analyser/dashboard' },
+            { label: 'Reports',   href: '/agents/kafka-analyser/reports'   },
+            { label: 'Settings',  href: '/agents/kafka-analyser/settings'  },
+          ],
         };
+        const accentOverrides = {
+          'kafka-analyser': '#FF6B35',
+        };
+        const acStyle = accentOverrides[slug]
+          ? `--ca:${accentOverrides[slug]};cursor:pointer`
+          : 'cursor:pointer';
         const extras = (agentLinks[slug] || []).map(l =>
           `<a href="${l.href}" class="btn btn--ghost btn--sm" onclick="event.stopPropagation()">${l.label}</a>`
         ).join('');
 
         return `
-          <div class="agent-card ${ac}" onclick="window.location='/chat?agent=${encodeURIComponent(slug)}'" style="cursor:pointer">
+          <div class="agent-card ${ac}" onclick="window.location='/chat?agent=${encodeURIComponent(slug)}'" style="${acStyle}">
             <div class="agent-card__accent"></div>
             <div class="agent-card__body">
               <div class="agent-card__icon">${initial}</div>

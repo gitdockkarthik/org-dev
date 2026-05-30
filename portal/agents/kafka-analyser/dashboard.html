@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kafka Dashboard — UAP</title>
+  <link rel="stylesheet" href="/css/style.css?v=3">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <style>
+    body { background: var(--bg); }
+    .subnav { display: flex; background: var(--navy-1); border-bottom: 1px solid var(--border); padding: 0 40px; }
+    .subnav__link { display: inline-flex; align-items: center; gap: 6px; padding: 13px 16px; font-size: .85rem; color: var(--text-muted); border-bottom: 2px solid transparent; margin-bottom: -1px; text-decoration: none; transition: color var(--t), border-color var(--t); }
+    .subnav__link:hover { color: var(--text); }
+    .subnav__link--active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+    .content { padding: 28px 40px; }
+    .page-heading { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 24px; gap: 16px; flex-wrap: wrap; }
+    .page-heading__title { font-size: 1.4rem; font-weight: 700; margin-bottom: 4px; }
+    .page-heading__sub { font-size: .88rem; color: var(--text-muted); }
+    /* KPI cards */
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(175px, 1fr)); gap: 14px; margin-bottom: 22px; }
+    .kpi { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); padding: 18px 20px; }
+    .kpi__label { font-size: .73rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }
+    .kpi__value { font-size: 1.9rem; font-weight: 700; line-height: 1; margin-bottom: 3px; }
+    .kpi__sub { font-size: .75rem; color: var(--text-muted); }
+    .kpi--danger  .kpi__value { color: var(--danger); }
+    .kpi--success .kpi__value { color: var(--success); }
+    .kpi--warn    .kpi__value { color: var(--warn); }
+    .kpi--orange  .kpi__value { color: #FF6B35; }
+    /* Tab bar — orange active */
+    .tab-bar { display: flex; gap: 4px; margin-bottom: 22px; background: var(--navy-2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 4px; width: fit-content; flex-wrap: wrap; }
+    .tab-btn { padding: 7px 16px; border: none; background: transparent; color: var(--text-muted); font-size: .83rem; font-weight: 500; border-radius: var(--r-xs); cursor: pointer; transition: background var(--t), color var(--t); white-space: nowrap; }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn--active { background: var(--navy-1); color: #FF6B35; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    .tab-panel { display: none; }
+    .tab-panel--active { display: block; }
+    /* Tables */
+    .data-table-wrap { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; margin-bottom: 16px; }
+    .data-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+    .data-table th { padding: 10px 14px; text-align: left; font-size: .72rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-dim); background: var(--navy-2); border-bottom: 1px solid var(--border); }
+    .data-table td { padding: 11px 14px; border-bottom: 1px solid var(--border); color: var(--text); vertical-align: middle; }
+    .data-table tr:last-child td { border-bottom: none; }
+    .data-table tr:hover td { background: var(--navy-3); }
+    .data-table__empty { padding: 32px; text-align: center; color: var(--text-dim); }
+    /* Charts */
+    .chart-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 16px; margin-bottom: 22px; }
+    .chart-card { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); padding: 20px; }
+    .chart-card__title { font-size: .87rem; font-weight: 600; margin-bottom: 14px; }
+    .chart-wrap { position: relative; max-height: 280px; }
+    /* Severity badges */
+    .sev { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: .72rem; font-weight: 700; }
+    .sev--critical { background: rgba(220,38,38,.12); color: #dc2626; }
+    .sev--warning  { background: rgba(217,119,6,.12);  color: #d97706; }
+    .sev--healthy  { background: rgba(22,163,74,.1);   color: #16a34a; }
+    /* Broker cards */
+    .broker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; margin-bottom: 22px; }
+    .broker-card { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); padding: 16px 18px; }
+    .broker-card__header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+    .broker-card__name { font-size: .95rem; font-weight: 700; }
+    .broker-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .bm { }
+    .bm__label { font-size: .68rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 3px; }
+    .bm__value { font-size: 1.1rem; font-weight: 700; }
+    /* Progress bar */
+    .progress-bar { background: var(--navy-3); border-radius: 4px; height: 7px; overflow: hidden; width: 100%; }
+    .progress-bar__fill { height: 100%; border-radius: 4px; transition: width .3s; }
+    /* Anomaly cards */
+    .anomaly-list { display: flex; flex-direction: column; gap: 12px; }
+    .anomaly-card { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); padding: 16px 18px; }
+    .anomaly-card__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+    .anomaly-card__desc { font-size: .88rem; color: var(--text); margin-bottom: 10px; }
+    .anomaly-card__recs { font-size: .82rem; color: var(--text-muted); }
+    .anomaly-card__recs li { margin: 4px 0; margin-left: 16px; }
+    /* Connector task bar */
+    .task-bar-wrap { display: flex; align-items: center; gap: 8px; }
+    .task-label { font-size: .75rem; color: var(--text-muted); white-space: nowrap; }
+    @media (max-width: 768px) { .subnav { padding: 0 20px; } .content { padding: 20px; } .chart-grid { grid-template-columns: 1fr; } .broker-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+
+  <header class="topbar">
+    <a href="/" class="topbar__brand">
+      <img src='/assets/agentsiq-logo.svg' alt='AgentsIQ' style='height:44px;'>
+    </a>
+    <nav class="topbar__nav">
+      <a href="/" class="topbar__link">Agents</a>
+      <a href="/admin/" class="topbar__link">Admin</a>
+    </nav>
+    <div class="topbar__right" style="font-size:.85rem;color:var(--text-muted)">Kafka Analyser</div>
+  </header>
+
+  <nav class="subnav">
+    <a href="/chat?agent=kafka-analyser"              class="subnav__link">💬 Chat</a>
+    <a href="/agents/kafka-analyser/dashboard"        class="subnav__link subnav__link--active">📊 Dashboard</a>
+    <a href="/agents/kafka-analyser/reports"          class="subnav__link">📁 Reports</a>
+    <a href="/agents/kafka-analyser/settings"         class="subnav__link">⚙ Settings</a>
+  </nav>
+
+  <div class="content">
+    <div class="page-heading">
+      <div>
+        <div class="page-heading__title">Kafka Dashboard</div>
+        <div class="page-heading__sub">Cluster health, consumer lag, broker metrics and anomaly detection</div>
+      </div>
+      <button class="btn btn--primary" id="genBtn" onclick="generateAndLoad()">⚡ Generate Synthetic Data</button>
+    </div>
+
+    <div class="tab-bar">
+      <button class="tab-btn tab-btn--active" data-tab="overview"        onclick="switchTab('overview',this)">Cluster Overview</button>
+      <button class="tab-btn"                 data-tab="consumer-groups" onclick="switchTab('consumer-groups',this)">Consumer Groups</button>
+      <button class="tab-btn"                 data-tab="topics"          onclick="switchTab('topics',this)">Topics</button>
+      <button class="tab-btn"                 data-tab="brokers"         onclick="switchTab('brokers',this)">Brokers</button>
+      <button class="tab-btn"                 data-tab="connectors"      onclick="switchTab('connectors',this)">Connectors</button>
+      <button class="tab-btn"                 data-tab="insights"        onclick="switchTab('insights',this)">AI Insights</button>
+    </div>
+
+    <div id="tab-overview"        class="tab-panel tab-panel--active"></div>
+    <div id="tab-consumer-groups" class="tab-panel"></div>
+    <div id="tab-topics"          class="tab-panel"></div>
+    <div id="tab-brokers"         class="tab-panel"></div>
+    <div id="tab-connectors"      class="tab-panel"></div>
+    <div id="tab-insights"        class="tab-panel"></div>
+  </div>
+
+  <script src="/js/config.js?v=3"></script>
+  <script src="/js/portal.js?v=3"></script>
+  <script>
+    const SLUG  = 'kafka-analyser';
+    const PROXY = `${BACKEND_URL}/api/agents/${SLUG}/proxy`;
+
+    const charts = {};
+    const _loaded = new Set();
+
+    // ── API helper ───────────────────────────────────────────────────────────
+
+    async function api(path, opts = {}) {
+      const res = await fetch(`${PROXY}${path}`, {
+        ...opts,
+        headers: { ..._authHeaders(), ...opts.headers },
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(e.detail || `HTTP ${res.status}`);
+      }
+      return res.json();
+    }
+
+    // ── Formatters ───────────────────────────────────────────────────────────
+
+    function fmtNum(n) { return (n ?? 0).toLocaleString(); }
+    function fmtRate(n) {
+      if (!n) return '0/s';
+      if (n >= 1e6) return (n/1e6).toFixed(1) + 'M/s';
+      if (n >= 1e3) return Math.round(n/1e3) + 'K/s';
+      return n + '/s';
+    }
+    function fmtBytes(b) {
+      if (!b) return '0 B';
+      if (b >= 1e12) return (b/1e12).toFixed(1) + ' TB';
+      if (b >= 1e9)  return (b/1e9).toFixed(1)  + ' GB';
+      if (b >= 1e6)  return (b/1e6).toFixed(1)  + ' MB';
+      return Math.round(b/1e3) + ' KB';
+    }
+    function metricColor(pct) {
+      if (pct >= 80) return 'var(--danger)';
+      if (pct >= 60) return '#d97706';
+      return 'var(--success)';
+    }
+    function sevBadge(sev) {
+      return `<span class="sev sev--${sev}">${sev.toUpperCase()}</span>`;
+    }
+    function stateBadge(state) {
+      const styles = {
+        'Stable':      'background:rgba(22,163,74,.1);color:#16a34a',
+        'Rebalancing': 'background:rgba(234,88,12,.1);color:#ea580c',
+        'Dead':        'background:rgba(100,116,139,.12);color:#64748b',
+      };
+      const s = styles[state] || 'background:rgba(99,102,241,.1);color:#6366f1';
+      return `<span style="${s};padding:2px 8px;border-radius:4px;font-size:.72rem;font-weight:700">${state}</span>`;
+    }
+    function trendCell(trend, rate) {
+      if (trend === 'growing')    return `<span style="color:var(--danger);font-weight:600">▲ growing</span>`;
+      if (trend === 'recovering') return `<span style="color:var(--success)">▼ recovering</span>`;
+      return `<span style="color:var(--text-muted)">→ stable</span>`;
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    function skeletonHTML() {
+      return `<div style="display:flex;flex-direction:column;gap:12px;padding:4px 0">
+        ${[80,60,90,70].map(w=>`<div class="skeleton" style="height:14px;width:${w}%"></div>`).join('')}
+      </div>`;
+    }
+    function emptyState(icon, title, sub) {
+      return `<div class="empty-state"><div class="empty-state__icon">${icon}</div>
+        <div class="empty-state__title">${title}</div>
+        <div class="empty-state__sub">${sub || ''}</div></div>`;
+    }
+    function destroyChart(k) { if (charts[k]) { charts[k].destroy(); delete charts[k]; } }
+
+    // ── Tab switching ─────────────────────────────────────────────────────────
+
+    function switchTab(name, btn) {
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('tab-panel--active'));
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('tab-btn--active'));
+      document.getElementById('tab-' + name).classList.add('tab-panel--active');
+      btn.classList.add('tab-btn--active');
+      if (!_loaded.has(name)) loadTab(name);
+    }
+
+    // ── Per-tab loading ──────────────────────────────────────────────────────
+
+    async function loadTab(name) {
+      const el = document.getElementById('tab-' + name);
+      el.innerHTML = skeletonHTML();
+      try {
+        switch (name) {
+          case 'overview': {
+            const [ov, cg] = await Promise.all([
+              api('/dashboard/overview'),
+              api('/dashboard/consumer-groups').catch(() => ({ consumer_groups: [] })),
+            ]);
+            _loaded.add(name);
+            renderOverview(ov, (cg.consumer_groups || []).length);
+            break;
+          }
+          case 'consumer-groups': {
+            const d = await api('/dashboard/consumer-groups');
+            _loaded.add(name);
+            renderConsumerGroups(d);
+            break;
+          }
+          case 'topics': {
+            const d = await api('/dashboard/topics');
+            _loaded.add(name);
+            renderTopics(d);
+            break;
+          }
+          case 'brokers': {
+            const d = await api('/dashboard/brokers');
+            _loaded.add(name);
+            renderBrokers(d);
+            break;
+          }
+          case 'connectors': {
+            const d = await api('/dashboard/connectors');
+            _loaded.add(name);
+            renderConnectors(d);
+            break;
+          }
+          case 'insights': {
+            const d = await api('/dashboard/insights');
+            _loaded.add(name);
+            renderInsights(d);
+            break;
+          }
+        }
+      } catch (e) {
+        document.getElementById('tab-' + name).innerHTML =
+          emptyState('⚠', 'Failed to load', e.message);
+      }
+    }
+
+    // ── Generate & reload ────────────────────────────────────────────────────
+
+    async function generateAndLoad() {
+      const btn = document.getElementById('genBtn');
+      btn.disabled = true;
+      btn.textContent = '⏳ Generating…';
+      try {
+        const d = await api('/reports/generate-sample', { method: 'POST' });
+        showToast(d.message || 'Synthetic data generated', 'success');
+        _loaded.clear();
+        // Reload current active tab
+        const activeBtn = document.querySelector('.tab-btn--active');
+        const activeTab = activeBtn ? activeBtn.dataset.tab : 'overview';
+        loadTab(activeTab);
+      } catch (e) {
+        showToast('Generation failed: ' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '⚡ Generate Synthetic Data';
+      }
+    }
+
+    // ── Tab 1: Cluster Overview ──────────────────────────────────────────────
+
+    function renderOverview(data, consumerGroupCount) {
+      if (data.empty) {
+        document.getElementById('tab-overview').innerHTML = emptyState('🔌',
+          'No cluster data loaded',
+          'Click "Generate Synthetic Data" above, or configure a Kafka source on the <a href="/agents/kafka-analyser/settings">Settings</a> page.');
+        return;
+      }
+
+      const cluster  = data.cluster  || {};
+      const brokers  = data.brokers  || [];
+      const anomalies = data.anomalies || [];
+
+      const totalURPs    = brokers.reduce((s, b) => s + (b.urp_count || 0), 0);
+      const healthScore  = cluster.health_score || 0;
+      const healthClass  = healthScore >= 80 ? 'kpi--success' : healthScore >= 60 ? 'kpi--warn' : 'kpi--danger';
+      const urpClass     = totalURPs > 0 ? 'kpi--danger' : 'kpi--success';
+      const criticalCount = cluster.critical_count || 0;
+
+      const brokerCards = brokers.map(b => {
+        const statusColor = b.status === 'warning' ? '#d97706' : b.status === 'critical' ? 'var(--danger)' : 'var(--success)';
+        return `
+          <div class="broker-card">
+            <div class="broker-card__header">
+              <span class="broker-card__name">${b.broker_id}</span>
+              <span class="sev sev--${b.status === 'healthy' ? 'healthy' : b.status === 'warning' ? 'warning' : 'critical'}">${b.status.toUpperCase()}</span>
+            </div>
+            <div class="broker-metrics">
+              <div class="bm"><div class="bm__label">Heap</div><div class="bm__value" style="color:${metricColor(b.heap_pct)}">${b.heap_pct}%</div></div>
+              <div class="bm"><div class="bm__label">CPU</div><div class="bm__value" style="color:${metricColor(b.cpu_pct)}">${b.cpu_pct}%</div></div>
+              <div class="bm"><div class="bm__label">URPs</div><div class="bm__value" style="color:${b.urp_count > 0 ? 'var(--danger)' : 'var(--success)'}">${b.urp_count}</div></div>
+              <div class="bm"><div class="bm__label">GC Pauses</div><div class="bm__value" style="color:${b.gc_pause_count > 0 ? '#d97706' : 'var(--success)'}">${b.gc_pause_count}</div></div>
+            </div>
+          </div>`;
+      }).join('');
+
+      const anomalyRows = anomalies.length
+        ? anomalies.map(a => `
+            <tr>
+              <td>${sevBadge(a.severity)}</td>
+              <td style="font-size:.78rem;color:var(--text-muted);text-transform:uppercase;font-weight:600">${a.category.replace(/_/g,' ')}</td>
+              <td>${a.description}</td>
+            </tr>`).join('')
+        : `<tr><td colspan="3" class="data-table__empty">✅ No active anomalies</td></tr>`;
+
+      document.getElementById('tab-overview').innerHTML = `
+        <div class="kpi-grid">
+          <div class="kpi kpi--success">
+            <div class="kpi__label">Brokers Online</div>
+            <div class="kpi__value">${brokers.length}/${cluster.broker_count || brokers.length}</div>
+            <div class="kpi__sub">${cluster.name || 'cluster'}</div>
+          </div>
+          <div class="kpi ${urpClass}">
+            <div class="kpi__label">Under-Replicated</div>
+            <div class="kpi__value">${totalURPs}</div>
+            <div class="kpi__sub">partitions</div>
+          </div>
+          <div class="kpi kpi--orange">
+            <div class="kpi__label">Consumer Groups</div>
+            <div class="kpi__value">${consumerGroupCount}</div>
+            <div class="kpi__sub">active</div>
+          </div>
+          <div class="kpi ${healthClass}">
+            <div class="kpi__label">Health Score</div>
+            <div class="kpi__value">${healthScore}</div>
+            <div class="kpi__sub">${criticalCount} critical issue${criticalCount !== 1 ? 's' : ''}</div>
+          </div>
+        </div>
+        <div style="font-size:.87rem;font-weight:600;margin-bottom:12px">Broker Status</div>
+        <div class="broker-grid">${brokerCards}</div>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead><tr><th>Severity</th><th>Category</th><th>Description</th></tr></thead>
+            <tbody>${anomalyRows}</tbody>
+          </table>
+        </div>`;
+    }
+
+    // ── Tab 2: Consumer Groups ────────────────────────────────────────────────
+
+    function renderConsumerGroups(data) {
+      if (data.empty) {
+        document.getElementById('tab-consumer-groups').innerHTML = emptyState('📭', 'No data', 'Generate synthetic data first.');
+        return;
+      }
+      const groups = data.consumer_groups || [];
+      const rows = groups.map(g => {
+        const lagColor = g.lag_trend === 'growing' && g.total_lag > 10000 ? 'style="color:var(--danger);font-weight:700"' : '';
+        return `<tr>
+          <td style="font-weight:600">${g.group_name}</td>
+          <td><code style="font-size:.8rem">${g.topic}</code></td>
+          <td ${lagColor}>${fmtNum(g.total_lag)}</td>
+          <td>${trendCell(g.lag_trend, g.lag_rate_per_min)}</td>
+          <td style="font-size:.82rem;color:var(--text-muted)">${g.lag_rate_per_min > 0 ? '+' : ''}${fmtNum(g.lag_rate_per_min)}/min</td>
+          <td>${stateBadge(g.state)}</td>
+        </tr>`;
+      }).join('') || `<tr><td colspan="6" class="data-table__empty">No consumer groups</td></tr>`;
+
+      document.getElementById('tab-consumer-groups').innerHTML = `
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead><tr><th>Group</th><th>Topic</th><th>Total Lag</th><th>Trend</th><th>Rate/min</th><th>State</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
+    }
+
+    // ── Tab 3: Topics ─────────────────────────────────────────────────────────
+
+    function renderTopics(data) {
+      if (data.empty) {
+        document.getElementById('tab-topics').innerHTML = emptyState('📬', 'No data', 'Generate synthetic data first.');
+        return;
+      }
+      const topics = (data.topics || []).slice(0, 10);
+
+      const rows = (data.topics || []).map(t => {
+        const retWarn = t.retention_pct >= 80;
+        return `<tr>
+          <td style="font-weight:600"><code style="font-size:.8rem">${t.topic}</code></td>
+          <td style="text-align:center">${t.partition_count}</td>
+          <td style="text-align:center">${t.replication_factor}</td>
+          <td>${fmtRate(t.messages_in_per_sec)}</td>
+          <td style="text-align:right">
+            ${t.retention_pct.toFixed(1)}%
+            ${retWarn ? '<span style="margin-left:4px;background:rgba(217,119,6,.12);color:#d97706;padding:1px 5px;border-radius:3px;font-size:.68rem;font-weight:700">WARN</span>' : ''}
+          </td>
+          <td><span class="sev sev--${t.status === 'warning' ? 'warning' : 'healthy'}">${t.status.toUpperCase()}</span></td>
+        </tr>`;
+      }).join('');
+
+      document.getElementById('tab-topics').innerHTML = `
+        <div class="chart-card" style="margin-bottom:22px">
+          <div class="chart-card__title">Top 10 Topics by Message Rate</div>
+          <div class="chart-wrap"><canvas id="topicChart"></canvas></div>
+        </div>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead><tr><th>Topic</th><th style="text-align:center">Partitions</th><th style="text-align:center">RF</th><th>Msg/s</th><th style="text-align:right">Retention</th><th>Status</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
+
+      setTimeout(() => {
+        destroyChart('topic');
+        const ctx = document.getElementById('topicChart')?.getContext('2d');
+        if (ctx) {
+          charts['topic'] = new Chart(ctx, {
+            type: 'bar',
+            data: {
+              labels: topics.map(t => t.topic),
+              datasets: [{
+                label: 'Messages/sec',
+                data: topics.map(t => t.messages_in_per_sec),
+                backgroundColor: topics.map(t => t.retention_pct >= 80 ? '#dc2626' : '#FF6B35'),
+              }],
+            },
+            options: {
+              indexAxis: 'y',
+              responsive: true,
+              plugins: { legend: { display: false } },
+              scales: { x: { ticks: { callback: v => fmtRate(v) } } },
+            },
+          });
+        }
+      }, 50);
+    }
+
+    // ── Tab 4: Brokers ────────────────────────────────────────────────────────
+
+    function renderBrokers(data) {
+      if (data.empty) {
+        document.getElementById('tab-brokers').innerHTML = emptyState('🖥', 'No data', 'Generate synthetic data first.');
+        return;
+      }
+      const brokers = data.brokers || [];
+
+      const cards = brokers.map(b => {
+        function metricRow(label, pct, max) {
+          const color = metricColor(pct);
+          const fillPct = Math.min(100, pct);
+          return `<div style="margin-bottom:10px">
+            <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+              <span style="font-size:.73rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em">${label}</span>
+              <span style="font-size:.85rem;font-weight:700;color:${color}">${pct}%</span>
+            </div>
+            <div class="progress-bar">
+              <div class="progress-bar__fill" style="width:${fillPct}%;background:${color}"></div>
+            </div>
+          </div>`;
+        }
+        return `
+          <div class="broker-card">
+            <div class="broker-card__header">
+              <span class="broker-card__name">${b.broker_id}</span>
+              <span class="sev sev--${b.status === 'healthy' ? 'healthy' : b.status === 'warning' ? 'warning' : 'critical'}">${b.status.toUpperCase()}</span>
+            </div>
+            ${metricRow('Heap', b.heap_pct)}
+            ${metricRow('CPU', b.cpu_pct)}
+            ${metricRow('Disk', b.disk_pct)}
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px">
+              <div class="bm">
+                <div class="bm__label">GC Pauses</div>
+                <div class="bm__value" style="color:${b.gc_pause_count > 0 ? '#d97706' : 'var(--success)'}">${b.gc_pause_count}</div>
+              </div>
+              <div class="bm">
+                <div class="bm__label">Under-Replicated</div>
+                <div class="bm__value" style="color:${b.urp_count > 0 ? 'var(--danger)' : 'var(--success)'}">${b.urp_count}</div>
+              </div>
+              <div class="bm">
+                <div class="bm__label">Msgs/sec</div>
+                <div class="bm__value" style="font-size:.9rem">${fmtRate(b.messages_in_per_sec)}</div>
+              </div>
+              <div class="bm">
+                <div class="bm__label">Req Idle %</div>
+                <div class="bm__value" style="font-size:.9rem;color:${b.request_handler_idle_pct < 30 ? 'var(--danger)' : 'var(--success)'}">${b.request_handler_idle_pct}%</div>
+              </div>
+            </div>
+          </div>`;
+      }).join('');
+
+      document.getElementById('tab-brokers').innerHTML = `<div class="broker-grid">${cards}</div>`;
+    }
+
+    // ── Tab 5: Connectors ─────────────────────────────────────────────────────
+
+    function renderConnectors(data) {
+      if (data.empty) {
+        document.getElementById('tab-connectors').innerHTML = emptyState('🔗', 'No data', 'Generate synthetic data first.');
+        return;
+      }
+      const connectors = data.connectors || [];
+
+      const rows = connectors.map(c => {
+        const failed = c.failed_tasks || 0;
+        const total  = c.total_tasks  || 1;
+        const healthy = total - failed;
+        const pct = Math.round((healthy / total) * 100);
+        const barColor = failed > 0 ? 'var(--danger)' : 'var(--success)';
+        const stateColor = c.state === 'FAILED' ? 'color:var(--danger);font-weight:700' : c.state === 'RUNNING' ? 'color:var(--success);font-weight:600' : '';
+        return `<tr>
+          <td style="font-weight:600">${c.connector_name}</td>
+          <td style="font-size:.78rem;color:var(--text-muted);text-transform:uppercase;font-weight:600">${c.connector_type}</td>
+          <td style="${stateColor}">${c.state}</td>
+          <td style="text-align:center">${healthy}/${total}</td>
+          <td style="text-align:center;color:${failed > 0 ? 'var(--danger)' : 'var(--text-muted)'};font-weight:${failed > 0 ? '700' : '400'}">${failed}</td>
+          <td style="min-width:120px">
+            <div class="task-bar-wrap">
+              <div class="progress-bar" style="flex:1">
+                <div class="progress-bar__fill" style="width:${pct}%;background:${barColor}"></div>
+              </div>
+              <span class="task-label">${pct}%</span>
+            </div>
+          </td>
+        </tr>`;
+      }).join('') || `<tr><td colspan="6" class="data-table__empty">No connectors configured</td></tr>`;
+
+      document.getElementById('tab-connectors').innerHTML = `
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead><tr><th>Name</th><th>Type</th><th>State</th><th style="text-align:center">Tasks</th><th style="text-align:center">Failed</th><th>Task Health</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
+    }
+
+    // ── Tab 6: AI Insights ────────────────────────────────────────────────────
+
+    function renderInsights(data) {
+      if (data.empty) {
+        document.getElementById('tab-insights').innerHTML = emptyState('🤖', 'No data', 'Generate synthetic data first.');
+        return;
+      }
+      const anomalies = data.anomalies || [];
+      if (!anomalies.length) {
+        document.getElementById('tab-insights').innerHTML = emptyState('✅', 'No anomalies detected', 'All cluster metrics are within normal thresholds.');
+        return;
+      }
+
+      const cards = anomalies.map(a => {
+        const recs = (a.recommendations || []).map(r => `<li>${r}</li>`).join('');
+        return `
+          <div class="anomaly-card">
+            <div class="anomaly-card__header">
+              <div>
+                ${sevBadge(a.severity)}
+                <span style="margin-left:8px;font-size:.78rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em">${a.category.replace(/_/g,' ')}</span>
+              </div>
+            </div>
+            <div class="anomaly-card__desc">${a.description}</div>
+            ${recs ? `<div class="anomaly-card__recs"><strong style="font-size:.8rem;color:var(--text-muted)">Recommendations:</strong><ul style="margin-top:4px">${recs}</ul></div>` : ''}
+          </div>`;
+      }).join('');
+
+      document.getElementById('tab-insights').innerHTML = `<div class="anomaly-list">${cards}</div>`;
+    }
+
+    // ── Init ──────────────────────────────────────────────────────────────────
+
+    async function init() {
+      await portalReady;
+      loadTab('overview');
+    }
+
+    init();
+  </script>
+</body>
+</html>

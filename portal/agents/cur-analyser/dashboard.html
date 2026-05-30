@@ -38,10 +38,7 @@
 
   <header class="topbar">
     <a href="/" class="topbar__brand">
-      <span style="font-size:1.3rem;
-   font-weight:700;color:#ffffff;
-   letter-spacing:1px;
-   font-family:inherit;">OPERATIVE</span>
+      <img src='/assets/agentsiq-logo.svg' alt='AgentsIQ' style='height:44px;'>
     </a>
     <nav class="topbar__nav">
       <a href="/" class="topbar__link">Agents</a>
@@ -182,7 +179,7 @@
           type: 'bar',
           data: {
             labels: svcLabels,
-            datasets: [{ label: 'Cost (USD)', data: svcData, backgroundColor: '#0EA5E9', borderRadius: 4 }],
+            datasets: [{ label: 'Cost (USD)', data: svcData, backgroundColor: '#6366f1', borderRadius: 4 }],
           },
           options: {
             indexAxis: 'y',
@@ -207,8 +204,8 @@
             datasets: [{
               label: 'Daily Cost',
               data: trendData,
-              borderColor: '#0EA5E9',
-              backgroundColor: 'rgba(14,165,233,.12)',
+              borderColor: '#6366f1',
+              backgroundColor: 'rgba(99,102,241,.12)',
               fill: true, tension: 0.35, pointRadius: 3,
             }],
           },
