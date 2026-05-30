@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Register Agent — UAP Admin</title>
+  <link rel="stylesheet" href="/css/style.css?v=3">
+</head>
+<body class="admin-page">
+
+  <!-- Top bar -->
+  <header class="topbar">
+    <a href="/" class="topbar__brand">
+      <span style="font-size:1.3rem;
+   font-weight:700;color:#ffffff;
+   letter-spacing:1px;
+   font-family:inherit;">OPERATIVE</span>
+    </a>
+    <nav class="topbar__nav">
+      <a href="/" class="topbar__link">Agents</a>
+      <a href="/admin/" class="topbar__link topbar__link--active">Admin</a>
+      <a href="/docs/" class="topbar__link">Docs</a>
+    </nav>
+  </header>
+
+  <div class="admin-content admin-content--narrow">
+    <h1 class="admin-title">Register New Agent</h1>
+    <p class="admin-subtitle">
+      Fill in the manifest details. The agent will start in <strong>draft</strong> status —
+      publish it from the <a href="/admin/" style="color:var(--accent)">registry</a> when ready.
+    </p>
+
+    <!-- Success panel (hidden initially) -->
+    <div id="success-panel" class="success-panel hidden">
+      <div class="success-panel__title">✓ Agent registered</div>
+      <div id="success-id" class="success-panel__id"></div>
+      <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+        <button id="publish-now-btn" class="btn btn--success btn--sm">Publish now</button>
+        <a href="/admin/" class="btn btn--secondary btn--sm">View registry</a>
+        <button id="register-another-btn" class="btn btn--ghost btn--sm">Register another</button>
+      </div>
+    </div>
+
+    <!-- Form -->
+    <form id="register-form" class="register-form" novalidate>
+
+      <!-- Basic info -->
+      <div class="form-section">
+        <div class="form-section__title">Identity</div>
+        <div class="form-row">
+          <div class="form-field">
+            <label class="form-label form-label--required" for="f-name">Agent name</label>
+            <input id="f-name" name="name" type="text" class="form-input"
+              placeholder="e.g. Alert Analyser" required>
+          </div>
+          <div class="form-field">
+            <label class="form-label form-label--required" for="f-slug">Slug</label>
+            <input id="f-slug" name="slug" type="text" class="form-input"
+              placeholder="e.g. alert-analyser" pattern="[a-z0-9\-]+" required>
+            <span class="form-hint">Lowercase letters, digits, and hyphens only.</span>
+          </div>
+        </div>
+        <div class="form-field">
+          <label class="form-label" for="f-desc">Description</label>
+          <input id="f-desc" name="description" type="text" class="form-input"
+            placeholder="One-line description of what this agent does.">
+        </div>
+        <div class="form-row">
+          <div class="form-field">
+            <label class="form-label" for="f-version">Version</label>
+            <input id="f-version" name="version" type="text" class="form-input"
+              value="0.1.0" placeholder="0.1.0">
+          </div>
+          <div class="form-field">
+            <label class="form-label" for="f-invoke-url">Invoke URL</label>
+            <input id="f-invoke-url" name="invoke_url" type="url" class="form-input"
+              placeholder="http://agent-service:8001 (leave blank for direct Anthropic)">
+            <span class="form-hint">Leave blank to call Anthropic directly using the config below.</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI config -->
+      <div class="form-section">
+        <div class="form-section__title">AI Configuration</div>
+        <div class="form-field">
+          <label class="form-label" for="f-system-prompt">System prompt</label>
+          <textarea id="f-system-prompt" name="system_prompt" class="form-textarea"
+            style="min-height:130px"
+            placeholder="You are a helpful assistant specialised in…"></textarea>
+        </div>
+        <div class="form-row">
+          <div class="form-field">
+            <label class="form-label" for="f-model">Model</label>
+            <select id="f-model" name="model" class="form-select">
+              <option value="claude-sonnet-4-6" selected>claude-sonnet-4-6 (default)</option>
+              <option value="claude-opus-4-7">claude-opus-4-7</option>
+              <option value="claude-haiku-4-5-20251001">claude-haiku-4-5</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label class="form-label" for="f-temperature">Temperature</label>
+            <div class="slider-row">
+              <input id="f-temperature" name="temperature" type="range"
+                class="form-range" min="0" max="1" step="0.05" value="0.7">
+              <span class="range-value" id="temp-display">0.70</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tools (optional) -->
+      <div class="form-section">
+        <div class="form-section__title">Tools (optional)</div>
+        <div class="form-field">
+          <label class="form-label" for="f-tools">Tool definitions (JSON array)</label>
+          <textarea id="f-tools" name="tools" class="form-textarea mono"
+            style="min-height:80px;font-size:.8rem"
+            placeholder='[ { "name": "search", "description": "…", "input_schema": { … } } ]'></textarea>
+          <span class="form-hint">Anthropic tool schema. Leave blank for text-only agent.</span>
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div class="form-actions">
+        <button type="submit" id="submit-btn" class="btn btn--primary">Register Agent</button>
+        <a href="/admin/" class="btn btn--ghost">Cancel</a>
+        <span id="form-error" class="text-danger hidden" style="font-size:.85rem;margin-left:auto"></span>
+      </div>
+
+    </form>
+  </div>
+
+  <script src="/js/config.js?v=3"></script>
+  <script src="/js/portal.js?v=3"></script>
+  <script>
+    let newAgentId = null;
+
+    // ── Temperature slider ─────────────────────────────────────────────────────
+    const tempInput   = document.getElementById('f-temperature');
+    const tempDisplay = document.getElementById('temp-display');
+    tempInput.addEventListener('input', () => {
+      tempDisplay.textContent = parseFloat(tempInput.value).toFixed(2);
+    });
+
+    // ── Auto-slug from name ────────────────────────────────────────────────────
+    document.getElementById('f-name').addEventListener('input', e => {
+      const slugEl = document.getElementById('f-slug');
+      if (!slugEl._touched) {
+        slugEl.value = e.target.value
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '');
+      }
+    });
+    document.getElementById('f-slug').addEventListener('input', e => {
+      e.target._touched = e.target.value.length > 0;
+    });
+
+    // ── Validate slug ──────────────────────────────────────────────────────────
+    function validateSlug(val) {
+      return /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/.test(val);
+    }
+
+    // ── Submit ─────────────────────────────────────────────────────────────────
+    document.getElementById('register-form').addEventListener('submit', async e => {
+      e.preventDefault();
+      const errorEl = document.getElementById('form-error');
+      errorEl.classList.add('hidden');
+
+      const name       = document.getElementById('f-name').value.trim();
+      const slug       = document.getElementById('f-slug').value.trim();
+      const desc       = document.getElementById('f-desc').value.trim();
+      const version    = document.getElementById('f-version').value.trim() || '0.1.0';
+      const invokeUrl  = document.getElementById('f-invoke-url').value.trim() || null;
+      const sysprompt  = document.getElementById('f-system-prompt').value.trim();
+      const model      = document.getElementById('f-model').value;
+      const temperature = parseFloat(tempInput.value);
+      const toolsRaw   = document.getElementById('f-tools').value.trim();
+
+      // Validate
+      if (!name) { setError('Agent name is required.'); return; }
+      if (!slug || !validateSlug(slug)) {
+        setError('Slug must be lowercase letters, digits, and hyphens (e.g. my-agent).');
+        return;
+      }
+
+      let tools = [];
+      if (toolsRaw) {
+        try { tools = JSON.parse(toolsRaw); }
+        catch { setError('Tools JSON is invalid. Check formatting.'); return; }
+        if (!Array.isArray(tools)) { setError('Tools must be a JSON array.'); return; }
+      }
+
+      const payload = { name, slug, description: desc, version, invoke_url: invokeUrl,
+        system_prompt: sysprompt, model, temperature, tools };
+
+      const btn = document.getElementById('submit-btn');
+      btn.disabled = true;
+      btn.textContent = 'Registering…';
+
+      try {
+        const agent = await registerAgent(payload);
+        newAgentId = agent.id;
+        showSuccess(agent);
+      } catch (err) {
+        setError(err.message);
+        btn.disabled = false;
+        btn.textContent = 'Register Agent';
+      }
+    });
+
+    function setError(msg) {
+      const el = document.getElementById('form-error');
+      el.textContent = msg;
+      el.classList.remove('hidden');
+    }
+
+    function showSuccess(agent) {
+      document.getElementById('register-form').classList.add('hidden');
+      const panel = document.getElementById('success-panel');
+      panel.classList.remove('hidden');
+      document.getElementById('success-id').innerHTML =
+        `Agent ID: <strong>${agent.id}</strong><br>Slug: <strong>${agent.slug}</strong>`;
+      showToast(`"${agent.name}" registered`, 'success');
+    }
+
+    // ── Post-success actions ───────────────────────────────────────────────────
+    document.getElementById('publish-now-btn').addEventListener('click', async () => {
+      if (!newAgentId) return;
+      try {
+        await publishAgent(newAgentId);
+        showToast('Agent published', 'success');
+        document.getElementById('publish-now-btn').textContent = '✓ Published';
+        document.getElementById('publish-now-btn').disabled = true;
+      } catch (err) { showToast(err.message, 'error'); }
+    });
+
+    document.getElementById('register-another-btn').addEventListener('click', () => {
+      document.getElementById('success-panel').classList.add('hidden');
+      const form = document.getElementById('register-form');
+      form.reset();
+      form.classList.remove('hidden');
+      tempDisplay.textContent = '0.70';
+      document.getElementById('submit-btn').disabled = false;
+      document.getElementById('submit-btn').textContent = 'Register Agent';
+      newAgentId = null;
+    });
+  </script>
+</body>
+</html>

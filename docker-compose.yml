@@ -1,0 +1,104 @@
+services:
+
+  # ── Data store ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── Platform backend ────────────────────────────────────────────────────────
+  # Holds ANTHROPIC_API_KEY and forwards it to agents via X-Anthropic-Key header.
+  # No agent or portal env vars leak into this service.
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      BACKEND_API_KEY: ${BACKEND_API_KEY}
+      SECRET_KEY: ${SECRET_KEY}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  # ── Agent: Alert Analyser ───────────────────────────────────────────────────
+  # No ANTHROPIC_API_KEY — key is injected per-request via X-Anthropic-Key header
+  # by the backend orchestrator. Direct invocation (make test) requires the header.
+  alert-analyser:
+    build:
+      context: ./agents/alert-analyser
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${ALERT_ANALYSER_PORT:-8001}:8001"
+    environment:
+      AGENT_ID: ${ALERT_ANALYSER_AGENT_ID}
+      AGENT_SLUG: alert-analyser
+      AGENT_NAME: Alert Analyser
+      MODEL: ${MODEL:-claude-sonnet-4-6}
+      NOISE_THRESHOLD_REPEAT: ${NOISE_THRESHOLD_REPEAT:-3}
+      NOISE_THRESHOLD_CLOSE_SECS: ${NOISE_THRESHOLD_CLOSE_SECS:-300}
+      REGISTRY_URL: http://backend:8000
+      BACKEND_API_KEY: ${BACKEND_API_KEY}
+    depends_on:
+      - backend
+
+  # ── Agent: CUR Analyser ─────────────────────────────────────────────────────
+  # No ANTHROPIC_API_KEY — key is injected per-request via X-Anthropic-Key header.
+  cur-analyser:
+    build:
+      context: ./agents/cur-analyser
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${CUR_ANALYSER_PORT:-8002}:8002"
+    environment:
+      AGENT_ID: ${CUR_ANALYSER_AGENT_ID}
+      AGENT_SLUG: cur-analyser
+      AGENT_NAME: CUR Analyser
+      MODEL: ${MODEL:-claude-sonnet-4-6}
+      REGISTRY_URL: http://backend:8000
+      BACKEND_API_KEY: ${BACKEND_API_KEY}
+    depends_on:
+      - backend
+
+  # ── Portal ──────────────────────────────────────────────────────────────────
+  # Knows only BACKEND_URL and BACKEND_API_KEY — no DB, no Anthropic, no agents.
+  portal:
+    build:
+      context: ./portal
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${PORTAL_PORT:-3000}:80"
+    environment:
+      BACKEND_URL: ${BACKEND_URL:-http://localhost:8000}
+      BACKEND_API_KEY: ${BACKEND_API_KEY}
+      PORTAL_USERNAME: ${PORTAL_USERNAME:-}
+      PORTAL_PASSWORD: ${PORTAL_PASSWORD:-}
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:

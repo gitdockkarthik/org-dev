@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Unified Agent Platform</title>
+  <link rel="stylesheet" href="/css/style.css?v=3">
+</head>
+<body class="catalogue-page">
+
+  <!-- Top bar -->
+  <header class="topbar">
+    <a href="/" class="topbar__brand">
+      <span style="font-size:1.3rem;
+   font-weight:700;color:#ffffff;
+   letter-spacing:1px;
+   font-family:inherit;">OPERATIVE</span>
+    </a>
+    <nav class="topbar__nav">
+      <a href="/" class="topbar__link topbar__link--active">Agents</a>
+      <a href="/admin/" class="topbar__link">Admin</a>
+      <a href="/docs/" class="topbar__link">Docs</a>
+    </nav>
+    <div class="topbar__right">
+      <a href="/admin/register" class="btn btn--primary btn--sm">+ Register Agent</a>
+    </div>
+  </header>
+
+  <!-- Hero + search -->
+  <div class="page-hero">
+    <h1 class="page-hero__title">Agent Catalogue</h1>
+    <p class="page-hero__sub">Select an agent to start a conversation.</p>
+    <div class="page-hero__search">
+      <span class="page-hero__search-icon">⌕</span>
+      <input id="search" type="search" class="form-input" placeholder="Search agents…" autocomplete="off">
+    </div>
+  </div>
+
+  <!-- Agent grid -->
+  <section class="agents-section">
+    <div class="section-header">
+      <span class="section-title">Published Agents</span>
+      <span id="count" class="section-count"></span>
+    </div>
+    <div id="grid" class="agents-grid">
+      <!-- skeleton loading -->
+      <div class="agent-card" style="min-height:160px">
+        <div class="agent-card__accent skeleton" style="height:3px"></div>
+        <div class="agent-card__body">
+          <div class="skeleton" style="width:40px;height:40px;border-radius:10px;flex-shrink:0"></div>
+          <div style="flex:1;display:flex;flex-direction:column;gap:8px">
+            <div class="skeleton" style="height:14px;width:60%"></div>
+            <div class="skeleton" style="height:11px;width:90%"></div>
+            <div class="skeleton" style="height:11px;width:70%"></div>
+          </div>
+        </div>
+      </div>
+      <div class="agent-card" style="min-height:160px">
+        <div class="agent-card__accent skeleton" style="height:3px"></div>
+        <div class="agent-card__body">
+          <div class="skeleton" style="width:40px;height:40px;border-radius:10px;flex-shrink:0"></div>
+          <div style="flex:1;display:flex;flex-direction:column;gap:8px">
+            <div class="skeleton" style="height:14px;width:50%"></div>
+            <div class="skeleton" style="height:11px;width:85%"></div>
+            <div class="skeleton" style="height:11px;width:60%"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <script src="/js/config.js?v=3"></script>
+  <script src="/js/portal.js?v=3"></script>
+  <script>
+    let allAgents = [];
+
+    async function load() {
+      try {
+        const r = await fetch(`${BACKEND_URL}/api/platform/status`, {
+          headers: _authHeaders(),
+        });
+        if (r.ok) {
+          const d = await r.json();
+          if (!d.anthropic_connected) {
+            window.location.replace('/setup.html');
+            return;
+          }
+        }
+      } catch (_) { /* backend unreachable — show catalogue anyway */ }
+      try {
+        allAgents = await fetchAgents();
+        render(allAgents);
+      } catch (err) {
+        document.getElementById('grid').innerHTML = `
+          <div class="empty-state" style="grid-column:1/-1">
+            <div class="empty-state__icon">⚠</div>
+            <div class="empty-state__title">Could not load agents</div>
+            <div class="empty-state__sub">${err.message}</div>
+          </div>`;
+      }
+    }
+
+    function render(agents) {
+      const grid = document.getElementById('grid');
+      const count = document.getElementById('count');
+      count.textContent = `${agents.length} agent${agents.length !== 1 ? 's' : ''}`;
+
+      if (!agents.length) {
+        grid.innerHTML = `
+          <div class="empty-state" style="grid-column:1/-1">
+            <div class="empty-state__icon">🤖</div>
+            <div class="empty-state__title">No agents yet</div>
+            <div class="empty-state__sub">
+              <a href="/admin/register" style="color:var(--accent)">Register your first agent</a>
+            </div>
+          </div>`;
+        return;
+      }
+
+      grid.innerHTML = agents.map(agent => {
+        const ac = agentAccentClass(agent.slug);
+        const initial = (agent.slug || 'A')[0].toUpperCase();
+        const model = agent.model ? agent.model.replace('claude-', '') : '';
+        const slug = agent.slug;
+
+        // Extra quick-links for agents that expose dashboard/reports pages
+        const agentLinks = {
+          'alert-analyser': [
+            { label: 'Dashboard', href: '/agents/alert-analyser/dashboard' },
+            { label: 'Reports',   href: '/agents/alert-analyser/reports'   },
+            { label: 'Settings',  href: '/agents/alert-analyser/settings'  },
+          ],
+          'cur-analyser': [
+            { label: 'Dashboard', href: '/agents/cur-analyser/dashboard' },
+            { label: 'Reports',   href: '/agents/cur-analyser/reports'   },
+            { label: 'Settings',  href: '/agents/cur-analyser/settings'  },
+          ],
+          'infra-health': [
+            { label: 'Settings',  href: '/agents/infra-health/settings'  },
+          ],
+        };
+        const extras = (agentLinks[slug] || []).map(l =>
+          `<a href="${l.href}" class="btn btn--ghost btn--sm" onclick="event.stopPropagation()">${l.label}</a>`
+        ).join('');
+
+        return `
+          <div class="agent-card ${ac}" onclick="window.location='/chat?agent=${encodeURIComponent(slug)}'" style="cursor:pointer">
+            <div class="agent-card__accent"></div>
+            <div class="agent-card__body">
+              <div class="agent-card__icon">${initial}</div>
+              <div class="agent-card__info">
+                <div class="agent-card__name">${agent.name}</div>
+                <div class="agent-card__desc">${agent.description || 'No description.'}</div>
+              </div>
+            </div>
+            <div class="agent-card__footer">
+              <div class="agent-card__meta">
+                <span class="badge badge--published">published</span>
+                ${model ? `<span class="agent-card__model">${model}</span>` : ''}
+              </div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap">
+                ${extras}
+                <a href="/chat?agent=${encodeURIComponent(slug)}"
+                   class="btn btn--primary btn--sm"
+                   onclick="event.stopPropagation()">Chat →</a>
+              </div>
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    // Search filter
+    document.getElementById('search').addEventListener('input', e => {
+      const q = e.target.value.toLowerCase();
+      render(allAgents.filter(a =>
+        a.name.toLowerCase().includes(q) ||
+        a.slug.toLowerCase().includes(q) ||
+        (a.description || '').toLowerCase().includes(q)
+      ));
+    });
+
+    load();
+  </script>
+</body>
+</html>

@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Setup — AgentsIQ Studio</title>
+  <script src="/js/config.js?v=3"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f4f6f9; color: #1a1f2e; min-height: 100dvh; display: flex; flex-direction: column; align-items: center; padding: 40px 16px; }
+    .logo { margin-bottom: 36px; }
+    .logo img { height: 44px; }
+    .wizard { background: #fff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 40px; width: 100%; max-width: 520px; box-shadow: 0 4px 24px rgba(0,0,0,.07); }
+    /* Step indicator */
+    .steps { display: flex; align-items: center; margin-bottom: 36px; }
+    .step { display: flex; align-items: center; gap: 8px; font-size: .82rem; font-weight: 600; color: #94a3b8; flex: 1; }
+    .step.active { color: #6366f1; }
+    .step.done  { color: #15803d; }
+    .step__dot { width: 28px; height: 28px; border-radius: 50%; border: 2px solid #e2e8f0; display: grid; place-items: center; font-size: .8rem; font-weight: 700; flex-shrink: 0; background: #fff; }
+    .step.active .step__dot { border-color: #6366f1; color: #6366f1; }
+    .step.done  .step__dot { border-color: #15803d; background: #15803d; color: #fff; }
+    .step__line { flex: 1; height: 2px; background: #e2e8f0; margin: 0 6px; }
+    .step__line.done { background: #15803d; }
+    /* Panel */
+    .panel { display: none; }
+    .panel.active { display: block; }
+    .panel-title { font-size: 1.25rem; font-weight: 700; margin-bottom: 6px; }
+    .panel-sub { font-size: .88rem; color: #64748b; margin-bottom: 24px; line-height: 1.5; }
+    /* Form */
+    .field { margin-bottom: 18px; }
+    .field label { display: block; font-size: .83rem; font-weight: 600; color: #374151; margin-bottom: 6px; }
+    .field input { width: 100%; padding: 10px 13px; border: 1.5px solid #d1d5db; border-radius: 7px; font-size: .9rem; color: #1a1f2e; background: #fff; outline: none; transition: border-color .15s; }
+    .field input:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,.1); }
+    .field__hint { font-size: .75rem; color: #9ca3af; margin-top: 5px; }
+    /* Key display box */
+    .key-box { display: flex; align-items: center; gap: 8px; background: #f8faff; border: 1.5px solid #c7d2fe; border-radius: 7px; padding: 10px 13px; margin-bottom: 16px; }
+    .key-box__value { flex: 1; font-family: monospace; font-size: .85rem; color: #3730a3; word-break: break-all; }
+    .key-box__copy { padding: 5px 12px; background: #6366f1; color: #fff; border: none; border-radius: 5px; font-size: .78rem; font-weight: 600; cursor: pointer; white-space: nowrap; transition: opacity .15s; }
+    .key-box__copy:hover { opacity: .85; }
+    /* Buttons */
+    .btn-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .btn-primary { padding: 10px 24px; background: #6366f1; color: #fff; border: none; border-radius: 7px; font-size: .9rem; font-weight: 600; cursor: pointer; transition: opacity .15s; }
+    .btn-primary:hover { opacity: .88; }
+    .btn-primary:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-ghost { padding: 10px 18px; background: transparent; color: #64748b; border: 1.5px solid #e2e8f0; border-radius: 7px; font-size: .88rem; font-weight: 500; cursor: pointer; transition: border-color .15s, color .15s; text-decoration: none; display: inline-flex; align-items: center; }
+    .btn-ghost:hover { border-color: #94a3b8; color: #374151; }
+    .btn-test { padding: 10px 18px; background: #f1f5f9; color: #374151; border: 1.5px solid #e2e8f0; border-radius: 7px; font-size: .88rem; font-weight: 500; cursor: pointer; transition: background .15s; }
+    .btn-test:hover { background: #e2e8f0; }
+    .btn-test:disabled { opacity: .45; cursor: not-allowed; }
+    /* Status */
+    .status-msg { margin-top: 14px; padding: 11px 14px; border-radius: 8px; font-size: .85rem; display: none; }
+    .status-msg.success { background: #f0fdf4; border: 1px solid #bbf7d0; color: #15803d; display: flex; align-items: center; gap: 8px; }
+    .status-msg.error   { background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; display: flex; align-items: center; gap: 8px; }
+    .status-msg.loading { background: #f8faff; border: 1px solid #dbeafe; color: #3b82f6; display: flex; align-items: center; gap: 8px; }
+    /* Done */
+    .done-icon { font-size: 2.8rem; margin-bottom: 16px; }
+    a { color: #6366f1; }
+    .info-note { background: #fefce8; border: 1px solid #fde68a; border-radius: 8px; padding: 12px 14px; font-size: .82rem; color: #92400e; margin-bottom: 20px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="logo">
+    <img src="/assets/agentsiq-logo.svg" alt="AgentsIQ">
+  </div>
+
+  <div class="wizard" style="visibility:hidden">
+    <!-- Step indicator -->
+    <div class="steps">
+      <div class="step active" id="s1">
+        <div class="step__dot">1</div>
+        <span>Anthropic Key</span>
+      </div>
+      <div class="step__line" id="line1"></div>
+      <div class="step" id="s2">
+        <div class="step__dot">2</div>
+        <span>Platform Key</span>
+      </div>
+      <div class="step__line" id="line2"></div>
+      <div class="step" id="s3">
+        <div class="step__dot">3</div>
+        <span>Done</span>
+      </div>
+    </div>
+
+    <!-- Step 1: Anthropic API Key -->
+    <div class="panel active" id="panel1">
+      <div class="panel-title">Connect Anthropic</div>
+      <div class="panel-sub">Enter your Anthropic API key to power the AI agents. Test the connection, then click Next to save it to the platform.</div>
+      <div class="field">
+        <label for="apiKey">Anthropic API Key</label>
+        <input type="password" id="apiKey" placeholder="sk-ant-api03-…" autocomplete="new-password">
+        <div class="field__hint">Find your key at console.anthropic.com → API Keys</div>
+      </div>
+      <div class="btn-row">
+        <button class="btn-test" id="testBtn" onclick="testKey()">Test Connection</button>
+        <button class="btn-primary" id="next1Btn" onclick="saveAnthropicKey()" disabled>Next →</button>
+      </div>
+      <div class="status-msg" id="testStatus"></div>
+    </div>
+
+    <!-- Step 2: Platform API Key -->
+    <div class="panel" id="panel2">
+      <div class="panel-title">Set Platform API Key</div>
+      <div class="panel-sub">This key protects the admin API. Copy it now — you'll need it to access Admin and configure agents.</div>
+      <div class="info-note">
+        ⚠ Save this key somewhere safe. It will not be shown again after setup.
+      </div>
+      <div class="key-box">
+        <span class="key-box__value" id="generatedKey">—</span>
+        <button class="key-box__copy" onclick="copyKey()">Copy</button>
+      </div>
+      <div class="field">
+        <label for="customKey">Use a different key (optional)</label>
+        <input type="text" id="customKey" placeholder="Leave blank to use the generated key above">
+        <div class="field__hint">Must be at least 16 characters</div>
+      </div>
+      <div class="btn-row">
+        <button class="btn-ghost" onclick="goBack()">← Back</button>
+        <button class="btn-primary" id="next2Btn" onclick="savePlatformKey()">Save & Continue →</button>
+      </div>
+      <div class="status-msg" id="keyStatus"></div>
+    </div>
+
+    <!-- Step 3: Done -->
+    <div class="panel" id="panel3">
+      <div class="done-icon">🎉</div>
+      <div class="panel-title">You're all set!</div>
+      <div class="panel-sub" style="margin-bottom:28px">AgentsIQ Studio is configured. Head to the catalogue to start chatting with your agents.</div>
+      <div class="btn-row">
+        <button class="btn-primary" onclick="finish()">Launch Studio →</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const BACKEND_URL = (window.__CONFIG__?.BACKEND_URL || 'http://localhost:8000').replace(/\/$/, '');
+    let _apiKey = '';
+    let step = 1;
+    let keyTested = false;
+    let anthropicKey = '';
+
+    // Fetch API key from backend for any authenticated calls during setup.
+    async function bootstrapApiKey() {
+      try {
+        const r = await fetch(`${BACKEND_URL}/api/platform/bootstrap`);
+        if (r.ok) { const d = await r.json(); _apiKey = d.api_key || ''; }
+      } catch (_) {}
+    }
+
+    // On load: if already configured, skip wizard.
+    async function checkAlreadyConfigured() {
+      if (new URLSearchParams(window.location.search).get('force') === 'true') {
+        document.getElementById('generatedKey').textContent = generateKey();
+        document.querySelector('.wizard').style.visibility = 'visible';
+        return;
+      }
+      try {
+        const r = await fetch(`${BACKEND_URL}/api/platform/status`);
+        if (r.ok) {
+          const d = await r.json();
+          if (d.anthropic_connected) {
+            window.location.replace('/');
+            return;
+          }
+        }
+      } catch (_) { /* backend unreachable — show wizard */ }
+      // Generate a platform key for step 2 before showing
+      document.getElementById('generatedKey').textContent = generateKey();
+      document.querySelector('.wizard').style.visibility = 'visible';
+    }
+
+    function generateKey() {
+      const arr = new Uint8Array(24);
+      crypto.getRandomValues(arr);
+      return 'uap-' + Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    function markStepDone(n) {
+      const el = document.getElementById(`s${n}`);
+      el.className = 'step done';
+      el.querySelector('.step__dot').textContent = '✓';
+      const line = document.getElementById(`line${n}`);
+      if (line) line.classList.add('done');
+    }
+
+    function activateStep(n) {
+      document.getElementById(`panel${step}`).classList.remove('active');
+      markStepDone(step);
+      step = n;
+      document.getElementById(`panel${step}`).classList.add('active');
+      document.getElementById(`s${step}`).classList.add('active');
+    }
+
+    function goBack() {
+      document.getElementById(`panel${step}`).classList.remove('active');
+      document.getElementById(`s${step}`).className = 'step';
+      step = 1;
+      document.getElementById(`s${step}`).className = 'step active';
+      document.getElementById(`line1`).classList.remove('done');
+      document.getElementById(`panel1`).classList.add('active');
+    }
+
+    function showMsg(id, msg, cls) {
+      const el = document.getElementById(id);
+      el.textContent = msg;
+      el.className = `status-msg ${cls}`;
+    }
+
+    async function testKey() {
+      const key = document.getElementById('apiKey').value.trim();
+      if (!key) { showMsg('testStatus', 'Please enter your API key first.', 'error'); return; }
+      const btn = document.getElementById('testBtn');
+      btn.disabled = true;
+      showMsg('testStatus', 'Testing connection…', 'loading');
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/platform/test-anthropic`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_key: key }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          showMsg('testStatus', `✓ Connected — model: ${data.model}`, 'success');
+          keyTested = true;
+          anthropicKey = key;
+          document.getElementById('next1Btn').disabled = false;
+        } else {
+          showMsg('testStatus', `✗ ${data.error || 'Connection failed'}`, 'error');
+          document.getElementById('next1Btn').disabled = true;
+        }
+      } catch (err) {
+        showMsg('testStatus', `✗ Could not reach backend: ${err.message}`, 'error');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function saveAnthropicKey() {
+      const btn = document.getElementById('next1Btn');
+      btn.disabled = true;
+      showMsg('testStatus', 'Saving…', 'loading');
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/platform/config`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ anthropic_api_key: anthropicKey }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        activateStep(2);
+      } catch (err) {
+        showMsg('testStatus', `✗ Failed to save: ${err.message}`, 'error');
+        btn.disabled = false;
+      }
+    }
+
+    function copyKey() {
+      const key = document.getElementById('generatedKey').textContent;
+      navigator.clipboard.writeText(key).then(() => {
+        const btn = document.querySelector('.key-box__copy');
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+      });
+    }
+
+    async function savePlatformKey() {
+      const customVal = document.getElementById('customKey').value.trim();
+      const finalKey  = customVal || document.getElementById('generatedKey').textContent;
+
+      if (customVal && customVal.length < 16) {
+        showMsg('keyStatus', 'Key must be at least 16 characters.', 'error');
+        return;
+      }
+
+      const btn = document.getElementById('next2Btn');
+      btn.disabled = true;
+      showMsg('keyStatus', 'Saving…', 'loading');
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/platform/config`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ backend_api_key: finalKey }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        activateStep(3);
+      } catch (err) {
+        showMsg('keyStatus', `✗ Failed to save: ${err.message}`, 'error');
+        btn.disabled = false;
+      }
+    }
+
+    function finish() {
+      window.location.href = '/';
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      bootstrapApiKey();
+      checkAlreadyConfigured();
+      document.getElementById('apiKey').addEventListener('keydown', e => {
+        if (e.key === 'Enter') testKey();
+      });
+    });
+  </script>
+
+</body>
+</html>

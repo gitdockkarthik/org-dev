@@ -1,0 +1,15 @@
+{
+  "name": "CUR Analyser",
+  "slug": "cur-analyser",
+  "description": "Analyses your AWS spend and identifies cost drivers, trends and saving opportunities across services, regions and accounts.",
+  "version": "0.1.0",
+  "invoke_url": "http://cur-analyser:8002",
+  "capabilities": ["cost-breakdown", "trend-analysis", "anomaly-detection", "savings-recommendations"],
+  "env": [
+    "ANTHROPIC_API_KEY",
+    "MODEL",
+    "AGENT_ID",
+    "AGENT_SLUG",
+    "DATABASE_URL"
+  ]
+}

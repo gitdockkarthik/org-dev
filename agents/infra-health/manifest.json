@@ -1,0 +1,15 @@
+{
+  "name": "Infra Health Check",
+  "slug": "infra-health",
+  "description": "Monitors infrastructure service health. Reports status, uptime, response times, and last incidents for api-server, database, cache, queue, and cdn.",
+  "version": "0.1.0",
+  "invoke_url": "http://infra-health:8002",
+  "capabilities": ["health-check", "uptime-monitoring", "incident-history", "remediation-recommendations"],
+  "env": [
+    "ANTHROPIC_API_KEY",
+    "MODEL",
+    "AGENT_SLUG",
+    "AGENT_NAME",
+    "REGISTRY_URL"
+  ]
+}

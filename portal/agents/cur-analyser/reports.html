@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CUR Reports — UAP</title>
+  <link rel="stylesheet" href="/css/style.css?v=3">
+  <style>
+    body { background: var(--bg); }
+    .subnav { display: flex; background: var(--navy-1); border-bottom: 1px solid var(--border); padding: 0 40px; }
+    .subnav__link { display: inline-flex; align-items: center; gap: 6px; padding: 13px 16px; font-size: .85rem; color: var(--text-muted); border-bottom: 2px solid transparent; margin-bottom: -1px; text-decoration: none; transition: color var(--t), border-color var(--t); }
+    .subnav__link:hover { color: var(--text); }
+    .subnav__link--active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+    .content { padding: 28px 40px; }
+    .page-heading { margin-bottom: 24px; }
+    .page-heading__title { font-size: 1.4rem; font-weight: 700; margin-bottom: 4px; }
+    .page-heading__sub { font-size: .88rem; color: var(--text-muted); }
+    .upload-zone { border: 2px dashed var(--border-hi); border-radius: var(--r); padding: 36px 24px; text-align: center; cursor: pointer; transition: border-color var(--t), background var(--t); }
+    .upload-zone:hover, .upload-zone--drag { border-color: var(--accent); background: var(--accent-glow); }
+    .upload-zone__icon { font-size: 2rem; margin-bottom: 10px; }
+    .upload-zone__title { font-weight: 600; margin-bottom: 4px; }
+    .upload-zone__sub { font-size: .83rem; color: var(--text-muted); }
+    .action-card { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); padding: 20px 24px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap; margin-bottom: 16px; }
+    .action-card__info { flex: 1; }
+    .action-card__title { font-weight: 600; margin-bottom: 4px; }
+    .action-card__sub { font-size: .83rem; color: var(--text-muted); }
+    .section-card { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; margin-bottom: 16px; }
+    .section-card__header { padding: 14px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; font-weight: 600; font-size: .9rem; }
+    .data-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+    .data-table th { padding: 10px 14px; text-align: left; font-size: .72rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-dim); background: var(--navy-2); border-bottom: 1px solid var(--border); }
+    .data-table td { padding: 11px 14px; border-bottom: 1px solid var(--border); color: var(--text); }
+    .data-table tr:last-child td { border-bottom: none; }
+    .data-table tr:hover td { background: var(--navy-3); }
+    @media (max-width: 768px) { .subnav { padding: 0 20px; } .content { padding: 20px; } }
+  </style>
+</head>
+<body>
+
+  <header class="topbar">
+    <a href="/" class="topbar__brand">
+      <span style="font-size:1.3rem;
+   font-weight:700;color:#ffffff;
+   letter-spacing:1px;
+   font-family:inherit;">OPERATIVE</span>
+    </a>
+    <nav class="topbar__nav">
+      <a href="/" class="topbar__link">Agents</a>
+      <a href="/admin/" class="topbar__link">Admin</a>
+    </nav>
+    <div class="topbar__right" style="font-size:.85rem;color:var(--text-muted)">CUR Analyser</div>
+  </header>
+
+  <nav class="subnav">
+    <a href="/chat?agent=cur-analyser" class="subnav__link">💬 Chat</a>
+    <a href="/agents/cur-analyser/dashboard" class="subnav__link">📊 Dashboard</a>
+    <a href="/agents/cur-analyser/reports" class="subnav__link subnav__link--active">📁 Reports</a>
+    <a href="/agents/cur-analyser/settings" class="subnav__link">⚙ Settings</a>
+  </nav>
+
+  <div class="content">
+    <div class="page-heading">
+      <div class="page-heading__title">CUR Reports</div>
+      <div class="page-heading__sub">Upload AWS Cost and Usage Reports or generate sample data</div>
+    </div>
+
+    <!-- Upload zone -->
+    <div class="section-card">
+      <div class="section-card__header">Upload CUR Export</div>
+      <div style="padding:16px">
+        <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
+          <div class="upload-zone__icon">📤</div>
+          <div class="upload-zone__title">Upload CUR CSV</div>
+          <div class="upload-zone__sub">Click or drag &amp; drop a CSV file exported from AWS Cost &amp; Usage Reports</div>
+          <input type="file" id="fileInput" accept=".csv" style="display:none" onchange="uploadFile(this.files[0])">
+        </div>
+      </div>
+    </div>
+
+    <!-- Generate sample -->
+    <div class="action-card">
+      <div class="action-card__info">
+        <div class="action-card__title">Synthetic Data</div>
+        <div class="action-card__sub">Generate 300 realistic CUR line items across 10 AWS services for demonstration</div>
+      </div>
+      <button class="btn btn--primary" id="genBtn" onclick="generateSample()">⚡ Generate Sample Data</button>
+    </div>
+
+    <!-- Reports table -->
+    <div class="section-card">
+      <div class="section-card__header">
+        Reports
+        <button class="btn btn--ghost btn--sm" onclick="loadReports()">↻ Refresh</button>
+      </div>
+      <div id="reportsBody">
+        <div class="empty-state"><div class="empty-state__icon">📁</div><div class="empty-state__title">Loading…</div></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/config.js?v=3"></script>
+  <script src="/js/portal.js?v=3"></script>
+  <script>
+    const SLUG  = 'cur-analyser';
+    const PROXY = `${BACKEND_URL}/api/agents/${SLUG}/proxy`;
+
+    async function api(path, opts = {}) {
+      const res = await fetch(`${PROXY}${path}`, {
+        ...opts,
+        headers: { ..._authHeaders(), ...opts.headers },
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(e.detail || `HTTP ${res.status}`);
+      }
+      return res.json();
+    }
+
+    function formatUSD(v) {
+      return '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function formatSize(bytes) {
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    // Drag-and-drop
+    const zone = document.getElementById('uploadZone');
+    zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('upload-zone--drag'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('upload-zone--drag'));
+    zone.addEventListener('drop', e => {
+      e.preventDefault(); zone.classList.remove('upload-zone--drag');
+      const f = e.dataTransfer.files[0]; if (f) uploadFile(f);
+    });
+
+    async function generateSample() {
+      const btn = document.getElementById('genBtn');
+      btn.disabled = true;
+      btn.textContent = '⏳ Generating…';
+      try {
+        const data = await api('/reports/generate-sample', { method: 'POST' });
+        showToast(`Generated: ${data.row_count} line items — ${formatUSD(data.total_cost)} total`, 'success');
+        loadReports();
+      } catch (e) {
+        showToast('Generation failed: ' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '⚡ Generate Sample Data';
+      }
+    }
+
+    async function uploadFile(file) {
+      if (!file) return;
+      const fd = new FormData();
+      fd.append('file', file);
+      showToast('Uploading…');
+      try {
+        const data = await api('/reports/upload', { method: 'POST', body: fd });
+        showToast(`Uploaded: ${data.row_count} line items — ${formatUSD(data.total_cost)} total`, 'success');
+        loadReports();
+      } catch (e) {
+        showToast('Upload failed: ' + e.message, 'error');
+      }
+    }
+
+    async function loadReports() {
+      await portalReady;
+      const el = document.getElementById('reportsBody');
+      el.innerHTML = '<div class="empty-state"><div class="empty-state__icon">⏳</div><div class="empty-state__title">Loading…</div></div>';
+      try {
+        const reports = await api('/reports');
+        if (!reports.length) {
+          el.innerHTML = '<div class="empty-state"><div class="empty-state__icon">📁</div><div class="empty-state__title">No reports yet</div><div class="empty-state__sub">Upload a CUR CSV or generate sample data.</div></div>';
+          return;
+        }
+        const rows = reports.map(r => `<tr>
+          <td>${r.filename}</td>
+          <td>${(r.row_count || 0).toLocaleString()}</td>
+          <td style="font-weight:600;color:var(--accent)">${formatUSD(r.total_cost || 0)}</td>
+          <td>${formatSize(r.file_size || 0)}</td>
+          <td><span class="badge badge--published">${r.status}</span></td>
+          <td style="font-size:.78rem;color:var(--text-muted)">${new Date(r.created_at).toLocaleString()}</td>
+          <td style="display:flex;gap:6px">
+            <a href="/agents/cur-analyser/dashboard" class="btn btn--ghost btn--sm">📊 Dashboard</a>
+            <a href="/chat?agent=cur-analyser" class="btn btn--ghost btn--sm">💬 Chat</a>
+          </td>
+        </tr>`).join('');
+        el.innerHTML = `<div style="overflow-x:auto"><table class="data-table">
+          <thead><tr><th>Filename</th><th>Rows</th><th>Total Cost</th><th>Size</th><th>Status</th><th>Uploaded</th><th>Actions</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table></div>`;
+      } catch (e) {
+        el.innerHTML = `<div class="empty-state"><div class="empty-state__icon">⚠</div><div class="empty-state__title">Failed to load</div><div class="empty-state__sub">${e.message}</div></div>`;
+      }
+    }
+
+    loadReports();
+  </script>
+</body>
+</html>

@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Alert Dashboard — UAP</title>
+  <link rel="stylesheet" href="/css/style.css?v=3">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <style>
+    body { background: var(--bg); }
+    .subnav { display: flex; background: var(--navy-1); border-bottom: 1px solid var(--border); padding: 0 40px; }
+    .subnav__link { display: inline-flex; align-items: center; gap: 6px; padding: 13px 16px; font-size: .85rem; color: var(--text-muted); border-bottom: 2px solid transparent; margin-bottom: -1px; text-decoration: none; transition: color var(--t), border-color var(--t); }
+    .subnav__link:hover { color: var(--text); }
+    .subnav__link--active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+    .content { padding: 28px 40px; }
+    .page-heading { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 24px; gap: 16px; flex-wrap: wrap; }
+    .page-heading__title { font-size: 1.4rem; font-weight: 700; margin-bottom: 4px; }
+    .page-heading__sub { font-size: .88rem; color: var(--text-muted); }
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(175px, 1fr)); gap: 14px; margin-bottom: 22px; }
+    .kpi { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); padding: 18px 20px; }
+    .kpi__label { font-size: .73rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }
+    .kpi__value { font-size: 1.9rem; font-weight: 700; line-height: 1; margin-bottom: 3px; }
+    .kpi__sub { font-size: .75rem; color: var(--text-muted); }
+    .kpi--danger .kpi__value { color: var(--danger); }
+    .kpi--success .kpi__value { color: var(--success); }
+    .kpi--warn .kpi__value { color: var(--warn); }
+    .kpi--accent .kpi__value { color: var(--accent); }
+    .chart-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 16px; margin-bottom: 22px; }
+    .chart-card { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); padding: 20px; }
+    .chart-card__title { font-size: .87rem; font-weight: 600; margin-bottom: 14px; }
+    .chart-wrap { position: relative; max-height: 260px; }
+    .tab-bar { display: flex; gap: 4px; margin-bottom: 22px; background: var(--navy-2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 4px; width: fit-content; }
+    .tab-btn { padding: 7px 18px; border: none; background: transparent; color: var(--text-muted); font-size: .83rem; font-weight: 500; border-radius: var(--r-xs); cursor: pointer; transition: background var(--t), color var(--t); }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn--active { background: var(--navy-1); color: var(--text); box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    .tab-panel { display: none; }
+    .tab-panel--active { display: block; }
+    .data-table-wrap { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; margin-bottom: 16px; }
+    .data-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+    .data-table th { padding: 10px 14px; text-align: left; font-size: .72rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-dim); background: var(--navy-2); border-bottom: 1px solid var(--border); }
+    .data-table td { padding: 11px 14px; border-bottom: 1px solid var(--border); color: var(--text); }
+    .data-table tr:last-child td { border-bottom: none; }
+    .data-table tr:hover td { background: var(--navy-3); }
+    .data-table__empty { padding: 32px; text-align: center; color: var(--text-dim); }
+    .pri { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: .72rem; font-weight: 700; }
+    .pri--p1 { background: rgba(220,38,38,.1); color: #dc2626; }
+    .pri--p2 { background: rgba(234,88,12,.1); color: #ea580c; }
+    .pri--p3 { background: rgba(180,83,9,.1); color: #b45309; }
+    .pri--p4, .pri--p5 { background: rgba(100,116,139,.1); color: #64748b; }
+    .heatmap { display: grid; grid-template-columns: repeat(24, 1fr); gap: 3px; margin-bottom: 6px; }
+    .heatmap__cell { height: 28px; border-radius: 3px; cursor: default; }
+    .heatmap__labels { display: grid; grid-template-columns: repeat(24, 1fr); gap: 3px; }
+    .heatmap__labels span { font-size: .6rem; text-align: center; color: var(--text-dim); }
+    @media (max-width: 768px) { .subnav { padding: 0 20px; } .content { padding: 20px; } .chart-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+
+  <header class="topbar">
+    <a href="/" class="topbar__brand">
+      <span style="font-size:1.3rem;
+   font-weight:700;color:#ffffff;
+   letter-spacing:1px;
+   font-family:inherit;">OPERATIVE</span>
+    </a>
+    <nav class="topbar__nav">
+      <a href="/" class="topbar__link">Agents</a>
+      <a href="/admin/" class="topbar__link">Admin</a>
+    </nav>
+    <div class="topbar__right" style="font-size:.85rem;color:var(--text-muted)">Alert Analyser</div>
+  </header>
+
+  <nav class="subnav">
+    <a href="/chat?agent=alert-analyser" class="subnav__link">💬 Chat</a>
+    <a href="/agents/alert-analyser/dashboard" class="subnav__link subnav__link--active">📊 Dashboard</a>
+    <a href="/agents/alert-analyser/reports" class="subnav__link">📁 Reports</a>
+    <a href="/agents/alert-analyser/settings" class="subnav__link">⚙ Settings</a>
+  </nav>
+
+  <div class="content">
+    <div class="page-heading">
+      <div>
+        <div class="page-heading__title">Alert Dashboard</div>
+        <div class="page-heading__sub">OpsGenie alert noise detection and signal analysis</div>
+      </div>
+      <button class="btn btn--primary" id="genBtn" onclick="generateAndLoad()">⚡ Generate Sample Data</button>
+    </div>
+
+    <div class="tab-bar">
+      <button class="tab-btn tab-btn--active" onclick="switchTab('overview',this)">Overview</button>
+      <button class="tab-btn" onclick="switchTab('noise',this)">Noise Analysis</button>
+      <button class="tab-btn" onclick="switchTab('genuine',this)">Genuine Alerts</button>
+      <button class="tab-btn" onclick="switchTab('trends',this)">Trends</button>
+    </div>
+
+    <div id="tab-overview" class="tab-panel tab-panel--active"></div>
+    <div id="tab-noise"    class="tab-panel"></div>
+    <div id="tab-genuine"  class="tab-panel"></div>
+    <div id="tab-trends"   class="tab-panel"></div>
+  </div>
+
+  <script src="/js/config.js?v=3"></script>
+  <script src="/js/portal.js?v=3"></script>
+  <script>
+    const SLUG  = 'alert-analyser';
+    const PROXY = `${BACKEND_URL}/api/agents/${SLUG}/proxy`;
+    const charts = {};
+    let stats = null;
+
+    async function api(path, opts = {}) {
+      const res = await fetch(`${PROXY}${path}`, {
+        ...opts,
+        headers: { ..._authHeaders(), ...opts.headers },
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(e.detail || `HTTP ${res.status}`);
+      }
+      return res.json();
+    }
+
+    function switchTab(name, btn) {
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('tab-panel--active'));
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('tab-btn--active'));
+      document.getElementById('tab-' + name).classList.add('tab-panel--active');
+      btn.classList.add('tab-btn--active');
+    }
+
+    async function generateAndLoad() {
+      const btn = document.getElementById('genBtn');
+      btn.disabled = true;
+      btn.textContent = '⏳ Generating…';
+      try {
+        await api('/reports/generate-sample', { method: 'POST' });
+        showToast('Generated 200 synthetic alerts', 'success');
+        await loadDashboard();
+      } catch (e) {
+        showToast('Generation failed: ' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '⚡ Generate Sample Data';
+      }
+    }
+
+    async function loadDashboard() {
+      await portalReady;
+      ['overview','noise','genuine','trends'].forEach(t =>
+        document.getElementById('tab-' + t).innerHTML = skeletonHTML());
+      try {
+        const data = await api('/dashboard');
+        if (data.empty) {
+          ['overview','noise','genuine','trends'].forEach(t =>
+            document.getElementById('tab-' + t).innerHTML = emptyState('🚨','No alert data loaded',
+              'Click "Generate Sample Data" or upload alerts on the <a href="/agents/alert-analyser/reports">Reports page</a>.'));
+          return;
+        }
+        stats = data.stats;
+        renderOverview();
+        renderNoise();
+        renderGenuine();
+        renderTrends();
+      } catch (e) {
+        showToast('Failed to load dashboard: ' + e.message, 'error');
+      }
+    }
+
+    function skeletonHTML() {
+      return `<div style="display:flex;flex-direction:column;gap:12px;padding:4px 0">
+        ${[80,60,90,70].map(w=>`<div class="skeleton" style="height:14px;width:${w}%"></div>`).join('')}
+      </div>`;
+    }
+    function emptyState(icon, title, sub) {
+      return `<div class="empty-state"><div class="empty-state__icon">${icon}</div>
+        <div class="empty-state__title">${title}</div>
+        <div class="empty-state__sub">${sub}</div></div>`;
+    }
+    function priClass(p) { return `pri pri--${(p||'p5').toLowerCase()}`; }
+    function destroyChart(k) { if (charts[k]) { charts[k].destroy(); delete charts[k]; } }
+
+    function renderOverview() {
+      const s = stats;
+      document.getElementById('tab-overview').innerHTML = `
+        <div class="kpi-grid">
+          <div class="kpi kpi--accent"><div class="kpi__label">Total Alerts</div><div class="kpi__value">${s.total.toLocaleString()}</div><div class="kpi__sub">in dataset</div></div>
+          <div class="kpi kpi--danger"><div class="kpi__label">Noise</div><div class="kpi__value">${s.noise_count}</div><div class="kpi__sub">${s.noise_ratio}% noise rate</div></div>
+          <div class="kpi kpi--success"><div class="kpi__label">Genuine</div><div class="kpi__value">${s.genuine_count}</div><div class="kpi__sub">require attention</div></div>
+          <div class="kpi kpi--warn"><div class="kpi__label">MTTR</div><div class="kpi__value">${s.mttr_minutes}m</div><div class="kpi__sub">mean time to resolve</div></div>
+        </div>
+        <div class="chart-grid">
+          <div class="chart-card"><div class="chart-card__title">Genuine vs Noise</div><div class="chart-wrap"><canvas id="donutChart"></canvas></div></div>
+          <div class="chart-card"><div class="chart-card__title">Alert Volume by Day</div><div class="chart-wrap"><canvas id="trendChart"></canvas></div></div>
+        </div>`;
+      setTimeout(() => {
+        destroyChart('donut');
+        const c = document.getElementById('donutChart')?.getContext('2d');
+        if (c) charts['donut'] = new Chart(c, { type:'doughnut', data:{ labels:['Genuine','Noise'], datasets:[{ data:[s.genuine_count,s.noise_count], backgroundColor:['#16a34a','#dc2626'], borderWidth:0 }] }, options:{ responsive:true, cutout:'65%', plugins:{legend:{position:'bottom'}} } });
+        destroyChart('trend');
+        const t = document.getElementById('trendChart')?.getContext('2d');
+        if (t && s.daily_trend.length) charts['trend'] = new Chart(t, { type:'line', data:{ labels:s.daily_trend.map(d=>d.date), datasets:[
+          { label:'Genuine', data:s.daily_trend.map(d=>d.genuine), borderColor:'#16a34a', backgroundColor:'rgba(22,163,74,.1)', fill:true, tension:.4 },
+          { label:'Noise',   data:s.daily_trend.map(d=>d.noise),   borderColor:'#dc2626', backgroundColor:'rgba(220,38,38,.1)',  fill:true, tension:.4 },
+        ] }, options:{ responsive:true, plugins:{legend:{position:'bottom'}} } });
+      }, 50);
+    }
+
+    function renderNoise() {
+      const s = stats;
+      document.getElementById('tab-noise').innerHTML = `
+        <div class="chart-grid">
+          <div class="chart-card"><div class="chart-card__title">Top Noisy Sources</div><div class="chart-wrap"><canvas id="srcChart"></canvas></div></div>
+          <div class="chart-card"><div class="chart-card__title">Noise Score by Service</div><div class="chart-wrap"><canvas id="scoreChart"></canvas></div></div>
+        </div>
+        <div class="data-table-wrap"><table class="data-table">
+          <thead><tr><th>Alert Alias</th><th>Fire Count</th></tr></thead>
+          <tbody>${s.repeat_offenders.map(r=>`<tr><td><code>${r.alias}</code></td><td>${r.count}</td></tr>`).join('') || '<tr><td colspan="2" class="data-table__empty">No repeat offenders</td></tr>'}</tbody>
+        </table></div>
+        <div class="data-table-wrap" style="margin-top:16px"><table class="data-table">
+          <caption style="text-align:left;padding:14px 14px 0;font-size:.87rem;font-weight:600">Suppression Recommendations</caption>
+          <thead><tr><th>Alert</th><th>Occurrences</th><th>Action</th></tr></thead>
+          <tbody>${s.suppression_recommendations.length
+            ? s.suppression_recommendations.map(r=>`<tr><td><code>${r.alias}</code></td><td>${r.count}</td><td><span class="badge badge--deprecated">Suppress</span></td></tr>`).join('')
+            : '<tr><td colspan="3" class="data-table__empty">No strong suppression candidates</td></tr>'
+          }</tbody>
+        </table></div>`;
+      setTimeout(() => {
+        destroyChart('src');
+        const c = document.getElementById('srcChart')?.getContext('2d');
+        if (c) charts['src'] = new Chart(c, { type:'bar', data:{ labels:s.top_noisy_sources.map(x=>x.source), datasets:[{label:'Noise Count',data:s.top_noisy_sources.map(x=>x.count),backgroundColor:'#dc2626'}] }, options:{indexAxis:'y',responsive:true,plugins:{legend:{display:false}}} });
+        destroyChart('score');
+        const sc = document.getElementById('scoreChart')?.getContext('2d');
+        const sorted = [...s.service_noise_scores].sort((a,b)=>b.score-a.score).slice(0,10);
+        if (sc) charts['score'] = new Chart(sc, { type:'bar', data:{ labels:sorted.map(x=>x.service), datasets:[{label:'Noise %',data:sorted.map(x=>x.score),backgroundColor:'#0EA5E9'}] }, options:{indexAxis:'y',responsive:true,plugins:{legend:{display:false}},scales:{x:{max:100}}} });
+      }, 50);
+    }
+
+    function renderGenuine() {
+      const s = stats;
+      document.getElementById('tab-genuine').innerHTML = `
+        <div class="kpi-grid">
+          <div class="kpi kpi--success"><div class="kpi__label">Total Genuine</div><div class="kpi__value">${s.genuine_count}</div><div class="kpi__sub">real incidents</div></div>
+          <div class="kpi kpi--danger"><div class="kpi__label">Unresolved</div><div class="kpi__value">${s.unresolved_genuine.length}</div><div class="kpi__sub">need attention</div></div>
+          <div class="kpi kpi--warn"><div class="kpi__label">P1/P2</div><div class="kpi__value">${s.high_severity_genuine.length}</div><div class="kpi__sub">high severity</div></div>
+        </div>
+        <div class="chart-grid">
+          <div class="data-table-wrap"><table class="data-table">
+            <caption style="text-align:left;padding:14px 14px 0;font-size:.87rem;font-weight:600">High Severity Genuine Alerts</caption>
+            <thead><tr><th>Message</th><th>Source</th><th>Priority</th></tr></thead>
+            <tbody>${s.high_severity_genuine.map(a=>`<tr><td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.message}</td><td>${a.source}</td><td><span class="${priClass(a.priority)}">${a.priority}</span></td></tr>`).join('') || '<tr><td colspan="3" class="data-table__empty">None</td></tr>'}</tbody>
+          </table></div>
+          <div class="chart-card"><div class="chart-card__title">Team Alert Breakdown</div><div class="chart-wrap"><canvas id="teamChart"></canvas></div></div>
+        </div>
+        <div class="data-table-wrap"><table class="data-table">
+          <caption style="text-align:left;padding:14px 14px 0;font-size:.87rem;font-weight:600">Unresolved Genuine Alerts</caption>
+          <thead><tr><th>Message</th><th>Source</th><th>Priority</th><th>Team</th></tr></thead>
+          <tbody>${s.unresolved_genuine.map(a=>`<tr><td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.message}</td><td>${a.source}</td><td><span class="${priClass(a.priority)}">${a.priority}</span></td><td>${(a.teams||['—'])[0]}</td></tr>`).join('') || '<tr><td colspan="4" class="data-table__empty">All genuine alerts resolved</td></tr>'}</tbody>
+        </table></div>`;
+      setTimeout(() => {
+        destroyChart('team');
+        const c = document.getElementById('teamChart')?.getContext('2d');
+        if (c && s.team_breakdown.length) charts['team'] = new Chart(c, { type:'bar', data:{ labels:s.team_breakdown.map(t=>t.team), datasets:[
+          {label:'Genuine',data:s.team_breakdown.map(t=>t.genuine),backgroundColor:'#16a34a'},
+          {label:'Noise',  data:s.team_breakdown.map(t=>t.noise),  backgroundColor:'#dc2626'},
+        ] }, options:{responsive:true,plugins:{legend:{position:'bottom'}},scales:{x:{stacked:true},y:{stacked:true}}} });
+      }, 50);
+    }
+
+    function renderTrends() {
+      const s = stats;
+      const hourly = s.hourly_distribution;
+      const maxH = Math.max(...hourly.map(h=>h.count), 1);
+      document.getElementById('tab-trends').innerHTML = `
+        <div class="chart-grid">
+          <div class="chart-card">
+            <div class="chart-card__title">Alert Volume by Hour</div>
+            <div class="heatmap" id="heatmapGrid"></div>
+            <div class="heatmap__labels">${hourly.map(h=>`<span>${h.hour}</span>`).join('')}</div>
+          </div>
+          <div class="chart-card"><div class="chart-card__title">Peak Alert Hours</div><div class="chart-wrap"><canvas id="hourChart"></canvas></div></div>
+        </div>
+        <div class="chart-card"><div class="chart-card__title">Signal Quality Score Over Time</div><div class="chart-wrap"><canvas id="healthChart"></canvas></div></div>`;
+      const grid = document.getElementById('heatmapGrid');
+      hourly.forEach(h => {
+        const cell = document.createElement('div');
+        cell.className = 'heatmap__cell';
+        const i = h.count / maxH;
+        cell.style.background = i < 0.05 ? 'var(--navy-3)' : `rgba(220,38,38,${0.15 + i * 0.85})`;
+        cell.title = `${h.hour}:00 — ${h.count} alerts`;
+        grid.appendChild(cell);
+      });
+      setTimeout(() => {
+        destroyChart('hour');
+        const c = document.getElementById('hourChart')?.getContext('2d');
+        if (c) charts['hour'] = new Chart(c, { type:'bar', data:{ labels:hourly.map(h=>`${h.hour}:00`), datasets:[{label:'Alerts',data:hourly.map(h=>h.count),backgroundColor:hourly.map(h=>{ const i=h.count/maxH; return i>.7?'#dc2626':i>.4?'#b45309':'#0EA5E9'; })}] }, options:{responsive:true,plugins:{legend:{display:false}}} });
+        destroyChart('health');
+        const hc = document.getElementById('healthChart')?.getContext('2d');
+        if (hc && s.daily_trend.length) {
+          const scores = s.daily_trend.map(d=>{ const t=(d.genuine||0)+(d.noise||0); return t>0?Math.round((d.genuine/t)*100):100; });
+          charts['health'] = new Chart(hc, { type:'line', data:{ labels:s.daily_trend.map(d=>d.date), datasets:[{label:'Signal Quality (%)',data:scores,borderColor:'#16a34a',backgroundColor:'rgba(22,163,74,.1)',fill:true,tension:.4}] }, options:{responsive:true,scales:{y:{min:0,max:100,ticks:{callback:v=>v+'%'}}},plugins:{legend:{display:false}}} });
+        }
+      }, 50);
+    }
+
+    loadDashboard();
+  </script>
+</body>
+</html>

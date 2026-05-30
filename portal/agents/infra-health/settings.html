@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Infra Health Settings — UAP</title>
+  <link rel="stylesheet" href="/css/style.css?v=3">
+  <style>
+    body { background: #f4f6f9; color: #1a1f2e; }
+    .subnav { display: flex; background: var(--navy-1); border-bottom: 1px solid var(--border); padding: 0 40px; }
+    .subnav__link { display: inline-flex; align-items: center; gap: 6px; padding: 13px 16px; font-size: .85rem; color: var(--text-muted); border-bottom: 2px solid transparent; margin-bottom: -1px; text-decoration: none; transition: color var(--t), border-color var(--t); }
+    .subnav__link:hover { color: var(--text); }
+    .subnav__link--active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+    .content { padding: 36px 40px; max-width: 680px; }
+    .page-heading { margin-bottom: 28px; }
+    .page-heading__title { font-size: 1.4rem; font-weight: 700; margin-bottom: 4px; color: #1a1f2e; }
+    .page-heading__sub { font-size: .88rem; color: #64748b; }
+    .info-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 28px 32px; margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,0,0,.06); }
+    .info-card__title { font-size: .95rem; font-weight: 700; color: #1a1f2e; margin-bottom: 16px; }
+    .info-row { display: flex; justify-content: space-between; align-items: center; padding: 11px 0; border-bottom: 1px solid #f1f5f9; font-size: .86rem; }
+    .info-row:last-child { border-bottom: none; }
+    .info-row__label { color: #64748b; }
+    .info-row__value { font-weight: 600; color: #1a1f2e; }
+    .badge-ok { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; background: #f0fdf4; border: 1px solid #bbf7d0; color: #15803d; font-size: .78rem; font-weight: 600; }
+    .badge-ok::before { content: '●'; font-size: .55rem; }
+    .badge-unknown { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; background: #f1f5f9; border: 1px solid #e2e8f0; color: #64748b; font-size: .78rem; font-weight: 600; }
+    @media (max-width: 768px) { .subnav { padding: 0 20px; } .content { padding: 20px; } .info-card { padding: 20px; } }
+  </style>
+</head>
+<body>
+
+  <header class="topbar">
+    <a href="/" class="topbar__brand">
+      <span style="font-size:1.3rem;
+   font-weight:700;color:#ffffff;
+   letter-spacing:1px;
+   font-family:inherit;">OPERATIVE</span>
+    </a>
+    <nav class="topbar__nav">
+      <a href="/" class="topbar__link">Agents</a>
+      <a href="/admin/" class="topbar__link">Admin</a>
+    </nav>
+    <div class="topbar__right" style="font-size:.85rem;color:var(--text-muted)">Infra Health Check</div>
+  </header>
+
+  <nav class="subnav">
+    <a href="/chat?agent=infra-health" class="subnav__link">💬 Chat</a>
+    <a href="/agents/infra-health/settings" class="subnav__link subnav__link--active">⚙ Settings</a>
+  </nav>
+
+  <div class="content">
+    <div class="page-heading">
+      <div class="page-heading__title">Agent Settings</div>
+      <div class="page-heading__sub">Status and configuration for the Infra Health Check agent</div>
+    </div>
+
+    <div class="info-card">
+      <div class="info-card__title">Agent Status</div>
+      <div class="info-row">
+        <span class="info-row__label">Agent</span>
+        <span class="info-row__value" id="stStatus"><span class="badge-unknown">Checking…</span></span>
+      </div>
+      <div class="info-row">
+        <span class="info-row__label">Model</span>
+        <span class="info-row__value" id="stModel">—</span>
+      </div>
+      <div class="info-row">
+        <span class="info-row__label">Version</span>
+        <span class="info-row__value" id="stVersion">—</span>
+      </div>
+      <div class="info-row">
+        <span class="info-row__label">Invoke URL</span>
+        <span class="info-row__value" id="stUrl">—</span>
+      </div>
+    </div>
+
+    <div class="info-card">
+      <div class="info-card__title">Configuration</div>
+      <div class="info-row">
+        <span class="info-row__label">Data source</span>
+        <span class="info-row__value">Mock (built-in)</span>
+      </div>
+      <div class="info-row">
+        <span class="info-row__label">Services monitored</span>
+        <span class="info-row__value">api-server, database, cache, queue, cdn</span>
+      </div>
+      <div class="info-row">
+        <span class="info-row__label">Alert thresholds</span>
+        <span class="info-row__value" style="color:#64748b;font-weight:400">None configured</span>
+      </div>
+      <div class="info-row">
+        <span class="info-row__label">Live API integration</span>
+        <span class="info-row__value" style="color:#64748b;font-weight:400">Planned — Phase 2</span>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/config.js?v=3"></script>
+  <script src="/js/portal.js?v=3"></script>
+  <script>
+    const SLUG = 'infra-health-check';
+
+    async function loadStatus() {
+      try {
+        // Get agent metadata from registry
+        const agent = await fetchAgent(SLUG);
+        document.getElementById('stModel').textContent   = agent.model || '—';
+        document.getElementById('stVersion').textContent = agent.version || '—';
+        document.getElementById('stUrl').textContent     = agent.invoke_url || '(managed)';
+
+        // Ping the agent health endpoint via backend proxy
+        const res = await fetch(`${BACKEND_URL}/api/agents/${SLUG}/proxy/health`, {
+          headers: _authHeaders(),
+        });
+        if (res.ok) {
+          document.getElementById('stStatus').innerHTML = '<span class="badge-ok">Healthy</span>';
+        } else {
+          document.getElementById('stStatus').innerHTML = '<span class="badge-unknown">Unreachable</span>';
+        }
+      } catch (_) {
+        document.getElementById('stStatus').innerHTML = '<span class="badge-unknown">Unreachable</span>';
+      }
+    }
+
+    loadStatus();
+  </script>
+</body>
+</html>

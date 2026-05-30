@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Documentation — AgentsIQ Studio</title>
+  <link rel="stylesheet" href="/css/style.css?v=3">
+  <style>
+    /* ── Docs layout ──────────────────────────────────────────────────────────── */
+    .docs-page { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+    .docs-body  { display: flex; flex: 1; overflow: hidden; }
+
+    /* ── Sidebar ──────────────────────────────────────────────────────────────── */
+    .docs-sidebar {
+      width: 258px;
+      flex-shrink: 0;
+      background: var(--navy-1);
+      border-right: 1px solid var(--border);
+      overflow-y: auto;
+      padding: 24px 0 40px;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+    .docs-sidebar__header {
+      padding: 0 20px 20px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 16px;
+      flex-shrink: 0;
+    }
+    .docs-sidebar__title {
+      font-size: .8rem;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+    .docs-nav-group { padding: 0 10px 8px; }
+    .docs-nav-group__label {
+      font-size: .67rem;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      padding: 10px 10px 5px;
+    }
+    .docs-nav-link {
+      display: block;
+      padding: 5px 10px;
+      border-radius: var(--r-xs);
+      font-size: .82rem;
+      color: var(--text-muted);
+      transition: color var(--t), background var(--t);
+      cursor: pointer;
+      border: none;
+      background: none;
+      width: 100%;
+      text-align: left;
+      text-decoration: none;
+    }
+    .docs-nav-link:hover { color: var(--text); background: var(--navy-3); }
+    .docs-nav-link.active {
+      color: var(--accent);
+      background: var(--accent-glow);
+      font-weight: 500;
+    }
+    .docs-nav-link--sub { padding-left: 20px; font-size: .79rem; }
+
+    /* ── Content ──────────────────────────────────────────────────────────────── */
+    .docs-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0;
+      scroll-behavior: smooth;
+    }
+    .docs-article {
+      max-width: 780px;
+      padding: 48px 56px 100px;
+      margin: 0 auto;
+    }
+
+    /* Section spacing & scroll offset */
+    .docs-section { scroll-margin-top: 72px; padding-top: 48px; border-top: 1px solid var(--border); margin-top: 0; }
+    .docs-section:first-child { border-top: none; padding-top: 0; }
+
+    /* ── Typography ───────────────────────────────────────────────────────────── */
+    .docs-h1 {
+      font-size: 2rem; font-weight: 800; margin-bottom: 10px;
+      background: linear-gradient(135deg, var(--text) 0%, var(--text-muted) 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .docs-lead { font-size: 1.05rem; color: var(--text-muted); margin-bottom: 40px; line-height: 1.7; }
+    .docs-h2 { font-size: 1.35rem; font-weight: 700; margin: 40px 0 14px; color: var(--text); }
+    .docs-h3 { font-size: 1rem; font-weight: 700; margin: 28px 0 10px; color: var(--text); }
+    .docs-h4 { font-size: .88rem; font-weight: 700; margin: 20px 0 8px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
+    .docs-p  { font-size: .9rem; line-height: 1.75; color: var(--text-muted); margin: 10px 0; }
+    .docs-p a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+    .docs-p strong { color: var(--text); font-weight: 600; }
+    .docs-li { font-size: .9rem; line-height: 1.75; color: var(--text-muted); }
+    .docs-ul, .docs-ol { padding-left: 20px; margin: 10px 0; display: flex; flex-direction: column; gap: 4px; }
+
+    /* ── Code ─────────────────────────────────────────────────────────────────── */
+    .docs-code-block {
+      background: var(--navy-2);
+      border: 1px solid var(--border);
+      border-radius: var(--r-sm);
+      margin: 16px 0;
+      overflow: hidden;
+    }
+    .docs-code-block__bar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 7px 14px;
+      background: var(--navy-3);
+      border-bottom: 1px solid var(--border);
+    }
+    .docs-code-block__lang { font-size: .72rem; color: var(--text-dim); font-family: var(--mono); }
+    .docs-code-block__copy {
+      font-size: .72rem; color: var(--text-dim); background: none; border: none;
+      cursor: pointer; padding: 2px 6px; border-radius: 4px;
+      transition: color var(--t), background var(--t);
+    }
+    .docs-code-block__copy:hover { color: var(--text); background: var(--border); }
+    .docs-code-block pre {
+      padding: 16px;
+      overflow-x: auto;
+      margin: 0;
+    }
+    .docs-code-block pre code {
+      font-family: var(--mono);
+      font-size: .81rem;
+      line-height: 1.65;
+      color: var(--text);
+    }
+    .docs-inline-code {
+      font-family: var(--mono);
+      font-size: .82em;
+      background: var(--navy-3);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 6px;
+      color: var(--success);
+    }
+
+    /* ── Callouts ─────────────────────────────────────────────────────────────── */
+    .callout {
+      border-radius: var(--r-sm);
+      padding: 14px 18px;
+      margin: 18px 0;
+      display: flex;
+      gap: 12px;
+      font-size: .875rem;
+      line-height: 1.65;
+    }
+    .callout__icon { font-size: 1rem; flex-shrink: 0; line-height: 1.65; }
+    .callout__body { color: var(--text-muted); }
+    .callout__body strong { color: var(--text); }
+    .callout--tip   { background: var(--accent-glow); border: 1px solid rgba(99,102,241,.25); }
+    .callout--warn  { background: var(--warn-bg);   border: 1px solid rgba(251,191,36,.2); }
+    .callout--note  { background: var(--navy-2);    border: 1px solid var(--border); }
+    .callout--rule  { background: var(--danger-bg); border: 1px solid rgba(248,113,113,.2); }
+
+    /* ── Tables ───────────────────────────────────────────────────────────────── */
+    .docs-table-wrap { overflow-x: auto; margin: 16px 0; border-radius: var(--r-sm); border: 1px solid var(--border); }
+    .docs-table { width: 100%; border-collapse: collapse; font-size: .84rem; }
+    .docs-table th { padding: 10px 14px; text-align: left; font-size: .72rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-dim); background: var(--navy-2); border-bottom: 1px solid var(--border); }
+    .docs-table td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: top; color: var(--text-muted); line-height: 1.55; }
+    .docs-table tr:last-child td { border-bottom: none; }
+    .docs-table td:first-child { font-family: var(--mono); font-size: .78rem; color: var(--success); white-space: nowrap; }
+    .docs-table td strong { color: var(--text); }
+    .docs-table td em { color: var(--text-dim); font-style: normal; font-size: .8em; }
+
+    /* ── Step list ────────────────────────────────────────────────────────────── */
+    .steps { display: flex; flex-direction: column; gap: 16px; margin: 16px 0; }
+    .step { display: flex; gap: 16px; }
+    .step__num {
+      width: 26px; height: 26px; border-radius: 50%;
+      background: var(--accent-glow); border: 1px solid rgba(99,102,241,.3);
+      display: grid; place-items: center;
+      font-size: .75rem; font-weight: 700; color: var(--accent);
+      flex-shrink: 0; margin-top: 1px;
+    }
+    .step__body { flex: 1; }
+    .step__title { font-size: .9rem; font-weight: 600; margin-bottom: 4px; }
+    .step__desc  { font-size: .85rem; color: var(--text-muted); line-height: 1.65; }
+
+    /* ── Schema block ─────────────────────────────────────────────────────────── */
+    .schema { background: var(--navy-2); border: 1px solid var(--border); border-radius: var(--r-sm); margin: 16px 0; overflow: hidden; }
+    .schema__title { padding: 8px 14px; background: var(--navy-3); border-bottom: 1px solid var(--border); font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--text-dim); }
+    .schema__row { display: flex; gap: 0; border-bottom: 1px solid var(--border); }
+    .schema__row:last-child { border-bottom: none; }
+    .schema__field { padding: 8px 14px; font-family: var(--mono); font-size: .78rem; color: var(--success); width: 160px; flex-shrink: 0; border-right: 1px solid var(--border); }
+    .schema__type  { padding: 8px 14px; font-family: var(--mono); font-size: .75rem; color: var(--accent); width: 100px; flex-shrink: 0; border-right: 1px solid var(--border); }
+    .schema__desc  { padding: 8px 14px; font-size: .8rem; color: var(--text-muted); line-height: 1.5; flex: 1; }
+    .schema__req   { color: var(--danger); }
+    .schema__opt   { color: var(--text-dim); }
+
+    /* ── Page nav pills ───────────────────────────────────────────────────────── */
+    .page-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 0 4px; }
+    .page-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 13px;
+      background: var(--navy-2); border: 1px solid var(--border); border-radius: 99px;
+      font-size: .8rem; color: var(--text-muted); text-decoration: none;
+      transition: border-color var(--t), color var(--t);
+    }
+    .page-pill:hover { color: var(--text); border-color: var(--border-hi); }
+    .page-pill__badge { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+
+    /* ── Responsive ───────────────────────────────────────────────────────────── */
+    @media (max-width: 900px) {
+      .docs-sidebar { display: none; }
+      .docs-article { padding: 32px 20px 80px; }
+    }
+  </style>
+</head>
+<body class="docs-page">
+
+  <!-- Top bar -->
+  <header class="topbar">
+    <a href="/" class="topbar__brand">
+      <img src='/assets/agentsiq-logo.svg' alt='AgentsIQ' style='height:44px;'>
+    </a>
+    <nav class="topbar__nav">
+      <a href="/" class="topbar__link">Agents</a>
+      <a href="/admin/" class="topbar__link">Admin</a>
+      <a href="/docs/" class="topbar__link topbar__link--active">Docs</a>
+    </nav>
+  </header>
+
+  <div class="docs-body">
+
+    <!-- ── Sidebar nav ─────────────────────────────────────────────────────── -->
+    <nav class="docs-sidebar" id="docs-sidebar">
+      <div class="docs-sidebar__header">
+        <div class="docs-sidebar__title">Documentation</div>
+      </div>
+
+      <div class="docs-nav-group">
+        <div class="docs-nav-group__label">Getting Started</div>
+        <a class="docs-nav-link" href="#getting-started">Overview</a>
+        <a class="docs-nav-link docs-nav-link--sub" href="#gs-access">Access</a>
+        <a class="docs-nav-link docs-nav-link--sub" href="#gs-env">Environment Variables</a>
+      </div>
+
+      <div class="docs-nav-group">
+        <div class="docs-nav-group__label">Using the Portal</div>
+        <a class="docs-nav-link" href="#portal">Portal Areas</a>
+        <a class="docs-nav-link docs-nav-link--sub" href="#portal-nav">Navigation</a>
+      </div>
+
+      <div class="docs-nav-group">
+        <div class="docs-nav-group__label">Agent Catalogue</div>
+        <a class="docs-nav-link" href="#catalogue">Agent Cards</a>
+        <a class="docs-nav-link docs-nav-link--sub" href="#catalogue-actions">Quick Actions</a>
+      </div>
+
+      <div class="docs-nav-group">
+        <div class="docs-nav-group__label">Chat Interface</div>
+        <a class="docs-nav-link" href="#chat">Chat Layout</a>
+        <a class="docs-nav-link docs-nav-link--sub" href="#chat-sessions">Sessions</a>
+      </div>
+
+      <div class="docs-nav-group">
+        <div class="docs-nav-group__label">Operator Guide</div>
+        <a class="docs-nav-link" href="#operator">Admin Console</a>
+        <a class="docs-nav-link docs-nav-link--sub" href="#operator-platform">Platform Tab</a>
+      </div>
+
+      <div class="docs-nav-group">
+        <div class="docs-nav-group__label">Agent Settings</div>
+        <a class="docs-nav-link" href="#settings">Per-Agent Settings</a>
+        <a class="docs-nav-link docs-nav-link--sub" href="#settings-alert">Alert Analyser</a>
+        <a class="docs-nav-link docs-nav-link--sub" href="#settings-cur">CUR Analyser</a>
+        <a class="docs-nav-link docs-nav-link--sub" href="#settings-infra">Infra Health</a>
+      </div>
+
+      <div class="docs-nav-group">
+        <div class="docs-nav-group__label">Client Delivery</div>
+        <a class="docs-nav-link" href="#delivery">Deployment</a>
+        <a class="docs-nav-link docs-nav-link--sub" href="#delivery-envvars">Required Variables</a>
+        <a class="docs-nav-link docs-nav-link--sub" href="#delivery-steps">Setup Steps</a>
+        <a class="docs-nav-link docs-nav-link--sub" href="#delivery-limitations">Known Limitations</a>
+      </div>
+
+      <div class="docs-nav-group">
+        <div class="docs-nav-group__label">Agent Development</div>
+        <a class="docs-nav-link" href="#dev">Building Agents</a>
+        <a class="docs-nav-link docs-nav-link--sub" href="#dev-contract">Invoke Contract</a>
+        <a class="docs-nav-link docs-nav-link--sub" href="#dev-tools">Tools</a>
+        <a class="docs-nav-link docs-nav-link--sub" href="#dev-config">Config Persistence</a>
+        <a class="docs-nav-link docs-nav-link--sub" href="#dev-register">Registration</a>
+      </div>
+    </nav>
+
+    <!-- ── Content ────────────────────────────────────────────────────────── -->
+    <main class="docs-content" id="docs-content">
+      <article class="docs-article">
+
+        <!-- ═══════════════════════════════════════════════════════════════════ -->
+        <!--  SECTION 1 — GETTING STARTED                                        -->
+        <!-- ═══════════════════════════════════════════════════════════════════ -->
+        <section class="docs-section" id="getting-started">
+          <h1 class="docs-h1">AgentsIQ Studio</h1>
+          <p class="docs-lead">
+            A multi-domain AI platform that brings intelligent agents to your operations team.
+            Each agent specialises in a specific domain — alert noise detection, cloud cost analysis,
+            infrastructure health — and provides an AI chatbot, dashboard, and reports
+            powered by your real data.
+          </p>
+
+          <h2 class="docs-h2" id="gs-access">Access</h2>
+          <p class="docs-p">
+            The platform is available at <strong>studio.agentsiq.net</strong>.
+            Access is protected by Cloudflare Access — enter your email address
+            and you will receive a one-time verification code. No password to manage.
+          </p>
+          <p class="docs-p">
+            To deploy your own instance, you need exactly two environment variables set
+            before the application starts. Everything else is configured through the
+            <strong>Setup Wizard</strong> and individual agent <strong>Settings</strong> pages.
+          </p>
+
+          <h2 class="docs-h2" id="gs-env">Minimum Environment Variables</h2>
+          <div class="docs-table-wrap">
+            <table class="docs-table">
+              <thead><tr><th>Variable</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td>DATABASE_URL</td>
+                  <td><strong>Required.</strong> PostgreSQL connection string. Set via <code class="docs-inline-code">.env</code> or your platform dashboard. The database must exist before the application starts — this cannot be configured through the UI.</td>
+                </tr>
+                <tr>
+                  <td>ENCRYPTION_KEY</td>
+                  <td><strong>Required.</strong> Fernet symmetric key used to encrypt secrets at rest. Generate once with:<br><code class="docs-inline-code">python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'</code><br>All services in the same deployment must share the same key. Never change this after initial setup — it will render all stored secrets unreadable.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout callout--warn">
+            <span class="callout__icon">⚠</span>
+            <div class="callout__body">
+              <strong>Do not set PORT manually.</strong> Railway, ECS, and Kubernetes inject
+              <code>PORT</code> automatically. Setting it in your environment will conflict
+              with the platform's port binding.
+            </div>
+          </div>
+          <p class="docs-p">
+            After providing these two variables, open the platform URL and the Setup Wizard
+            will guide you through the remaining configuration in under two minutes.
+          </p>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════════════ -->
+        <!--  SECTION 2 — USING THE PORTAL                                       -->
+        <!-- ═══════════════════════════════════════════════════════════════════ -->
+        <section class="docs-section" id="portal">
+          <h2 class="docs-h2">Using the Portal</h2>
+          <p class="docs-p">
+            The portal has three areas: the <strong>Agent Catalogue</strong> (home page),
+            the <strong>Admin console</strong>, and individual <strong>agent workspaces</strong>.
+            Use the top navigation bar to move between areas.
+          </p>
+
+          <div class="docs-table-wrap">
+            <table class="docs-table">
+              <thead><tr><th>Area</th><th>URL</th><th>Purpose</th></tr></thead>
+              <tbody>
+                <tr><td>/</td><td>Agent Catalogue</td><td>Browse and launch published agents</td></tr>
+                <tr><td>/admin/</td><td>Admin Console</td><td>Manage agent lifecycle; configure platform</td></tr>
+                <tr><td>/chat?agent=&lt;slug&gt;</td><td>Chat</td><td>Converse with a specific agent</td></tr>
+                <tr><td>/agents/&lt;slug&gt;/</td><td>Agent workspace</td><td>Agent-specific dashboard, reports, settings</td></tr>
+                <tr><td>/setup.html</td><td>Setup Wizard</td><td>First-run configuration (auto-redirected)</td></tr>
+                <tr><td>/docs/</td><td>Documentation</td><td>This page</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3 class="docs-h3" id="portal-nav">Navigation</h3>
+          <p class="docs-p">
+            Each agent card on the catalogue shows the agent's name, description, model version,
+            and quick action buttons. Use the search bar to filter agents by name, slug, or
+            description — filtering runs locally with no server round-trip.
+            The catalogue updates automatically when agents are published or deprecated.
+          </p>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════════════ -->
+        <!--  SECTION 3 — AGENT CATALOGUE                                        -->
+        <!-- ═══════════════════════════════════════════════════════════════════ -->
+        <section class="docs-section" id="catalogue">
+          <h2 class="docs-h2">Agent Catalogue</h2>
+          <p class="docs-p">
+            Published agents appear as cards. Each card's accent colour is derived
+            deterministically from the agent's slug — the same agent always shows
+            the same colour across browsers and sessions.
+            The agent count shown top-right of the catalogue updates in real time
+            as agents are published or deprecated.
+          </p>
+
+          <h3 class="docs-h3" id="catalogue-actions">Quick Actions</h3>
+          <div class="docs-table-wrap">
+            <table class="docs-table">
+              <thead><tr><th>Agent</th><th>Available actions</th></tr></thead>
+              <tbody>
+                <tr><td>Alert Analyser</td><td>Chat, Dashboard, Reports, Settings</td></tr>
+                <tr><td>CUR Analyser</td><td>Chat, Dashboard, Reports, Settings</td></tr>
+                <tr><td>Infra Health Check</td><td>Chat, Settings</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="docs-p">
+            Click <strong>Chat</strong> to open the agent's conversation interface.
+            The other buttons open the agent's workspace pages — dashboards display
+            pre-computed analytics, reports show uploaded or synced data sets,
+            and settings control the agent's data source.
+          </p>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════════════ -->
+        <!--  SECTION 4 — CHAT INTERFACE                                         -->
+        <!-- ═══════════════════════════════════════════════════════════════════ -->
+        <section class="docs-section" id="chat">
+          <h2 class="docs-h2">Chat Interface</h2>
+          <p class="docs-p">
+            The left sidebar shows four pieces of information: the agent name,
+            the model currently in use, your session ID, and the current data context —
+            what data the agent is working with and key metrics derived from it.
+          </p>
+          <p class="docs-p">
+            Type your question in the input box at the bottom and press Enter to send.
+            The agent responds with analysis, structured tables, and actionable recommendations.
+            Markdown formatting — headers, bold, code blocks, and tables — is rendered inline.
+          </p>
+          <p class="docs-p">
+            Ask follow-up questions naturally. The agent retains context within a session:
+            you can reference earlier parts of the conversation without repeating background.
+          </p>
+
+          <h3 class="docs-h3" id="chat-sessions">Sessions</h3>
+          <p class="docs-p">
+            Click <strong>New Session</strong> in the sidebar to start a fresh conversation.
+            The previous session is preserved in the database and can be resumed by navigating
+            back with the same session ID. Sessions are identified by a UUID stored in
+            <code class="docs-inline-code">sessionStorage</code> — refreshing the page
+            resumes the same session; closing the tab and reopening starts a new one.
+          </p>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════════════ -->
+        <!--  SECTION 5 — OPERATOR GUIDE                                         -->
+        <!-- ═══════════════════════════════════════════════════════════════════ -->
+        <section class="docs-section" id="operator">
+          <h2 class="docs-h2">Operator Guide</h2>
+          <p class="docs-p">
+            Operators manage the platform via the <strong>Admin</strong> link in the top bar.
+            The admin console has two tabs: <strong>Agents</strong> and <strong>Platform</strong>.
+          </p>
+
+          <h3 class="docs-h3">Agents Tab</h3>
+          <p class="docs-p">
+            Lists all registered agents with status filters: All, Draft, Published, Deprecated.
+          </p>
+          <ul class="docs-ul">
+            <li class="docs-li"><strong>Deprecate</strong> — removes an agent from the catalogue without deleting its registration or chat history. The agent moves to the Deprecated tab and can be re-published at any time.</li>
+            <li class="docs-li"><strong>+ Register Agent</strong> — opens the registration form. Fill in the name, slug, description, invoke URL, and model. The agent starts in Draft status.</li>
+            <li class="docs-li"><strong>Publish</strong> — makes a Draft agent live in the catalogue immediately.</li>
+          </ul>
+
+          <div class="callout callout--note">
+            <span class="callout__icon">📋</span>
+            <div class="callout__body">
+              The slug is the permanent identifier for an agent. It is used in URLs,
+              the invoke path, and the database. Choose it carefully — changing it after
+              registration requires re-registering the agent and migrating any stored sessions.
+            </div>
+          </div>
+
+          <h3 class="docs-h3" id="operator-platform">Platform Tab</h3>
+          <p class="docs-p">
+            The Platform tab shows the current state of the backend configuration:
+          </p>
+          <ul class="docs-ul">
+            <li class="docs-li"><strong>Anthropic API</strong> — shows <em>Connected</em> if the API key is present and valid, <em>Not configured</em> if missing.</li>
+            <li class="docs-li"><strong>Model in use</strong> — the Claude model used for direct invocations.</li>
+            <li class="docs-li"><strong>Published agents</strong> — count of agents currently visible in the catalogue.</li>
+            <li class="docs-li"><strong>Platform version</strong> — the backend release version.</li>
+          </ul>
+          <p class="docs-p">
+            The <strong>Test Connection</strong> button in the Edit Platform Config section
+            tests a new Anthropic API key without saving it. Changes made here apply
+            immediately — the backend cache is updated in memory without requiring a redeployment.
+          </p>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════════════ -->
+        <!--  SECTION 6 — AGENT SETTINGS                                         -->
+        <!-- ═══════════════════════════════════════════════════════════════════ -->
+        <section class="docs-section" id="settings">
+          <h2 class="docs-h2">Agent Settings</h2>
+          <p class="docs-p">
+            Each agent has a Settings page accessible from its card (Settings button)
+            or from the sub-navigation bar within the agent workspace.
+            Settings are stored encrypted in the database and survive restarts —
+            there is no need to reconfigure after upgrades or redeployments.
+          </p>
+
+          <h3 class="docs-h3" id="settings-alert">Alert Analyser</h3>
+          <p class="docs-p">Choose the source for alert data:</p>
+          <ul class="docs-ul">
+            <li class="docs-li"><strong>File Upload</strong> — upload a CSV or JSON export from OpsGenie via the Reports page. The file is parsed on upload and stored in memory for the session.</li>
+            <li class="docs-li"><strong>OpsGenie / JSM API</strong> — enter your Cloud ID, email address, and API token. The agent calls the JSM Ops API directly and retrieves the last 100 alerts. Click <strong>Save &amp; Sync</strong> to pull data immediately. Subsequent syncs can be triggered from the Settings page at any time.</li>
+            <li class="docs-li"><strong>Synthetic Data</strong> — generates a realistic set of OpsGenie-formatted alerts for demonstration. No credentials required.</li>
+          </ul>
+          <p class="docs-p">
+            Credentials (API token, Cloud ID) are encrypted using the deployment's
+            <code class="docs-inline-code">ENCRYPTION_KEY</code> before being written
+            to the database. They are decrypted in memory at runtime and never returned
+            to the browser.
+          </p>
+
+          <h4 class="docs-h4">Sync Schedule</h4>
+          <p class="docs-p">
+            Configure how often the agent automatically pulls fresh data from OpsGenie.
+            Options: <strong>Disabled</strong>, <strong>Every 15 min</strong>,
+            <strong>Every 30 min</strong>, <strong>Every hour</strong>,
+            <strong>Every 6 hours</strong>, <strong>Every 24 hours</strong>.
+            Set to Disabled if you prefer to sync manually.
+            The last synced time is shown below the dropdown.
+          </p>
+
+          <h4 class="docs-h4">Noise Detection Tuning</h4>
+          <p class="docs-p">
+            Two thresholds control how alerts are classified as noise:
+          </p>
+          <ul class="docs-ul">
+            <li class="docs-li"><strong>Repeat threshold</strong> — alerts firing more than this many times in 1 hour are flagged as noise. Default: 3.</li>
+            <li class="docs-li"><strong>Auto-close threshold</strong> — alerts that auto-close in fewer than this many seconds are flagged as noise. Default: 300 seconds (5 minutes).</li>
+          </ul>
+          <p class="docs-p">
+            Tune these to match your organisation's alert patterns. Changes take effect
+            immediately on the next sync. All settings are persisted to your database
+            and survive restarts.
+          </p>
+
+          <h3 class="docs-h3" id="settings-cur">CUR Analyser</h3>
+          <p class="docs-p">Choose the source for AWS cost data:</p>
+          <ul class="docs-ul">
+            <li class="docs-li"><strong>File Upload</strong> — upload an AWS Cost and Usage Report CSV export via the Reports page. The file must use the standard CUR column schema.</li>
+            <li class="docs-li"><strong>Synthetic Data</strong> — auto-generates a realistic CUR dataset with multiple services, regions, and accounts. No AWS credentials required.</li>
+          </ul>
+          <p class="docs-p">
+            AWS Cost Explorer API integration is planned for Phase 2. For now, export your
+            CUR data from the AWS Billing console and upload it via the Reports page.
+          </p>
+
+          <h3 class="docs-h3" id="settings-infra">Infra Health Check</h3>
+          <p class="docs-p">
+            The Settings page for Infra Health Check is read-only. It shows the agent's
+            current health status, model version, and invoke URL. No configuration is required —
+            the agent's health data is built in, covering five services:
+            api-server, database, cache, queue, and cdn.
+          </p>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════════════ -->
+        <!--  SECTION 7 — CLIENT DELIVERY & DEPLOYMENT                           -->
+        <!-- ═══════════════════════════════════════════════════════════════════ -->
+        <section class="docs-section" id="delivery">
+          <h2 class="docs-h2">Client Delivery &amp; Deployment</h2>
+          <p class="docs-p">
+            AgentsIQ agents are delivered as standalone plugin repositories.
+            Each plugin is self-contained and deployable on any platform that runs Docker —
+            Railway, ECS, Fly.io, or a bare VM with Docker Compose.
+          </p>
+
+          <h3 class="docs-h3" id="delivery-envvars">Required Environment Variables</h3>
+          <p class="docs-p">
+            Only two variables must be set before the application starts. Everything else
+            is configured through the Setup Wizard or agent Settings pages.
+          </p>
+          <div class="docs-table-wrap">
+            <table class="docs-table">
+              <thead><tr><th>Variable</th><th>Set via</th><th>Notes</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td>DATABASE_URL</td>
+                  <td><code class="docs-inline-code">.env</code> or platform dashboard</td>
+                  <td>PostgreSQL connection string. The database must exist before startup. Cannot be set through the UI.</td>
+                </tr>
+                <tr>
+                  <td>ENCRYPTION_KEY</td>
+                  <td><code class="docs-inline-code">.env</code> or platform dashboard</td>
+                  <td>All services must share the same key. Generate once — never rotate after data has been written.</td>
+                </tr>
+                <tr>
+                  <td>PORT</td>
+                  <td>Auto-injected</td>
+                  <td>Never set manually. Railway, ECS, and Kubernetes inject this at runtime.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p class="docs-p">The following are configured through the UI after first start:</p>
+          <ul class="docs-ul">
+            <li class="docs-li"><strong>Anthropic API Key</strong> — entered in Setup Wizard Step 1, stored encrypted in the <code class="docs-inline-code">platform_config</code> table.</li>
+            <li class="docs-li"><strong>Platform API Key</strong> — auto-generated in Setup Wizard Step 2, stored encrypted in the <code class="docs-inline-code">platform_config</code> table. This key secures all communication between the portal and the backend API — every portal request includes it as an <code class="docs-inline-code">X-API-Key</code> header. Users never interact with it directly. The portal fetches this key automatically from the backend at load time via <code class="docs-inline-code">GET /api/platform/bootstrap</code>, so wizard-generated keys work immediately without any environment variable changes.</li>
+            <li class="docs-li"><strong>OpsGenie credentials</strong> — entered in Alert Analyser Settings, stored encrypted in the agent's <code class="docs-inline-code">agent_config</code> table.</li>
+            <li class="docs-li"><strong>Data source preferences</strong> — configured per agent in their respective Settings pages.</li>
+          </ul>
+
+          <h3 class="docs-h3" id="delivery-steps">Deployment Steps</h3>
+          <div class="steps">
+            <div class="step">
+              <div class="step__num">1</div>
+              <div class="step__body">
+                <div class="step__title">Clone the agent repository</div>
+                <div class="step__desc">Each agent is delivered as a standalone repo. Clone it to your deployment environment.</div>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step__num">2</div>
+              <div class="step__body">
+                <div class="step__title">Copy <code class="docs-inline-code">.env.example</code> to <code class="docs-inline-code">.env</code></div>
+                <div class="step__desc">The example file documents every variable. You only need to fill in two.</div>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step__num">3</div>
+              <div class="step__body">
+                <div class="step__title">Set <code class="docs-inline-code">DATABASE_URL</code> and <code class="docs-inline-code">ENCRYPTION_KEY</code></div>
+                <div class="step__desc">These are the only variables that cannot be set through the UI. Generate the encryption key with the command documented in <code class="docs-inline-code">.env.example</code>.</div>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step__num">4</div>
+              <div class="step__body">
+                <div class="step__title">Run <code class="docs-inline-code">docker compose up</code></div>
+                <div class="step__desc">Starts all services. The backend creates the database schema automatically on first start.</div>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step__num">5</div>
+              <div class="step__body">
+                <div class="step__title">Open the portal in your browser</div>
+                <div class="step__desc">The platform detects that no Anthropic key is configured and redirects automatically to the Setup Wizard.</div>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step__num">6</div>
+              <div class="step__body">
+                <div class="step__title">Complete the Setup Wizard</div>
+                <div class="step__desc">Takes approximately two minutes. Enter and test your Anthropic API key, then copy the auto-generated Platform API Key. Both are saved encrypted to the database.</div>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step__num">7</div>
+              <div class="step__body">
+                <div class="step__title">Configure each agent's data source</div>
+                <div class="step__desc">Go to each agent's Settings page and select your data source. For Alert Analyser with OpsGenie, enter your Cloud ID, email, and API token, then click Save &amp; Sync.</div>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step__num">8</div>
+              <div class="step__body">
+                <div class="step__title">Data is live</div>
+                <div class="step__desc">The agent populates its dashboard and is ready to answer questions. Open the catalogue and click Chat.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="callout callout--tip">
+            <span class="callout__icon">💡</span>
+            <div class="callout__body">
+              To register a new agent with the platform, click <strong>+ Register Agent</strong>
+              in the Admin console and fill in the manifest details.
+              No API calls, no file editing, no restarts required.
+            </div>
+          </div>
+
+          <h3 class="docs-h3" id="delivery-limitations">Known Limitations</h3>
+          <ul class="docs-ul">
+            <li class="docs-li"><strong>Agent configuration requires <code class="docs-inline-code">DATABASE_URL</code> for persistence.</strong> If an agent container restarts without <code class="docs-inline-code">DATABASE_URL</code> configured, any previously saved settings (OpsGenie credentials, data source preference) will not be restored.</li>
+            <li class="docs-li"><strong>No scheduled auto-sync.</strong> Alert data must be manually synced via the Alert Analyser Settings page. Automatic scheduled sync is planned for Phase 2.</li>
+            <li class="docs-li"><strong>AWS Cost Explorer API integration is planned for Phase 2.</strong> CUR data must currently be exported from the AWS Billing console and uploaded manually via the Reports page.</li>
+          </ul>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════════════ -->
+        <!--  SECTION 8 — AGENT DEVELOPMENT                                      -->
+        <!-- ═══════════════════════════════════════════════════════════════════ -->
+        <section class="docs-section" id="dev">
+          <h2 class="docs-h2">Agent Development</h2>
+          <p class="docs-p">
+            Build a new agent by copying the
+            <code class="docs-inline-code">agents/agent-template/</code> folder.
+            The template is self-contained — it has no dependency on the monorepo's
+            <code class="docs-inline-code">shared/</code> package and can be extracted
+            and delivered as a standalone repository to clients.
+          </p>
+
+          <h3 class="docs-h3" id="dev-contract">Invoke Contract</h3>
+          <p class="docs-p">
+            Every agent exposes exactly two HTTP endpoints:
+          </p>
+          <div class="docs-table-wrap">
+            <table class="docs-table">
+              <thead><tr><th>Method + Path</th><th>Description</th><th>Auth</th></tr></thead>
+              <tbody>
+                <tr><td>GET /health</td><td>Returns <code class="docs-inline-code">{"status":"ok","agent":"&lt;slug&gt;"}</code></td><td>None</td></tr>
+                <tr><td>POST /invoke</td><td>Accepts <code class="docs-inline-code">InvokeRequest</code>, returns <code class="docs-inline-code">InvokeResponse</code></td><td>None (backend handles auth)</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p class="docs-p">
+            The <code class="docs-inline-code">POST /invoke</code> body:
+          </p>
+          <div class="schema">
+            <div class="schema__title">InvokeRequest</div>
+            <div class="schema__row">
+              <div class="schema__field">session_id</div>
+              <div class="schema__type">string</div>
+              <div class="schema__desc"><span class="schema__req">required</span> — UUID v4. Groups messages into a conversation.</div>
+            </div>
+            <div class="schema__row">
+              <div class="schema__field">user_message</div>
+              <div class="schema__type">string</div>
+              <div class="schema__desc"><span class="schema__req">required</span> — The user's current message.</div>
+            </div>
+            <div class="schema__row">
+              <div class="schema__field">context</div>
+              <div class="schema__type">dict</div>
+              <div class="schema__desc"><span class="schema__opt">optional</span> — Arbitrary key-value pairs injected into the system prompt. Use for tenant data, loaded report content, or session metadata.</div>
+            </div>
+            <div class="schema__row">
+              <div class="schema__field">history</div>
+              <div class="schema__type">list</div>
+              <div class="schema__desc"><span class="schema__opt">optional</span> — Previous messages as <code>[{"role":"user"|"assistant","content":"..."}]</code>. The orchestrator loads DB history automatically; standalone agents use this field directly.</div>
+            </div>
+          </div>
+          <p class="docs-p">
+            The response must contain a <code class="docs-inline-code">response</code> string
+            and a <code class="docs-inline-code">metadata</code> dict. The template returns
+            <code class="docs-inline-code">{"tokens_used": N}</code> in metadata.
+          </p>
+
+          <h3 class="docs-h3" id="dev-tools">Tools</h3>
+          <p class="docs-p">
+            Define tools in the <code class="docs-inline-code">tools/</code> folder by
+            subclassing <code class="docs-inline-code">ToolExecutor</code>:
+          </p>
+          <div class="docs-code-block">
+            <div class="docs-code-block__bar">
+              <span class="docs-code-block__lang">python — tools/my_tool.py</span>
+              <button class="docs-code-block__copy">Copy</button>
+            </div>
+            <pre><code>from typing import Any
+from tools.base import ToolExecutor
+
+class MyTool(ToolExecutor):
+    name = "my_tool"
+    description = "What this tool does, written for Claude to understand."
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "The input to process."}
+        },
+        "required": ["query"],
+    }
+
+    async def execute(self, **kwargs: Any) -> str:
+        query = kwargs["query"]
+        # ... perform work ...
+        return "Result as a plain string."</code></pre>
+          </div>
+          <p class="docs-p">
+            Register tools in <code class="docs-inline-code">main.py</code>:
+          </p>
+          <div class="docs-code-block">
+            <div class="docs-code-block__bar">
+              <span class="docs-code-block__lang">python — main.py</span>
+              <button class="docs-code-block__copy">Copy</button>
+            </div>
+            <pre><code>from tools.my_tool import MyTool
+_runner = AgentRunner(tools=[MyTool()])</code></pre>
+          </div>
+          <p class="docs-p">
+            <code class="docs-inline-code">AgentRunner</code> handles the multi-turn tool loop
+            automatically. It runs until Claude returns <code class="docs-inline-code">stop_reason == "end_turn"</code>,
+            executing each tool call and appending results before the next Claude turn.
+          </p>
+
+          <h3 class="docs-h3" id="dev-config">Config Persistence</h3>
+          <p class="docs-p">
+            Add settings persistence using the <code class="docs-inline-code">agent_config</code>
+            database pattern — see <code class="docs-inline-code">alert-analyser</code> for
+            the reference implementation:
+            <code class="docs-inline-code">models.py</code> defines the
+            <code class="docs-inline-code">agent_config</code> table,
+            <code class="docs-inline-code">database.py</code> creates the async engine from
+            <code class="docs-inline-code">DATABASE_URL</code>, and
+            <code class="docs-inline-code">routes_settings.py</code> exposes
+            <code class="docs-inline-code">GET /settings</code> and
+            <code class="docs-inline-code">POST /settings</code>.
+          </p>
+          <p class="docs-p">
+            All secrets written through the Settings page are encrypted at rest
+            using the deployment's shared <code class="docs-inline-code">ENCRYPTION_KEY</code>.
+            The <code class="docs-inline-code">encryption.py</code> module in each agent
+            handles encrypt/decrypt transparently — use
+            <code class="docs-inline-code">is_secret_key(key)</code> to determine which
+            fields to encrypt before writing and decrypt after reading.
+          </p>
+          <p class="docs-p">
+            Declare your agent's configuration requirements in
+            <code class="docs-inline-code">manifest.json</code> — the platform reads this
+            file during registration. Agents with a <code class="docs-inline-code">DATABASE_URL</code>
+            listed in <code class="docs-inline-code">env</code> will have their
+            <code class="docs-inline-code">agent_config</code> table created automatically
+            on first startup.
+          </p>
+
+          <h3 class="docs-h3" id="dev-register">Self-Registration</h3>
+          <p class="docs-p">
+            If <code class="docs-inline-code">REGISTRY_URL</code> and
+            <code class="docs-inline-code">BACKEND_API_KEY</code> are set, the agent
+            calls <code class="docs-inline-code">POST /api/registry/agents</code> on startup,
+            resolves any 409 conflict by slug lookup, and publishes itself automatically.
+            On Railway, set these two variables to the backend's public URL and API key —
+            the agent will appear in the catalogue the first time it boots.
+          </p>
+          <p class="docs-p">
+            Alternatively, register manually via the Admin console
+            <strong>+ Register Agent</strong> button. Fill in the manifest details and
+            click <strong>Publish now</strong> — the agent appears in the catalogue immediately.
+          </p>
+
+          <div class="callout callout--rule">
+            <span class="callout__icon">⛔</span>
+            <div class="callout__body">
+              <strong>Agents must be stateless.</strong>
+              No in-memory session dictionaries, no file system writes, no database state
+              beyond the <code>agent_config</code> settings table.
+              Every request must be fully self-contained — all conversational context
+              arrives through <code>context</code> and <code>history</code>.
+              The platform's <code>chat_messages</code> table provides session persistence;
+              agents should never need their own.
+            </div>
+          </div>
+        </section>
+
+      </article>
+    </main>
+
+  </div><!-- /.docs-body -->
+
+  <script>
+    // ── Active link tracking via IntersectionObserver ────────────────────────
+    const links    = document.querySelectorAll('.docs-nav-link');
+    const sections = document.querySelectorAll('section[id]');
+
+    const io = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (!entry.isIntersecting) return;
+        links.forEach(l => l.classList.remove('active'));
+        const active = document.querySelector(`.docs-nav-link[href="#${entry.target.id}"]`);
+        if (active) {
+          active.classList.add('active');
+          active.scrollIntoView({ block: 'nearest' });
+        }
+      });
+    }, {
+      root: document.getElementById('docs-content'),
+      rootMargin: '-56px 0px -60% 0px',
+      threshold: 0,
+    });
+
+    sections.forEach(s => io.observe(s));
+
+    // ── Copy buttons ──────────────────────────────────────────────────────────
+    document.querySelectorAll('.docs-code-block__copy').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const pre  = btn.closest('.docs-code-block').querySelector('pre');
+        const text = btn.dataset.copy || pre?.textContent || '';
+        navigator.clipboard?.writeText(text.trim()).then(() => {
+          const orig = btn.textContent;
+          btn.textContent = 'Copied!';
+          setTimeout(() => { btn.textContent = orig; }, 1500);
+        }).catch(() => {});
+      });
+    });
+
+    // ── Smooth-scroll nav links ───────────────────────────────────────────────
+    document.querySelectorAll('.docs-nav-link[href^="#"]').forEach(link => {
+      link.addEventListener('click', e => {
+        e.preventDefault();
+        const target = document.getElementById(link.getAttribute('href').slice(1));
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          history.replaceState(null, '', link.getAttribute('href'));
+        }
+      });
+    });
+
+    // ── Restore scroll position from URL hash ────────────────────────────────
+    if (location.hash) {
+      const el = document.getElementById(location.hash.slice(1));
+      if (el) setTimeout(() => el.scrollIntoView({ block: 'start' }), 100);
+    }
+  </script>
+</body>
+</html>
+<!-- cache bust -->

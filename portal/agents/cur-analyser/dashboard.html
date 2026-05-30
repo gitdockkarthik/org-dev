@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CUR Dashboard — UAP</title>
+  <link rel="stylesheet" href="/css/style.css?v=3">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    body { background: var(--bg); }
+    .subnav { display: flex; background: var(--navy-1); border-bottom: 1px solid var(--border); padding: 0 40px; }
+    .subnav__link { display: inline-flex; align-items: center; gap: 6px; padding: 13px 16px; font-size: .85rem; color: var(--text-muted); border-bottom: 2px solid transparent; margin-bottom: -1px; text-decoration: none; transition: color var(--t), border-color var(--t); }
+    .subnav__link:hover { color: var(--text); }
+    .subnav__link--active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+    .content { padding: 28px 40px; }
+    .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .kpi-card { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); padding: 20px 24px; }
+    .kpi-card__label { font-size: .75rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; }
+    .kpi-card__value { font-size: 1.8rem; font-weight: 700; color: var(--text); line-height: 1; }
+    .kpi-card__sub { font-size: .8rem; color: var(--text-muted); margin-top: 6px; }
+    .charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+    .chart-card { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); padding: 20px 24px; }
+    .chart-card__title { font-size: .88rem; font-weight: 600; margin-bottom: 16px; color: var(--text); }
+    .chart-wrap { position: relative; height: 260px; }
+    .section-card { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; margin-bottom: 16px; }
+    .section-card__header { padding: 14px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; font-weight: 600; font-size: .9rem; }
+    .data-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+    .data-table th { padding: 10px 14px; text-align: left; font-size: .72rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-dim); background: var(--navy-2); border-bottom: 1px solid var(--border); }
+    .data-table td { padding: 11px 14px; border-bottom: 1px solid var(--border); color: var(--text); }
+    .data-table tr:last-child td { border-bottom: none; }
+    .data-table tr:hover td { background: var(--navy-3); }
+    .pct-bar { height: 6px; border-radius: 3px; background: var(--accent); display: inline-block; min-width: 2px; }
+    @media (max-width: 900px) { .charts-row { grid-template-columns: 1fr; } }
+    @media (max-width: 768px) { .subnav { padding: 0 20px; } .content { padding: 20px; } }
+  </style>
+</head>
+<body>
+
+  <header class="topbar">
+    <a href="/" class="topbar__brand">
+      <span style="font-size:1.3rem;
+   font-weight:700;color:#ffffff;
+   letter-spacing:1px;
+   font-family:inherit;">OPERATIVE</span>
+    </a>
+    <nav class="topbar__nav">
+      <a href="/" class="topbar__link">Agents</a>
+      <a href="/admin/" class="topbar__link">Admin</a>
+    </nav>
+    <div class="topbar__right" style="font-size:.85rem;color:var(--text-muted)">CUR Analyser</div>
+  </header>
+
+  <nav class="subnav">
+    <a href="/chat?agent=cur-analyser" class="subnav__link">💬 Chat</a>
+    <a href="/agents/cur-analyser/dashboard" class="subnav__link subnav__link--active">📊 Dashboard</a>
+    <a href="/agents/cur-analyser/reports" class="subnav__link">📁 Reports</a>
+    <a href="/agents/cur-analyser/settings" class="subnav__link">⚙ Settings</a>
+  </nav>
+
+  <div class="content">
+    <div id="emptyState" style="display:none">
+      <div class="empty-state" style="margin-top:60px">
+        <div class="empty-state__icon">📊</div>
+        <div class="empty-state__title">No CUR data yet</div>
+        <div class="empty-state__sub">
+          <a href="/agents/cur-analyser/reports" style="color:var(--accent)">Upload a CUR CSV or generate sample data</a>
+        </div>
+      </div>
+    </div>
+
+    <div id="dashboard" style="display:none">
+      <!-- KPI row -->
+      <div class="kpi-row">
+        <div class="kpi-card">
+          <div class="kpi-card__label">Total Cost</div>
+          <div class="kpi-card__value" id="kpiTotal">—</div>
+          <div class="kpi-card__sub" id="kpiRows"></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-card__label">Top Service</div>
+          <div class="kpi-card__value" id="kpiTopSvc" style="font-size:1.1rem;line-height:1.3">—</div>
+          <div class="kpi-card__sub" id="kpiTopSvcCost"></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-card__label">Services</div>
+          <div class="kpi-card__value" id="kpiSvcCount">—</div>
+          <div class="kpi-card__sub">distinct services</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-card__label">Date Range</div>
+          <div class="kpi-card__value" id="kpiDays" style="font-size:1.1rem;line-height:1.3">—</div>
+          <div class="kpi-card__sub" id="kpiDateRange"></div>
+        </div>
+      </div>
+
+      <!-- Charts -->
+      <div class="charts-row">
+        <div class="chart-card">
+          <div class="chart-card__title">Top Services by Cost</div>
+          <div class="chart-wrap"><canvas id="svcChart"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card__title">Daily Cost Trend</div>
+          <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
+        </div>
+      </div>
+
+      <!-- Service breakdown table -->
+      <div class="section-card">
+        <div class="section-card__header">Service Breakdown</div>
+        <div id="svcTable"></div>
+      </div>
+    </div>
+
+    <div id="loadingState">
+      <div class="empty-state" style="margin-top:60px">
+        <div class="empty-state__icon">⏳</div>
+        <div class="empty-state__title">Loading dashboard…</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/config.js?v=3"></script>
+  <script src="/js/portal.js?v=3"></script>
+  <script>
+    const SLUG  = 'cur-analyser';
+    const PROXY = `${BACKEND_URL}/api/agents/${SLUG}/proxy`;
+
+    async function api(path) {
+      const res = await fetch(`${PROXY}${path}`, { headers: _authHeaders() });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(e.detail || `HTTP ${res.status}`);
+      }
+      return res.json();
+    }
+
+    function formatUSD(v) {
+      return '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    let svcChart, trendChart;
+
+    async function load() {
+      await portalReady;
+      try {
+        const data = await api('/dashboard');
+        document.getElementById('loadingState').style.display = 'none';
+
+        if (data.empty) {
+          document.getElementById('emptyState').style.display = 'block';
+          return;
+        }
+
+        document.getElementById('dashboard').style.display = 'block';
+
+        const { summary, services, trend } = data;
+
+        // KPIs
+        document.getElementById('kpiTotal').textContent = formatUSD(summary.total_cost || 0);
+        document.getElementById('kpiRows').textContent = `${(summary.row_count || 0).toLocaleString()} line items`;
+
+        if (services && services.length) {
+          document.getElementById('kpiTopSvc').textContent = services[0].service;
+          document.getElementById('kpiTopSvcCost').textContent = formatUSD(services[0].cost);
+          document.getElementById('kpiSvcCount').textContent = services.length;
+        }
+
+        if (trend && trend.length) {
+          const first = trend[0].date;
+          const last  = trend[trend.length - 1].date;
+          document.getElementById('kpiDays').textContent = `${trend.length}d`;
+          document.getElementById('kpiDateRange').textContent = `${first} → ${last}`;
+        }
+
+        // Service bar chart
+        const svcLabels = (services || []).slice(0, 10).map(s => s.service.replace('Amazon ', '').replace('AWS ', ''));
+        const svcData   = (services || []).slice(0, 10).map(s => s.cost);
+        const ctx1 = document.getElementById('svcChart').getContext('2d');
+        if (svcChart) svcChart.destroy();
+        svcChart = new Chart(ctx1, {
+          type: 'bar',
+          data: {
+            labels: svcLabels,
+            datasets: [{ label: 'Cost (USD)', data: svcData, backgroundColor: '#0EA5E9', borderRadius: 4 }],
+          },
+          options: {
+            indexAxis: 'y',
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { ticks: { callback: v => '$' + v.toLocaleString() }, grid: { color: '#e2e8f0' } },
+              y: { grid: { display: false } },
+            },
+          },
+        });
+
+        // Daily trend line chart
+        const trendLabels = (trend || []).map(t => t.date);
+        const trendData   = (trend || []).map(t => t.cost);
+        const ctx2 = document.getElementById('trendChart').getContext('2d');
+        if (trendChart) trendChart.destroy();
+        trendChart = new Chart(ctx2, {
+          type: 'line',
+          data: {
+            labels: trendLabels,
+            datasets: [{
+              label: 'Daily Cost',
+              data: trendData,
+              borderColor: '#0EA5E9',
+              backgroundColor: 'rgba(14,165,233,.12)',
+              fill: true, tension: 0.35, pointRadius: 3,
+            }],
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { ticks: { maxTicksLimit: 10 }, grid: { color: '#e2e8f0' } },
+              y: { ticks: { callback: v => '$' + v.toLocaleString() }, grid: { color: '#e2e8f0' } },
+            },
+          },
+        });
+
+        // Service breakdown table
+        const totalCost = summary.total_cost || 1;
+        const maxBarCost = services && services.length ? services[0].cost : 1;
+        const rows = (services || []).map(s => {
+          const pct = ((s.cost / totalCost) * 100).toFixed(1);
+          const barW = Math.round((s.cost / maxBarCost) * 120);
+          return `<tr>
+            <td>${s.service}</td>
+            <td style="font-weight:600;color:var(--accent)">${formatUSD(s.cost)}</td>
+            <td>${pct}%</td>
+            <td><span class="pct-bar" style="width:${barW}px"></span></td>
+          </tr>`;
+        }).join('');
+        document.getElementById('svcTable').innerHTML = `
+          <div style="overflow-x:auto"><table class="data-table">
+            <thead><tr><th>Service</th><th>Cost</th><th>% of Total</th><th></th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table></div>`;
+
+      } catch (e) {
+        document.getElementById('loadingState').innerHTML = `
+          <div class="empty-state" style="margin-top:60px">
+            <div class="empty-state__icon">⚠</div>
+            <div class="empty-state__title">Failed to load dashboard</div>
+            <div class="empty-state__sub">${e.message}</div>
+          </div>`;
+      }
+    }
+
+    load();
+  </script>
+</body>
+</html>

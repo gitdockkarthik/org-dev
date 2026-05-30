@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin — Unified Agent Platform</title>
+  <link rel="stylesheet" href="/css/style.css?v=3">
+</head>
+<body class="admin-page">
+
+  <!-- Top bar -->
+  <header class="topbar">
+    <a href="/" class="topbar__brand">
+      <span style="font-size:1.3rem;
+   font-weight:700;color:#ffffff;
+   letter-spacing:1px;
+   font-family:inherit;">OPERATIVE</span>
+    </a>
+    <nav class="topbar__nav">
+      <a href="/" class="topbar__link">Agents</a>
+      <a href="/admin/" class="topbar__link topbar__link--active">Admin</a>
+      <a href="/docs/" class="topbar__link">Docs</a>
+    </nav>
+    <div class="topbar__right">
+      <a href="/admin/register" class="btn btn--primary btn--sm">+ Register Agent</a>
+    </div>
+  </header>
+
+  <!-- Admin top tabs -->
+  <div class="admin-tabs" style="display:flex;gap:0;border-bottom:1px solid var(--border);background:var(--navy-1);padding:0 40px;">
+    <button class="admin-tab admin-tab--active" id="tab-agents" onclick="switchTab('agents')" style="padding:13px 18px;background:transparent;border:none;border-bottom:2px solid var(--accent);color:var(--accent);font-size:.88rem;font-weight:600;cursor:pointer;margin-bottom:-1px;">Agents</button>
+    <button class="admin-tab" id="tab-platform" onclick="switchTab('platform')" style="padding:13px 18px;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--text-muted);font-size:.88rem;font-weight:500;cursor:pointer;margin-bottom:-1px;">Platform</button>
+  </div>
+
+  <!-- Agents panel -->
+  <div id="panel-agents" class="admin-content">
+    <h1 class="admin-title">Agent Registry</h1>
+    <p class="admin-subtitle">Manage agent lifecycles — publish drafts, deprecate old versions.</p>
+
+    <!-- Filter tabs -->
+    <div class="filter-tabs">
+      <button class="filter-tab filter-tab--active" data-filter="all">
+        All <span class="filter-tab__count" id="count-all">—</span>
+      </button>
+      <button class="filter-tab" data-filter="draft">
+        Draft <span class="filter-tab__count" id="count-draft">—</span>
+      </button>
+      <button class="filter-tab" data-filter="published">
+        Published <span class="filter-tab__count" id="count-published">—</span>
+      </button>
+      <button class="filter-tab" data-filter="deprecated">
+        Deprecated <span class="filter-tab__count" id="count-deprecated">—</span>
+      </button>
+    </div>
+
+    <!-- Table -->
+    <div class="agents-table-wrap">
+      <table class="agents-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Slug</th>
+            <th>Status</th>
+            <th>Model</th>
+            <th>Version</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="table-body">
+          <tr>
+            <td colspan="6">
+              <div class="agents-table__empty">Loading…</div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Platform panel -->
+  <div id="panel-platform" class="admin-content" style="display:none;max-width:680px;">
+    <h1 class="admin-title">Platform</h1>
+    <p class="admin-subtitle" style="margin-bottom:28px">Platform status and configuration.</p>
+
+    <div style="background:var(--navy-1);border:1px solid var(--border);border-radius:var(--r);padding:24px 28px;margin-bottom:20px;">
+      <div style="font-size:.95rem;font-weight:700;margin-bottom:16px;">Platform Status</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);font-size:.86rem;">
+        <span style="color:var(--text-muted)">Anthropic API</span>
+        <span id="pt-api" style="font-weight:600">Checking…</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);font-size:.86rem;">
+        <span style="color:var(--text-muted)">Model in use</span>
+        <span id="pt-model" style="font-weight:600">—</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);font-size:.86rem;">
+        <span style="color:var(--text-muted)">Published agents</span>
+        <span id="pt-agents" style="font-weight:600">—</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;font-size:.86rem;">
+        <span style="color:var(--text-muted)">Platform version</span>
+        <span id="pt-version" style="font-weight:600">—</span>
+      </div>
+    </div>
+
+    <div style="background:var(--navy-1);border:1px solid var(--border);border-radius:var(--r);padding:24px 28px;">
+      <div style="font-size:.95rem;font-weight:700;margin-bottom:4px;">Edit Platform Config</div>
+      <div style="font-size:.83rem;color:var(--text-muted);margin-bottom:20px;">Test or update the Anthropic connection. Changes apply immediately.</div>
+
+      <div style="margin-bottom:16px;">
+        <label style="display:block;font-size:.83rem;font-weight:600;color:var(--text-muted);margin-bottom:6px;">Anthropic API Key</label>
+        <input id="cfg-key" type="password" placeholder="sk-ant-api03-…" autocomplete="new-password"
+          style="width:100%;padding:10px 13px;background:var(--navy-2);border:1.5px solid var(--border-hi);border-radius:6px;font-size:.9rem;color:var(--text);outline:none;">
+      </div>
+
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <button onclick="testPlatformKey()" style="padding:10px 20px;background:var(--navy-2);color:var(--text);border:1.5px solid var(--border-hi);border-radius:6px;font-size:.88rem;font-weight:500;cursor:pointer;">Test Connection</button>
+      </div>
+      <div id="cfg-status" style="display:none;margin-top:14px;padding:11px 14px;border-radius:8px;font-size:.85rem;"></div>
+    </div>
+  </div>
+
+  <!-- Toast container injected by portal.js -->
+  <script src="/js/config.js?v=3"></script>
+  <script src="/js/portal.js?v=3"></script>
+  <script>
+    let allAgents = [];
+    let activeFilter = 'all';
+
+    // ── Fetch & render ─────────────────────────────────────────────────────────
+    async function load() {
+      await portalReady;
+      try {
+        allAgents = await fetchAllAgents();
+        updateCounts();
+        renderTable(activeFilter);
+      } catch (err) {
+        document.getElementById('table-body').innerHTML = `
+          <tr><td colspan="6">
+            <div class="agents-table__empty" style="color:var(--danger)">
+              ${err.message.includes('403') ? 'Access denied — platform key may not be set yet.' : err.message}
+            </div>
+          </td></tr>`;
+      }
+    }
+
+    function updateCounts() {
+      document.getElementById('count-all').textContent = allAgents.length;
+      ['draft','published','deprecated'].forEach(s => {
+        document.getElementById(`count-${s}`).textContent =
+          allAgents.filter(a => a.status === s).length;
+      });
+    }
+
+    function renderTable(filter) {
+      const agents = filter === 'all' ? allAgents : allAgents.filter(a => a.status === filter);
+      const tbody = document.getElementById('table-body');
+
+      if (!agents.length) {
+        tbody.innerHTML = `<tr><td colspan="6">
+          <div class="agents-table__empty">No agents${filter !== 'all' ? ` with status "${filter}"` : ''}.</div>
+        </td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = agents.map(agent => {
+        const model = (agent.model || '').replace('claude-', '');
+        const canPublish   = agent.status === 'draft';
+        const canDeprecate = agent.status === 'published';
+        return `
+          <tr>
+            <td class="name-cell">${agent.name}</td>
+            <td class="slug-cell">${agent.slug}</td>
+            <td><span class="badge badge--${agent.status}">${agent.status}</span></td>
+            <td class="model-cell">${model || '—'}</td>
+            <td class="text-muted">${agent.version || '—'}</td>
+            <td class="actions-cell">
+              ${canPublish ? `
+                <button class="btn btn--success btn--sm"
+                  onclick="act('publish','${agent.id}','${agent.name}')">Publish</button>
+              ` : ''}
+              ${canDeprecate ? `
+                <button class="btn btn--danger btn--sm"
+                  onclick="act('deprecate','${agent.id}','${agent.name}')">Deprecate</button>
+              ` : ''}
+              <a href="/chat?agent=${encodeURIComponent(agent.slug)}"
+                 class="btn btn--ghost btn--sm"
+                 ${agent.status !== 'published' ? 'style="opacity:.4;pointer-events:none"' : ''}>Chat</a>
+            </td>
+          </tr>`;
+      }).join('');
+    }
+
+    // ── Actions ────────────────────────────────────────────────────────────────
+    async function act(action, agentId, agentName) {
+      const label = action === 'publish' ? 'Publish' : 'Deprecate';
+      if (!confirm(`${label} "${agentName}"?`)) return;
+      try {
+        const fn = action === 'publish' ? publishAgent : deprecateAgent;
+        const updated = await fn(agentId);
+        // Update in-place
+        const idx = allAgents.findIndex(a => a.id === agentId);
+        if (idx !== -1) allAgents[idx] = { ...allAgents[idx], status: updated.status };
+        updateCounts();
+        renderTable(activeFilter);
+        showToast(`"${agentName}" ${action}ed successfully`, 'success');
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    // ── Filter tabs ────────────────────────────────────────────────────────────
+    document.querySelectorAll('.filter-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.filter-tab').forEach(b => b.classList.remove('filter-tab--active'));
+        btn.classList.add('filter-tab--active');
+        activeFilter = btn.dataset.filter;
+        renderTable(activeFilter);
+      });
+    });
+
+    load();
+
+    // ── Admin tab switching ────────────────────────────────────────────────────
+    function switchTab(tab) {
+      document.getElementById('panel-agents').style.display   = tab === 'agents'   ? '' : 'none';
+      document.getElementById('panel-platform').style.display = tab === 'platform' ? '' : 'none';
+      document.getElementById('tab-agents').style.borderBottomColor   = tab === 'agents'   ? 'var(--accent)' : 'transparent';
+      document.getElementById('tab-agents').style.color               = tab === 'agents'   ? 'var(--accent)' : 'var(--text-muted)';
+      document.getElementById('tab-platform').style.borderBottomColor = tab === 'platform' ? 'var(--accent)' : 'transparent';
+      document.getElementById('tab-platform').style.color             = tab === 'platform' ? 'var(--accent)' : 'var(--text-muted)';
+      if (tab === 'platform') loadPlatformStatus();
+    }
+
+    async function loadPlatformStatus() {
+      try {
+        const r = await fetch(`${BACKEND_URL}/api/platform/status`, {
+          headers: _authHeaders()
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const d = await r.json();
+        document.getElementById('pt-api').innerHTML     = d.anthropic_connected
+          ? '<span style="color:#22c55e;font-weight:600">✓ Connected</span>'
+          : '<span style="color:#ef4444;font-weight:600">✗ Not configured</span>';
+        document.getElementById('pt-model').textContent   = d.model   || '—';
+        document.getElementById('pt-agents').textContent  = d.agent_count ?? '—';
+        document.getElementById('pt-version').textContent = d.version || '—';
+      } catch (err) {
+        document.getElementById('pt-api').innerHTML = `<span style="color:var(--text-muted)">${err.message}</span>`;
+      }
+    }
+
+    async function testPlatformKey() {
+      const key = document.getElementById('cfg-key').value.trim();
+      const el  = document.getElementById('cfg-status');
+      if (!key) { showCfgStatus('Enter an API key first.', 'error'); return; }
+      showCfgStatus('Testing…', 'loading');
+      try {
+        const r = await fetch(`${BACKEND_URL}/api/platform/test-anthropic`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_key: key }),
+        });
+        const d = await r.json();
+        if (d.success) {
+          showCfgStatus(`✓ Connected — model: ${d.model}`, 'success');
+        } else {
+          showCfgStatus(`✗ ${d.error || 'Failed'}`, 'error');
+        }
+      } catch (err) {
+        showCfgStatus(`✗ ${err.message}`, 'error');
+      }
+    }
+
+    function showCfgStatus(msg, type) {
+      const el = document.getElementById('cfg-status');
+      const styles = {
+        success: 'background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d',
+        error:   'background:#fef2f2;border:1px solid #fecaca;color:#dc2626',
+        loading: 'background:var(--navy-2);border:1px solid var(--border-hi);color:var(--text-muted)',
+      };
+      el.textContent = msg;
+      el.style.cssText = `display:block;margin-top:14px;padding:11px 14px;border-radius:8px;font-size:.85rem;${styles[type] || ''}`;
+    }
+  </script>
+</body>
+</html>

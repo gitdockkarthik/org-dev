@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chat — Unified Agent Platform</title>
+  <link rel="stylesheet" href="/css/style.css?v=3">
+</head>
+<body class="chat-page">
+
+  <!-- Top bar -->
+  <header class="topbar">
+    <a href="/" class="topbar__brand">
+      <img src='/assets/agentsiq-logo.svg' alt='AgentsIQ' style='height:44px;'>
+    </a>
+    <nav class="topbar__nav">
+      <a href="/" class="topbar__link">Agents</a>
+      <a href="/admin/" class="topbar__link">Admin</a>
+      <a href="/docs/" class="topbar__link">Docs</a>
+    </nav>
+    <div class="topbar__right" id="header-agent-name" style="font-size:.88rem;color:var(--text-muted)"></div>
+  </header>
+
+  <div class="chat-layout">
+
+    <!-- Sidebar -->
+    <aside class="chat-sidebar" id="sidebar">
+      <div class="chat-sidebar__header">
+        <div class="chat-sidebar__name" id="sidebar-name">Loading…</div>
+        <div class="chat-sidebar__desc" id="sidebar-desc"></div>
+      </div>
+
+      <div class="chat-sidebar__section">
+        <div class="chat-sidebar__section-label">Model</div>
+        <div class="chat-sidebar__session mono" id="sidebar-model">—</div>
+      </div>
+
+      <div class="chat-sidebar__section">
+        <div class="chat-sidebar__section-label">Session ID</div>
+        <div class="chat-sidebar__session" id="sidebar-session">—</div>
+      </div>
+
+      <div class="chat-sidebar__section" id="ctx-section" style="display:none">
+        <div class="chat-sidebar__section-label">Data Context</div>
+        <div id="ctx-info" style="font-size:.78rem;color:#e2e8f0;line-height:1.7"></div>
+      </div>
+
+      <div class="chat-sidebar__actions">
+        <button id="new-session-btn" class="btn btn--secondary btn--full">↺ New Session</button>
+      </div>
+
+      <div class="chat-sidebar__back">
+        <a href="/" class="btn btn--ghost btn--full btn--sm">← All Agents</a>
+      </div>
+    </aside>
+
+    <!-- Main chat area -->
+    <div class="chat-main">
+      <div class="chat-header">
+        <div>
+          <div class="chat-header__name" id="chat-header-name">—</div>
+          <div class="chat-header__status" id="chat-header-status">Loading agent…</div>
+        </div>
+      </div>
+
+      <!-- Messages -->
+      <div class="messages-wrap" id="messages"></div>
+
+      <!-- Input -->
+      <div class="chat-input-area">
+        <form class="chat-input-form" id="chat-form">
+          <textarea
+            id="chat-input"
+            class="chat-input-textarea"
+            placeholder="Type a message… (Enter to send, Shift+Enter for new line)"
+            rows="1"
+            autocomplete="off"
+          ></textarea>
+          <button type="submit" id="send-btn" class="chat-send-btn" disabled>
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M2 8l12-6-6 12V9L2 8z" fill="currentColor"/>
+            </svg>
+          </button>
+        </form>
+        <div class="chat-hint">Enter to send · Shift+Enter for new line</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/config.js?v=3"></script>
+  <script src="/js/portal.js?v=3"></script>
+  <script>
+    // ── State ──────────────────────────────────────────────────────────────────
+    let agent = null;
+    let sessionId = null;
+    let streaming = false;
+    let acClass = 'ca-0';
+    let agentContext = {};
+
+    // ── Per-agent context loaders ──────────────────────────────────────────────
+    const _CONTEXT_LOADERS = {
+      'alert-analyser': async () => {
+        const listUrl = `${BACKEND_URL}/api/agents/alert-analyser/proxy/reports`;
+        console.log('[ctx:alert-analyser] GET', listUrl);
+        const res = await fetch(listUrl, { headers: _authHeaders() });
+        console.log('[ctx:alert-analyser] list status:', res.status);
+        if (!res.ok) return {};
+        const reports = await res.json();
+        console.log('[ctx:alert-analyser] reports count:', reports.length);
+        if (!reports.length) return {};
+        const r = reports[0];
+
+        let alerts = [];
+        const dataUrl = `${BACKEND_URL}/api/agents/alert-analyser/proxy/reports/${r.id}/data`;
+        console.log('[ctx:alert-analyser] GET', dataUrl);
+        try {
+          const dataRes = await fetch(dataUrl, { headers: _authHeaders() });
+          console.log('[ctx:alert-analyser] data status:', dataRes.status);
+          if (dataRes.ok) {
+            alerts = await dataRes.json();
+            console.log('[ctx:alert-analyser] loaded', alerts.length, 'alerts');
+          } else {
+            const errBody = await dataRes.json().catch(() => ({ detail: dataRes.statusText }));
+            console.warn('[ctx:alert-analyser] data fetch failed:', dataRes.status, errBody);
+          }
+        } catch (e) {
+          console.warn('[ctx:alert-analyser] data fetch threw:', e.message);
+        }
+
+        return {
+          has_data: true,
+          report_id: r.id,
+          total_alerts: r.total_alerts,
+          genuine_count: r.genuine_count,
+          noise_count: r.noise_count,
+          filename: r.filename,
+          alerts,
+        };
+      },
+      'cur-analyser': async () => {
+        const listUrl = `${BACKEND_URL}/api/agents/cur-analyser/proxy/reports`;
+        console.log('[ctx:cur-analyser] GET', listUrl);
+        const res = await fetch(listUrl, { headers: _authHeaders() });
+        console.log('[ctx:cur-analyser] list status:', res.status);
+        if (!res.ok) return {};
+        const reports = await res.json();
+        console.log('[ctx:cur-analyser] reports count:', reports.length);
+        if (!reports.length) return {};
+        const r = reports[0];
+
+        let cur_data = [];
+        const dataUrl = `${BACKEND_URL}/api/agents/cur-analyser/proxy/reports/${r.id}/data`;
+        console.log('[ctx:cur-analyser] GET', dataUrl);
+        try {
+          const dataRes = await fetch(dataUrl, { headers: _authHeaders() });
+          console.log('[ctx:cur-analyser] data status:', dataRes.status);
+          if (dataRes.ok) {
+            cur_data = await dataRes.json();
+            console.log('[ctx:cur-analyser] loaded', cur_data.length, 'rows');
+          } else {
+            const errBody = await dataRes.json().catch(() => ({ detail: dataRes.statusText }));
+            console.warn('[ctx:cur-analyser] data fetch failed:', dataRes.status, errBody);
+          }
+        } catch (e) {
+          console.warn('[ctx:cur-analyser] data fetch threw:', e.message);
+        }
+
+        return {
+          has_data: true,
+          report_id: r.id,
+          row_count: r.row_count,
+          total_cost: r.total_cost,
+          filename: r.filename,
+          cur_data,
+        };
+      },
+    };
+
+    // ── DOM refs ───────────────────────────────────────────────────────────────
+    const messagesEl   = document.getElementById('messages');
+    const chatForm     = document.getElementById('chat-form');
+    const chatInput    = document.getElementById('chat-input');
+    const sendBtn      = document.getElementById('send-btn');
+    const sidebarName  = document.getElementById('sidebar-name');
+    const sidebarDesc  = document.getElementById('sidebar-desc');
+    const sidebarModel = document.getElementById('sidebar-model');
+    const sidebarSess  = document.getElementById('sidebar-session');
+    const headerName   = document.getElementById('chat-header-name');
+    const headerStatus = document.getElementById('chat-header-status');
+    const headerRight  = document.getElementById('header-agent-name');
+    const newSessBtn   = document.getElementById('new-session-btn');
+
+    // ── Init ───────────────────────────────────────────────────────────────────
+    async function init() {
+      const slug = new URLSearchParams(location.search).get('agent');
+      if (!slug) { location.href = '/'; return; }
+
+      document.title = `${slug} — UAP`;
+      acClass = agentAccentClass(slug);
+
+      try {
+        agent = await fetchAgent(slug);
+      } catch (err) {
+        showError(`Agent '${slug}' not found or not published.`);
+        return;
+      }
+
+      // Apply accent color
+      document.querySelector('.chat-sidebar').classList.add(acClass);
+
+      // Populate sidebar
+      sidebarName.textContent  = agent.name;
+      sidebarDesc.textContent  = agent.description || '';
+      sidebarModel.textContent = agent.model || '—';
+      headerName.textContent   = agent.name;
+      headerRight.textContent  = agent.name;
+      document.title           = `${agent.name} — UAP`;
+
+      // Session
+      sessionId = getOrCreateSession(slug);
+      updateSessionDisplay();
+
+      // Load agent-specific data context (e.g. latest report for alert/cur analysers)
+      await loadAgentContext(slug);
+
+      // Load history
+      await loadHistory();
+
+      // Ready
+      headerStatus.textContent = agentContext.has_data ? 'Ready · report loaded' : 'Ready';
+      sendBtn.disabled = false;
+      chatInput.focus();
+    }
+
+    async function loadAgentContext(slug) {
+      const loader = _CONTEXT_LOADERS[slug];
+      if (!loader) return;
+      try {
+        agentContext = await loader();
+      } catch (_) {
+        agentContext = {};
+      }
+      if (!agentContext.has_data) return;
+
+      const section = document.getElementById('ctx-section');
+      const info    = document.getElementById('ctx-info');
+      let html = `<div style="color:var(--success);font-weight:600">✓ Report loaded</div>`;
+      html += `<div style="word-break:break-all">${agentContext.filename || ''}</div>`;
+      if (slug === 'alert-analyser') {
+        html += `<div>${agentContext.total_alerts} alerts</div>`;
+        html += `<div style="color:var(--success)">${agentContext.genuine_count} genuine</div>`;
+        html += `<div style="color:var(--danger)">${agentContext.noise_count} noise</div>`;
+      } else if (slug === 'cur-analyser') {
+        html += `<div>${(agentContext.row_count || 0).toLocaleString()} line items</div>`;
+        html += `<div>$${Number(agentContext.total_cost || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>`;
+      }
+      info.innerHTML = html;
+      section.style.display = 'block';
+    }
+
+    function updateSessionDisplay() {
+      sidebarSess.textContent = sessionId;
+      headerStatus.textContent = 'Session active';
+    }
+
+    async function loadHistory() {
+      try {
+        const hist = await getHistory(sessionId);
+        if (hist.messages && hist.messages.length > 0) {
+          hist.messages.forEach(m => appendMessage(m.role, m.content, { fromHistory: true }));
+          scrollToBottom();
+        }
+      } catch (_) {
+        // New session — no history to load
+      }
+    }
+
+    // ── Message rendering ──────────────────────────────────────────────────────
+    function appendMessage(role, text, opts = {}) {
+      const isUser = role === 'user';
+      const msgEl = document.createElement('div');
+      msgEl.className = `msg msg--${isUser ? 'user' : 'assistant'}`;
+      msgEl.innerHTML = `
+        <div class="msg__label">${isUser ? 'You' : (agent?.name || 'Assistant')}</div>
+        <div class="msg__bubble"></div>
+      `;
+      const bubble = msgEl.querySelector('.msg__bubble');
+
+      if (isUser) {
+        bubble.textContent = text;
+      } else {
+        // Render markdown for history messages; streaming messages get raw text first
+        if (opts.fromHistory) {
+          bubble.innerHTML = renderMarkdown(text);
+        } else {
+          bubble.textContent = '';
+        }
+      }
+
+      messagesEl.appendChild(msgEl);
+      if (!opts.noScroll) scrollToBottom();
+      return { el: msgEl, bubble };
+    }
+
+    function appendLoadingBubble() {
+      const msgEl = document.createElement('div');
+      msgEl.className = 'msg msg--assistant';
+      msgEl.innerHTML = `
+        <div class="msg__label">${agent?.name || 'Assistant'}</div>
+        <div class="msg__bubble"><span class="dots-loader"><span>·</span><span>·</span><span>·</span></span></div>
+      `;
+      messagesEl.appendChild(msgEl);
+      scrollToBottom();
+      return msgEl;
+    }
+
+    function scrollToBottom() {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    // ── Send message ───────────────────────────────────────────────────────────
+    async function send() {
+      const text = chatInput.value.trim();
+      if (!text || streaming) return;
+
+      chatInput.value = '';
+      resizeTextarea();
+      streaming = true;
+      sendBtn.disabled = true;
+      headerStatus.textContent = 'Thinking…';
+
+      appendMessage('user', text);
+      const loadingEl = appendLoadingBubble();
+      const bubble = loadingEl.querySelector('.msg__bubble');
+      let rawText = '';
+      let replaced = false;
+
+      console.log('[send] invokeAgent args — slug:', agent.slug, 'sessionId:', sessionId,
+        'context keys:', Object.keys(agentContext), 'has_data:', agentContext.has_data,
+        'alerts count:', agentContext.alerts?.length ?? 'n/a');
+
+      invokeAgent(
+        agent.slug,     // 1: slug
+        text,           // 2: message
+        sessionId,      // 3: sessionId
+        agentContext,   // 4: context  ← must be before callbacks
+        // onChunk      // 5:
+        (char) => {
+          if (!replaced) {
+            bubble.textContent = '';
+            loadingEl.classList.add('streaming');
+            replaced = true;
+          }
+          rawText += char;
+          bubble.textContent = rawText;
+          scrollToBottom();
+        },
+        // onDone
+        (data) => {
+          console.log('[chat] onDone — rawText length:', rawText.length, 'data:', data);
+          // Replace raw text with rendered markdown
+          loadingEl.classList.remove('streaming');
+          bubble.innerHTML = renderMarkdown(rawText);
+          const tokens = data.metadata?.tokens_used;
+          if (tokens) {
+            const meta = document.createElement('div');
+            meta.className = 'msg__tokens';
+            meta.textContent = `${tokens} tokens`;
+            loadingEl.appendChild(meta);
+          }
+          streaming = false;
+          sendBtn.disabled = false;
+          headerStatus.textContent = 'Ready';
+          scrollToBottom();
+          chatInput.focus();
+        },
+        // onError
+        (err) => {
+          loadingEl.classList.remove('streaming');
+          loadingEl.classList.add('msg--error');
+          bubble.textContent = `Error: ${err.message}`;
+          streaming = false;
+          sendBtn.disabled = false;
+          headerStatus.textContent = 'Error';
+          scrollToBottom();
+        }
+      );
+    }
+
+    // ── New session ────────────────────────────────────────────────────────────
+    newSessBtn.addEventListener('click', async () => {
+      if (streaming) return;
+      const slug = new URLSearchParams(location.search).get('agent');
+      sessionId = resetSession(slug);
+      updateSessionDisplay();
+      messagesEl.innerHTML = '';
+      // Re-fetch context so it reflects any newly generated/uploaded report
+      document.getElementById('ctx-section').style.display = 'none';
+      agentContext = {};
+      await loadAgentContext(slug);
+      headerStatus.textContent = agentContext.has_data ? 'New session · report loaded' : 'New session started';
+      showToast('New session started', 'success');
+      chatInput.focus();
+    });
+
+    // ── Form handling ──────────────────────────────────────────────────────────
+    chatForm.addEventListener('submit', e => { e.preventDefault(); send(); });
+
+    chatInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+    });
+
+    chatInput.addEventListener('input', resizeTextarea);
+
+    function resizeTextarea() {
+      chatInput.style.height = 'auto';
+      chatInput.style.height = Math.min(chatInput.scrollHeight, 160) + 'px';
+    }
+
+    function showError(msg) {
+      headerStatus.textContent = 'Error';
+      messagesEl.innerHTML = `<div class="empty-state">
+        <div class="empty-state__icon">⚠</div>
+        <div class="empty-state__title">${msg}</div>
+        <div class="empty-state__sub"><a href="/" style="color:var(--accent)">← Back to catalogue</a></div>
+      </div>`;
+    }
+
+    init();
+  </script>
+</body>
+</html>

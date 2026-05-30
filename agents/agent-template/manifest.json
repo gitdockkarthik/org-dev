@@ -1,0 +1,22 @@
+{
+  "name": "My Agent Name",
+  "slug": "my-agent-slug",
+  "description": "One-line description of what this agent does.",
+  "version": "0.1.0",
+  "invoke_url": "http://my-agent-slug:8001",
+  "capabilities": [],
+  "required_env_vars": [
+    "ANTHROPIC_API_KEY",
+    "MODEL",
+    "AGENT_ID",
+    "AGENT_SLUG",
+    "AGENT_NAME",
+    "AGENT_SYSTEM_PROMPT"
+  ],
+  "tools": [
+    {
+      "name": "echo",
+      "description": "Returns the input text unchanged. Replace with real tools."
+    }
+  ]
+}
