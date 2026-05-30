@@ -1,7 +1,7 @@
 // ── Runtime config ─────────────────────────────────────────────────────────────
 // BACKEND_URL injected by docker-entrypoint.sh; falls back to localhost for dev.
 // API key is bootstrapped from the backend at load time — not from env vars.
-const BACKEND_URL = (window.__CONFIG__?.BACKEND_URL || 'http://localhost:8000').replace(/\/$/, '');
+const BACKEND_URL = '';
 let _apiKey = '';
 
 // ── Agent accent colours ────────────────────────────────────────────────────────
