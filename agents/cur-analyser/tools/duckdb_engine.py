@@ -43,12 +43,24 @@ def _detect_service_col(columns: list[str]) -> str | None:
 
 
 def _detect_date_col(columns: list[str]) -> str | None:
-    """Prefer line_item_usage_start_date; fall back to any date column."""
+    """Detect usage start date column — supports both
+    slash format (lineItem/UsageStartDate) and
+    underscore format (line_item_usage_start_date)."""
+    # Priority 1 — exact underscore match
     for col in columns:
         if col.lower() == "line_item_usage_start_date":
             return col
+    # Priority 2 — exact slash match (standard CUR export)
     for col in columns:
-        if "usagestartdate" in col.lower() or "date" in col.lower():
+        if col.lower() == "lineitem/usagestartdate":
+            return col
+    # Priority 3 — partial match on usagestart
+    for col in columns:
+        if "usagestart" in col.lower():
+            return col
+    # Priority 4 — any usage date
+    for col in columns:
+        if "usagedate" in col.lower():
             return col
     return None
 
