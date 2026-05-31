@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign In — Operative</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #f4f6f9;
+      color: #1a1f2e;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 16px;
+    }
+
+    .brand {
+      margin-bottom: 32px;
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      color: #0EA5E9;
+    }
+
+    .card {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      padding: 40px;
+      width: 100%;
+      max-width: 420px;
+      box-shadow: 0 4px 24px rgba(0,0,0,.07);
+    }
+
+    .card__title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+
+    .card__sub {
+      font-size: .88rem;
+      color: #64748b;
+      margin-bottom: 28px;
+    }
+
+    .field {
+      margin-bottom: 18px;
+    }
+
+    .field label {
+      display: block;
+      font-size: .83rem;
+      font-weight: 600;
+      color: #374151;
+      margin-bottom: 6px;
+    }
+
+    .field input {
+      width: 100%;
+      padding: 10px 13px;
+      border: 1.5px solid #d1d5db;
+      border-radius: 7px;
+      font-size: .9rem;
+      color: #1a1f2e;
+      background: #fff;
+      outline: none;
+      transition: border-color .15s;
+    }
+
+    .field input:focus {
+      border-color: #0EA5E9;
+      box-shadow: 0 0 0 3px rgba(14,165,233,.1);
+    }
+
+    .btn-primary {
+      width: 100%;
+      padding: 11px 24px;
+      background: #0EA5E9;
+      color: #fff;
+      border: none;
+      border-radius: 7px;
+      font-size: .95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity .15s;
+      margin-top: 4px;
+    }
+
+    .btn-primary:hover { opacity: .88; }
+    .btn-primary:disabled { opacity: .45; cursor: not-allowed; }
+
+    .error-msg {
+      display: none;
+      margin-top: 16px;
+      padding: 11px 14px;
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      border-radius: 8px;
+      font-size: .85rem;
+      color: #dc2626;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .error-msg.visible { display: flex; }
+
+    .footer {
+      margin-top: 28px;
+      text-align: center;
+      font-size: .8rem;
+      color: #94a3b8;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="brand">OPERATIVE</div>
+
+  <div class="card">
+    <div class="card__title">Sign in</div>
+    <div class="card__sub">Enter your credentials to access the platform.</div>
+
+    <form id="login-form" novalidate>
+      <div class="field">
+        <label for="email">Email</label>
+        <input id="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+      </div>
+
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" type="password" autocomplete="current-password" placeholder="••••••••" required>
+      </div>
+
+      <button id="submit-btn" class="btn-primary" type="submit">Sign in</button>
+
+      <div id="error-msg" class="error-msg">
+        <span>⚠</span>
+        <span id="error-text">Invalid email or password.</span>
+      </div>
+    </form>
+  </div>
+
+  <div class="footer">Contact your administrator to get access.</div>
+
+  <script>
+    const form = document.getElementById('login-form');
+    const btn  = document.getElementById('submit-btn');
+    const errBox  = document.getElementById('error-msg');
+    const errText = document.getElementById('error-text');
+
+    function showError(msg) {
+      errText.textContent = msg;
+      errBox.classList.add('visible');
+    }
+
+    function hideError() {
+      errBox.classList.remove('visible');
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      hideError();
+
+      const email    = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+
+      if (!email || !password) {
+        showError('Please enter your email and password.');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Signing in…';
+
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ email, password }),
+        });
+
+        if (res.ok) {
+          window.location.href = '/';
+        } else {
+          const data = await res.json().catch(() => ({}));
+          showError(data.detail || 'Invalid email or password.');
+        }
+      } catch (_) {
+        showError('Could not reach the server. Please try again.');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Sign in';
+      }
+    });
+  </script>
+</body>
+</html>

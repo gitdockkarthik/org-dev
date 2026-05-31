@@ -137,6 +137,32 @@ echo "6. Configure each agent via Settings UI:"
 echo "   • Select data source"
 echo "   • Click Save & Sync"
 echo ""
+echo ""
+echo "═══════════════════════════════════════════"
+echo "  Authentication Setup (Optional)"
+echo "═══════════════════════════════════════════"
+echo ""
+echo "AUTH_MODE options:"
+echo "  none  → No login required (default)"
+echo "  local → Email/password login"
+echo "  okta  → Corporate SSO (future)"
+echo ""
+read -p "Enable local auth? (y/N): " enable_auth
+if [[ "$enable_auth" == "y" || "$enable_auth" == "Y" ]]; then
+  read -p "Admin email: " admin_email
+  read -s -p "Admin password: " admin_password
+  echo ""
+  echo "AUTH_MODE=local" >> .env
+  echo "ADMIN_EMAIL=$admin_email" >> .env
+  echo "ADMIN_PASSWORD=$admin_password" >> .env
+  echo -e "${GREEN}✓ Local auth configured${NC}"
+  echo -e "${YELLOW}⚠  Share credentials securely with your team${NC}"
+else
+  echo "AUTH_MODE=none" >> .env
+  echo -e "${GREEN}✓ Auth disabled (open access)${NC}"
+fi
+
+echo ""
 echo "═══════════════════════════════════════════"
 echo -e "${GREEN}✓ Setup complete. Ready to start.${NC}"
 echo "═══════════════════════════════════════════"

@@ -21,6 +21,11 @@
       <a href="/admin/" class="topbar__link">Admin</a>
     </nav>
     <div class="topbar__right">
+      <button id="logout-btn" onclick="logout()"
+        class="btn btn--ghost btn--sm"
+        style="display:none;margin-right:8px">
+        Sign out
+      </button>
       <a href="/admin/register" class="btn btn--primary btn--sm">+ Register Agent</a>
     </div>
   </header>
@@ -71,6 +76,21 @@
   <script src="/js/config.js?v=3"></script>
   <script src="/js/portal.js?v=3"></script>
   <script>
+    // Auth gate: only redirect to /login when AUTH_MODE=local and user is not authenticated
+    (async function checkAuth() {
+      try {
+        const modeRes = await fetch('/api/auth/mode', { credentials: 'include' });
+        if (!modeRes.ok) return;
+        const { mode } = await modeRes.json();
+        if (mode === 'local') {
+          const meRes = await fetch('/api/auth/me', { credentials: 'include' });
+          if (meRes.status === 401) {
+            window.location.replace('/login');
+          }
+        }
+      } catch (_) { /* backend unreachable — let portal load and show its own error */ }
+    })();
+
     let allAgents = [];
 
     async function load() {
@@ -188,6 +208,19 @@
         (a.description || '').toLowerCase().includes(q)
       ));
     });
+
+    const authMode = window.__CONFIG__?.AUTH_MODE || 'none';
+    if (authMode === 'local') {
+      document.getElementById('logout-btn').style.display = '';
+    }
+
+    async function logout() {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+      });
+      window.location.href = '/login';
+    }
 
     load();
   </script>

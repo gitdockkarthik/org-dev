@@ -35,6 +35,9 @@ services:
       BACKEND_API_KEY: ${BACKEND_API_KEY}
       SECRET_KEY: ${SECRET_KEY}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      AUTH_MODE: ${AUTH_MODE:-none}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -115,6 +118,7 @@ services:
       BACKEND_API_KEY: ${BACKEND_API_KEY}
       PORTAL_USERNAME: ${PORTAL_USERNAME:-}
       PORTAL_PASSWORD: ${PORTAL_PASSWORD:-}
+      AUTH_MODE: ${AUTH_MODE:-none}
     depends_on:
       - backend
 

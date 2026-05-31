@@ -21,6 +21,12 @@
       <a href="/admin/" class="topbar__link topbar__link--active">Admin</a>
     </nav>
     <div class="topbar__right">
+      <button onclick="logout()"
+        id="logout-btn"
+        class="btn btn--ghost btn--sm"
+        style="margin-right:8px;display:none">
+        Sign out
+      </button>
       <a href="/admin/register" class="btn btn--primary btn--sm">+ Register Agent</a>
     </div>
   </header>
@@ -29,6 +35,7 @@
   <div class="admin-tabs" style="display:flex;gap:0;border-bottom:1px solid var(--border);background:var(--navy-1);padding:0 40px;">
     <button class="admin-tab admin-tab--active" id="tab-agents" onclick="switchTab('agents')" style="padding:13px 18px;background:transparent;border:none;border-bottom:2px solid var(--accent);color:var(--accent);font-size:.88rem;font-weight:600;cursor:pointer;margin-bottom:-1px;">Agents</button>
     <button class="admin-tab" id="tab-platform" onclick="switchTab('platform')" style="padding:13px 18px;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--text-muted);font-size:.88rem;font-weight:500;cursor:pointer;margin-bottom:-1px;">Platform</button>
+    <button class="admin-tab" id="tab-users" onclick="switchTab('users')" style="display:none;padding:13px 18px;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--text-muted);font-size:.88rem;font-weight:500;cursor:pointer;margin-bottom:-1px;">Users</button>
   </div>
 
   <!-- Agents panel -->
@@ -115,6 +122,70 @@
         <button onclick="testPlatformKey()" style="padding:10px 20px;background:var(--navy-2);color:var(--text);border:1.5px solid var(--border-hi);border-radius:6px;font-size:.88rem;font-weight:500;cursor:pointer;">Test Connection</button>
       </div>
       <div id="cfg-status" style="display:none;margin-top:14px;padding:11px 14px;border-radius:8px;font-size:.85rem;"></div>
+    </div>
+  </div>
+
+  <!-- Users panel -->
+  <div id="panel-users" class="admin-content" style="display:none;max-width:800px;">
+    <h1 class="admin-title">Users</h1>
+    <p class="admin-subtitle" style="margin-bottom:20px">Manage portal access. Admin creates all accounts — no self-signup.</p>
+
+    <!-- Add user form -->
+    <div id="add-user-form" style="display:none;background:var(--navy-1);border:1px solid var(--border);border-radius:var(--r);padding:24px 28px;margin-bottom:20px;">
+      <div style="font-size:.95rem;font-weight:700;margin-bottom:16px;">Add User</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
+        <div>
+          <label style="display:block;font-size:.83rem;font-weight:600;color:var(--text-muted);margin-bottom:6px;">Name</label>
+          <input id="new-name" type="text" placeholder="Full name" autocomplete="off"
+            style="width:100%;padding:9px 12px;background:var(--navy-2);border:1.5px solid var(--border-hi);border-radius:6px;font-size:.88rem;color:var(--text);outline:none;">
+        </div>
+        <div>
+          <label style="display:block;font-size:.83rem;font-weight:600;color:var(--text-muted);margin-bottom:6px;">Email</label>
+          <input id="new-email" type="email" placeholder="user@example.com" autocomplete="off"
+            style="width:100%;padding:9px 12px;background:var(--navy-2);border:1.5px solid var(--border-hi);border-radius:6px;font-size:.88rem;color:var(--text);outline:none;">
+        </div>
+        <div>
+          <label style="display:block;font-size:.83rem;font-weight:600;color:var(--text-muted);margin-bottom:6px;">Password</label>
+          <input id="new-password" type="password" placeholder="••••••••" autocomplete="new-password"
+            style="width:100%;padding:9px 12px;background:var(--navy-2);border:1.5px solid var(--border-hi);border-radius:6px;font-size:.88rem;color:var(--text);outline:none;">
+        </div>
+        <div>
+          <label style="display:block;font-size:.83rem;font-weight:600;color:var(--text-muted);margin-bottom:6px;">Role</label>
+          <select id="new-role"
+            style="width:100%;padding:9px 12px;background:var(--navy-2);border:1.5px solid var(--border-hi);border-radius:6px;font-size:.88rem;color:var(--text);outline:none;">
+            <option value="user">user</option>
+            <option value="admin">admin</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;">
+        <button onclick="submitAddUser()" style="padding:9px 20px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:.88rem;font-weight:600;cursor:pointer;">Save</button>
+        <button onclick="document.getElementById('add-user-form').style.display='none'" style="padding:9px 16px;background:transparent;color:var(--text-muted);border:1.5px solid var(--border-hi);border-radius:6px;font-size:.88rem;cursor:pointer;">Cancel</button>
+        <span id="add-user-status" style="font-size:.83rem;"></span>
+      </div>
+    </div>
+
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+      <span id="users-count" style="font-size:.9rem;font-weight:600;color:var(--text-muted);"></span>
+      <button onclick="document.getElementById('add-user-form').style.display='';document.getElementById('add-user-status').textContent=''"
+        style="padding:8px 16px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:.85rem;font-weight:600;cursor:pointer;">+ Add User</button>
+    </div>
+
+    <div class="agents-table-wrap">
+      <table class="agents-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Role</th>
+            <th>Created</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="users-table-body">
+          <tr><td colspan="5"><div class="agents-table__empty">Loading…</div></td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
 
@@ -221,13 +292,157 @@
 
     // ── Admin tab switching ────────────────────────────────────────────────────
     function switchTab(tab) {
-      document.getElementById('panel-agents').style.display   = tab === 'agents'   ? '' : 'none';
-      document.getElementById('panel-platform').style.display = tab === 'platform' ? '' : 'none';
-      document.getElementById('tab-agents').style.borderBottomColor   = tab === 'agents'   ? 'var(--accent)' : 'transparent';
-      document.getElementById('tab-agents').style.color               = tab === 'agents'   ? 'var(--accent)' : 'var(--text-muted)';
-      document.getElementById('tab-platform').style.borderBottomColor = tab === 'platform' ? 'var(--accent)' : 'transparent';
-      document.getElementById('tab-platform').style.color             = tab === 'platform' ? 'var(--accent)' : 'var(--text-muted)';
+      ['agents', 'platform', 'users'].forEach(t => {
+        const panel = document.getElementById(`panel-${t}`);
+        const tabEl = document.getElementById(`tab-${t}`);
+        if (panel) panel.style.display = t === tab ? '' : 'none';
+        if (tabEl) {
+          tabEl.style.borderBottomColor = t === tab ? 'var(--accent)' : 'transparent';
+          tabEl.style.color             = t === tab ? 'var(--accent)' : 'var(--text-muted)';
+          tabEl.style.fontWeight        = t === tab ? '600' : '500';
+        }
+      });
       if (tab === 'platform') loadPlatformStatus();
+      if (tab === 'users') loadUsers();
+    }
+
+    // ── Users tab ──────────────────────────────────────────────────────────────
+    let allUsers = [];
+
+    async function loadUsers() {
+      try {
+        const r = await fetch(`${BACKEND_URL}/api/admin/users`, {
+          headers: _authHeaders(),
+          credentials: 'include',
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        allUsers = await r.json();
+        renderUsersTable();
+      } catch (err) {
+        document.getElementById('users-table-body').innerHTML =
+          `<tr><td colspan="5"><div class="agents-table__empty" style="color:var(--danger)">${err.message}</div></td></tr>`;
+      }
+    }
+
+    function renderUsersTable() {
+      const tbody   = document.getElementById('users-table-body');
+      const countEl = document.getElementById('users-count');
+      countEl.textContent = `${allUsers.length} user${allUsers.length !== 1 ? 's' : ''}`;
+
+      if (!allUsers.length) {
+        tbody.innerHTML = `<tr><td colspan="5"><div class="agents-table__empty">No users yet.</div></td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = allUsers.map(u => {
+        const created = u.created_at ? new Date(u.created_at).toLocaleDateString() : '—';
+        const safeName = u.name.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        return `
+          <tr>
+            <td class="name-cell">${u.name}</td>
+            <td>${u.email}</td>
+            <td><span class="badge badge--${u.role === 'admin' ? 'published' : 'draft'}">${u.role}</span></td>
+            <td class="text-muted">${created}</td>
+            <td class="actions-cell">
+              <button class="btn btn--ghost btn--sm" onclick="promptResetPassword(${u.id}, '${safeName}')">Reset PW</button>
+              <button class="btn btn--danger btn--sm" onclick="deleteUser(${u.id}, '${safeName}')">Delete</button>
+            </td>
+          </tr>`;
+      }).join('');
+    }
+
+    async function submitAddUser() {
+      const name     = document.getElementById('new-name').value.trim();
+      const email    = document.getElementById('new-email').value.trim();
+      const password = document.getElementById('new-password').value;
+      const role     = document.getElementById('new-role').value;
+      const statusEl = document.getElementById('add-user-status');
+
+      if (!name || !email || !password) {
+        statusEl.textContent = 'All fields are required.';
+        statusEl.style.color = 'var(--danger)';
+        return;
+      }
+      statusEl.textContent = 'Saving…';
+      statusEl.style.color = 'var(--text-muted)';
+
+      try {
+        const r = await fetch(`${BACKEND_URL}/api/admin/users`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+          credentials: 'include',
+          body: JSON.stringify({ name, email, password, role }),
+        });
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          throw new Error(d.detail || `HTTP ${r.status}`);
+        }
+        document.getElementById('add-user-form').style.display = 'none';
+        ['new-name', 'new-email', 'new-password'].forEach(id => {
+          document.getElementById(id).value = '';
+        });
+        await loadUsers();
+        showToast(`User "${name}" created`, 'success');
+      } catch (err) {
+        statusEl.textContent = err.message;
+        statusEl.style.color = 'var(--danger)';
+      }
+    }
+
+    async function deleteUser(userId, userName) {
+      if (!confirm(`Delete user "${userName}"? This cannot be undone.`)) return;
+      try {
+        const r = await fetch(`${BACKEND_URL}/api/admin/users/${userId}`, {
+          method: 'DELETE',
+          headers: _authHeaders(),
+          credentials: 'include',
+        });
+        if (!r.ok && r.status !== 204) {
+          const d = await r.json().catch(() => ({}));
+          throw new Error(d.detail || `HTTP ${r.status}`);
+        }
+        await loadUsers();
+        showToast(`User "${userName}" deleted`, 'success');
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    async function promptResetPassword(userId, userName) {
+      const newPassword = prompt(`New password for "${userName}":`);
+      if (!newPassword) return;
+      try {
+        const r = await fetch(`${BACKEND_URL}/api/admin/users/${userId}/password`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+          credentials: 'include',
+          body: JSON.stringify({ new_password: newPassword }),
+        });
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          throw new Error(d.detail || `HTTP ${r.status}`);
+        }
+        showToast(`Password reset for "${userName}"`, 'success');
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    async function logout() {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+      });
+      window.location.href = '/login';
+    }
+
+    // Show logout button and Users tab only when AUTH_MODE=local
+    const authMode = window.__CONFIG__?.AUTH_MODE || 'none';
+    if (authMode === 'local') {
+      const btn = document.getElementById('logout-btn');
+      if (btn) btn.style.display = '';
+      const tabUsers = document.getElementById('tab-users');
+      if (tabUsers) tabUsers.style.display = '';
     }
 
     async function loadPlatformStatus() {

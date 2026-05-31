@@ -14,15 +14,46 @@ from core.database import AsyncSessionLocal, Base, engine
 from core.encryption import decrypt, encrypt, is_secret_key
 from core.platform_cache import set_anthropic_key, set_backend_api_key
 from models.platform_config import PlatformConfig
+from models.user import User
 from orchestrator.platform import router as platform_router
 from orchestrator.router import router as orchestrator_router
 from registry.router import router as registry_router
+from routes_auth import router as auth_router
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s — %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+async def _seed_admin_user() -> None:
+    """Create first admin user from env vars when AUTH_MODE=local and no users exist."""
+    from core.auth import hash_password
+
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy import func, select as sa_select
+
+        count = (await session.execute(sa_select(func.count()).select_from(User))).scalar()
+        if count and count > 0:
+            logger.info("Startup [4/4]: auth users exist — skipping admin seed")
+            return
+
+    if settings.admin_email and settings.admin_password:
+        async with AsyncSessionLocal() as session:
+            admin = User(
+                name="Admin",
+                email=settings.admin_email,
+                password_hash=hash_password(settings.admin_password),
+                role="admin",
+            )
+            session.add(admin)
+            await session.commit()
+        logger.info("Startup [4/4]: Auth: seeded admin user %s", settings.admin_email)
+    else:
+        logger.warning(
+            "Startup [4/4]: Auth: no admin user — set ADMIN_EMAIL + ADMIN_PASSWORD in .env"
+        )
 
 
 async def _seed_platform_config() -> None:
@@ -83,11 +114,20 @@ async def lifespan(app: FastAPI):
 
     # ── Step 3: seed env-var credentials into DB, then load cache ───────────────
     try:
-        logger.info("Startup [3/3]: seeding and loading platform config")
+        logger.info("Startup [3/4]: seeding and loading platform config")
         await _seed_platform_config()
-        logger.info("Startup [3/3]: platform config ready")
+        logger.info("Startup [3/4]: platform config ready")
     except Exception:
-        logger.exception("Startup [3/3] WARNING: platform config seed/load failed (non-fatal)")
+        logger.exception("Startup [3/4] WARNING: platform config seed/load failed (non-fatal)")
+
+    # ── Step 4: auth seed (local mode only) ─────────────────────────────────
+    if settings.auth_mode == "local":
+        try:
+            await _seed_admin_user()
+        except Exception:
+            logger.exception("Startup [4/4] WARNING: auth seed failed (non-fatal)")
+    else:
+        logger.info("Startup [4/4]: AUTH_MODE=%s — auth seed skipped", settings.auth_mode)
 
     logger.info("Startup complete — application is ready to serve requests")
     yield
@@ -115,6 +155,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router)
 app.include_router(registry_router)
 app.include_router(orchestrator_router)
 app.include_router(platform_router)
