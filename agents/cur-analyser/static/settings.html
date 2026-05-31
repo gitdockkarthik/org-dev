@@ -263,6 +263,17 @@
           <div class="radio-card-body">
             <div class="radio-card-label">File Upload</div>
             <div class="radio-card-desc">Upload an AWS Cost &amp; Usage Report (CUR) CSV export from the Reports page</div>
+            <div class="radio-card-sub" id="file-upload-hint"
+                 style="display:none;margin-top:0.5rem;
+                 padding:0.5rem;background:#f0f9ff;
+                 border-radius:6px;border:1px solid #bae6fd">
+              📂 Upload your CUR CSV on the
+              <a href="javascript:void(0)"
+                 onclick="document.querySelector('[data-tab=reports]') && window.location.href='?tab=reports'"
+                 style="color:#0EA5E9;font-weight:600">
+                 Reports page</a>,
+              then return here and click Save &amp; Sync.
+            </div>
           </div>
         </label>
 
@@ -290,7 +301,7 @@
     </div>
 
     <!-- C: Sync Schedule -->
-    <div class="card">
+    <div class="card" id="sync-schedule-card">
       <div class="card-title">Sync Schedule</div>
       <div class="sync-row" style="margin-top:0.75rem">
         <div class="field">
@@ -307,7 +318,7 @@
     </div>
 
     <!-- D: Cost Window -->
-    <div class="card">
+    <div class="card" id="cost-window-card">
       <div class="card-title">Cost Window</div>
       <div class="field" style="margin-top:0.75rem">
         <select id="cost-window">
@@ -340,6 +351,10 @@
       <div id="sync-status" class="status-rows" style="margin-top:0.75rem">
         <span style="color:#94a3b8;font-style:italic;font-size:.875rem">Loading…</span>
       </div>
+      <a href="/ui/reports.html"
+         style="font-size:0.8rem;color:#6366f1;margin-top:0.5rem;display:inline-block">
+         View all reports →
+      </a>
     </div>
 
   </div><!-- /#panel-data-source -->
@@ -650,6 +665,24 @@
       radio.checked = selected;
       card.classList.toggle('selected', selected);
     });
+
+    const hint = $('file-upload-hint');
+    const schedCard = $('sync-schedule-card');
+    const winCard   = $('cost-window-card');
+
+    if (value === 'file') {
+      if (hint)      hint.style.display      = 'block';
+      if (schedCard) schedCard.style.display  = 'none';
+      if (winCard)   winCard.style.display    = 'none';
+    } else if (value === 'synthetic') {
+      if (hint)      hint.style.display      = 'none';
+      if (schedCard) schedCard.style.display  = 'none';
+      if (winCard)   winCard.style.display    = 'none';
+    } else {
+      if (hint)      hint.style.display      = 'none';
+      if (schedCard) schedCard.style.display  = 'block';
+      if (winCard)   winCard.style.display    = 'block';
+    }
   }
 
   document.querySelectorAll('input[name="source"]').forEach(radio => {
