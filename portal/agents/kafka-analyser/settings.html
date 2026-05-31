@@ -479,6 +479,21 @@
 
     const $ = id => document.getElementById(id);
 
+    const isStandaloneMode =
+        window.location.pathname.startsWith('/ui/');
+    if (!isStandaloneMode) {
+        const banner = document.getElementById(
+            'no-key-banner');
+        if (banner) banner.style.display = 'none';
+        const apiKeyCard = document.getElementById(
+            'save-api-key');
+        if (apiKeyCard) {
+            const card = apiKeyCard.closest(
+                '.card, .settings-card, section');
+            if (card) card.style.display = 'none';
+        }
+    }
+
     document.querySelectorAll('.tab-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
