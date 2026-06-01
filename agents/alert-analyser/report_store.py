@@ -195,6 +195,22 @@ async def load_latest_from_db() -> bool:
                 "status": report.status,
                 "created_at": report.created_at.isoformat(),
             }
+            # Restore _reports + _classified so incremental sync works after rebuild
+            if report.report_data:
+                classified = json.loads(report.report_data)
+                _reports.clear()
+                _reports.insert(0, {
+                    "id": report.id,
+                    "filename": report.filename,
+                    "total_alerts": report.total_alerts,
+                    "genuine_count": report.genuine_count,
+                    "noise_count": report.noise_count,
+                    "suspect_count": report.suspect_count,
+                    "status": report.status,
+                    "created_at": report.created_at.isoformat(),
+                    "_classified": classified,
+                    "_stats": _stats_cache,
+                })
             logger.info(
                 "load_latest_from_db: loaded report id=%d total=%d",
                 report.id,

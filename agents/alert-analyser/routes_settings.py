@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
+_sync_lock = False  # Prevent concurrent syncs
+
 _DEFAULTS: dict = {
     "source_type": "file",
     "cloud_id": "",
@@ -125,61 +127,56 @@ async def load_config_from_db() -> dict:
 
 
 async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
-    """Core sync logic — callable from HTTP handler or lifespan startup."""
-    source_type = _config.get("source_type", "opsgenie")
-    if source_type == "standalone":
-        source: AlertSource = StandaloneOpsgenieSource(
-            api_key=_config["api_token"],
-            base_url=_config.get("opsgenie_base_url") or "https://api.opsgenie.com",
-        )
-    else:
-        source = JSMSource(
-            cloud_id=_config["cloud_id"],
-            email=_config["email"],
-            api_token=_config["api_token"],
-        )
-    last_synced = _config.get("last_synced")
-
-    if last_synced and not full_sync:
-        # Incremental — fetch only new alerts
-        alerts = await source.load_alerts(created_after=last_synced)
-    else:
-        # Full window sync
-        sync_window_days = _config.get("sync_window_days", 7)
-        alerts = await source.load_alerts(sync_window_days=sync_window_days)
-
-    filename = f"opsgenie-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.json"
-
-    from report_store import get_latest_classified
-    existing = get_latest_classified()
-    if existing and last_synced:
-        # Append new to existing
-        all_alerts_raw = [
-            a for a in (existing or [])
-        ]
-        # Combine: existing raw alerts + new
-        combined_alerts = alerts
-        # Re-classify combined set
-        classified = classify_alerts(combined_alerts)
-    else:
-        # First sync or full sync — use new only
-        classified = classify_alerts(alerts)
-        combined_alerts = alerts
-
-    report = add_report(filename, combined_alerts, classified)
-
-    _config["last_synced"] = datetime.now(timezone.utc).isoformat()
-    _config["alert_count"] = len(alerts)
-    await _upsert("last_synced", _config["last_synced"])
-    await _upsert("alert_count", _config["alert_count"])
-
-    return {
-        "ok": True,
-        "alert_count": len(alerts),
-        "last_synced": _config["last_synced"],
-        "report": report,
-    }
-
+    """Core sync logic callable from HTTP handler or lifespan startup."""
+    global _sync_lock
+    if _sync_lock:
+        raise HTTPException(status_code=429, detail="Sync already in progress")
+    _sync_lock = True
+    try:
+        source_type = _config.get("source_type", "opsgenie")
+        if source_type == "standalone":
+            source: AlertSource = StandaloneOpsgenieSource(
+                api_key=_config["api_token"],
+                base_url=_config.get("opsgenie_base_url") or "https://api.opsgenie.com",
+            )
+        else:
+            source = JSMSource(
+                cloud_id=_config["cloud_id"],
+                email=_config["email"],
+                api_token=_config["api_token"],
+            )
+        last_synced = _config.get("last_synced")
+        if last_synced and not full_sync:
+            alerts = await source.load_alerts(created_after=last_synced)
+        else:
+            sync_window_days = _config.get("sync_window_days", 7)
+            alerts = await source.load_alerts(sync_window_days=sync_window_days)
+        from datetime import datetime, timezone
+        filename = f"opsgenie-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.json"
+        from report_store import get_latest_classified
+        existing = get_latest_classified()
+        if existing and last_synced:
+            all_alerts_raw = [a for a in (existing or [])]
+            existing_ids = {a.get("id") for a in all_alerts_raw}
+            new_alerts = [a for a in alerts if a.get("id") not in existing_ids]
+            combined_alerts = all_alerts_raw + new_alerts
+            classified = classify_alerts(combined_alerts)
+        else:
+            classified = classify_alerts(alerts)
+            combined_alerts = alerts
+        report = add_report(filename, combined_alerts, classified)
+        _config["last_synced"] = datetime.now(timezone.utc).isoformat()
+        _config["alert_count"] = len(combined_alerts)
+        await _upsert("last_synced", _config["last_synced"])
+        await _upsert("alert_count", _config["alert_count"])
+        return {
+            "ok": True,
+            "alert_count": len(combined_alerts),
+            "last_synced": _config["last_synced"],
+            "report": report,
+        }
+    finally:
+        _sync_lock = False
 
 class SettingsPayload(BaseModel):
     source_type: str = "file"

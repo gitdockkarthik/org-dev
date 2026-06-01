@@ -110,8 +110,17 @@ class JSMSource(AlertSource):
                 if cursor is not None:
                     params["offset"] = cursor
 
-                resp = await client.get(url, headers=headers, params=params)
-                resp.raise_for_status()
+                for _attempt in range(3):
+                    resp = await client.get(url, headers=headers, params=params)
+                    if resp.status_code == 429:
+                        import asyncio
+                        retry_after = int(resp.headers.get("Retry-After", 5))
+                        await asyncio.sleep(retry_after)
+                        continue
+                    resp.raise_for_status()
+                    break
+                else:
+                    resp.raise_for_status()
                 data = resp.json()
 
                 page_alerts = data.get("values", [])
@@ -182,8 +191,17 @@ class StandaloneOpsgenieSource(AlertSource):
                     "order": "asc",
                 }
 
-                resp = await client.get(url, headers=headers, params=params)
-                resp.raise_for_status()
+                for _attempt in range(3):
+                    resp = await client.get(url, headers=headers, params=params)
+                    if resp.status_code == 429:
+                        import asyncio
+                        retry_after = int(resp.headers.get("Retry-After", 5))
+                        await asyncio.sleep(retry_after)
+                        continue
+                    resp.raise_for_status()
+                    break
+                else:
+                    resp.raise_for_status()
                 data = resp.json()
 
                 page_alerts = data.get("data", [])
