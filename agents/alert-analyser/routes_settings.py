@@ -27,10 +27,12 @@ _DEFAULTS: dict = {
     "alert_count": None,
     "sync_interval_minutes": 0,
     "noise_threshold_repeat": 3,
+    "noise_threshold_window_mins": 60,
     "noise_threshold_close_secs": 300,
     "sync_window_days": 7,
     "priority_weights": {"P1": -3, "P2": -2, "P3": 0, "P4": 1, "P5": 2},
     "noise_classification_threshold": 0,
+    "noise_suspect_threshold": -2,
     "opsgenie_base_url": "",
 }
 
@@ -186,10 +188,12 @@ class SettingsPayload(BaseModel):
     api_token: str = ""
     sync_interval_minutes: int = 0
     noise_threshold_repeat: int = 3
+    noise_threshold_window_mins: int = 60
     noise_threshold_close_secs: int = 300
     sync_window_days: int = 7
     priority_weights: dict = {"P1": -3, "P2": -2, "P3": 0, "P4": 1, "P5": 2}
     noise_classification_threshold: int = 0
+    noise_suspect_threshold: int = -2
     opsgenie_base_url: str = ""
 
 

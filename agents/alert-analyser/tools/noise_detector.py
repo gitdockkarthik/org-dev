@@ -38,7 +38,8 @@ def classify_alerts(alerts: list[dict]) -> list[dict]:
     for alias, times in alias_windows.items():
         times_sorted = sorted(times)
         for i, t in enumerate(times_sorted):
-            window_end = t + timedelta(hours=1)
+            window_mins = getattr(settings, 'noise_threshold_window_mins', 60)
+            window_end = t + timedelta(minutes=window_mins)
             count_in_window = sum(1 for tt in times_sorted[i:] if tt <= window_end)
             if count_in_window > repeat_threshold:
                 frequent_aliases.add(alias)
@@ -70,31 +71,65 @@ def classify_alerts(alerts: list[dict]) -> list[dict]:
 
         alias = alert.get("alias", "")
         src = alert.get("source", "unknown")
-        close_time = alert.get("report", {}).get("closeTime", 9999)
+        # close_time_seconds is derived here, so read the raw report.closeTime;
+        # 0 means the alert has no recorded close (still open).
+        close_time = alert.get("report", {}).get("closeTime", 0)
         acknowledged = alert.get("acknowledged", False)
         priority = alert.get("priority", "P5")
+        status = alert.get("status", "")
 
         if alias in frequent_aliases:
             noise_score += 2
             noise_reasons.append(f"fires >{repeat_threshold}x within 1 hour")
-        if close_time < close_secs_threshold and not acknowledged:
-            noise_score += 2
-            noise_reasons.append(f"auto-closes in <{close_secs_threshold}s without ACK")
-        if not acknowledged:
-            noise_score += 1
-            noise_reasons.append("never acknowledged")
         if priority in ("P1", "P2"):
             noise_score -= 3
             genuine_reasons.append(f"{priority} priority")
-        if close_time > 1800:
+
+        # CHANGE 1 — acknowledgement signal
+        if not acknowledged:
+            noise_score += 2
+            noise_reasons.append("not acknowledged")
+        else:
             noise_score -= 2
-            genuine_reasons.append("open >1800s")
+            genuine_reasons.append("acknowledged by team")
+
+        # CHANGE 2 — cycle speed signal
+        if close_time > 0 and close_time < 180:
+            noise_score += 3
+            noise_reasons.append(f"auto-resolved in {close_time}s (<3 mins)")
+        elif close_time > 0 and close_time < 1800:
+            noise_score += 1
+            noise_reasons.append(f"auto-resolved in {close_time}s (<30 mins)")
+        elif close_time > 14400:
+            noise_score -= 1
+            genuine_reasons.append("open for extended period (>4hrs)")
+
+        # CHANGE 4 — persistent open signal
+        if status == "open" and close_time == 0:
+            if not acknowledged:
+                noise_score += 2
+                noise_reasons.append("persistent open — not acknowledged")
+            else:
+                noise_score -= 1
+                genuine_reasons.append("persistent open — being investigated")
+
+        # CHANGE 3 — three-tier classification
+        noise_threshold = getattr(settings, "noise_classification_threshold", 0)
+        suspect_threshold = getattr(
+            settings, "noise_suspect_threshold", max(noise_threshold - 2, -2)
+        )
+        if noise_score > noise_threshold:
+            classification = "noise"
+        elif noise_score > suspect_threshold:
+            classification = "noise-suspect"
+        else:
+            classification = "genuine"
 
         classified.append(
             {
                 **alert,
                 "noise_score": noise_score,
-                "classification": "noise" if noise_score > 0 else "genuine",
+                "classification": classification,
                 "noise_reasons": noise_reasons,
                 "genuine_reasons": genuine_reasons,
                 "close_time_seconds": close_time,

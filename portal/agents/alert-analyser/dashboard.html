@@ -175,14 +175,27 @@
         <div class="empty-state__sub">${sub}</div></div>`;
     }
     function priClass(p) { return `pri pri--${(p||'p5').toLowerCase()}`; }
+    // Collapse OpsGenie team values (e.g. "{'type':'team','id':'9a64f39e-...'}") to "Team-XXXXXXXX".
+    function cleanTeam(t) {
+      if (t == null) return 'Unknown';
+      const s = String(t).trim();
+      if (!s || s.toLowerCase() === 'unknown') return 'Unknown';
+      const m = s.match(/([0-9a-fA-F]{8})-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/);
+      return m ? `Team-${m[1]}` : s;
+    }
     function destroyChart(k) { if (charts[k]) { charts[k].destroy(); delete charts[k]; } }
 
     function renderOverview() {
       const s = stats;
+      const suspectCount = s.suspect_count || 0;
+      const noisePct = s.total ? Math.round(s.noise_count / s.total * 1000) / 10 : 0;
+      const suspectPct = s.total ? Math.round(suspectCount / s.total * 1000) / 10 : 0;
+      const totalNoisePct = s.noise_ratio != null ? s.noise_ratio : noisePct + suspectPct;
       document.getElementById('tab-overview').innerHTML = `
         <div class="kpi-grid">
           <div class="kpi kpi--accent"><div class="kpi__label">Total Alerts</div><div class="kpi__value">${s.total.toLocaleString()}</div><div class="kpi__sub">in dataset</div></div>
-          <div class="kpi kpi--danger"><div class="kpi__label">Noise</div><div class="kpi__value">${s.noise_count}</div><div class="kpi__sub">${s.noise_ratio}% noise rate</div></div>
+          <div class="kpi kpi--danger"><div class="kpi__label">Noise</div><div class="kpi__value">${s.noise_count}</div><div class="kpi__sub">${noisePct}% noise + ${suspectPct}% suspect = ${totalNoisePct}% total</div></div>
+          <div class="kpi kpi--warn"><div class="kpi__label">Noise Suspect</div><div class="kpi__value" id="kpiSuspect">${suspectCount.toLocaleString()}</div><div class="kpi__sub">needs human review</div></div>
           <div class="kpi kpi--success"><div class="kpi__label">Genuine</div><div class="kpi__value">${s.genuine_count}</div><div class="kpi__sub">require attention</div></div>
           <div class="kpi kpi--warn"><div class="kpi__label">MTTR</div><div class="kpi__value">${s.mttr_minutes}m</div><div class="kpi__sub">mean time to resolve</div></div>
         </div>
@@ -197,8 +210,9 @@
         destroyChart('trend');
         const t = document.getElementById('trendChart')?.getContext('2d');
         if (t && s.daily_trend.length) charts['trend'] = new Chart(t, { type:'line', data:{ labels:s.daily_trend.map(d=>d.date), datasets:[
-          { label:'Genuine', data:s.daily_trend.map(d=>d.genuine), borderColor:'#16a34a', backgroundColor:'rgba(22,163,74,.1)', fill:true, tension:.4 },
-          { label:'Noise',   data:s.daily_trend.map(d=>d.noise),   borderColor:'#dc2626', backgroundColor:'rgba(220,38,38,.1)',  fill:true, tension:.4 },
+          { label:'Genuine',       data:s.daily_trend.map(d=>d.genuine),     borderColor:'#16a34a', backgroundColor:'rgba(22,163,74,.1)', fill:true, tension:.4 },
+          { label:'Noise',         data:s.daily_trend.map(d=>d.noise),       borderColor:'#dc2626', backgroundColor:'rgba(220,38,38,.1)',  fill:true, tension:.4 },
+          { label:'Noise Suspect', data:s.daily_trend.map(d=>d.suspect||0),  borderColor:'#f59e0b', backgroundColor:'rgba(245,158,11,.1)', fill:true, tension:.4 },
         ] }, options:{ responsive:true, plugins:{legend:{position:'bottom'}} } });
       }, 50);
     }
@@ -252,12 +266,12 @@
         <div class="data-table-wrap"><table class="data-table">
           <caption style="text-align:left;padding:14px 14px 0;font-size:.87rem;font-weight:600">Unresolved Genuine Alerts</caption>
           <thead><tr><th>Message</th><th>Source</th><th>Priority</th><th>Team</th></tr></thead>
-          <tbody>${s.unresolved_genuine.map(a=>`<tr><td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.message}</td><td>${a.source}</td><td><span class="${priClass(a.priority)}">${a.priority}</span></td><td>${(a.teams||['—'])[0]}</td></tr>`).join('') || '<tr><td colspan="4" class="data-table__empty">All genuine alerts resolved</td></tr>'}</tbody>
+          <tbody>${s.unresolved_genuine.map(a=>`<tr><td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.message}</td><td>${a.source}</td><td><span class="${priClass(a.priority)}">${a.priority}</span></td><td>${cleanTeam((a.teams||['—'])[0])}</td></tr>`).join('') || '<tr><td colspan="4" class="data-table__empty">All genuine alerts resolved</td></tr>'}</tbody>
         </table></div>`;
       setTimeout(() => {
         destroyChart('team');
         const c = document.getElementById('teamChart')?.getContext('2d');
-        if (c && s.team_breakdown.length) charts['team'] = new Chart(c, { type:'bar', data:{ labels:s.team_breakdown.map(t=>t.team), datasets:[
+        if (c && s.team_breakdown.length) charts['team'] = new Chart(c, { type:'bar', data:{ labels:s.team_breakdown.map(t=>cleanTeam(t.team)), datasets:[
           {label:'Genuine',data:s.team_breakdown.map(t=>t.genuine),backgroundColor:'#16a34a'},
           {label:'Noise',  data:s.team_breakdown.map(t=>t.noise),  backgroundColor:'#dc2626'},
         ] }, options:{responsive:true,plugins:{legend:{position:'bottom'}},scales:{x:{stacked:true},y:{stacked:true}}} });

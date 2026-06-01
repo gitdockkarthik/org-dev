@@ -438,6 +438,50 @@
           <input type="number" id="threshold-repeat" min="1" value="3" style="max-width:120px" />
         </div>
         <div class="field">
+          <label for="threshold-window">
+            Sliding window for repetition detection
+          </label>
+          <select id="threshold-window" style="max-width:200px">
+            <option value="5">5 minutes</option>
+            <option value="15">15 minutes</option>
+            <option value="30">30 minutes</option>
+            <option value="60" selected>1 hour (default)</option>
+            <option value="240">4 hours</option>
+            <option value="480">8 hours</option>
+          </select>
+          <p class="hint">
+            Time window for counting repeated alert firings. Default 1 hour suits most
+            environments. Use shorter windows for high-frequency systems.
+          </p>
+        </div>
+        <div class="card-section">
+          <div class="card-section-title">
+            Acknowledgement Weights
+          </div>
+          <p class="hint" style="margin-bottom:0.75rem">
+            Human engagement signal — acknowledged alerts are treated as more genuine.
+          </p>
+          <div class="field">
+            <label for="weight-unack">
+              Not acknowledged penalty
+            </label>
+            <input type="number" id="weight-unack" value="2" style="max-width:120px" />
+            <p class="hint">
+              Added to noise score when alert has never been acknowledged. Default +2.
+            </p>
+          </div>
+          <div class="field">
+            <label for="weight-ack">
+              Acknowledged bonus
+            </label>
+            <input type="number" id="weight-ack" value="2" style="max-width:120px" />
+            <p class="hint">
+              Subtracted from noise score when alert has been acknowledged. Default -2
+              (enter as positive number).
+            </p>
+          </div>
+        </div>
+        <div class="field">
           <label for="threshold-close">
             Flag as noise if alert auto-closes in fewer than X seconds
           </label>
@@ -487,6 +531,16 @@
         <div class="hint">
           Lower value = stricter noise detection. Default 0 means any positive net score = noise.
         </div>
+      </div>
+      <div class="field" style="margin-top:1rem">
+        <label for="noise-suspect-threshold">
+          Noise-Suspect threshold
+        </label>
+        <input type="number" id="noise-suspect-threshold" value="-2" style="max-width:120px" />
+        <p class="hint">
+          Alerts with score between this and the noise threshold are flagged as
+          Noise-Suspect — needing human review before suppression. Default -2.
+        </p>
       </div>
     </div>
 
@@ -772,8 +826,9 @@
 
   function buildSourcePayload() {
     const radio = document.querySelector('input[name="source"]:checked');
+    const sourceType = document.querySelector('input[name="source"]:checked')?.value || 'opsgenie';
     const payload = {
-      source_type:           radio ? radio.value : 'synthetic',
+      source_type:           sourceType,
       sync_interval_minutes: parseInt($('sync-interval').value, 10),
       sync_window_days:      parseInt($('sync-window').value, 10),
     };
@@ -797,8 +852,9 @@
 
   function buildTuningPayload() {
     return {
-      noise_threshold_repeat:     parseInt($('threshold-repeat').value, 10),
-      noise_threshold_close_secs: parseInt($('threshold-close').value, 10),
+      noise_threshold_repeat:      parseInt($('threshold-repeat').value, 10),
+      noise_threshold_window_mins: parseInt($('threshold-window').value, 10),
+      noise_threshold_close_secs:  parseInt($('threshold-close').value, 10),
       priority_weights: {
         P1: parseInt($('w-p1').value, 10),
         P2: parseInt($('w-p2').value, 10),
@@ -807,6 +863,7 @@
         P5: parseInt($('w-p5').value, 10),
       },
       noise_classification_threshold: parseInt($('noise-class-threshold').value, 10),
+      noise_suspect_threshold:        parseInt($('noise-suspect-threshold').value, 10),
     };
   }
 
@@ -932,6 +989,13 @@
 
       // Source radio
       selectSource(cfg.source_type || 'synthetic');
+      if (cfg.source_type === 'standalone') {
+        const radio = document.querySelector('input[name="source"][value="standalone"]');
+        if (radio) {
+          radio.checked = true;
+          radio.closest('.radio-card').classList.add('selected');
+        }
+      }
 
       // Pre-fill non-secret fields
       selectOpsgenieType(cfg.opsgenie_type || 'jsm');
@@ -955,7 +1019,12 @@
       if (winEl.querySelector('option[value="' + winVal + '"]')) winEl.value = winVal;
 
       // Noise thresholds
-      if (cfg.noise_threshold_repeat     != null) $('threshold-repeat').value = cfg.noise_threshold_repeat;
+      if (cfg.noise_threshold_repeat       != null) $('threshold-repeat').value = cfg.noise_threshold_repeat;
+      if (cfg.noise_threshold_window_mins  != null) {
+        const winEl = $('threshold-window');
+        const winVal = String(cfg.noise_threshold_window_mins);
+        if (winEl.querySelector('option[value="' + winVal + '"]')) winEl.value = winVal;
+      }
       if (cfg.noise_threshold_close_secs != null) $('threshold-close').value  = cfg.noise_threshold_close_secs;
 
       // Priority weights
@@ -971,6 +1040,9 @@
       // Classification threshold
       if (cfg.noise_classification_threshold != null) {
         $('noise-class-threshold').value = cfg.noise_classification_threshold;
+      }
+      if (cfg.noise_suspect_threshold != null) {
+        $('noise-suspect-threshold').value = cfg.noise_suspect_threshold;
       }
 
       // Sync status section
