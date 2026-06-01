@@ -288,7 +288,7 @@
         </label>
 
         <label class="radio-card" id="card-opsgenie">
-          <input type="radio" name="source" value="opsgenie" />
+          <input type="radio" name="source" value="standalone" />
           <div class="radio-card-body">
             <div class="radio-card-label">OpsGenie / JSM API</div>
             <div class="radio-card-desc">Fetch alerts live from the Atlassian JSM Ops API using Basic Auth</div>
@@ -791,7 +791,7 @@
       radio.checked = selected;
       card.classList.toggle('selected', selected);
     });
-    $('opsfields').classList.toggle('hidden', value !== 'opsgenie');
+    $('opsfields').classList.toggle('hidden', value !== 'standalone');
   }
 
   document.querySelectorAll('input[name="source"]').forEach(radio => {
@@ -832,7 +832,7 @@
       sync_interval_minutes: parseInt($('sync-interval').value, 10),
       sync_window_days:      parseInt($('sync-window').value, 10),
     };
-    if (payload.source_type === 'opsgenie') {
+    if (payload.source_type === 'standalone') {
       const opsType = (document.querySelector('input[name="opsgenie-type"]:checked') || {}).value || 'jsm';
       payload.opsgenie_type = opsType;
       if (opsType === 'standalone') {

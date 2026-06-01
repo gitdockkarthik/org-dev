@@ -294,7 +294,7 @@ async def proxy_agent_endpoint(
         if k.lower() not in ("host", "content-length", "transfer-encoding", "x-api-key")
     }
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=120.0) as client:
         try:
             resp = await client.request(
                 method=request.method,
