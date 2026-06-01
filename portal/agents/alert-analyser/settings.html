@@ -469,6 +469,15 @@
               Flag as noise if alert auto-closes in fewer than X seconds
             </label>
             <input type="number" id="threshold-close" min="30" value="300" style="max-width:120px" />
+
+            <label for="threshold-window">Sliding window for repeat detection (minutes)</label>
+            <select id="threshold-window" style="max-width:200px">
+              <option value="15">15 mins</option>
+              <option value="30">30 mins</option>
+              <option value="60" selected>60 mins</option>
+              <option value="120">120 mins</option>
+              <option value="240">240 mins</option>
+            </select>
             <div class="hint">300 seconds = 5 minutes</div>
           </div>
         </div>
@@ -834,6 +843,7 @@
       return {
         noise_threshold_repeat:     parseInt($('threshold-repeat').value, 10),
         noise_threshold_close_secs: parseInt($('threshold-close').value, 10),
+        noise_threshold_window_mins: parseInt($('threshold-window').value, 10),
         priority_weights: {
           P1: parseInt($('w-p1').value, 10),
           P2: parseInt($('w-p2').value, 10),
@@ -991,6 +1001,11 @@
         // Noise thresholds
         if (cfg.noise_threshold_repeat     != null) $('threshold-repeat').value = cfg.noise_threshold_repeat;
         if (cfg.noise_threshold_close_secs != null) $('threshold-close').value  = cfg.noise_threshold_close_secs;
+        if (cfg.noise_threshold_window_mins != null) {
+          const winEl = $('threshold-window');
+          const winVal = String(cfg.noise_threshold_window_mins);
+          if ([...winEl.options].some(o => o.value === winVal)) winEl.value = winVal;
+        }
 
         // Priority weights
         if (cfg.priority_weights) {
