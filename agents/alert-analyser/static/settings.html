@@ -782,7 +782,7 @@
       payload.opsgenie_type = opsType;
       if (opsType === 'standalone') {
         const gk = $('genie-key').value.trim();
-        if (gk) payload.genie_key = gk;
+        if (gk) payload.api_token = gk;
       } else {
         payload.cloud_id = $('cloud-id').value.trim();
         payload.email    = $('ds-email').value.trim();
