@@ -9,7 +9,7 @@ import threading
 from datetime import datetime, timezone
 from typing import Any
 
-from tools.noise_detector import compute_dashboard_stats
+from tools.dashboard_builder import compute_dashboard_stats
 
 _lock = threading.Lock()
 _reports: list[dict[str, Any]] = []
