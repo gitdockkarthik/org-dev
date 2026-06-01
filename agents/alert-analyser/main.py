@@ -16,7 +16,7 @@ from routes_dashboard import router as dashboard_router
 from routes_reports import router as reports_router
 from routes_settings import _config, _run_opsgenie_sync, _sync_changed, load_config_from_db, router as settings_router
 from tools.dashboard_builder import DashboardBuilderTool
-from tools.noise_detector import NoiseDetectorTool
+from tools.noise_detector import NoiseDetectorTool, classify_alerts
 from tools.source import FileSource
 from tools.suppression_advisor import SuppressionAdvisorTool
 
@@ -225,6 +225,16 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Config initialisation raised an unexpected exception (agent will still start)")
 
+    try:
+        from report_store import load_latest_from_db
+        loaded = await load_latest_from_db()
+        if loaded:
+            logger.info("Startup: loaded last report from DB")
+        else:
+            logger.info("Startup: no previous report found")
+    except Exception:
+        logger.exception("Startup: loading last report from DB failed (agent will still start)")
+
     sync_task = asyncio.create_task(_sync_loop())
 
     yield
@@ -261,12 +271,39 @@ async def invoke(
     elif "alerts" in ctx:
         _alert_cache[body.session_id] = ctx["alerts"]
 
-    has_data = bool(_alert_cache.get(body.session_id))
-    alert_count = len(_alert_cache.get(body.session_id, []))
+    alerts = _alert_cache.get(body.session_id, [])
+    has_data = bool(alerts)
+    alert_count = len(alerts)
+
+    # Cache holds raw alerts; classify so the summary reflects genuine/noise/suspect.
+    # Send only a bounded summary to the LLM — never the full alert list — to keep
+    # the system prompt small.
+    classified = classify_alerts(alerts) if alerts else []
+    alert_summary = {
+        "total": len(classified),
+        "genuine": sum(1 for a in classified if a.get("classification") == "genuine"),
+        "noise": sum(1 for a in classified if a.get("classification") == "noise"),
+        "suspect": sum(1 for a in classified if a.get("classification") == "noise-suspect"),
+        "sample_noise": [
+            {"message": a.get("message", "")[:100], "source": a.get("source", ""),
+             "priority": a.get("priority", ""), "reasons": a.get("noise_reasons", [])}
+            for a in classified if a.get("classification") == "noise"
+        ][:20],
+        "sample_genuine": [
+            {"message": a.get("message", "")[:100], "source": a.get("source", ""),
+             "priority": a.get("priority", ""), "reasons": a.get("genuine_reasons", [])}
+            for a in classified if a.get("classification") == "genuine"
+        ][:20],
+    }
 
     response_text, tokens = await _runner.run(
         user_message=body.user_message,
-        context={"session_id": body.session_id, "has_data": has_data, "alert_count": alert_count},
+        context={
+            "session_id": body.session_id,
+            "has_data": has_data,
+            "alert_count": alert_count,
+            "alert_summary": alert_summary,
+        },
         history=body.history,
         api_key=x_anthropic_key,
     )

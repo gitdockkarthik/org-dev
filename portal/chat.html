@@ -129,12 +129,16 @@
           console.warn('[ctx:alert-analyser] data fetch threw:', e.message);
         }
 
+        // suspect_count isn't in the report meta — derive it from the classified data.
+        const suspect_count = alerts.filter(a => a && a.classification === 'noise-suspect').length;
+
         return {
           has_data: true,
           report_id: r.id,
           total_alerts: r.total_alerts,
           genuine_count: r.genuine_count,
           noise_count: r.noise_count,
+          suspect_count,
           filename: r.filename,
           alerts,
         };
@@ -249,8 +253,11 @@
       let html = `<div style="color:var(--success);font-weight:600">✓ Report loaded</div>`;
       html += `<div style="word-break:break-all">${agentContext.filename || ''}</div>`;
       if (slug === 'alert-analyser') {
+        const suspect = agentContext.suspect_count || 0;
+        const genuineOnly = (agentContext.genuine_count || 0) - suspect;
         html += `<div>${agentContext.total_alerts} alerts</div>`;
-        html += `<div style="color:var(--success)">${agentContext.genuine_count} genuine</div>`;
+        html += `<div style="color:var(--success)">${genuineOnly} genuine</div>`;
+        html += `<div style="color:#f59e0b">${suspect} noise suspect</div>`;
         html += `<div style="color:var(--danger)">${agentContext.noise_count} noise</div>`;
       } else if (slug === 'cur-analyser') {
         html += `<div>${(agentContext.row_count || 0).toLocaleString()} line items</div>`;
