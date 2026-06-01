@@ -175,6 +175,64 @@
         <div class="empty-state__sub">${sub}</div></div>`;
     }
     function priClass(p) { return `pri pri--${(p||'p5').toLowerCase()}`; }
+
+    // ── Data Quality Insights (Overview tab) ──
+    function dqRec(text) {
+      return text
+        ? `<div style="margin-top:12px;padding:10px 12px;background:rgba(245,158,11,.08);border-left:3px solid var(--warn);border-radius:4px;font-size:.78rem;color:var(--text-muted);line-height:1.5">${text}</div>`
+        : '';
+    }
+    function dqRow(label, value, color) {
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:.83rem">
+        <span style="color:var(--text-muted)">${label}</span>
+        <span style="font-weight:700${color ? ';color:' + color : ''}">${value}</span></div>`;
+    }
+    function renderDataQuality(dq) {
+      const lc = dq.lifecycle, pr = dq.priority, ack = dq.acknowledgement;
+      const srcRows = (dq.sources || []).map(s => `<tr${s.flagged ? ' style="background:rgba(220,38,38,.06)"' : ''}>
+          <td>${s.source}</td><td>${s.auto_resolve_rate}%</td><td>${s.avg_close_mins}m</td>
+          <td style="${s.flagged ? 'color:var(--danger);font-weight:700' : ''}">${s.never_close_rate}%</td></tr>`
+        ).join('') || '<tr><td colspan="4" class="data-table__empty">No source data</td></tr>';
+      const prRows = pr.distribution.map(p => {
+        const flag = p.priority === 'P5' && pr.flagged;
+        return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:.8rem">
+          <span style="width:24px;color:var(--text-muted)">${p.priority}</span>
+          <div style="flex:1;height:8px;background:var(--navy-3);border-radius:4px;overflow:hidden">
+            <div style="height:100%;width:${p.pct}%;background:${flag ? 'var(--danger)' : 'var(--accent)'}"></div></div>
+          <span style="width:46px;text-align:right;font-weight:600${flag ? ';color:var(--danger)' : ''}">${p.pct}%</span></div>`;
+      }).join('');
+      return `
+        <div class="chart-card__title" style="font-size:1rem;margin:6px 0 14px">Data Quality Insights</div>
+        <div class="chart-grid">
+          <div class="chart-card">
+            <div class="chart-card__title">Alert Lifecycle Health</div>
+            ${dqRow('Never closed', lc.never_closed_pct + '%', lc.never_closed_pct > 50 ? 'var(--warn)' : '')}
+            ${dqRow('Proper open/close cycle', lc.proper_cycle_pct + '%')}
+            ${dqRow('Acknowledged', lc.acknowledged_pct + '%')}
+            ${dqRow('Unacknowledged', lc.unacknowledged_pct + '%')}
+            ${dqRec(lc.recommendation)}
+          </div>
+          <div class="chart-card">
+            <div class="chart-card__title">Source Health</div>
+            <table class="data-table" style="font-size:.8rem">
+              <thead><tr><th>Source</th><th>Auto-resolve</th><th>Avg close</th><th>Never-close</th></tr></thead>
+              <tbody>${srcRows}</tbody></table>
+            ${dqRec(dq.source_recommendation)}
+          </div>
+          <div class="chart-card">
+            <div class="chart-card__title">Priority Distribution</div>
+            ${prRows}
+            ${dqRec(pr.recommendation)}
+          </div>
+          <div class="chart-card">
+            <div class="chart-card__title">Acknowledgement Rate</div>
+            ${dqRow('Acknowledged', ack.acknowledged_pct + '%', 'var(--success)')}
+            ${dqRow('Never acknowledged', ack.never_acked_pct + '%', ack.never_acked_pct > 30 ? 'var(--danger)' : '')}
+            <div style="margin-top:6px;font-size:.72rem;color:var(--text-dim)">Within-15-min timing requires acknowledgement timestamps, not tracked in current alert data.</div>
+            ${dqRec(ack.recommendation)}
+          </div>
+        </div>`;
+    }
     // Collapse OpsGenie team values (e.g. "{'type':'team','id':'9a64f39e-...'}") to "Team-XXXXXXXX".
     function cleanTeam(t) {
       if (t == null) return 'Unknown';
@@ -202,7 +260,8 @@
         <div class="chart-grid">
           <div class="chart-card"><div class="chart-card__title">Genuine vs Noise</div><div class="chart-wrap"><canvas id="donutChart"></canvas></div></div>
           <div class="chart-card"><div class="chart-card__title">Alert Volume by Day</div><div class="chart-wrap"><canvas id="trendChart"></canvas></div></div>
-        </div>`;
+        </div>
+        ${s.data_quality ? renderDataQuality(s.data_quality) : ''}`;
       setTimeout(() => {
         destroyChart('donut');
         const c = document.getElementById('donutChart')?.getContext('2d');
@@ -252,7 +311,7 @@
       document.getElementById('tab-genuine').innerHTML = `
         <div class="kpi-grid">
           <div class="kpi kpi--success"><div class="kpi__label">Total Genuine</div><div class="kpi__value">${s.genuine_count}</div><div class="kpi__sub">real incidents</div></div>
-          <div class="kpi kpi--danger"><div class="kpi__label">Unresolved</div><div class="kpi__value">${s.unresolved_genuine.length}</div><div class="kpi__sub">need attention</div></div>
+          <div class="kpi kpi--danger"><div class="kpi__label">Open Alerts</div><div class="kpi__value">${s.unresolved_genuine.length}</div><div class="kpi__sub">showing up to 100</div></div>
           <div class="kpi kpi--warn"><div class="kpi__label">P1/P2</div><div class="kpi__value">${s.high_severity_genuine.length}</div><div class="kpi__sub">high severity</div></div>
         </div>
         <div class="chart-grid">
@@ -273,6 +332,7 @@
         const c = document.getElementById('teamChart')?.getContext('2d');
         if (c && s.team_breakdown.length) charts['team'] = new Chart(c, { type:'bar', data:{ labels:s.team_breakdown.map(t=>cleanTeam(t.team)), datasets:[
           {label:'Genuine',data:s.team_breakdown.map(t=>t.genuine),backgroundColor:'#16a34a'},
+          {label:'Suspect',data:s.team_breakdown.map(t=>t.suspect||0),backgroundColor:'#f59e0b'},
           {label:'Noise',  data:s.team_breakdown.map(t=>t.noise),  backgroundColor:'#dc2626'},
         ] }, options:{responsive:true,plugins:{legend:{position:'bottom'}},scales:{x:{stacked:true},y:{stacked:true}}} });
       }, 50);
@@ -291,7 +351,8 @@
           </div>
           <div class="chart-card"><div class="chart-card__title">Peak Alert Hours</div><div class="chart-wrap"><canvas id="hourChart"></canvas></div></div>
         </div>
-        <div class="chart-card"><div class="chart-card__title">Signal Quality Score Over Time</div><div class="chart-wrap"><canvas id="healthChart"></canvas></div></div>`;
+        <div class="chart-card"><div class="chart-card__title">Daily Alert Classification</div><div class="chart-wrap"><canvas id="classChart"></canvas></div></div>
+        <div class="chart-card" style="margin-top:16px"><div class="chart-card__title">Hourly Alert Distribution</div><div class="chart-wrap"><canvas id="hourDistChart"></canvas></div></div>`;
       const grid = document.getElementById('heatmapGrid');
       hourly.forEach(h => {
         const cell = document.createElement('div');
@@ -302,14 +363,25 @@
         grid.appendChild(cell);
       });
       setTimeout(() => {
+        // FIX 4 — single indigo palette, top-3 peak hours highlighted red
         destroyChart('hour');
         const c = document.getElementById('hourChart')?.getContext('2d');
-        if (c) charts['hour'] = new Chart(c, { type:'bar', data:{ labels:hourly.map(h=>`${h.hour}:00`), datasets:[{label:'Alerts',data:hourly.map(h=>h.count),backgroundColor:hourly.map(h=>{ const i=h.count/maxH; return i>.7?'#dc2626':i>.4?'#b45309':'#6366f1'; })}] }, options:{responsive:true,plugins:{legend:{display:false}}} });
-        destroyChart('health');
-        const hc = document.getElementById('healthChart')?.getContext('2d');
-        if (hc && s.daily_trend.length) {
-          const scores = s.daily_trend.map(d=>{ const t=(d.genuine||0)+(d.noise||0); return t>0?Math.round((d.genuine/t)*100):100; });
-          charts['health'] = new Chart(hc, { type:'line', data:{ labels:s.daily_trend.map(d=>d.date), datasets:[{label:'Signal Quality (%)',data:scores,borderColor:'#16a34a',backgroundColor:'rgba(22,163,74,.1)',fill:true,tension:.4}] }, options:{responsive:true,scales:{y:{min:0,max:100,ticks:{callback:v=>v+'%'}}},plugins:{legend:{display:false}}} });
+        const topHours = new Set([...hourly].sort((a,b)=>b.count-a.count).slice(0,3).map(h=>h.hour));
+        if (c) charts['hour'] = new Chart(c, { type:'bar', data:{ labels:hourly.map(h=>`${h.hour}:00`), datasets:[{label:'Alerts',data:hourly.map(h=>h.count),backgroundColor:hourly.map(h=>topHours.has(h.hour)?'#dc2626':'#6366f1')}] }, options:{responsive:true,plugins:{legend:{display:false}}} });
+        // FIX 3 — daily classification stacked bar (replaces Signal Quality line)
+        destroyChart('class');
+        const cc = document.getElementById('classChart')?.getContext('2d');
+        if (cc && s.daily_trend.length) charts['class'] = new Chart(cc, { type:'bar', data:{ labels:s.daily_trend.map(d=>d.date), datasets:[
+          {label:'Genuine',       data:s.daily_trend.map(d=>d.genuine||0), backgroundColor:'#16a34a'},
+          {label:'Noise Suspect', data:s.daily_trend.map(d=>d.suspect||0), backgroundColor:'#f59e0b'},
+          {label:'Noise',         data:s.daily_trend.map(d=>d.noise||0),   backgroundColor:'#dc2626'},
+        ] }, options:{responsive:true,plugins:{legend:{position:'bottom'}},scales:{x:{stacked:true},y:{stacked:true}}} });
+        // FIX 3 — hourly distribution bar with peak-hour annotation
+        destroyChart('hourdist');
+        const hd = document.getElementById('hourDistChart')?.getContext('2d');
+        if (hd && hourly.length) {
+          const peak = hourly.reduce((m,h)=>h.count>m.count?h:m, hourly[0]);
+          charts['hourdist'] = new Chart(hd, { type:'bar', data:{ labels:hourly.map(h=>`${h.hour}:00`), datasets:[{label:'Alerts',data:hourly.map(h=>h.count),backgroundColor:hourly.map(h=>h.hour===peak.hour?'#dc2626':'#6366f1')}] }, options:{responsive:true,plugins:{legend:{display:false},title:{display:true,text:`Peak: ${peak.hour}:00 (${peak.count} alerts)`}}} });
         }
       }, 50);
     }

@@ -140,6 +140,121 @@ def compute_dashboard_stats(classified: list[dict]) -> dict:
         "daily_trend": [
             {"date": d, **v} for d, v in sorted(daily_bins.items())
         ],
+        "data_quality": compute_data_quality(classified),
+    }
+
+
+def compute_data_quality(classified: list[dict]) -> dict:
+    """Derive actionable data-quality insights from classified alerts.
+
+    Powers the Overview "Data Quality Insights" cards: lifecycle health,
+    per-source close behaviour, priority distribution, and acknowledgement.
+    Recommendation strings (and their trigger thresholds) live here so the
+    UI only has to render them.
+    """
+    total = len(classified)
+
+    def pct(n: int) -> float:
+        return round(n / total * 100, 1) if total else 0.0
+
+    # ── Card 1: alert lifecycle health ──
+    closed = [a for a in classified if a.get("status") == "closed"]
+    never_closed = total - len(closed)
+    proper_cycle = sum(1 for a in closed if a.get("close_time_seconds", 0) > 0)
+    acked = sum(1 for a in classified if a.get("acknowledged"))
+    unacked = total - acked
+
+    never_closed_pct = pct(never_closed)
+    lifecycle_rec = (
+        f"{never_closed_pct}% of alerts never close in OpsGenie. Configure "
+        "auto-close in integrations or train teams to close resolved alerts. "
+        "This improves MTTR accuracy and noise detection by ~40%."
+    )
+
+    # ── Card 2: per-source health ──
+    src_stats: dict[str, dict[str, int]] = {}
+    for a in classified:
+        src = a.get("source", "unknown")
+        d = src_stats.setdefault(src, {"total": 0, "closed": 0, "fast": 0, "close_secs": 0})
+        d["total"] += 1
+        if a.get("status") == "closed":
+            ct = a.get("close_time_seconds", 0)
+            d["closed"] += 1
+            d["close_secs"] += ct
+            if 0 < ct < 300:
+                d["fast"] += 1
+
+    sources: list[dict] = []
+    for src, d in src_stats.items():
+        n = d["total"]
+        never_rate = round((n - d["closed"]) / n * 100, 1) if n else 0.0
+        avg_close = round(d["close_secs"] / d["closed"]) if d["closed"] else 0
+        sources.append({
+            "source": src,
+            "count": n,
+            "auto_resolve_rate": round(d["fast"] / n * 100, 1) if n else 0.0,
+            "avg_close_secs": avg_close,
+            "avg_close_mins": round(avg_close / 60, 1),
+            "never_close_rate": never_rate,
+            "flagged": never_rate > 50,
+        })
+    sources.sort(key=lambda x: x["never_close_rate"], reverse=True)
+    flagged_src = next((s for s in sources if s["flagged"]), None)
+    source_rec = (
+        f"{flagged_src['source']} has {flagged_src['never_close_rate']}% open alerts. "
+        "Review webhook configuration."
+        if flagged_src else ""
+    )
+
+    # ── Card 3: priority distribution ──
+    prio_order = ["P1", "P2", "P3", "P4", "P5"]
+    prio_counts = {p: 0 for p in prio_order}
+    for a in classified:
+        p = a.get("priority", "P5")
+        prio_counts[p] = prio_counts.get(p, 0) + 1
+    distribution = [
+        {"priority": p, "count": prio_counts[p], "pct": pct(prio_counts[p])}
+        for p in prio_order
+    ]
+    p5_pct = pct(prio_counts.get("P5", 0))
+    prio_flagged = p5_pct > 40
+    prio_rec = (
+        f"{p5_pct}% of alerts are P5. Consider raising thresholds in monitoring "
+        "tools to reduce low-priority alert volume."
+        if prio_flagged else ""
+    )
+
+    # ── Card 4: acknowledgement rate ──
+    # Note: alerts carry only an `acknowledged` flag, not an ack timestamp, so
+    # we report overall acknowledgement rather than a within-15-minutes rate.
+    never_acked_pct = pct(unacked)
+    ack_rec = (
+        f"{never_acked_pct}% of alerts are never acknowledged. Review on-call "
+        "rotation and escalation policies."
+        if never_acked_pct > 30 else ""
+    )
+
+    return {
+        "lifecycle": {
+            "never_closed_pct": never_closed_pct,
+            "proper_cycle_pct": pct(proper_cycle),
+            "acknowledged_pct": pct(acked),
+            "unacknowledged_pct": pct(unacked),
+            "recommendation": lifecycle_rec,
+        },
+        "sources": sources,
+        "source_recommendation": source_rec,
+        "priority": {
+            "distribution": distribution,
+            "p5_pct": p5_pct,
+            "flagged": prio_flagged,
+            "recommendation": prio_rec,
+        },
+        "acknowledgement": {
+            "acknowledged_pct": pct(acked),
+            "never_acked_pct": never_acked_pct,
+            "recommendation": ack_rec,
+        },
     }
 
 
