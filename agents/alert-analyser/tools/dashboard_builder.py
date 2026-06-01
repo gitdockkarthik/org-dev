@@ -133,7 +133,8 @@ def compute_dashboard_stats(classified: list[dict]) -> dict:
         ],
         "suppression_recommendations": [{"alias": alias_message.get(a) or (a[:8] if a else ""), "count": c} for a, c in repeat_offenders[:10]],
         "high_severity_genuine": high_severity_genuine,
-        "unresolved_genuine": [a for a in genuine_list if a.get("status") == "open"][:100],
+        "unresolved_count": len([a for a in genuine_list if a.get("status") == "open"]),
+        "unresolved_genuine": [a for a in genuine_list if a.get("status") == "open"][:50],
         "team_breakdown": [{"team": _clean_team_name(t), **v} for t, v in team_counts.items()],
         "hourly_distribution": [
             {"hour": h, "count": hourly_bins[h]} for h in range(24)
