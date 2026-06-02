@@ -163,14 +163,12 @@ async def store_report(classified: list[dict], meta: dict) -> None:
 
 
 async def load_latest_from_db() -> bool:
-    """Load the most recent persisted report into the cache on startup."""
+    """Load all persisted reports into cache on startup."""
     from config import settings
     from database import SessionLocal
     from models import AlertReport
-
     if SessionLocal is None:
         return False
-
     global _stats_cache, _meta_cache
     try:
         async with SessionLocal() as session:
@@ -178,28 +176,16 @@ async def load_latest_from_db() -> bool:
                 select(AlertReport)
                 .where(AlertReport.agent_slug == settings.agent_slug)
                 .order_by(AlertReport.created_at.desc())
-                .limit(1)
+                .limit(30)
             )
-            report = result.scalar_one_or_none()
-            if report is None:
+            reports = result.scalars().all()
+            if not reports:
                 return False
-
-            _stats_cache = json.loads(report.stats_data) if report.stats_data else None
-            _meta_cache = {
-                "id": report.id,
-                "filename": report.filename,
-                "total_alerts": report.total_alerts,
-                "genuine_count": report.genuine_count,
-                "noise_count": report.noise_count,
-                "suspect_count": report.suspect_count,
-                "status": report.status,
-                "created_at": report.created_at.isoformat(),
-            }
-            # Restore _reports + _classified so incremental sync works after rebuild
-            if report.report_data:
-                classified = json.loads(report.report_data)
-                _reports.clear()
-                _reports.insert(0, {
+            _reports.clear()
+            for report in reports:
+                stats = json.loads(report.stats_data) if report.stats_data else None
+                classified = json.loads(report.report_data) if report.report_data else []
+                _reports.append({
                     "id": report.id,
                     "filename": report.filename,
                     "total_alerts": report.total_alerts,
@@ -209,18 +195,29 @@ async def load_latest_from_db() -> bool:
                     "status": report.status,
                     "created_at": report.created_at.isoformat(),
                     "_classified": classified,
-                    "_stats": _stats_cache,
+                    "_stats": stats,
                 })
+            # Use latest report for stats/meta cache
+            latest = reports[0]
+            _stats_cache = json.loads(latest.stats_data) if latest.stats_data else None
+            _meta_cache = {
+                "id": latest.id,
+                "filename": latest.filename,
+                "total_alerts": latest.total_alerts,
+                "genuine_count": latest.genuine_count,
+                "noise_count": latest.noise_count,
+                "suspect_count": latest.suspect_count,
+                "status": latest.status,
+                "created_at": latest.created_at.isoformat(),
+            }
             logger.info(
-                "load_latest_from_db: loaded report id=%d total=%d",
-                report.id,
-                report.total_alerts,
+                "load_latest_from_db: restored %d reports, latest id=%d total=%d",
+                len(reports), latest.id, latest.total_alerts,
             )
             return True
     except Exception as e:
         logger.error("load_latest_from_db: failed: %s", e)
         return False
-
 
 def get_reports() -> list[dict]:
     if _reports:
