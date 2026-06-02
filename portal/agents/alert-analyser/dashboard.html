@@ -147,7 +147,10 @@
       ['overview','noise','genuine','trends'].forEach(t =>
         document.getElementById('tab-' + t).innerHTML = skeletonHTML());
       try {
-        const data = await api('/dashboard');
+        const [data, cfg] = await Promise.all([api('/dashboard'), api('/settings').catch(() => ({}))]);
+        const sourceType = cfg.source_type || 'synthetic';
+        const genBtn = document.getElementById('genBtn');
+        if (genBtn) genBtn.style.display = sourceType === 'synthetic' ? '' : 'none';
         if (data.empty) {
           ['overview','noise','genuine','trends'].forEach(t =>
             document.getElementById('tab-' + t).innerHTML = emptyState('🚨','No alert data loaded',

@@ -121,6 +121,12 @@
     }
 
     async function loadSnapshot() {
+      // Hide generate button if source is not synthetic
+      try {
+        const cfg = await api('/settings').catch(() => ({}));
+        const genBtn = document.getElementById('genBtn');
+        if (genBtn) genBtn.style.display = (cfg.source_type || 'synthetic') === 'synthetic' ? '' : 'none';
+      } catch (_) {}
       const el = document.getElementById('snapshotBody');
       el.innerHTML = '<div class="empty-state"><div class="empty-state__icon">⏳</div><div class="empty-state__title">Loading…</div></div>';
       try {

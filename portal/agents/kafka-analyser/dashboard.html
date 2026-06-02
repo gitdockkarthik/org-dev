@@ -588,6 +588,13 @@
 
     async function init() {
       await portalReady;
+
+      // Hide generate button if source is not synthetic
+      try {
+        const cfg = await api('/settings').catch(() => ({}));
+        const genBtn = document.getElementById('genBtn');
+        if (genBtn) genBtn.style.display = (cfg.source_type || 'synthetic') === 'synthetic' ? '' : 'none';
+      } catch (_) {}
       loadTab('overview');
     }
 
