@@ -312,7 +312,7 @@
         <div class="kpi-grid">
           <div class="kpi kpi--success"><div class="kpi__label">Total Genuine</div><div class="kpi__value">${s.genuine_count}</div><div class="kpi__sub">real incidents</div></div>
           <div class="kpi kpi--danger"><div class="kpi__label">Open Alerts</div><div class="kpi__value">${s.unresolved_count || s.unresolved_genuine.length}</div><div class="kpi__sub">showing top 50 of ${s.unresolved_count || s.unresolved_genuine.length} total${(s.unresolved_count || 0) > 500 ? ' · ⚠️ High open alert count — review OpsGenie closure policy' : ''}</div></div>
-          <div class="kpi kpi--warn"><div class="kpi__label">P1/P2</div><div class="kpi__value">${s.high_severity_genuine.length}</div><div class="kpi__sub">high severity</div></div>
+          <div class="kpi kpi--warn"><div class="kpi__label">P1/P2</div><div class="kpi__value">${s.high_severity_count ?? s.high_severity_genuine.length}</div><div class="kpi__sub">showing top 50 of ${s.high_severity_count ?? s.high_severity_genuine.length} total · high severity</div></div>
         </div>
         <div class="chart-grid">
           <div class="data-table-wrap"><table class="data-table">

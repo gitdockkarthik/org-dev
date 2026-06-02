@@ -257,7 +257,9 @@ def compute_dashboard_stats(classified: list[dict]) -> dict:
 
     # Unresolved and high-severity genuine
     unresolved_genuine = [a for a in genuine if a.get("status", "").lower() in ("open", "")][:20]
-    high_severity_genuine = [a for a in genuine if a.get("priority", "") in ("P1", "P2")][:10]
+    high_severity_genuine_all = [a for a in genuine if a.get("priority", "") in ("P1", "P2")]
+    high_severity_count = len(high_severity_genuine_all)
+    high_severity_genuine = high_severity_genuine_all[:10]
 
     return {
         "total": total,
@@ -271,6 +273,7 @@ def compute_dashboard_stats(classified: list[dict]) -> dict:
         "service_noise_scores": service_noise_scores,
         "suppression_recommendations": suppression_recommendations,
         "unresolved_genuine": unresolved_genuine,
+        "high_severity_count": high_severity_count,
         "high_severity_genuine": high_severity_genuine,
         "team_breakdown": team_breakdown,
         "hourly_distribution": hourly_distribution,

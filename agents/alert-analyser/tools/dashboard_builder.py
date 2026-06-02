@@ -79,9 +79,11 @@ def compute_dashboard_stats(classified: list[dict]) -> dict:
     repeat_offenders = sorted(alias_counts.items(), key=lambda x: x[1], reverse=True)[:10]
 
     # High-severity genuine alerts
-    high_severity_genuine = [
+    high_severity_genuine_all = [
         a for a in genuine_list if a.get("priority") in ("P1", "P2")
-    ][:50]
+    ]
+    high_severity_count = len(high_severity_genuine_all)
+    high_severity_genuine = high_severity_genuine_all[:50]
 
     # Team breakdown
     team_counts: dict[str, dict[str, int]] = {}
@@ -132,6 +134,7 @@ def compute_dashboard_stats(classified: list[dict]) -> dict:
             for a, c in repeat_offenders
         ],
         "suppression_recommendations": [{"alias": alias_message.get(a) or (a[:8] if a else ""), "count": c} for a, c in repeat_offenders[:10]],
+        "high_severity_count": high_severity_count,
         "high_severity_genuine": high_severity_genuine,
         "unresolved_count": len([a for a in genuine_list if a.get("status") == "open"]),
         "unresolved_genuine": [a for a in genuine_list if a.get("status") == "open"][:50],
