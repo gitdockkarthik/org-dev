@@ -406,8 +406,8 @@
       const rows = (data.topics || []).map(t => {
         const retWarn = t.retention_pct >= 80;
         return `<tr>
-          <td style="font-weight:600"><code style="font-size:.8rem">${t.topic}</code></td>
-          <td style="text-align:center">${t.partition_count}</td>
+          <td style="font-weight:600"><code style="font-size:.8rem">${(t.name || t.topic || 'Unknown')}</code></td>
+          <td style="text-align:center">${(t.partition_count || t.partitions || 0)}</td>
           <td style="text-align:center">${t.replication_factor}</td>
           <td>${fmtRate(t.messages_in_per_sec)}</td>
           <td style="text-align:right">
@@ -437,7 +437,7 @@
           charts['topic'] = new Chart(ctx, {
             type: 'bar',
             data: {
-              labels: topics.map(t => t.topic),
+              labels: topics.map(t => (t.name || t.topic || 'Unknown')),
               datasets: [{
                 label: 'Messages/sec',
                 data: topics.map(t => t.messages_in_per_sec),
