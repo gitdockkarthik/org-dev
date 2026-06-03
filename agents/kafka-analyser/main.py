@@ -351,6 +351,7 @@ async def lifespan(app: FastAPI):
                                 "anomalies": anomalies,
                             },
                             source_type=cluster_row.source_type,
+                            cluster_id=str(cluster_row.id),
                         )
                         logger.info(
                             "Startup: cluster data restored from DB — cluster_id=%d, "
