@@ -981,7 +981,8 @@
         selectOpsgenieType(cfg.opsgenie_type || 'jsm');
         if (cfg.cloud_id) $('cloud-id').value = cfg.cloud_id;
         if (cfg.email)    $('ds-email').value  = cfg.email;
-        if (cfg.api_url)  $('api-url-input').value = cfg.api_url;
+        if (cfg.opsgenie_base_url) $('api-url-input').value = cfg.opsgenie_base_url;
+        else if (cfg.api_url) $('api-url-input').value = cfg.api_url;
         if (cfg.api_token_configured) {
           $('api-token').value = '••••••••';
           $('api-token').placeholder = 'Leave blank to keep existing';
