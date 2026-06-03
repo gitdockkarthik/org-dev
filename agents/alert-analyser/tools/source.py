@@ -171,7 +171,7 @@ class StandaloneOpsgenieSource(AlertSource):
 
         # Standalone OpsGenie query syntax uses epoch milliseconds
         epoch_ms = int(start.timestamp() * 1000)
-        query = f"createdAt>{epoch_ms}"
+        query = f"createdAt > {epoch_ms}"
 
         all_alerts: list[dict] = []
         limit = 100
