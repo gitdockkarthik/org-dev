@@ -1,32 +1,31 @@
 """RealKafkaCollector — collect live cluster state from a real Kafka/Redpanda broker.
 
-Uses aiokafka's admin client (and a short-lived consumer for end offsets) to
-build the same snapshot dict the synthetic collector produces, so the rest of
-the pipeline (kafka_store, anomaly_detector) is unchanged.
+Uses kafka-python-ng's synchronous admin client (and a short-lived consumer for
+end offsets) to build the same snapshot dict the synthetic collector produces,
+so the rest of the pipeline (kafka_store, anomaly_detector) is unchanged.
 
-Only depends on aiokafka, asyncio, and the stdlib — plus tools/base.py.
+kafka-python is synchronous, so all blocking client work runs inside asyncio's
+default executor to stay compatible with the otherwise-async pipeline.
+
+Only depends on kafka (kafka-python-ng), asyncio, ssl, and tools/base.py.
 """
 from __future__ import annotations
 
+import asyncio
+import ssl
 from typing import Any
 
-from aiokafka import AIOKafkaConsumer
-from aiokafka.admin import AIOKafkaAdminClient
-from aiokafka.helpers import create_ssl_context
+from kafka import KafkaAdminClient, KafkaConsumer
 
 from tools.base import KafkaCollector
 
-import logging
-
-class _SuppressAiokafkaBufferError(logging.Filter):
-    def filter(self, record: logging.LogRecord) -> bool:
-        return "Buffer underrun decoding string" not in record.getMessage()
-
-logging.getLogger("aiokafka").addFilter(_SuppressAiokafkaBufferError())
-logging.getLogger("aiokafka.conn").addFilter(_SuppressAiokafkaBufferError())
-
 # Consumer-group states that have no live members / offsets worth querying.
 _INACTIVE_GROUP_STATES = {"Dead", "Empty"}
+
+
+def _is_internal_topic(name: str) -> bool:
+    """Internal/system topics that should never surface on the dashboard."""
+    return name.startswith("__") or name == "_schemas"
 
 
 class RealKafkaCollector(KafkaCollector):
@@ -42,10 +41,19 @@ class RealKafkaCollector(KafkaCollector):
         self.cluster_label: str = config.get("cluster_label") or "Kafka"
 
     # ------------------------------------------------------------------ #
-    # Security                                                            #
+    # Config helpers                                                      #
     # ------------------------------------------------------------------ #
+    @property
+    def _bootstrap_list(self) -> list[str]:
+        """kafka-python accepts a list of host:port entries."""
+        return [s.strip() for s in str(self.bootstrap_servers).split(",") if s.strip()]
+
+    @property
+    def _source_type(self) -> str:
+        return "kafka_sasl" if self.auth_type == "sasl" else "kafka_internal"
+
     def _security_kwargs(self) -> dict[str, Any]:
-        """Build the aiokafka security kwargs for the configured auth mode."""
+        """Build the kafka-python security kwargs for the configured auth mode."""
         if self.auth_type == "none":
             return {"security_protocol": "PLAINTEXT"}
 
@@ -57,7 +65,7 @@ class RealKafkaCollector(KafkaCollector):
                 "sasl_plain_password": self.sasl_password,
             }
             if self.tls_enabled:
-                kwargs["ssl_context"] = create_ssl_context()
+                kwargs["ssl_context"] = ssl.create_default_context()
             return kwargs
 
         raise RuntimeError(
@@ -65,56 +73,55 @@ class RealKafkaCollector(KafkaCollector):
             f"for bootstrap_servers={self.bootstrap_servers!r}"
         )
 
-    @property
-    def _source_type(self) -> str:
-        return "kafka_sasl" if self.auth_type == "sasl" else "kafka_internal"
-
     # ------------------------------------------------------------------ #
-    # Collection                                                          #
+    # Collection (async wrapper over the synchronous client)             #
     # ------------------------------------------------------------------ #
     async def collect(self) -> dict[str, Any]:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._collect_sync)
+
+    def _collect_sync(self) -> dict[str, Any]:
         security = self._security_kwargs()
 
-        admin = AIOKafkaAdminClient(
-            bootstrap_servers=self.bootstrap_servers,
-            **security,
-        )
+        try:
+            admin = KafkaAdminClient(
+                bootstrap_servers=self._bootstrap_list,
+                **security,
+            )
+        except Exception as exc:  # noqa: BLE001 — surface any connect failure clearly
+            raise RuntimeError(
+                f"Failed to connect to Kafka at bootstrap_servers="
+                f"{self.bootstrap_servers!r} (auth_type={self.auth_type!r}): {exc}"
+            ) from exc
 
         try:
             try:
-                await admin.start()
-            except Exception as exc:  # noqa: BLE001 — surface any connect failure as 400
+                cluster_info = admin.describe_cluster()
+                brokers = self._build_brokers(cluster_info)
+
+                topics, total_urp = self._build_topics(admin)
+                consumer_groups = self._build_consumer_groups(admin, security)
+
+                cluster = self._build_cluster(cluster_info, len(brokers), total_urp)
+
+                return {
+                    "cluster": cluster,
+                    "brokers": brokers,
+                    "consumer_groups": consumer_groups,
+                    "topics": topics,
+                    "connectors": [],
+                    "anomalies": [],
+                }
+            except RuntimeError:
+                raise
+            except Exception as exc:  # noqa: BLE001
                 raise RuntimeError(
-                    f"Failed to connect to Kafka at bootstrap_servers="
+                    f"Failed to collect from Kafka at bootstrap_servers="
                     f"{self.bootstrap_servers!r} (auth_type={self.auth_type!r}): {exc}"
                 ) from exc
-
-            cluster_info = await admin.describe_cluster()
-            brokers = self._build_brokers(cluster_info)
-
-            topics, total_urp = await self._build_topics(admin)
-            consumer_groups = await self._build_consumer_groups(admin, security)
-
-            cluster = self._build_cluster(cluster_info, len(brokers), total_urp)
-
-            return {
-                "cluster": cluster,
-                "brokers": brokers,
-                "consumer_groups": consumer_groups,
-                "topics": topics,
-                "connectors": [],
-                "anomalies": [],
-            }
-        except RuntimeError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            raise RuntimeError(
-                f"Failed to collect from Kafka at bootstrap_servers="
-                f"{self.bootstrap_servers!r} (auth_type={self.auth_type!r}): {exc}"
-            ) from exc
         finally:
             try:
-                await admin.close()
+                admin.close()
             except Exception:  # noqa: BLE001 — best-effort cleanup
                 pass
 
@@ -137,7 +144,7 @@ class RealKafkaCollector(KafkaCollector):
 
     def _build_brokers(self, cluster_info: dict[str, Any]) -> list[dict[str, Any]]:
         brokers: list[dict[str, Any]] = []
-        for node in cluster_info.get("brokers", []):
+        for node in cluster_info.get("brokers", []) or []:
             brokers.append(
                 {
                     "id": str(node.get("node_id")),
@@ -155,21 +162,21 @@ class RealKafkaCollector(KafkaCollector):
             )
         return brokers
 
-    async def _build_topics(
-        self, admin: AIOKafkaAdminClient
+    def _build_topics(
+        self, admin: KafkaAdminClient
     ) -> tuple[list[dict[str, Any]], int]:
         """Return (topics, total_under_replicated_partition_count)."""
-        names = [n for n in await admin.list_topics() if not n.startswith("__")]
+        names = [n for n in admin.list_topics() if not _is_internal_topic(n)]
         if not names:
             return [], 0
 
-        described = await admin.describe_topics(names)
+        described = admin.describe_topics(names)
 
         topics: list[dict[str, Any]] = []
         total_urp = 0
         for meta in described:
             name = meta.get("topic", "")
-            if not name or name.startswith("__"):
+            if not name or _is_internal_topic(name):
                 continue
             partitions = meta.get("partitions", []) or []
             partition_count = len(partitions)
@@ -200,20 +207,20 @@ class RealKafkaCollector(KafkaCollector):
             )
         return topics, total_urp
 
-    async def _build_consumer_groups(
-        self, admin: AIOKafkaAdminClient, security: dict[str, Any]
+    def _build_consumer_groups(
+        self, admin: KafkaAdminClient, security: dict[str, Any]
     ) -> list[dict[str, Any]]:
-        listed = await admin.list_consumer_groups()
+        listed = admin.list_consumer_groups()
         group_ids = [entry[0] for entry in listed]
         if not group_ids:
             return []
 
-        states = await self._describe_group_states(admin, group_ids)
+        states = self._describe_group_states(admin, group_ids)
 
         # Only active groups need an offset/lag round-trip.
         active = [g for g in group_ids if states.get(g, "Unknown") not in _INACTIVE_GROUP_STATES]
 
-        consumer: AIOKafkaConsumer | None = None
+        consumer: KafkaConsumer | None = None
         try:
             groups: list[dict[str, Any]] = []
             for group_id in group_ids:
@@ -222,21 +229,20 @@ class RealKafkaCollector(KafkaCollector):
                     groups.append(self._empty_group(group_id, state))
                     continue
 
-                offsets = await admin.list_consumer_group_offsets(group_id)
+                offsets = admin.list_consumer_group_offsets(group_id)
                 if not offsets:
                     groups.append(self._empty_group(group_id, state))
                     continue
 
                 if consumer is None:
-                    consumer = AIOKafkaConsumer(
-                        bootstrap_servers=self.bootstrap_servers,
+                    consumer = KafkaConsumer(
+                        bootstrap_servers=self._bootstrap_list,
                         enable_auto_commit=False,
                         group_id=None,
                         **security,
                     )
-                    await consumer.start()
 
-                partitions, total_lag, topics = await self._group_lag(consumer, offsets)
+                partitions, total_lag, topics = self._group_lag(consumer, offsets)
                 groups.append(
                     {
                         "group_id": group_id,
@@ -252,16 +258,16 @@ class RealKafkaCollector(KafkaCollector):
         finally:
             if consumer is not None:
                 try:
-                    await consumer.stop()
+                    consumer.close()
                 except Exception:  # noqa: BLE001 — best-effort cleanup
                     pass
 
-    async def _describe_group_states(
-        self, admin: AIOKafkaAdminClient, group_ids: list[str]
+    def _describe_group_states(
+        self, admin: KafkaAdminClient, group_ids: list[str]
     ) -> dict[str, str]:
         """Map group_id -> state, tolerating describe failures."""
         try:
-            described = await admin.describe_consumer_groups(group_ids)
+            described = admin.describe_consumer_groups(group_ids)
         except Exception:  # noqa: BLE001 — fall back to treating all as active
             return {g: "Unknown" for g in group_ids}
 
@@ -276,11 +282,11 @@ class RealKafkaCollector(KafkaCollector):
                 states[group_id] = state or "Unknown"
         return states
 
-    async def _group_lag(
-        self, consumer: AIOKafkaConsumer, offsets: dict[Any, Any]
+    def _group_lag(
+        self, consumer: KafkaConsumer, offsets: dict[Any, Any]
     ) -> tuple[list[dict[str, Any]], int, set[str]]:
         tps = list(offsets.keys())
-        end_offsets = await consumer.end_offsets(tps)
+        end_offsets = consumer.end_offsets(tps)
 
         partitions: list[dict[str, Any]] = []
         total_lag = 0
