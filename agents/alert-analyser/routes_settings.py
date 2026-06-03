@@ -218,8 +218,13 @@ async def get_settings() -> dict:
 @router.post("")
 async def save_settings(payload: SettingsPayload) -> dict:
     data = payload.model_dump()
+    # Keep existing api_token if payload sends blank or mask
+    if not data.get("api_token") or data.get("api_token") == "••••••••":
+        data["api_token"] = _config.get("api_token", "")
     _config.update(data)
     for k, v in data.items():
+        if k == "api_token" and not v:
+            continue  # never upsert empty api_token — keep existing encrypted value
         await _upsert(k, v)
     _sync_changed.set()  # wake the background loop to re-evaluate interval immediately
     return {"ok": True}
