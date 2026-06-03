@@ -36,6 +36,7 @@ _DEFAULTS: dict = {
     "noise_classification_threshold": 0,
     "noise_suspect_threshold": -2,
     "opsgenie_base_url": "",
+    "opsgenie_type": "standalone",
 }
 
 # Write-through in-memory cache; populated from DB on startup.
@@ -194,6 +195,7 @@ class SettingsPayload(BaseModel):
     noise_classification_threshold: int = 0
     noise_suspect_threshold: int = -2
     opsgenie_base_url: str = ""
+    opsgenie_type: str = "standalone"
 
 
 @router.get("")
