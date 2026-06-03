@@ -154,7 +154,8 @@ async def _collection_loop() -> None:
     logger.info("Collection loop started")
     while True:
         try:
-            interval_secs = int(_config.get("collection_interval_secs", 0))
+            from routes_settings import _config as _rs_config
+            interval_secs = int(_rs_config.get("collection_interval_secs", 0))
             if interval_secs <= 0:
                 await asyncio.sleep(30)
                 continue
@@ -168,7 +169,7 @@ async def _collection_loop() -> None:
                 logger.debug("Collection loop: no enabled clusters — skipping")
                 continue
 
-            source_type = _config.get("source_type", "synthetic")
+            source_type = _rs_config.get("source_type", "synthetic")
             if source_type not in ("kafka_internal", "kafka_sasl", "live"):
                 logger.debug("Collection loop: source_type=%s — skipping", source_type)
                 continue
