@@ -210,6 +210,8 @@ async def get_settings() -> dict:
     result["noise_classification_threshold"] = _config.get(
         "noise_classification_threshold", 0
     )
+    result["api_token_configured"] = bool(_config.get("api_token", ""))
+    result["genie_key_configured"] = bool(_config.get("api_token", "")) and _config.get("source_type") == "standalone" and _config.get("opsgenie_type") == "standalone"
     return result
 
 

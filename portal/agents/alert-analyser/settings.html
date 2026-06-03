@@ -826,12 +826,12 @@
         payload.opsgenie_type = opsType;
         if (opsType === 'standalone') {
           const gk = $('genie-key-input').value.trim();
-          if (gk) payload.api_token = gk;
+          if (gk && gk !== '••••••••') payload.api_token = gk;
         } else {
           payload.cloud_id = $('cloud-id').value.trim();
           payload.email    = $('ds-email').value.trim();
           const tok = $('api-token').value.trim();
-          if (tok) payload.api_token = tok;
+          if (tok && tok !== '••••••••') payload.api_token = tok;
         }
         const apiUrl = $('api-url-input').value.trim();
         if (apiUrl) payload.opsgenie_base_url = apiUrl;
@@ -982,7 +982,15 @@
         if (cfg.cloud_id) $('cloud-id').value = cfg.cloud_id;
         if (cfg.email)    $('ds-email').value  = cfg.email;
         if (cfg.api_url)  $('api-url-input').value = cfg.api_url;
-        if (cfg.genie_key_configured) $('genie-key-status').style.display = '';
+        if (cfg.api_token_configured) {
+          $('api-token').value = '••••••••';
+          $('api-token').placeholder = 'Leave blank to keep existing';
+        }
+        if (cfg.genie_key_configured) {
+          $('genie-key-status').style.display = '';
+          $('genie-key-input').value = '••••••••';
+          $('genie-key-input').placeholder = 'Leave blank to keep existing';
+        }
 
         // Sync interval
         const intEl = $('sync-interval');
