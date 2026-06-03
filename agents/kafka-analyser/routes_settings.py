@@ -240,7 +240,7 @@ async def test_cluster(cluster_id: int) -> dict:
     try:
         collector = RealKafkaCollector({
             "bootstrap_servers": cluster["bootstrap_servers"],
-            "auth_type": cluster["auth_type"],
+            "auth_type": "none" if cluster["auth_type"] == "none" else "sasl",
             "sasl_username": cluster.get("sasl_username"),
             "sasl_password": cluster.get("sasl_password"),
             "sasl_mechanism": cluster.get("sasl_mechanism", "PLAIN"),
@@ -286,7 +286,7 @@ async def sync_metrics() -> dict:
         c = enabled[0]
         collector = RealKafkaCollector({
             "bootstrap_servers": c["bootstrap_servers"],
-            "auth_type": c["auth_type"],
+            "auth_type": "none" if c["auth_type"] == "none" else "sasl",
             "sasl_username": c.get("sasl_username"),
             "sasl_password": c.get("sasl_password"),
             "sasl_mechanism": c.get("sasl_mechanism", "PLAIN"),
