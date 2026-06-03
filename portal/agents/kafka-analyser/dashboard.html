@@ -613,33 +613,77 @@
 
     // ── Tab 6: AI Insights ────────────────────────────────────────────────────
 
-    function renderInsights(data) {
+    async function renderInsights(data) {
       if (data.empty) {
         document.getElementById('tab-insights').innerHTML = emptyState('🤖', 'No data', 'Generate synthetic data first.');
         return;
       }
       const anomalies = data.anomalies || [];
-      if (!anomalies.length) {
-        document.getElementById('tab-insights').innerHTML = emptyState('✅', 'No anomalies detected', 'All cluster metrics are within normal thresholds.');
-        return;
-      }
 
-      const cards = anomalies.map(a => {
+      // Build anomaly cards
+      const cards = anomalies.length ? anomalies.map(a => {
         const recs = (a.recommendations || []).map(r => `<li>${r}</li>`).join('');
+        const sevColor = a.severity === 'critical' ? '#dc2626' : '#d97706';
         return `
           <div class="anomaly-card">
             <div class="anomaly-card__header">
               <div>
                 ${sevBadge(a.severity)}
-                <span style="margin-left:8px;font-size:.78rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em">${a.category.replace(/_/g,' ')}</span>
+                <span style="margin-left:8px;font-size:.78rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em">${(a.category||'').replace(/_/g,' ')}</span>
               </div>
             </div>
             <div class="anomaly-card__desc">${a.description}</div>
             ${recs ? `<div class="anomaly-card__recs"><strong style="font-size:.8rem;color:var(--text-muted)">Recommendations:</strong><ul style="margin-top:4px">${recs}</ul></div>` : ''}
           </div>`;
-      }).join('');
+      }).join('') : `<div style="text-align:center;padding:2rem;color:var(--success);font-size:.95rem">✅ No active anomalies — all metrics within thresholds</div>`;
 
-      document.getElementById('tab-insights').innerHTML = `<div class="anomaly-list">${cards}</div>`;
+      // Narrative section placeholder
+      const narrativeHtml = `
+        <div class="anomaly-card" id="ai-narrative-card" style="margin-bottom:18px;border-color:var(--accent);border-width:2px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <div style="font-weight:700;font-size:.95rem;color:var(--accent)">🤖 AI Cluster Analysis</div>
+            <button class="dash-refresh-btn" id="btn-get-narrative" style="font-size:.8rem;padding:4px 12px">
+              Generate Analysis
+            </button>
+          </div>
+          <div id="narrative-content" style="font-size:.88rem;color:var(--text-muted);line-height:1.6">
+            Click "Generate Analysis" for an AI-powered summary and recommendations.
+          </div>
+        </div>`;
+
+      document.getElementById('tab-insights').innerHTML = narrativeHtml + `<div class="anomaly-list">${cards}</div>`;
+
+      // Bind narrative button
+      document.getElementById('btn-get-narrative').addEventListener('click', async () => {
+        const btn = document.getElementById('btn-get-narrative');
+        const content = document.getElementById('narrative-content');
+        btn.textContent = 'Analysing…';
+        btn.disabled = true;
+        content.textContent = 'Generating AI analysis…';
+        try {
+          await portalReady;
+          const r = await fetch(`${PROXY}/dashboard/insights/narrative`, {
+            method: 'POST',
+            headers: _authHeaders(),
+          });
+          const d = await r.json();
+          if (d.narrative) {
+            // Convert markdown bold to HTML
+            const html = d.narrative
+              .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+              .replace(/\n/g, '<br>');
+            content.innerHTML = html;
+            btn.textContent = '↺ Refresh Analysis';
+          } else {
+            content.textContent = 'Analysis unavailable.';
+            btn.textContent = 'Generate Analysis';
+          }
+        } catch(e) {
+          content.textContent = 'Failed to generate analysis: ' + e.message;
+          btn.textContent = 'Generate Analysis';
+        }
+        btn.disabled = false;
+      });
     }
 
     // ── Init ──────────────────────────────────────────────────────────────────

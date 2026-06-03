@@ -1,7 +1,15 @@
-"""Anomaly detector — re-classifies cluster data against configurable thresholds."""
 from __future__ import annotations
-
 from typing import Any
+
+
+def _broker_id(broker: dict) -> str:
+    return str(broker.get("id") or broker.get("broker_id") or "unknown")
+
+def _group_id(group: dict) -> str:
+    return str(group.get("group_id") or group.get("group_name") or "unknown")
+
+def _topic_name(topic: dict) -> str:
+    return str(topic.get("name") or topic.get("topic") or "unknown")
 
 
 def detect_anomalies(
@@ -12,76 +20,131 @@ def detect_anomalies(
     retention_threshold_pct: float = 80.0,
     connector_alert_enabled: bool = True,
 ) -> list[dict[str, Any]]:
-    """Re-classify anomalies from live cluster data against current thresholds."""
     anomalies: list[dict[str, Any]] = []
 
+    # ── Broker anomalies ──────────────────────────────────────────
     for broker in cluster_data.get("brokers", []):
-        if broker["heap_pct"] >= heap_threshold_pct:
+        bid = _broker_id(broker)
+        heap = broker.get("heap_pct", 0.0)
+        gc_ms = broker.get("gc_pause_ms") or broker.get("gc_pause_count", 0)
+        urp = broker.get("urp_count", 0)
+
+        if heap >= heap_threshold_pct:
             anomalies.append({
-                "severity": "critical" if broker["heap_pct"] >= 90 else "warning",
+                "severity": "critical" if heap >= 90 else "warning",
                 "category": "broker_heap",
                 "description": (
-                    f"{broker['broker_id']} heap at {broker['heap_pct']:.0f}% "
+                    f"Broker {bid} heap at {heap:.0f}% "
                     f"(threshold: {heap_threshold_pct:.0f}%)."
-                    + (
-                        f" {broker['gc_pause_count']} GC pauses >{broker['gc_pause_ms']}ms detected."
-                        if broker.get("gc_pause_count", 0) > 0
-                        else ""
-                    )
+                    + (f" GC pause: {gc_ms}ms." if gc_ms else "")
                 ),
+                "recommendations": [
+                    f"Trigger GC on broker {bid}: kafka-jmx-tool or rolling restart",
+                    "Review heap allocation — increase -Xmx if consistently above threshold",
+                    "Check for message size spikes or consumer lag causing retention pressure",
+                ],
             })
-        if broker.get("urp_count", 0) > urp_threshold:
+
+        if urp > urp_threshold:
             anomalies.append({
                 "severity": "critical",
                 "category": "under_replicated_partitions",
-                "description": (
-                    f"{broker['urp_count']} under-replicated partition(s) on {broker['broker_id']}."
-                ),
+                "description": f"{urp} under-replicated partition(s) on broker {bid}.",
+                "recommendations": [
+                    "Check broker connectivity and disk I/O",
+                    f"Run: kafka-topics --describe --under-replicated-partitions",
+                    "Verify replication factor matches ISR count",
+                    "Check for broker restarts or network partitions",
+                ],
             })
 
+    # ── Consumer group anomalies ──────────────────────────────────
     for group in cluster_data.get("consumer_groups", []):
-        if group["total_lag"] >= lag_threshold:
-            severity = "critical" if group["lag_trend"] == "growing" else "warning"
+        gid = _group_id(group)
+        lag = group.get("total_lag", 0)
+        trend = group.get("lag_trend", "stable")
+        rate = group.get("lag_rate_per_min", 0.0)
+        state = group.get("state", "")
+
+        if lag >= lag_threshold:
+            # ETA calculation
+            eta_str = ""
+            if trend == "growing" and rate > 0:
+                mins_to_double = lag / rate
+                if mins_to_double < 60:
+                    eta_str = f" ETA to double: ~{mins_to_double:.0f} min"
+                else:
+                    eta_str = f" ETA to double: ~{mins_to_double/60:.1f} hrs"
+
+            severity = "critical" if trend == "growing" else "warning"
             anomalies.append({
                 "severity": severity,
                 "category": "consumer_lag",
                 "description": (
-                    f"{group['group_name']} lag at {group['total_lag']:,} messages"
-                    + (
-                        f", growing at +{group['lag_rate_per_min']:,}/min"
-                        if group["lag_trend"] == "growing"
-                        else ""
-                    )
-                    + "."
+                    f"{gid} lag: {lag:,} messages "
+                    f"({trend}"
+                    + (f" at +{rate:,.0f}/min" if trend == "growing" else "")
+                    + f").{eta_str}"
                 ),
+                "recommendations": [
+                    f"Scale up consumer group '{gid}' — add more consumer instances",
+                    "Check for consumer processing bottlenecks or errors",
+                    "Review topic partition count — insufficient partitions limit parallelism",
+                    f"Monitor with: kafka-consumer-groups --describe --group {gid}",
+                ],
             })
-        if group.get("state") == "Dead":
+
+        if state == "Dead":
             anomalies.append({
                 "severity": "warning",
                 "category": "consumer_group_dead",
-                "description": f"{group['group_name']} is in Dead state — no active consumers.",
+                "description": f"{gid} is in Dead state — no active consumers.",
+                "recommendations": [
+                    f"Restart consumer application for group '{gid}'",
+                    "Check application logs for crash or connection errors",
+                    "Verify consumer group configuration and broker connectivity",
+                ],
             })
 
+    # ── Topic anomalies ───────────────────────────────────────────
     for topic in cluster_data.get("topics", []):
-        if topic["retention_pct"] >= retention_threshold_pct:
+        tname = _topic_name(topic)
+        if tname.startswith("__") or tname == "_schemas":
+            continue  # skip internal topics
+        ret_pct = topic.get("retention_pct", 0.0)
+        if ret_pct >= retention_threshold_pct:
             anomalies.append({
-                "severity": "critical" if topic["retention_pct"] >= 95 else "warning",
+                "severity": "critical" if ret_pct >= 95 else "warning",
                 "category": "topic_retention",
-                "description": (
-                    f"{topic['topic']} at {topic['retention_pct']:.1f}% retention capacity."
-                ),
+                "description": f"{tname} at {ret_pct:.1f}% retention capacity.",
+                "recommendations": [
+                    f"Increase retention.bytes for topic '{tname}'",
+                    "Check consumer lag — slow consumers cause retention buildup",
+                    "Consider adding partitions to distribute load",
+                    f"Run: kafka-configs --alter --topic {tname} --add-config retention.bytes=<new-value>",
+                ],
             })
 
+    # ── Connector anomalies ───────────────────────────────────────
     if connector_alert_enabled:
         for conn in cluster_data.get("connectors", []):
-            if conn["state"] == "FAILED" or conn.get("failed_tasks", 0) > 0:
+            cname = conn.get("connector_name") or conn.get("name") or "unknown"
+            failed = conn.get("failed_tasks", 0)
+            total = conn.get("total_tasks", 0)
+            state = conn.get("state", "")
+            if state == "FAILED" or failed > 0:
                 anomalies.append({
                     "severity": "critical",
                     "category": "connector_failure",
-                    "description": (
-                        f"{conn['connector_name']} {conn['state']} — "
-                        f"{conn['failed_tasks']}/{conn['total_tasks']} tasks failed."
-                    ),
+                    "description": f"{cname} {state} — {failed}/{total} tasks failed.",
+                    "recommendations": [
+                        f"Check connector logs: GET /connectors/{cname}/tasks/0/status",
+                        "Verify source/sink connectivity and credentials",
+                        f"Restart connector: POST /connectors/{cname}/restart",
+                        "Review connector configuration for schema or format issues",
+                    ],
                 })
 
+    # Sort: critical first, then warning
+    anomalies.sort(key=lambda a: 0 if a["severity"] == "critical" else 1)
     return anomalies

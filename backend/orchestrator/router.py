@@ -294,6 +294,11 @@ async def proxy_agent_endpoint(
         if k.lower() not in ("host", "content-length", "transfer-encoding", "x-api-key")
     }
 
+    # Inject Anthropic key for agents that call Claude directly
+    anthropic_key = get_anthropic_key()
+    if anthropic_key:
+        fwd_headers["x-anthropic-key"] = anthropic_key
+
     async with httpx.AsyncClient(timeout=120.0) as client:
         try:
             resp = await client.request(
