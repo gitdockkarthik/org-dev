@@ -294,7 +294,11 @@ async def sync_metrics() -> dict:
             "cluster_label": c["name"],
         })
         data = await collector.collect()
-        kafka_store.set_cluster_data(data, source_type=c.get("source_type", "kafka_internal"))
+        kafka_store.set_cluster_data(
+            data,
+            source_type=c.get("source_type", "kafka_internal"),
+            cluster_id=str(c.get("id", "default"))
+        )
         meta = kafka_store.get_sync_meta()
         _config["last_synced"] = meta["last_synced"]
         _config["broker_count"] = meta["broker_count"]

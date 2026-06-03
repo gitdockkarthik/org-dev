@@ -9,9 +9,9 @@ router = APIRouter(tags=["dashboard"])
 
 
 @router.get("/dashboard/overview")
-async def get_overview() -> dict:
+async def get_overview(cluster_id: str | None = None) -> dict:
     """Cluster health, broker status, anomaly summary."""
-    data = kafka_store.get_cluster_data()
+    data = kafka_store.get_cluster_data(cluster_id)
     if data is None:
         return {"empty": True}
     return {
@@ -22,9 +22,9 @@ async def get_overview() -> dict:
 
 
 @router.get("/dashboard/consumer-groups")
-async def get_consumer_groups() -> dict:
+async def get_consumer_groups(cluster_id: str | None = None) -> dict:
     """Consumer group lag leaderboard sorted worst-first."""
-    data = kafka_store.get_cluster_data()
+    data = kafka_store.get_cluster_data(cluster_id)
     if data is None:
         return {"empty": True}
     groups = sorted(data["consumer_groups"], key=lambda g: g["total_lag"], reverse=True)
@@ -32,9 +32,9 @@ async def get_consumer_groups() -> dict:
 
 
 @router.get("/dashboard/topics")
-async def get_topics() -> dict:
+async def get_topics(cluster_id: str | None = None) -> dict:
     """Topic metrics sorted by message rate descending."""
-    data = kafka_store.get_cluster_data()
+    data = kafka_store.get_cluster_data(cluster_id)
     if data is None:
         return {"empty": True}
     topics = sorted(data["topics"], key=lambda t: t["messages_in_per_sec"], reverse=True)
@@ -42,36 +42,36 @@ async def get_topics() -> dict:
 
 
 @router.get("/dashboard/brokers")
-async def get_brokers() -> dict:
+async def get_brokers(cluster_id: str | None = None) -> dict:
     """Per-broker CPU, heap, GC, and URP metrics."""
-    data = kafka_store.get_cluster_data()
+    data = kafka_store.get_cluster_data(cluster_id)
     if data is None:
         return {"empty": True}
     return {"brokers": data["brokers"]}
 
 
 @router.get("/dashboard/connectors")
-async def get_connectors() -> dict:
+async def get_connectors(cluster_id: str | None = None) -> dict:
     """Connector state and per-task health."""
-    data = kafka_store.get_cluster_data()
+    data = kafka_store.get_cluster_data(cluster_id)
     if data is None:
         return {"empty": True}
     return {"connectors": data["connectors"]}
 
 
 @router.get("/dashboard/insights")
-async def get_insights() -> dict:
+async def get_insights(cluster_id: str | None = None) -> dict:
     """Active anomalies with severity, root cause, and recommendations."""
-    data = kafka_store.get_cluster_data()
+    data = kafka_store.get_cluster_data(cluster_id)
     if data is None:
         return {"empty": True}
     return {"anomalies": data["anomalies"]}
 
 
 @router.post("/dashboard/insights/narrative")
-async def get_insights_narrative(request: Request) -> dict:
+async def get_insights_narrative(request: Request, cluster_id: str | None = None) -> dict:
     """Generate AI narrative summary of current cluster health."""
-    data = kafka_store.get_cluster_data()
+    data = kafka_store.get_cluster_data(cluster_id)
     if data is None:
         return {"narrative": "No cluster data available. Run a sync first."}
 

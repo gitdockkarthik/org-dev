@@ -176,7 +176,10 @@
     // ── API helper ───────────────────────────────────────────────────────────
 
     async function api(path, opts = {}) {
-      const res = await fetch(`${PROXY}${path}`, {
+      const url = _currentClusterId
+        ? `${PROXY}${path}?cluster_id=${_currentClusterId}`
+        : `${PROXY}${path}`;
+      const res = await fetch(url, {
         ...opts,
         headers: { ..._authHeaders(), ...opts.headers },
       });
@@ -666,7 +669,7 @@
         content.textContent = 'Generating AI analysis…';
         try {
           await portalReady;
-          const r = await fetch(`${PROXY}/dashboard/insights/narrative`, {
+          const r = await fetch(`${PROXY}/dashboard/insights/narrative${_currentClusterId ? '?cluster_id=' + _currentClusterId : ''}`, {
             method: 'POST',
             headers: _authHeaders(),
           });
@@ -736,8 +739,9 @@
 
     document.getElementById('ctrl-cluster').addEventListener('change', function() {
       _currentClusterId = this.value;
-      const activeBtn = document.querySelector('.tab-btn--active');
-      if (activeBtn) loadTab(activeBtn.dataset.tab);
+      loadTab('overview');
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('tab-btn--active'));
+      document.querySelector('[data-tab="overview"]').classList.add('tab-btn--active');
     });
 
     // ── Tab filters ───────────────────────────────────────────────
