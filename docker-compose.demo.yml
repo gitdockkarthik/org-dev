@@ -56,6 +56,22 @@ services:
       retries: 5
       start_period: 30s
 
+  # ── ZooKeeper: Non-Prod ──────────────────────────────────────────────────────
+  zookeeper-nonprod:
+    image: confluentinc/cp-zookeeper:5.3.1
+    restart: unless-stopped
+    ports:
+      - "2183:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 | grep imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
   # ── Kafka: Non-Prod (Confluent 5.3.1 + ZooKeeper) ──────────────────────────
   kafka-nonprod:
     image: confluentinc/cp-kafka:5.3.1
@@ -64,14 +80,14 @@ services:
       - "9094:9094"
     environment:
       KAFKA_BROKER_ID: 2
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper-demo:2181
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper-nonprod:2181
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9094
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-nonprod:9094
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_DELETE_TOPIC_ENABLE: "true"
     depends_on:
-      zookeeper-demo:
+      zookeeper-nonprod:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9094 --list"]
