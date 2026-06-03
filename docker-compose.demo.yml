@@ -1,0 +1,76 @@
+version: "3.8"
+
+# ── Demo Kafka Stack — Confluent 5.3.1 + ZooKeeper ──────────────────────────
+# Broker + ZooKeeper: 5.3.1 (matches org production)
+# Schema Registry: 6.2.1 (matches org internal SR version)
+# Usage:
+#   Start:   docker-compose -f docker-compose.yml -f docker-compose.demo.yml up -d
+#   Stop:    docker-compose -f docker-compose.demo.yml down
+#   Seed:    bash scripts/demo-kafka-seed.sh
+#
+# Kafka Analyser settings (Internal Kafka):
+#   Bootstrap: kafka-demo:9095
+#   Auth:      None
+
+services:
+
+  zookeeper-demo:
+    image: confluentinc/cp-zookeeper:5.3.1
+    restart: unless-stopped
+    ports:
+      - "2182:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 | grep imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  kafka-demo:
+    image: confluentinc/cp-kafka:5.3.1
+    restart: unless-stopped
+    ports:
+      - "9095:9095"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper-demo:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9095
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-demo:9095
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_DELETE_TOPIC_ENABLE: "true"
+      KAFKA_JMX_PORT: 9999
+      KAFKA_JMX_HOSTNAME: kafka-demo
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_NUM_PARTITIONS: 3
+    depends_on:
+      zookeeper-demo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9095 --list"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  schema-registry-demo:
+    image: confluentinc/cp-schema-registry:6.2.1
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry-demo
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka-demo:9095
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    depends_on:
+      kafka-demo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8081/subjects || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
