@@ -215,7 +215,9 @@
       const styles = {
         'Stable':      'background:rgba(22,163,74,.1);color:#16a34a',
         'Rebalancing': 'background:rgba(234,88,12,.1);color:#ea580c',
-        'Dead':        'background:rgba(100,116,139,.12);color:#64748b',
+        'Dead':        'background:rgba(220,38,38,.1);color:#dc2626',
+        'Empty':       'background:rgba(100,116,139,.12);color:#64748b',
+        'Unknown':     'background:rgba(100,116,139,.12);color:#64748b',
       };
       const s = styles[state] || 'background:rgba(99,102,241,.1);color:#6366f1';
       return `<span style="${s};padding:2px 8px;border-radius:4px;font-size:.72rem;font-weight:700">${state}</span>`;
@@ -421,8 +423,9 @@
           <td>${trendCell(g.lag_trend, g.lag_rate_per_min)}</td>
           <td style="font-size:.82rem;color:var(--text-muted)">${g.lag_rate_per_min > 0 ? '+' : ''}${fmtNum(g.lag_rate_per_min)}/min</td>
           <td>${stateBadge(g.state)}</td>
+          <td><span class="sev sev--${g.total_lag > 10000 ? 'critical' : g.total_lag > 1000 ? 'warning' : 'healthy'}">${g.total_lag > 10000 ? 'CRITICAL' : g.total_lag > 1000 ? 'WARNING' : 'HEALTHY'}</span></td>
         </tr>`;
-      }).join('') || `<tr><td colspan="6" class="data-table__empty">No consumer groups</td></tr>`;
+      }).join('') || `<tr><td colspan="7" class="data-table__empty">No consumer groups</td></tr>`;
 
       const cgFilters = `
         <div class="filter-bar">
@@ -437,7 +440,7 @@
       document.getElementById('tab-consumer-groups').innerHTML = cgFilters + `
         <div class="data-table-wrap">
           <table class="data-table">
-            <thead><tr><th>Group</th><th>Topic</th><th>Total Lag</th><th>Trend</th><th>Rate/min</th><th>State</th></tr></thead>
+            <thead><tr><th>Group</th><th>Topic</th><th>Total Lag</th><th>Trend</th><th>Rate/min</th><th>State</th><th>Status</th></tr></thead>
             <tbody>${rows}</tbody>
           </table>
         </div>`;
@@ -459,6 +462,7 @@
           <td style="text-align:center">${(t.partition_count || t.partitions || 0)}</td>
           <td style="text-align:center">${t.replication_factor}</td>
           <td>${fmtRate(t.messages_in_per_sec)}</td>
+          <td style="font-size:.82rem;color:var(--text-muted)">${fmtBytes(t.bytes_in_per_sec || 0)}/s</td>
           <td style="text-align:right">
             ${t.retention_pct.toFixed(1)}%
             ${retWarn ? '<span style="margin-left:4px;background:rgba(217,119,6,.12);color:#d97706;padding:1px 5px;border-radius:3px;font-size:.68rem;font-weight:700">WARN</span>' : ''}
@@ -483,7 +487,7 @@
         </div>
         <div class="data-table-wrap">
           <table class="data-table">
-            <thead><tr><th>Topic</th><th style="text-align:center">Partitions</th><th style="text-align:center">RF</th><th>Msg/s</th><th style="text-align:right">Retention</th><th>Status</th></tr></thead>
+            <thead><tr><th>Topic</th><th style="text-align:center">Partitions</th><th style="text-align:center">RF</th><th>Msg/s</th><th>Bytes/s</th><th style="text-align:right">Retention</th><th>Status</th></tr></thead>
             <tbody>${rows}</tbody>
           </table>
         </div>`;
