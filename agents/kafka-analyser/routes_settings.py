@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from config import settings
 from encryption import decrypt, encrypt, is_secret_key
 from tools.real_kafka import RealKafkaCollector
+from storage import get_backend
 import kafka_store
 
 logger = logging.getLogger(__name__)
@@ -52,70 +53,29 @@ _config: dict = dict(_DEFAULTS)
 
 
 async def _upsert(key: str, value) -> None:
-    from database import SessionLocal
-    from models import AgentConfig
-
-    if SessionLocal is None:
-        return
-    now = datetime.now(timezone.utc)
     raw = json.dumps(value)
     stored = encrypt(raw) if is_secret_key(key) else raw
-    async with SessionLocal() as session:
-        stmt = (
-            pg_insert(AgentConfig)
-            .values(agent_slug=settings.agent_slug, key=key, value=stored, updated_at=now)
-            .on_conflict_do_update(
-                index_elements=["agent_slug", "key"],
-                set_={"value": stored, "updated_at": now},
-            )
-        )
-        await session.execute(stmt)
-        await session.commit()
+    await get_backend().set(key, stored)
 
 
 async def load_config_from_db() -> dict:
-    """Load all config rows from DB into _config. Returns the raw DB dict (empty if no DB)."""
-    from database import SessionLocal
-    from models import AgentConfig
-
-    if SessionLocal is None:
-        logger.warning("load_config_from_db: DATABASE_URL not set — no DB session available")
-        return {}
     try:
-        async with SessionLocal() as session:
-            rows = (
-                await session.execute(
-                    select(AgentConfig).where(AgentConfig.agent_slug == settings.agent_slug)
-                )
-            ).scalars().all()
-
-        logger.info(
-            "load_config_from_db: found %d row(s) — keys: %s",
-            len(rows),
-            [r.key for r in rows],
-        )
-
-        if not rows:
+        raw_dict = await get_backend().get_all()
+        if not raw_dict:
             return {}
-
         db_cfg: dict = {}
-        for r in rows:
-            secret = is_secret_key(r.key)
+        for key, stored in raw_dict.items():
+            secret = is_secret_key(key)
             try:
-                raw = decrypt(r.value) if secret else r.value
-                db_cfg[r.key] = json.loads(raw)
-                logger.debug("load_config_from_db: loaded key=%r (secret=%s)", r.key, secret)
+                raw = decrypt(stored) if secret else stored
+                db_cfg[key] = json.loads(raw)
             except Exception as exc:
-                logger.error(
-                    "load_config_from_db: failed to decode key=%r (secret=%s): %s",
-                    r.key, secret, exc,
-                )
-
+                logger.error("load_config_from_db: failed to decode key=%r: %s", key, exc)
         _config.update(db_cfg)
         logger.info("load_config_from_db: loaded keys: %s", list(db_cfg))
         return db_cfg
     except Exception:
-        logger.exception("load_config_from_db: DB query failed")
+        logger.exception("load_config_from_db: failed")
         return {}
 
 

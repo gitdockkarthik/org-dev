@@ -155,6 +155,7 @@ services:
       REGISTRY_URL: http://backend:8000
       BACKEND_API_KEY: ${BACKEND_API_KEY}
       DATABASE_URL: ${DATABASE_URL}
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-postgres}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       MODEL: ${MODEL:-claude-sonnet-4-6}
       AGENT_SLUG: kafka-analyser

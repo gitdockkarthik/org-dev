@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     backend_api_key: str = ""
 
     database_url: str = ""
+    storage_backend: str = "postgres"
 
     port: int = 8003
 

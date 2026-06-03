@@ -15,6 +15,7 @@ from config import settings
 from routes_dashboard import router as dashboard_router
 from routes_reports import router as reports_router
 from routes_settings import load_config_from_db, router as settings_router
+from storage import init_storage
 from tools.kafka_tools import (
     AnomalyTool,
     BrokerMetricsTool,
@@ -137,6 +138,7 @@ async def _init_config() -> None:
             await conn.run_sync(Base.metadata.create_all)
         logger.info("_init_config: DB tables ensured")
 
+    init_storage(settings.agent_slug)
     db_cfg = await load_config_from_db()
     if not db_cfg:
         logger.info("_init_config: no saved config found — waiting for user setup")
