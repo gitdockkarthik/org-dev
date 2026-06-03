@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from config import settings
 from encryption import decrypt, encrypt, is_secret_key
+from tools.real_kafka import RealKafkaCollector
 import kafka_store
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,18 @@ _DEFAULTS: dict = {
     "urp_threshold": 0,
     "connector_alert_enabled": True,
     "retention_threshold_pct": 80,
+    # Cluster A — Internal (no auth)
+    "cluster_a_enabled": False,
+    "cluster_a_label": "Internal",
+    "cluster_a_bootstrap": "",
+    # Cluster B — External (SASL)
+    "cluster_b_enabled": False,
+    "cluster_b_label": "External",
+    "cluster_b_bootstrap": "",
+    "cluster_b_sasl_username": "",
+    "cluster_b_sasl_password": "",
+    "cluster_b_sasl_mechanism": "PLAIN",
+    "cluster_b_tls_enabled": True,
 }
 
 # Write-through in-memory cache; populated from DB on startup.
@@ -120,6 +133,31 @@ class SettingsPayload(BaseModel):
     retention_threshold_pct: int = 80
     api_key: str = ""
 
+    # Cluster A — Internal (no auth)
+    cluster_a_enabled: bool = False
+    cluster_a_label: str = "Internal"
+    cluster_a_bootstrap: str = ""
+
+    # Cluster B — External (SASL)
+    cluster_b_enabled: bool = False
+    cluster_b_label: str = "External"
+    cluster_b_bootstrap: str = ""
+    cluster_b_sasl_username: str = ""
+    cluster_b_sasl_password: str = ""
+    cluster_b_sasl_mechanism: str = "PLAIN"
+    cluster_b_tls_enabled: bool = True
+
+
+class TestConnectionPayload(BaseModel):
+    cluster: str  # "a" | "b"
+    bootstrap_servers: str
+    auth_type: str  # "none" | "sasl"
+    sasl_username: str | None = None
+    sasl_password: str | None = None
+    sasl_mechanism: str = "PLAIN"
+    tls_enabled: bool = False
+    cluster_label: str = ""
+
 
 @router.get("")
 async def get_settings() -> dict:
@@ -142,15 +180,88 @@ async def save_settings(payload: SettingsPayload) -> dict:
     return {"ok": True}
 
 
+@router.post("/test-connection")
+async def test_connection(payload: TestConnectionPayload) -> dict:
+    collector = RealKafkaCollector({
+        "bootstrap_servers": payload.bootstrap_servers,
+        "auth_type": payload.auth_type,
+        "sasl_username": payload.sasl_username,
+        "sasl_password": payload.sasl_password,
+        "sasl_mechanism": payload.sasl_mechanism,
+        "tls_enabled": payload.tls_enabled,
+        "cluster_label": payload.cluster_label,
+    })
+    try:
+        data = await collector.collect()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001 — surface any failure to the UI as 400
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    cluster = data.get("cluster", {})
+    return {
+        "ok": True,
+        "broker_count": cluster.get("broker_count", len(data.get("brokers", []))),
+        "topic_count": len(data.get("topics", [])),
+        "cluster_id": str(cluster.get("id", "")),
+    }
+
+
 @router.post("/sync")
 async def sync_metrics() -> dict:
     source = _config.get("source_type", "synthetic")
 
-    if source == "redpanda":
-        raise HTTPException(
-            status_code=400,
-            detail="Redpanda Cloud connectivity is available in Phase 2. Use Synthetic Data for now.",
-        )
+    if source in ("kafka_internal", "kafka_sasl"):
+        # Build active cluster configs from _config
+        collectors = []
+        if _config.get("cluster_a_enabled") and _config.get("cluster_a_bootstrap"):
+            collectors.append(RealKafkaCollector({
+                "bootstrap_servers": _config["cluster_a_bootstrap"],
+                "auth_type": "none",
+                "sasl_username": None,
+                "sasl_password": None,
+                "sasl_mechanism": "PLAIN",
+                "tls_enabled": False,
+                "cluster_label": _config.get("cluster_a_label", "Internal"),
+            }))
+        if _config.get("cluster_b_enabled") and _config.get("cluster_b_bootstrap"):
+            collectors.append(RealKafkaCollector({
+                "bootstrap_servers": _config["cluster_b_bootstrap"],
+                "auth_type": "sasl",
+                "sasl_username": _config.get("cluster_b_sasl_username"),
+                "sasl_password": _config.get("cluster_b_sasl_password"),
+                "sasl_mechanism": _config.get("cluster_b_sasl_mechanism", "PLAIN"),
+                "tls_enabled": _config.get("cluster_b_tls_enabled", True),
+                "cluster_label": _config.get("cluster_b_label", "External"),
+            }))
+        if not collectors:
+            raise HTTPException(status_code=400,
+                detail="No clusters enabled. Enable at least one cluster in Settings.")
+        # Collect from first enabled cluster (multi-cluster merge is Phase 3)
+        data = await collectors[0].collect()
+        kafka_store.set_cluster_data(data, source_type=source)
+
+        meta = kafka_store.get_sync_meta()
+        _config["last_synced"] = meta["last_synced"]
+        _config["broker_count"] = meta["broker_count"]
+        _config["consumer_group_count"] = meta["consumer_group_count"]
+        _config["topic_count"] = meta["topic_count"]
+        _config["connector_count"] = meta["connector_count"]
+
+        await _upsert("last_synced", _config["last_synced"])
+        await _upsert("broker_count", _config["broker_count"])
+        await _upsert("consumer_group_count", _config["consumer_group_count"])
+        await _upsert("topic_count", _config["topic_count"])
+        await _upsert("connector_count", _config["connector_count"])
+
+        return {
+            "ok": True,
+            "broker_count": meta["broker_count"],
+            "consumer_group_count": meta["consumer_group_count"],
+            "topic_count": meta["topic_count"],
+            "connector_count": meta["connector_count"],
+            "last_synced": meta["last_synced"],
+        }
     if source in ("kafka", "msk"):
         raise HTTPException(
             status_code=400,

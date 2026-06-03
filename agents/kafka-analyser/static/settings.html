@@ -151,6 +151,39 @@
     .toggle-wrap { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; }
     .toggle-wrap .toggle-label { font-size: 0.9rem; color: #334155; font-weight: 500; }
 
+    /* ── Cluster config panels (Cluster A / Cluster B) ── */
+    .hidden { display: none; }
+    .form-row { margin-bottom: 0.75rem; }
+    .form-row:last-child { margin-bottom: 0; }
+    .form-label {
+      display: block; font-size: 0.875rem; font-weight: 500;
+      color: #475569; margin-bottom: 0.375rem;
+    }
+    .form-row input[type="text"],
+    .form-row input[type="password"],
+    .form-row select {
+      width: 100%; padding: 0.5rem 0.75rem; border: 1px solid #cbd5e1;
+      border-radius: 6px; font-size: 0.875rem; color: #1e293b;
+      background: #ffffff; outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .form-row input:focus, .form-row select:focus {
+      border-color: #FF6B35; box-shadow: 0 0 0 3px rgba(255,107,53,0.12);
+    }
+    .toggle-slider {
+      width: 38px; height: 20px; background: #cbd5e1; border-radius: 9999px;
+      position: relative; transition: background 0.2s; flex-shrink: 0; cursor: pointer;
+    }
+    .toggle-input:checked + .toggle-slider { background: #FF6B35; }
+    .toggle-slider::after {
+      content: ''; position: absolute; width: 14px; height: 14px;
+      border-radius: 50%; background: #fff; top: 3px; left: 3px;
+      transition: left 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+    .toggle-input:checked + .toggle-slider::after { left: 21px; }
+    .action-msg.success { color: #15803d; }
+    .action-msg.error   { color: #b91c1c; }
+
     /* ── Sync row ── */
     .sync-row { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
     .sync-row .field { margin-bottom: 0; flex: 0 0 220px; }
@@ -265,32 +298,19 @@
           </div>
         </label>
 
-        <label class="radio-card" id="card-redpanda">
-          <input type="radio" name="source" value="redpanda" />
+        <label class="radio-card" id="card-kafka-internal">
+          <input type="radio" name="source" value="kafka_internal" />
           <div class="radio-card-body">
-            <div class="radio-card-label">Redpanda Cloud</div>
-            <div class="radio-card-desc">Connect to Redpanda Cloud free tier — real Kafka protocol, zero cost</div>
-            <div class="redpanda-fields hidden" id="redpanda-fields">
-              <div class="field">
-                <label for="bootstrap-servers">Bootstrap Servers</label>
-                <input type="text" id="bootstrap-servers" placeholder="seed-abc123.redpanda.com:9092" />
-              </div>
-              <div class="field">
-                <label for="sasl-username">SASL Username</label>
-                <input type="text" id="sasl-username" placeholder="username" autocomplete="off" />
-              </div>
-              <div class="field">
-                <label for="sasl-password">SASL Password</label>
-                <input type="password" id="sasl-password" placeholder="password" autocomplete="new-password" />
-              </div>
-              <div class="field">
-                <div class="toggle-row">
-                  <input type="checkbox" id="tls-enabled" class="toggle-input" />
-                  <label for="tls-enabled" class="toggle-track"></label>
-                  <span class="toggle-label">TLS enabled</span>
-                </div>
-              </div>
-            </div>
+            <div class="radio-card-label">Internal Kafka <span class="phase-badge">Phase 2</span></div>
+            <div class="radio-card-desc">No-auth Kafka broker on your internal network</div>
+          </div>
+        </label>
+
+        <label class="radio-card" id="card-kafka-sasl">
+          <input type="radio" name="source" value="kafka_sasl" />
+          <div class="radio-card-body">
+            <div class="radio-card-label">External Kafka / Redpanda <span class="phase-badge">Phase 2</span></div>
+            <div class="radio-card-desc">SASL auth — PLAIN, SCRAM-256, SCRAM-512</div>
           </div>
         </label>
 
@@ -317,6 +337,82 @@
         </label>
 
       </div>
+    </div>
+
+    <!-- Cluster config panels — shown when a real source is selected -->
+    <div id="cluster-config" class="hidden">
+
+      <!-- Cluster A — Internal -->
+      <div class="card" id="cluster-a-card" style="margin-top:1rem">
+        <div class="card-title" style="display:flex;align-items:center;gap:0.75rem">
+          Cluster A — Internal (No Auth)
+          <label class="toggle-wrap">
+            <input type="checkbox" id="cluster-a-enabled" class="toggle-input" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="form-row">
+          <label class="form-label">Bootstrap Servers</label>
+          <input type="text" id="cluster-a-bootstrap"
+                 placeholder="broker1:9092,broker2:9092" />
+        </div>
+        <div class="form-row">
+          <label class="form-label">Label</label>
+          <input type="text" id="cluster-a-label" value="Internal" style="max-width:160px" />
+        </div>
+        <button class="btn btn-secondary" id="btn-test-a" style="margin-top:0.5rem">
+          Test Connection
+        </button>
+        <div id="test-a-msg" class="action-msg hidden"></div>
+      </div>
+
+      <!-- Cluster B — External SASL -->
+      <div class="card" id="cluster-b-card" style="margin-top:1rem">
+        <div class="card-title" style="display:flex;align-items:center;gap:0.75rem">
+          Cluster B — External (SASL)
+          <label class="toggle-wrap">
+            <input type="checkbox" id="cluster-b-enabled" class="toggle-input" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="form-row">
+          <label class="form-label">Bootstrap Servers</label>
+          <input type="text" id="cluster-b-bootstrap"
+                 placeholder="broker.external.com:9092" />
+        </div>
+        <div class="form-row">
+          <label class="form-label">Label</label>
+          <input type="text" id="cluster-b-label" value="External" style="max-width:160px" />
+        </div>
+        <div class="form-row">
+          <label class="form-label">SASL Username</label>
+          <input type="text" id="cluster-b-username" autocomplete="off" />
+        </div>
+        <div class="form-row">
+          <label class="form-label">SASL Password</label>
+          <input type="password" id="cluster-b-password" autocomplete="new-password" />
+        </div>
+        <div class="form-row">
+          <label class="form-label">Mechanism</label>
+          <select id="cluster-b-mechanism" style="max-width:200px">
+            <option value="PLAIN">PLAIN</option>
+            <option value="SCRAM-SHA-256">SCRAM-SHA-256</option>
+            <option value="SCRAM-SHA-512">SCRAM-SHA-512</option>
+          </select>
+        </div>
+        <div class="form-row" style="display:flex;align-items:center;gap:0.75rem">
+          <label class="form-label" style="margin-bottom:0">TLS / SSL</label>
+          <label class="toggle-wrap">
+            <input type="checkbox" id="cluster-b-tls" class="toggle-input" checked />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <button class="btn btn-secondary" id="btn-test-b" style="margin-top:0.5rem">
+          Test Connection
+        </button>
+        <div id="test-b-msg" class="action-msg hidden"></div>
+      </div>
+
     </div>
 
     <!-- C: Collection Interval -->
@@ -606,14 +702,19 @@
       radio.checked = selected;
       card.classList.toggle('selected', selected);
     });
-    $('redpanda-fields').classList.toggle('hidden', value !== 'redpanda');
+    // Show the cluster config panels only for real Kafka sources.
+    const isReal = value === 'kafka_internal' || value === 'kafka_sasl';
+    $('cluster-config').classList.toggle('hidden', !isReal);
+    // Cluster A (internal, no-auth) shows for both real sources;
+    // Cluster B (SASL) only for kafka_sasl.
+    $('cluster-b-card').classList.toggle('hidden', value !== 'kafka_sasl');
   }
 
   document.querySelectorAll('input[name="source"]:not([disabled])').forEach(radio => {
     radio.addEventListener('change', () => selectSource(radio.value));
   });
 
-  ['card-synthetic', 'card-redpanda'].forEach(id => {
+  ['card-synthetic', 'card-kafka-internal', 'card-kafka-sasl'].forEach(id => {
     const card = $(id);
     if (!card) return;
     card.addEventListener('click', () => {
@@ -629,14 +730,22 @@
     const payload = {
       source_type: radio ? radio.value : 'synthetic',
       collection_interval_secs: parseInt($('collection-interval').value, 10),
+      // Cluster A — Internal (no auth)
+      cluster_a_enabled:   $('cluster-a-enabled').checked,
+      cluster_a_label:     $('cluster-a-label').value.trim(),
+      cluster_a_bootstrap: $('cluster-a-bootstrap').value.trim(),
+      // Cluster B — External (SASL)
+      cluster_b_enabled:        $('cluster-b-enabled').checked,
+      cluster_b_label:          $('cluster-b-label').value.trim(),
+      cluster_b_bootstrap:      $('cluster-b-bootstrap').value.trim(),
+      cluster_b_sasl_username:  $('cluster-b-username').value.trim(),
+      cluster_b_sasl_mechanism: $('cluster-b-mechanism').value,
+      cluster_b_tls_enabled:    $('cluster-b-tls').checked,
     };
-    if (payload.source_type === 'redpanda') {
-      payload.bootstrap_servers = $('bootstrap-servers').value.trim();
-      payload.sasl_username     = $('sasl-username').value.trim();
-      const pwd = $('sasl-password').value.trim();
-      if (pwd) payload.sasl_password = pwd;
-      payload.tls_enabled = $('tls-enabled').checked;
-    }
+    // Only send the password when one was entered, so an empty box never
+    // overwrites a previously-saved secret.
+    const bpwd = $('cluster-b-password').value;
+    if (bpwd) payload.cluster_b_sasl_password = bpwd;
     return payload;
   }
 
@@ -649,6 +758,57 @@
       retention_threshold_pct: parseInt($('retention-threshold').value, 10),
     };
   }
+
+  // ── Test cluster connection ────────────────────────────────────────────────────
+
+  async function testCluster(cluster) {
+    const isA = cluster === "a";
+    const msgEl = document.getElementById(`test-${cluster}-msg`);
+    msgEl.textContent = "Testing…";
+    msgEl.className = "action-msg";
+    const payload = isA ? {
+      cluster: "a",
+      bootstrap_servers: document.getElementById("cluster-a-bootstrap").value,
+      auth_type: "none",
+      sasl_username: null,
+      sasl_password: null,
+      sasl_mechanism: "PLAIN",
+      tls_enabled: false,
+      cluster_label: document.getElementById("cluster-a-label").value,
+    } : {
+      cluster: "b",
+      bootstrap_servers: document.getElementById("cluster-b-bootstrap").value,
+      auth_type: "sasl",
+      sasl_username: document.getElementById("cluster-b-username").value,
+      sasl_password: document.getElementById("cluster-b-password").value,
+      sasl_mechanism: document.getElementById("cluster-b-mechanism").value,
+      tls_enabled: document.getElementById("cluster-b-tls").checked,
+      cluster_label: document.getElementById("cluster-b-label").value,
+    };
+    try {
+      const r = await fetch("/settings/test-connection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const d = await r.json();
+      if (d.ok) {
+        msgEl.textContent =
+          `✓ Connected — ${d.broker_count} broker(s), ${d.topic_count} topic(s)`;
+        msgEl.className = "action-msg success";
+      } else {
+        msgEl.textContent = "✗ " + (d.detail || "Connection failed");
+        msgEl.className = "action-msg error";
+      }
+    } catch(e) {
+      msgEl.textContent = "✗ " + e.message;
+      msgEl.className = "action-msg error";
+    }
+  }
+  document.getElementById("btn-test-a")
+    .addEventListener("click", () => testCluster("a"));
+  document.getElementById("btn-test-b")
+    .addEventListener("click", () => testCluster("b"));
 
   // ── API calls ────────────────────────────────────────────────────────────────
 
@@ -775,10 +935,23 @@
       // Source radio
       selectSource(cfg.source_type || 'synthetic');
 
-      // Pre-fill non-secret connection fields
-      if (cfg.bootstrap_servers) $('bootstrap-servers').value = cfg.bootstrap_servers;
-      if (cfg.sasl_username)     $('sasl-username').value     = cfg.sasl_username;
-      if (cfg.tls_enabled != null) $('tls-enabled').checked   = cfg.tls_enabled;
+      // Pre-fill cluster config fields (password intentionally never pre-filled)
+      // Cluster A — Internal
+      if (cfg.cluster_a_enabled  != null) $('cluster-a-enabled').checked = cfg.cluster_a_enabled;
+      if (cfg.cluster_a_label)            $('cluster-a-label').value     = cfg.cluster_a_label;
+      if (cfg.cluster_a_bootstrap)        $('cluster-a-bootstrap').value = cfg.cluster_a_bootstrap;
+      // Cluster B — External (SASL)
+      if (cfg.cluster_b_enabled  != null) $('cluster-b-enabled').checked = cfg.cluster_b_enabled;
+      if (cfg.cluster_b_label)            $('cluster-b-label').value     = cfg.cluster_b_label;
+      if (cfg.cluster_b_bootstrap)        $('cluster-b-bootstrap').value = cfg.cluster_b_bootstrap;
+      if (cfg.cluster_b_sasl_username)    $('cluster-b-username').value  = cfg.cluster_b_sasl_username;
+      if (cfg.cluster_b_sasl_mechanism) {
+        const mEl = $('cluster-b-mechanism');
+        if (mEl.querySelector('option[value="' + cfg.cluster_b_sasl_mechanism + '"]')) {
+          mEl.value = cfg.cluster_b_sasl_mechanism;
+        }
+      }
+      if (cfg.cluster_b_tls_enabled != null) $('cluster-b-tls').checked = cfg.cluster_b_tls_enabled;
 
       // Collection interval
       const intEl = $('collection-interval');

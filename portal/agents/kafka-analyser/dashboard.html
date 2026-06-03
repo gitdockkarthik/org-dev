@@ -105,7 +105,7 @@
         <div class="page-heading__title">Kafka Dashboard</div>
         <div class="page-heading__sub">Cluster health, consumer lag, broker metrics and anomaly detection</div>
       </div>
-      <button class="btn btn--primary" id="genBtn" onclick="generateAndLoad()">⚡ Generate Synthetic Data</button>
+      <button class="btn btn--primary" id="genBtn" onclick="generateAndLoad()" style="display:none">⚡ Generate Synthetic Data</button>
     </div>
 
     <div class="tab-bar">
@@ -311,14 +311,14 @@
         return `
           <div class="broker-card">
             <div class="broker-card__header">
-              <span class="broker-card__name">${b.broker_id}</span>
+              <span class="broker-card__name">${(b.broker_id || b.id || 'Broker')}</span>
               <span class="sev sev--${b.status === 'healthy' ? 'healthy' : b.status === 'warning' ? 'warning' : 'critical'}">${b.status.toUpperCase()}</span>
             </div>
             <div class="broker-metrics">
               <div class="bm"><div class="bm__label">Heap</div><div class="bm__value" style="color:${metricColor(b.heap_pct)}">${b.heap_pct}%</div></div>
               <div class="bm"><div class="bm__label">CPU</div><div class="bm__value" style="color:${metricColor(b.cpu_pct)}">${b.cpu_pct}%</div></div>
               <div class="bm"><div class="bm__label">URPs</div><div class="bm__value" style="color:${b.urp_count > 0 ? 'var(--danger)' : 'var(--success)'}">${b.urp_count}</div></div>
-              <div class="bm"><div class="bm__label">GC Pauses</div><div class="bm__value" style="color:${b.gc_pause_count > 0 ? '#d97706' : 'var(--success)'}">${b.gc_pause_count}</div></div>
+              <div class="bm"><div class="bm__label">GC Pauses</div><div class="bm__value" style="color:${(b.gc_pause_count ?? b.gc_pause_ms ?? 0) > 0 ? '#d97706' : 'var(--success)'}">${(b.gc_pause_count ?? b.gc_pause_ms ?? 0)}</div></div>
             </div>
           </div>`;
       }).join('');
@@ -481,7 +481,7 @@
         return `
           <div class="broker-card">
             <div class="broker-card__header">
-              <span class="broker-card__name">${b.broker_id}</span>
+              <span class="broker-card__name">${(b.broker_id || b.id || 'Broker')}</span>
               <span class="sev sev--${b.status === 'healthy' ? 'healthy' : b.status === 'warning' ? 'warning' : 'critical'}">${b.status.toUpperCase()}</span>
             </div>
             ${metricRow('Heap', b.heap_pct)}
@@ -490,7 +490,7 @@
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px">
               <div class="bm">
                 <div class="bm__label">GC Pauses</div>
-                <div class="bm__value" style="color:${b.gc_pause_count > 0 ? '#d97706' : 'var(--success)'}">${b.gc_pause_count}</div>
+                <div class="bm__value" style="color:${(b.gc_pause_count ?? b.gc_pause_ms ?? 0) > 0 ? '#d97706' : 'var(--success)'}">${(b.gc_pause_count ?? b.gc_pause_ms ?? 0)}</div>
               </div>
               <div class="bm">
                 <div class="bm__label">Under-Replicated</div>
@@ -588,13 +588,12 @@
 
     async function init() {
       await portalReady;
-
-      // Hide generate button if source is not synthetic
       try {
-        const cfg = await api('/settings').catch(() => ({}));
-        const genBtn = document.getElementById('genBtn');
-        if (genBtn) genBtn.style.display = (cfg.source_type || 'synthetic') === 'synthetic' ? '' : 'none';
-      } catch (_) {}
+        const cfg = await api('/settings');
+        if (cfg.source_type === 'synthetic') {
+          document.getElementById('genBtn').style.display = '';
+        }
+      } catch(_) {}
       loadTab('overview');
     }
 
