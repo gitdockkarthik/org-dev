@@ -982,7 +982,8 @@
         bootstrap_servers: document.getElementById('cf-bootstrap').value.trim(),
         auth_type: authType,
         sasl_username: document.getElementById('cf-username').value,
-        sasl_password: document.getElementById('cf-password').value,
+        sasl_password: document.getElementById('cf-password').value ||
+                       (editingId ? '••••••••' : ''),
         sasl_mechanism: document.getElementById('cf-mechanism').value,
         tls_enabled: document.getElementById('cf-tls').checked,
         enabled: false,
