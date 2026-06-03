@@ -150,11 +150,60 @@ async def _init_config() -> None:
 
 
 async def _collection_loop() -> None:
-    """Background collection loop — placeholder for Phase 2 live collection."""
-    logger.info("Collection loop started (Phase 1: manual sync via /settings/sync)")
+    """Background collection loop — syncs all enabled clusters at configured interval."""
+    logger.info("Collection loop started")
     while True:
-        await asyncio.sleep(3600)
-        logger.debug("Collection loop: no live source configured — skipping tick")
+        try:
+            interval_secs = int(_config.get("collection_interval_secs", 0))
+            if interval_secs <= 0:
+                await asyncio.sleep(30)
+                continue
+
+            await asyncio.sleep(interval_secs)
+
+            from storage import get_backend
+            clusters = await get_backend().get_clusters(settings.agent_slug)
+            enabled = [c for c in clusters if c.get("enabled")]
+            if not enabled:
+                logger.debug("Collection loop: no enabled clusters — skipping")
+                continue
+
+            source_type = _config.get("source_type", "synthetic")
+            if source_type not in ("kafka_internal", "kafka_sasl", "live"):
+                logger.debug("Collection loop: source_type=%s — skipping", source_type)
+                continue
+
+            from tools.real_kafka import RealKafkaCollector
+            import kafka_store as _ks
+            for c in enabled:
+                try:
+                    collector = RealKafkaCollector({
+                        "bootstrap_servers": c["bootstrap_servers"],
+                        "auth_type": "none" if c["auth_type"] == "none" else "sasl",
+                        "sasl_username": c.get("sasl_username"),
+                        "sasl_password": c.get("sasl_password"),
+                        "sasl_mechanism": c.get("sasl_mechanism", "PLAIN"),
+                        "tls_enabled": c.get("tls_enabled", False),
+                        "cluster_label": c["name"],
+                    })
+                    data = await collector.collect()
+                    _ks.set_cluster_data(
+                        data,
+                        source_type=c.get("source_type", "kafka_internal"),
+                        cluster_id=str(c.get("id", "default")),
+                    )
+                    logger.info(
+                        "Collection loop: synced cluster '%s' (id=%s)",
+                        c["name"], c.get("id"),
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Collection loop: failed to sync cluster '%s': %s",
+                        c["name"], exc,
+                    )
+        except Exception as exc:
+            logger.warning("Collection loop error: %s", exc)
+            await asyncio.sleep(30)
 
 
 @asynccontextmanager
