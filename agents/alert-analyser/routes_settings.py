@@ -134,16 +134,18 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
     _sync_lock = True
     try:
         source_type = _config.get("source_type", "opsgenie")
-        if source_type == "standalone":
-            source: AlertSource = StandaloneOpsgenieSource(
-                api_key=_config["api_token"],
-                base_url=_config.get("opsgenie_base_url") or "https://api.opsgenie.com",
-            )
-        else:
-            source = JSMSource(
+        opsgenie_type = _config.get("opsgenie_type", "standalone")
+        use_jsm = source_type == "standalone" and opsgenie_type == "jsm"
+        if use_jsm:
+            source: AlertSource = JSMSource(
                 cloud_id=_config["cloud_id"],
                 email=_config["email"],
                 api_token=_config["api_token"],
+            )
+        else:
+            source = StandaloneOpsgenieSource(
+                api_key=_config["api_token"],
+                base_url=_config.get("opsgenie_base_url") or "https://api.opsgenie.com",
             )
         last_synced = _config.get("last_synced")
         if last_synced and not full_sync:
