@@ -171,7 +171,7 @@ class StandaloneOpsgenieSource(AlertSource):
 
         # Standalone OpsGenie query syntax uses epoch milliseconds
         epoch_ms = int(start.timestamp() * 1000)
-        query = f"createdAt > {epoch_ms}"
+        query = f"createdAt>{epoch_ms}"
 
         all_alerts: list[dict] = []
         limit = 100
@@ -184,15 +184,11 @@ class StandaloneOpsgenieSource(AlertSource):
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             while True:
-                params: dict = {
-                    "query": query,
-                    "limit": limit,
-                    "offset": offset,
-                    "order": "asc",
-                }
+                # Build URL manually to avoid httpx encoding the query operators
+                manual_url = f"{url}?query={query}&limit={limit}&offset={offset}&order=asc"
 
                 for _attempt in range(3):
-                    resp = await client.get(url, headers=headers, params=params)
+                    resp = await client.get(manual_url, headers=headers)
                     if resp.status_code == 429:
                         import asyncio
                         retry_after = int(resp.headers.get("Retry-After", 5))
