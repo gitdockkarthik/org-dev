@@ -739,9 +739,9 @@
 
     document.getElementById('ctrl-cluster').addEventListener('change', function() {
       _currentClusterId = this.value;
-      loadTab('overview');
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('tab-btn--active'));
-      document.querySelector('[data-tab="overview"]').classList.add('tab-btn--active');
+      const activeBtn = document.querySelector('.tab-btn--active');
+      const activeTab = activeBtn ? activeBtn.dataset.tab : 'overview';
+      loadTab(activeTab);
     });
 
     // ── Tab filters ───────────────────────────────────────────────
