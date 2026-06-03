@@ -187,7 +187,17 @@ async def _collection_loop() -> None:
                         "tls_enabled": c.get("tls_enabled", False),
                         "cluster_label": c["name"],
                     })
-                    data = await collector.collect()
+                    try:
+                        data = await collector.collect()
+                    except RuntimeError as exc:
+                        # Check if this is a background aiokafka error after data collection
+                        if "Buffer underrun" in str(exc) or "KafkaConnectionError" in str(exc):
+                            logger.warning(
+                                "Collection loop: background error on cluster '%s' — skipping this tick: %s",
+                                c["name"], exc,
+                            )
+                            continue
+                        raise
                     _ks.set_cluster_data(
                         data,
                         source_type=c.get("source_type", "kafka_internal"),

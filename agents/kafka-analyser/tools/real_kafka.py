@@ -16,6 +16,15 @@ from aiokafka.helpers import create_ssl_context
 
 from tools.base import KafkaCollector
 
+import logging
+
+class _SuppressAiokafkaBufferError(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "Buffer underrun decoding string" not in record.getMessage()
+
+logging.getLogger("aiokafka").addFilter(_SuppressAiokafkaBufferError())
+logging.getLogger("aiokafka.conn").addFilter(_SuppressAiokafkaBufferError())
+
 # Consumer-group states that have no live members / offsets worth querying.
 _INACTIVE_GROUP_STATES = {"Dead", "Empty"}
 
