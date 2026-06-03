@@ -823,7 +823,7 @@
           </label>
           <div style="flex:1;min-width:0">
             <div style="font-weight:600;font-size:0.9rem">${c.name}</div>
-            <div style="font-size:0.8rem;color:#64748b">${c.bootstrap_servers} · ${c.auth_type} · ${c.environment}</div>
+            <div style="font-size:0.8rem;color:#64748b">${c.bootstrap_servers} · ${c.auth_type} · ${c.environment}${c.sasl_username ? ' · 🔑 ' + c.sasl_username : ''}</div>
           </div>
           <span class="status-badge status-${c.status}" style="font-size:0.75rem;padding:0.2rem 0.5rem;border-radius:4px;background:${c.status==='healthy'?'#dcfce7':c.status==='error'?'#fee2e2':'#f1f5f9'};color:${c.status==='healthy'?'#166534':c.status==='error'?'#991b1b':'#475569'}">${c.status}</span>
           <button class="btn btn-secondary" onclick="testClusterById(${c.id})" style="padding:0.25rem 0.625rem;font-size:0.8rem">Test</button>
@@ -885,7 +885,8 @@
       document.getElementById('cf-bootstrap').value = c.bootstrap_servers;
       document.getElementById('cf-auth-type').value = c.auth_type;
       document.getElementById('cf-username').value = c.sasl_username || '';
-      document.getElementById('cf-password').value = '';
+      document.getElementById('cf-password').value = c.sasl_password ? '••••••••' : '';
+      document.getElementById('cf-password').placeholder = c.sasl_password ? 'Leave blank to keep existing' : 'Enter password';
       document.getElementById('cf-mechanism').value = c.sasl_mechanism || 'PLAIN';
       document.getElementById('cf-tls').checked = c.tls_enabled || false;
       updateAuthFields(c.auth_type);
