@@ -272,6 +272,12 @@ async def invoke(
         _alert_cache[body.session_id] = ctx["alerts"]
 
     alerts = _alert_cache.get(body.session_id, [])
+    if not alerts:
+        from report_store import get_latest_classified
+        cached = get_latest_classified()
+        if cached:
+            alerts = cached
+            _alert_cache[body.session_id] = alerts
     has_data = bool(alerts)
     alert_count = len(alerts)
 
