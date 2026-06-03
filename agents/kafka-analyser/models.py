@@ -32,10 +32,18 @@ class KafkaCluster(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     agent_slug: Mapped[str] = mapped_column(String(64), nullable=False)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
-    source_type: Mapped[str] = mapped_column(String(32), nullable=False, default="synthetic")
+    environment: Mapped[str] = mapped_column(String(32), nullable=False, default="internal")
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False, default="kafka_internal")
     bootstrap_servers: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    auth_type: Mapped[str] = mapped_column(String(32), nullable=False, default="none")
+    sasl_username: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    sasl_password: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    sasl_mechanism: Mapped[str] = mapped_column(String(32), nullable=False, default="PLAIN")
+    tls_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     config_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="healthy")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="unchecked")
+    last_tested_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

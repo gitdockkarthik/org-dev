@@ -119,6 +119,19 @@ class TestConnectionPayload(BaseModel):
     cluster_label: str = ""
 
 
+class ClusterPayload(BaseModel):
+    id: int | None = None
+    name: str
+    environment: str = "internal"
+    bootstrap_servers: str
+    auth_type: str = "none"
+    sasl_username: str = ""
+    sasl_password: str = ""
+    sasl_mechanism: str = "PLAIN"
+    tls_enabled: bool = False
+    enabled: bool = False
+
+
 @router.get("")
 async def get_settings() -> dict:
     await load_config_from_db()
@@ -167,53 +180,132 @@ async def test_connection(payload: TestConnectionPayload) -> dict:
     }
 
 
+@router.get("/clusters")
+async def list_clusters() -> dict:
+    clusters = await get_backend().get_clusters(settings.agent_slug)
+    # Never return sasl_password in plaintext — mask it
+    for c in clusters:
+        if c.get("sasl_password"):
+            c["sasl_password"] = "••••••••"
+    return {"clusters": clusters}
+
+
+@router.post("/clusters")
+async def create_cluster(payload: ClusterPayload) -> dict:
+    cluster = payload.model_dump()
+    cluster["agent_slug"] = settings.agent_slug
+    cluster["source_type"] = (
+        "kafka_sasl" if payload.auth_type != "none" else "kafka_internal"
+    )
+    cluster["status"] = "unchecked"
+    saved = await get_backend().save_cluster(cluster)
+    if saved.get("sasl_password"):
+        saved["sasl_password"] = "••••••••"
+    return {"cluster": saved}
+
+
+@router.put("/clusters/{cluster_id}")
+async def update_cluster(cluster_id: int, payload: ClusterPayload) -> dict:
+    existing = await get_backend().get_cluster(cluster_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+    cluster = payload.model_dump()
+    cluster["id"] = cluster_id
+    cluster["agent_slug"] = settings.agent_slug
+    cluster["source_type"] = (
+        "kafka_sasl" if payload.auth_type != "none" else "kafka_internal"
+    )
+    # If password is the mask, keep existing password
+    if cluster.get("sasl_password") == "••••••••":
+        cluster["sasl_password"] = existing.get("sasl_password", "")
+    saved = await get_backend().save_cluster(cluster)
+    if saved.get("sasl_password"):
+        saved["sasl_password"] = "••••••••"
+    return {"cluster": saved}
+
+
+@router.delete("/clusters/{cluster_id}")
+async def delete_cluster(cluster_id: int) -> dict:
+    deleted = await get_backend().delete_cluster(cluster_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+    return {"ok": True}
+
+
+@router.post("/clusters/{cluster_id}/test")
+async def test_cluster(cluster_id: int) -> dict:
+    cluster = await get_backend().get_cluster(cluster_id)
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+    try:
+        collector = RealKafkaCollector({
+            "bootstrap_servers": cluster["bootstrap_servers"],
+            "auth_type": cluster["auth_type"],
+            "sasl_username": cluster.get("sasl_username"),
+            "sasl_password": cluster.get("sasl_password"),
+            "sasl_mechanism": cluster.get("sasl_mechanism", "PLAIN"),
+            "tls_enabled": cluster.get("tls_enabled", False),
+            "cluster_label": cluster["name"],
+        })
+        data = await collector.collect()
+        await get_backend().update_cluster_status(
+            cluster_id, "healthy",
+            last_tested_at=datetime.now(timezone.utc)
+        )
+        return {
+            "ok": True,
+            "broker_count": len(data.get("brokers", [])),
+            "topic_count": len(data.get("topics", [])),
+            "cluster_id": data.get("cluster", {}).get("id", ""),
+        }
+    except Exception as exc:
+        await get_backend().update_cluster_status(cluster_id, "error")
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/clusters/{cluster_id}/enable")
+async def toggle_cluster(cluster_id: int, enabled: bool) -> dict:
+    cluster = await get_backend().get_cluster(cluster_id)
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+    cluster["enabled"] = enabled
+    await get_backend().save_cluster(cluster)
+    return {"ok": True, "enabled": enabled}
+
+
 @router.post("/sync")
 async def sync_metrics() -> dict:
     source = _config.get("source_type", "synthetic")
 
-    if source in ("kafka_internal", "kafka_sasl"):
-        # Build active cluster configs from _config
-        collectors = []
-        if _config.get("cluster_a_enabled") and _config.get("cluster_a_bootstrap"):
-            collectors.append(RealKafkaCollector({
-                "bootstrap_servers": _config["cluster_a_bootstrap"],
-                "auth_type": "none",
-                "sasl_username": None,
-                "sasl_password": None,
-                "sasl_mechanism": "PLAIN",
-                "tls_enabled": False,
-                "cluster_label": _config.get("cluster_a_label", "Internal"),
-            }))
-        if _config.get("cluster_b_enabled") and _config.get("cluster_b_bootstrap"):
-            collectors.append(RealKafkaCollector({
-                "bootstrap_servers": _config["cluster_b_bootstrap"],
-                "auth_type": "sasl",
-                "sasl_username": _config.get("cluster_b_sasl_username"),
-                "sasl_password": _config.get("cluster_b_sasl_password"),
-                "sasl_mechanism": _config.get("cluster_b_sasl_mechanism", "PLAIN"),
-                "tls_enabled": _config.get("cluster_b_tls_enabled", True),
-                "cluster_label": _config.get("cluster_b_label", "External"),
-            }))
-        if not collectors:
+    if source in ("kafka_internal", "kafka_sasl", "live"):
+        clusters = await get_backend().get_clusters(settings.agent_slug)
+        enabled = [c for c in clusters if c.get("enabled")]
+        if not enabled:
             raise HTTPException(status_code=400,
                 detail="No clusters enabled. Enable at least one cluster in Settings.")
-        # Collect from first enabled cluster (multi-cluster merge is Phase 3)
-        data = await collectors[0].collect()
-        kafka_store.set_cluster_data(data, source_type=source)
-
+        c = enabled[0]
+        collector = RealKafkaCollector({
+            "bootstrap_servers": c["bootstrap_servers"],
+            "auth_type": c["auth_type"],
+            "sasl_username": c.get("sasl_username"),
+            "sasl_password": c.get("sasl_password"),
+            "sasl_mechanism": c.get("sasl_mechanism", "PLAIN"),
+            "tls_enabled": c.get("tls_enabled", False),
+            "cluster_label": c["name"],
+        })
+        data = await collector.collect()
+        kafka_store.set_cluster_data(data, source_type=c.get("source_type", "kafka_internal"))
         meta = kafka_store.get_sync_meta()
         _config["last_synced"] = meta["last_synced"]
         _config["broker_count"] = meta["broker_count"]
         _config["consumer_group_count"] = meta["consumer_group_count"]
         _config["topic_count"] = meta["topic_count"]
         _config["connector_count"] = meta["connector_count"]
-
         await _upsert("last_synced", _config["last_synced"])
         await _upsert("broker_count", _config["broker_count"])
         await _upsert("consumer_group_count", _config["consumer_group_count"])
         await _upsert("topic_count", _config["topic_count"])
         await _upsert("connector_count", _config["connector_count"])
-
         return {
             "ok": True,
             "broker_count": meta["broker_count"],

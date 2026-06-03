@@ -27,6 +27,7 @@ from sqlalchemy import select, delete
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from config import settings
+from encryption import encrypt, decrypt, is_secret_key
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,32 @@ class StorageBackend(ABC):
     async def delete(self, key: str) -> None:
         ...
 
+    # ── Cluster CRUD ──────────────────────────────────────────────────────────
+    @abstractmethod
+    async def save_cluster(self, cluster: dict) -> dict:
+        """Save or update a cluster. Returns saved cluster with id."""
+        ...
+
+    @abstractmethod
+    async def get_clusters(self, agent_slug: str) -> list[dict]:
+        """Return all clusters for agent_slug."""
+        ...
+
+    @abstractmethod
+    async def get_cluster(self, cluster_id: int) -> dict | None:
+        """Return single cluster by id."""
+        ...
+
+    @abstractmethod
+    async def delete_cluster(self, cluster_id: int) -> bool:
+        """Delete cluster by id. Returns True if deleted."""
+        ...
+
+    @abstractmethod
+    async def update_cluster_status(self, cluster_id: int, status: str, last_tested_at=None) -> None:
+        """Update cluster status and optionally last_tested_at."""
+        ...
+
 
 # ── In-memory backend ───────────────────────────────────────────────────────
 class MemoryBackend(StorageBackend):
@@ -58,6 +85,8 @@ class MemoryBackend(StorageBackend):
 
     def __init__(self) -> None:
         self._store: dict[str, str] = {}
+        self._clusters: dict[int, dict] = {}
+        self._next_id: int = 1
         self._lock = asyncio.Lock()
         logger.warning(
             "StorageBackend: using in-memory storage — data will not persist across restarts"
@@ -78,6 +107,50 @@ class MemoryBackend(StorageBackend):
     async def delete(self, key: str) -> None:
         async with self._lock:
             self._store.pop(key, None)
+
+    # ── Cluster CRUD ──────────────────────────────────────────────────────────
+    async def save_cluster(self, cluster: dict) -> dict:
+        async with self._lock:
+            cid = cluster.get("id")
+            if cid:
+                # Update existing record (merge provided fields).
+                rec = dict(self._clusters.get(cid, {}))
+                rec.update(cluster)
+                rec["id"] = cid
+                self._clusters[cid] = rec
+            else:
+                # Insert with a freshly assigned id.
+                cid = self._next_id
+                self._next_id += 1
+                rec = dict(cluster)
+                rec["id"] = cid
+                self._clusters[cid] = rec
+            return dict(rec)
+
+    async def get_clusters(self, agent_slug: str) -> list[dict]:
+        async with self._lock:
+            return [
+                dict(c) for c in self._clusters.values()
+                if c.get("agent_slug") == agent_slug
+            ]
+
+    async def get_cluster(self, cluster_id: int) -> dict | None:
+        async with self._lock:
+            c = self._clusters.get(cluster_id)
+            return dict(c) if c is not None else None
+
+    async def delete_cluster(self, cluster_id: int) -> bool:
+        async with self._lock:
+            return self._clusters.pop(cluster_id, None) is not None
+
+    async def update_cluster_status(self, cluster_id: int, status: str, last_tested_at=None) -> None:
+        async with self._lock:
+            c = self._clusters.get(cluster_id)
+            if c is None:
+                return
+            c["status"] = status
+            if last_tested_at is not None:
+                c["last_tested_at"] = last_tested_at
 
 
 # ── Postgres backend ────────────────────────────────────────────────────────
@@ -162,6 +235,142 @@ class PostgresBackend(StorageBackend):
                 await session.commit()
         except Exception:
             logger.exception("PostgresBackend.delete: failed to delete key=%r", key)
+
+    # ── Cluster CRUD ──────────────────────────────────────────────────────────
+    # Columns accepted from an incoming cluster dict (sasl_password handled
+    # separately so it can be encrypted at rest).
+    _CLUSTER_FIELDS = (
+        "agent_slug", "name", "environment", "source_type", "bootstrap_servers",
+        "auth_type", "sasl_username", "sasl_mechanism", "tls_enabled", "enabled",
+        "status",
+    )
+
+    @staticmethod
+    def _row_to_dict(row) -> dict:
+        """Convert a KafkaCluster ORM row to a plain dict (decrypt sasl_password)."""
+        pw = row.sasl_password
+        if pw:
+            try:
+                pw = decrypt(pw)
+            except Exception:
+                logger.error(
+                    "PostgresBackend._row_to_dict: failed to decrypt sasl_password for id=%s",
+                    row.id,
+                )
+                pw = None
+        return {
+            "id": row.id,
+            "agent_slug": row.agent_slug,
+            "name": row.name,
+            "environment": row.environment,
+            "source_type": row.source_type,
+            "bootstrap_servers": row.bootstrap_servers,
+            "auth_type": row.auth_type,
+            "sasl_username": row.sasl_username,
+            "sasl_password": pw,
+            "sasl_mechanism": row.sasl_mechanism,
+            "tls_enabled": row.tls_enabled,
+            "enabled": row.enabled,
+            "config_json": row.config_json,
+            "status": row.status,
+            "last_tested_at": row.last_tested_at,
+            "created_at": row.created_at,
+        }
+
+    async def save_cluster(self, cluster: dict) -> dict:
+        from database import SessionLocal
+        from models import KafkaCluster
+
+        if SessionLocal is None:
+            return dict(cluster)
+        try:
+            pw = cluster.get("sasl_password")
+            stored_pw = encrypt(pw) if pw else pw  # keep None/"" as-is
+            async with SessionLocal() as session:
+                cid = cluster.get("id")
+                row = await session.get(KafkaCluster, cid) if cid else None
+                if row is None:
+                    row = KafkaCluster()
+                    session.add(row)
+                for f in self._CLUSTER_FIELDS:
+                    if f in cluster:
+                        setattr(row, f, cluster[f])
+                if "sasl_password" in cluster:
+                    row.sasl_password = stored_pw
+                await session.commit()
+                await session.refresh(row)
+                return self._row_to_dict(row)
+        except Exception:
+            logger.exception("PostgresBackend.save_cluster: failed")
+            return dict(cluster)
+
+    async def get_clusters(self, agent_slug: str) -> list[dict]:
+        from database import SessionLocal
+        from models import KafkaCluster
+
+        if SessionLocal is None:
+            return []
+        try:
+            async with SessionLocal() as session:
+                rows = (
+                    await session.execute(
+                        select(KafkaCluster).where(KafkaCluster.agent_slug == agent_slug)
+                    )
+                ).scalars().all()
+            return [self._row_to_dict(r) for r in rows]
+        except Exception:
+            logger.exception("PostgresBackend.get_clusters: failed for agent_slug=%r", agent_slug)
+            return []
+
+    async def get_cluster(self, cluster_id: int) -> dict | None:
+        from database import SessionLocal
+        from models import KafkaCluster
+
+        if SessionLocal is None:
+            return None
+        try:
+            async with SessionLocal() as session:
+                row = await session.get(KafkaCluster, cluster_id)
+                return self._row_to_dict(row) if row is not None else None
+        except Exception:
+            logger.exception("PostgresBackend.get_cluster: failed for id=%s", cluster_id)
+            return None
+
+    async def delete_cluster(self, cluster_id: int) -> bool:
+        from database import SessionLocal
+        from models import KafkaCluster
+
+        if SessionLocal is None:
+            return False
+        try:
+            async with SessionLocal() as session:
+                row = await session.get(KafkaCluster, cluster_id)
+                if row is None:
+                    return False
+                await session.delete(row)
+                await session.commit()
+                return True
+        except Exception:
+            logger.exception("PostgresBackend.delete_cluster: failed for id=%s", cluster_id)
+            return False
+
+    async def update_cluster_status(self, cluster_id: int, status: str, last_tested_at=None) -> None:
+        from database import SessionLocal
+        from models import KafkaCluster
+
+        if SessionLocal is None:
+            return
+        try:
+            async with SessionLocal() as session:
+                row = await session.get(KafkaCluster, cluster_id)
+                if row is None:
+                    return
+                row.status = status
+                if last_tested_at is not None:
+                    row.last_tested_at = last_tested_at
+                await session.commit()
+        except Exception:
+            logger.exception("PostgresBackend.update_cluster_status: failed for id=%s", cluster_id)
 
 
 # ── Factory ─────────────────────────────────────────────────────────────────
