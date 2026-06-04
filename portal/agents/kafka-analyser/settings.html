@@ -766,23 +766,6 @@
       }
     });
 
-    function renderSyncStatus(cfg) {
-      const el = $('sync-status');
-      el.innerHTML = '';
-      function addRow(label, valueHtml) {
-        const div = document.createElement('div');
-        div.className = 'status-row';
-        div.innerHTML = '<span class="status-row-label">' + label + '</span><span class="status-value">' + valueHtml + '</span>';
-        el.appendChild(div);
-      }
-      addRow('Source type', '<span class="badge">' + (cfg.source_type || 'synthetic') + '</span>');
-      addRow('Last synced', fmtDatetime(cfg.last_synced || null));
-      addRow('Brokers', cfg.broker_count != null ? String(cfg.broker_count) : '—');
-      addRow('Consumer groups', cfg.consumer_group_count != null ? String(cfg.consumer_group_count) : '—');
-      addRow('Topics', cfg.topic_count != null ? String(cfg.topic_count) : '—');
-      addRow('Connectors', cfg.connector_count != null ? String(cfg.connector_count) : '—');
-    }
-
     async function renderPerClusterSyncStatus() {
       const el = $('sync-status');
       try {
@@ -811,8 +794,8 @@
                 </div>
                 <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;font-size:.78rem;color:var(--text-muted)">
                   <span>Brokers: <strong style="color:var(--text)">${cluster.broker_count || '—'}</strong></span>
-                  <span>Topics: <strong style="color:var(--text)">${ov ? (ov.topics ? ov.topics.length : '—') : '—'}</strong></span>
-                  <span>Groups: <strong style="color:var(--text)">${ov ? (ov.consumer_groups ? ov.consumer_groups.length : '—') : '—'}</strong></span>
+                  <span>Topics: <strong style="color:var(--text)">${ov && ov.topic_count != null ? ov.topic_count : '—'}</strong></span>
+                  <span>Groups: <strong style="color:var(--text)">${ov && ov.consumer_group_count != null ? ov.consumer_group_count : '—'}</strong></span>
                 </div>
               </div>`;
           } catch(e) {
@@ -866,7 +849,7 @@
         if (cfg.connector_alert_enabled  != null) $('connector-alert').checked    = cfg.connector_alert_enabled;
         if (cfg.retention_threshold_pct  != null) $('retention-threshold').value  = cfg.retention_threshold_pct;
 
-        renderSyncStatus(cfg);
+        $('sync-status').innerHTML = '';
         renderPerClusterSyncStatus();
       } catch (err) {
         $('sync-status').innerHTML =
