@@ -243,6 +243,9 @@ class PostgresBackend(StorageBackend):
         "agent_slug", "name", "environment", "source_type", "bootstrap_servers",
         "auth_type", "sasl_username", "sasl_mechanism", "tls_enabled", "enabled",
         "status",
+        "schema_registry_url",
+        "zookeeper_url",
+        "kafka_connect_url",
     )
 
     @staticmethod
@@ -275,6 +278,9 @@ class PostgresBackend(StorageBackend):
             "status": row.status,
             "last_tested_at": row.last_tested_at,
             "created_at": row.created_at,
+            "schema_registry_url": row.schema_registry_url or "",
+            "zookeeper_url": row.zookeeper_url or "",
+            "kafka_connect_url": row.kafka_connect_url or "",
         }
 
     async def save_cluster(self, cluster: dict) -> dict:

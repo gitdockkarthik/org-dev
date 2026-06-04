@@ -384,6 +384,19 @@
             </div>
           </div>
 
+          <div class="form-row">
+            <label for="cf-sr-url">Schema Registry URL <span style="font-size:.75rem;color:var(--text-muted)">(optional)</span></label>
+            <input type="text" id="cf-sr-url" placeholder="http://schema-registry:8081" />
+          </div>
+          <div class="form-row">
+            <label for="cf-zk-url">ZooKeeper URL <span style="font-size:.75rem;color:var(--text-muted)">(optional)</span></label>
+            <input type="text" id="cf-zk-url" placeholder="zookeeper:2181" />
+          </div>
+          <div class="form-row">
+            <label for="cf-connect-url">Kafka Connect URL <span style="font-size:.75rem;color:var(--text-muted)">(optional)</span></label>
+            <input type="text" id="cf-connect-url" placeholder="http://kafka-connect:8083" />
+          </div>
+
           <!-- Kerberos fields — shown for sasl_gssapi -->
           <div id="cf-gssapi-fields" class="hidden">
             <div class="form-row">
@@ -889,6 +902,9 @@
       document.getElementById('cf-password').placeholder = c.sasl_password ? 'Leave blank to keep existing' : 'Enter password';
       document.getElementById('cf-mechanism').value = c.sasl_mechanism || 'PLAIN';
       document.getElementById('cf-tls').checked = c.tls_enabled || false;
+      document.getElementById('cf-sr-url').value = c.schema_registry_url || '';
+      document.getElementById('cf-zk-url').value = c.zookeeper_url || '';
+      document.getElementById('cf-connect-url').value = c.kafka_connect_url || '';
       updateAuthFields(c.auth_type);
       document.getElementById('cluster-form-card').classList.remove('hidden');
       document.getElementById('cluster-form-card').scrollIntoView({behavior:'smooth'});
@@ -927,6 +943,9 @@
       document.getElementById('cf-username').value = '';
       document.getElementById('cf-password').value = '';
       document.getElementById('cf-tls').checked = false;
+      document.getElementById('cf-sr-url').value = '';
+      document.getElementById('cf-zk-url').value = '';
+      document.getElementById('cf-connect-url').value = '';
       updateAuthFields('none');
       document.getElementById('cluster-form-card').classList.remove('hidden');
       document.getElementById('cluster-form-card').scrollIntoView({behavior:'smooth'});
@@ -987,6 +1006,9 @@
                        (editingId ? '••••••••' : ''),
         sasl_mechanism: document.getElementById('cf-mechanism').value,
         tls_enabled: document.getElementById('cf-tls').checked,
+        schema_registry_url: document.getElementById('cf-sr-url').value.trim(),
+        zookeeper_url: document.getElementById('cf-zk-url').value.trim(),
+        kafka_connect_url: document.getElementById('cf-connect-url').value.trim(),
         enabled: false,
       };
       if (!payload.name || !payload.bootstrap_servers) {

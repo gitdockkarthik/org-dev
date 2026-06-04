@@ -129,6 +129,9 @@ class ClusterPayload(BaseModel):
     sasl_password: str = ""
     sasl_mechanism: str = "PLAIN"
     tls_enabled: bool = False
+    schema_registry_url: str = ""
+    zookeeper_url: str = ""
+    kafka_connect_url: str = ""
     enabled: bool = False
 
 
