@@ -288,23 +288,31 @@ async def sync_metrics() -> dict:
         if not enabled:
             raise HTTPException(status_code=400,
                 detail="No clusters enabled. Enable at least one cluster in Settings.")
-        c = enabled[0]
-        collector = RealKafkaCollector({
-            "bootstrap_servers": c["bootstrap_servers"],
-            "auth_type": "none" if c["auth_type"] == "none" else "sasl",
-            "sasl_username": c.get("sasl_username"),
-            "sasl_password": c.get("sasl_password"),
-            "sasl_mechanism": c.get("sasl_mechanism", "PLAIN"),
-            "tls_enabled": c.get("tls_enabled", False),
-            "cluster_label": c["name"],
-        })
-        data = await collector.collect()
-        kafka_store.set_cluster_data(
-            data,
-            source_type=c.get("source_type", "kafka_internal"),
-            cluster_id=str(c.get("id", "default"))
-        )
-        meta = kafka_store.get_sync_meta()
+        last_meta = None
+        for c in enabled:
+            try:
+                collector = RealKafkaCollector({
+                    "bootstrap_servers": c["bootstrap_servers"],
+                    "auth_type": "none" if c["auth_type"] == "none" else "sasl",
+                    "sasl_username": c.get("sasl_username"),
+                    "sasl_password": c.get("sasl_password"),
+                    "sasl_mechanism": c.get("sasl_mechanism", "PLAIN"),
+                    "tls_enabled": c.get("tls_enabled", False),
+                    "cluster_label": c["name"],
+                })
+                data = await collector.collect()
+                kafka_store.set_cluster_data(
+                    data,
+                    source_type=c.get("source_type", "kafka_internal"),
+                    cluster_id=str(c.get("id", "default"))
+                )
+                last_meta = kafka_store.get_sync_meta(str(c.get("id", "default")))
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "sync_metrics: failed to sync cluster '%s': %s", c["name"], exc
+                )
+        meta = last_meta or kafka_store.get_sync_meta()
         _config["last_synced"] = meta["last_synced"]
         _config["broker_count"] = meta["broker_count"]
         _config["consumer_group_count"] = meta["consumer_group_count"]
