@@ -134,7 +134,7 @@ class KafkaConnectCollector:
 
             task_details = [
                 {
-                    "task_id": t.get("id", {}).get("task", i),
+                    "task_id": t.get("id") if isinstance(t.get("id"), int) else (t.get("id", {}).get("task", i) if isinstance(t.get("id"), dict) else i),
                     "state": t.get("state", "UNKNOWN"),
                     "worker_id": t.get("worker_id", ""),
                     "trace": t.get("trace", "")[:200] if t.get("trace") else "",
