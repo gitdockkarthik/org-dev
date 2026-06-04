@@ -567,7 +567,7 @@
         return `
           <div class="broker-card">
             <div class="broker-card__header">
-              <span class="broker-card__name">${(b.broker_id || b.id || 'Broker')}</span>
+              <span class="broker-card__name">Broker ID: ${(b.broker_id || b.id || 'Broker')}</span>
               <span class="sev sev--${b.status === 'healthy' ? 'healthy' : b.status === 'warning' ? 'warning' : 'critical'}">${b.status.toUpperCase()}</span>
             </div>
             ${metricRow('Heap', b.heap_pct)}
