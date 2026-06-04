@@ -68,6 +68,35 @@ async def get_insights(cluster_id: str | None = None) -> dict:
     return {"anomalies": data["anomalies"]}
 
 
+@router.get("/dashboard/schema-registry")
+async def get_schema_registry(cluster_id: str | None = None) -> dict:
+    """Fetch Schema Registry subjects, versions and compatibility."""
+    from storage import get_backend
+    from config import settings
+
+    # Get cluster's schema registry URL
+    sr_url = None
+    if cluster_id:
+        try:
+            cluster = await get_backend().get_cluster(int(cluster_id))
+            if cluster:
+                sr_url = cluster.get("schema_registry_url", "")
+        except Exception:
+            pass
+
+    if not sr_url:
+        return {
+            "status": "not_configured",
+            "message": "No Schema Registry URL configured for this cluster. Edit the cluster in Settings to add one.",
+            "subjects": [],
+            "subject_count": 0,
+        }
+
+    from tools.schema_registry import SchemaRegistryCollector
+    collector = SchemaRegistryCollector(sr_url)
+    return await collector.collect()
+
+
 @router.post("/dashboard/insights/narrative")
 async def get_insights_narrative(request: Request, cluster_id: str | None = None) -> dict:
     """Generate AI narrative summary of current cluster health."""

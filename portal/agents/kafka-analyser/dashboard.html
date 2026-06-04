@@ -154,6 +154,7 @@
       <button class="tab-btn"                 data-tab="brokers"         onclick="switchTab('brokers',this)">Brokers</button>
       <button class="tab-btn"                 data-tab="connectors"      onclick="switchTab('connectors',this)">Connectors</button>
       <button class="tab-btn"                 data-tab="insights"        onclick="switchTab('insights',this)">AI Insights</button>
+      <button class="tab-btn"                 data-tab="schema-registry" onclick="switchTab('schema-registry',this)">Schema Registry</button>
     </div>
 
     <div id="tab-overview"        class="tab-panel tab-panel--active"></div>
@@ -162,6 +163,7 @@
     <div id="tab-brokers"         class="tab-panel"></div>
     <div id="tab-connectors"      class="tab-panel"></div>
     <div id="tab-insights"        class="tab-panel"></div>
+    <div id="tab-schema-registry" class="tab-panel"></div>
   </div>
 
   <script src="/js/config.js?v=3"></script>
@@ -299,6 +301,11 @@
             const d = await api('/dashboard/insights');
             _loaded.add(name);
             renderInsights(d);
+            break;
+          }
+          case 'schema-registry': {
+            const d = await api('/dashboard/schema-registry');
+            renderSchemaRegistry(d);
             break;
           }
         }
@@ -787,6 +794,95 @@
         const text = row.textContent.toLowerCase();
         row.style.display = text.includes(val.toLowerCase()) ? '' : 'none';
       });
+    }
+
+    function renderSchemaRegistry(data) {
+      const el = document.getElementById('tab-schema-registry');
+      if (data.status === 'not_configured') {
+        el.innerHTML = emptyState('🔌', 'Schema Registry not configured',
+          'Edit the cluster in Settings and add a Schema Registry URL.');
+        return;
+      }
+      if (data.status === 'unreachable') {
+        el.innerHTML = emptyState('❌', 'Schema Registry unreachable',
+          `Could not connect to ${data.url}`);
+        return;
+      }
+
+      const compatColor = {
+        'BACKWARD': 'var(--success)',
+        'FORWARD': '#3b82f6',
+        'FULL': '#8b5cf6',
+        'NONE': 'var(--danger)',
+      };
+
+      const typeColors = {
+        'AVRO': '#ef4444',
+        'JSON': '#f59e0b',
+        'PROTOBUF': '#6366f1',
+      };
+
+      const subjects = data.subjects || [];
+      const rows = subjects.map(s => `
+        <tr>
+          <td style="font-weight:600"><code style="font-size:.8rem">${s.subject}</code></td>
+          <td style="text-align:center">${s.version_count}</td>
+          <td style="text-align:center">${s.latest_version}</td>
+          <td>
+            <span style="background:${typeColors[s.schema_type] || '#64748b'}22;
+                         color:${typeColors[s.schema_type] || '#64748b'};
+                         padding:2px 8px;border-radius:4px;font-size:.72rem;font-weight:700">
+              ${s.schema_type}
+            </span>
+          </td>
+          <td>
+            <span style="color:${compatColor[s.compatibility] || 'var(--text-muted)'};font-size:.82rem;font-weight:600">
+              ${s.compatibility}
+            </span>
+          </td>
+          <td style="font-size:.8rem;color:var(--text-muted)">${s.schema_id || '-'}</td>
+        </tr>`).join('') || `<tr><td colspan="6" class="data-table__empty">No subjects registered</td></tr>`;
+
+      el.innerHTML = `
+        <div class="kpi-grid" style="margin-bottom:18px">
+          <div class="kpi kpi--success">
+            <div class="kpi__label">Status</div>
+            <div class="kpi__value" style="font-size:1.2rem">✅ ${data.status}</div>
+            <div class="kpi__sub">${data.url}</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi__label">Subjects</div>
+            <div class="kpi__value">${data.subject_count}</div>
+            <div class="kpi__sub">registered schemas</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi__label">Total Versions</div>
+            <div class="kpi__value">${data.total_versions || 0}</div>
+            <div class="kpi__sub">across all subjects</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi__label">Global Compatibility</div>
+            <div class="kpi__value" style="font-size:1.1rem;color:${compatColor[data.global_compatibility] || 'var(--text)'}">
+              ${data.global_compatibility || 'BACKWARD'}
+            </div>
+            <div class="kpi__sub">default policy</div>
+          </div>
+        </div>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Subject</th>
+                <th style="text-align:center">Versions</th>
+                <th style="text-align:center">Latest</th>
+                <th>Type</th>
+                <th>Compatibility</th>
+                <th>Schema ID</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
     }
 
     async function init() {
