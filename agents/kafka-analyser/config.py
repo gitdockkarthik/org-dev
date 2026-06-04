@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 
 
 class Settings(BaseSettings):
@@ -18,6 +19,22 @@ class Settings(BaseSettings):
     storage_backend: str = "postgres"
 
     port: int = 8003
+
+    # ── Cache backend ────────────────────────────────────────────────────────
+    cache_backend: str = Field(default="none", alias="CACHE_BACKEND")
+    cache_url: str = Field(default="", alias="CACHE_URL")
+
+    # ── Vector backend ───────────────────────────────────────────────────────
+    vector_backend: str = Field(default="none", alias="VECTOR_BACKEND")
+    vector_url: str = Field(default="", alias="VECTOR_URL")
+    vector_api_key: str = Field(default="", alias="VECTOR_API_KEY")
+    vector_index: str = Field(default="kafka-analyser", alias="VECTOR_INDEX")
+
+    # ── Graph backend ────────────────────────────────────────────────────────
+    graph_backend: str = Field(default="none", alias="GRAPH_BACKEND")
+    graph_url: str = Field(default="", alias="GRAPH_URL")
+    graph_username: str = Field(default="neo4j", alias="GRAPH_USERNAME")
+    graph_password: str = Field(default="", alias="GRAPH_PASSWORD")
 
     @property
     def agent_system_prompt(self) -> str:
