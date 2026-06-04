@@ -298,9 +298,12 @@
             break;
           }
           case 'connectors': {
-            const d = await api('/dashboard/connectors');
-            _loaded.add(name);
-            renderConnectors(d);
+            const d = await api('/dashboard/kafka-connect');
+            renderKafkaConnect(d);
+            // Render into the old connectors tab panel
+            const oldEl = document.getElementById('tab-connectors');
+            const newEl = document.getElementById('tab-kafka-connect');
+            if (oldEl && newEl) oldEl.innerHTML = newEl.innerHTML;
             break;
           }
           case 'insights': {
