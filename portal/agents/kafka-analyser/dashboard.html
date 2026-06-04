@@ -818,15 +818,11 @@
       if (activeBtn) loadTab(activeBtn.dataset.tab);
     });
 
-    document.getElementById('ctrl-cluster').addEventListener('change', async function() {
+    document.getElementById('ctrl-cluster').addEventListener('change', function() {
       _currentClusterId = this.value;
-      // Clear all tab panels to avoid showing stale data
-      document.querySelectorAll('.tab-panel').forEach(p => {
-        p.innerHTML = '<div style="padding:2rem;text-align:center;color:var(--text-muted)">Loading…</div>';
-      });
       const activeBtn = document.querySelector('.tab-btn--active');
       const activeTab = activeBtn ? activeBtn.dataset.tab : 'overview';
-      await loadTab(activeTab);
+      loadTab(activeTab);
     });
 
     // ── Tab filters ───────────────────────────────────────────────
