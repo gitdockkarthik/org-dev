@@ -820,9 +820,20 @@
 
     document.getElementById('ctrl-cluster').addEventListener('change', function() {
       _currentClusterId = this.value;
+      // Show loading state on active tab only
       const activeBtn = document.querySelector('.tab-btn--active');
       const activeTab = activeBtn ? activeBtn.dataset.tab : 'overview';
-      loadTab(activeTab);
+      const activePanel = document.getElementById('tab-' + activeTab);
+      if (activePanel) {
+        activePanel.style.opacity = '0.4';
+        activePanel.style.pointerEvents = 'none';
+      }
+      loadTab(activeTab).finally(() => {
+        if (activePanel) {
+          activePanel.style.opacity = '1';
+          activePanel.style.pointerEvents = '';
+        }
+      });
     });
 
     // ── Tab filters ───────────────────────────────────────────────
