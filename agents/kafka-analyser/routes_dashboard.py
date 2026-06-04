@@ -14,10 +14,18 @@ async def get_overview(cluster_id: str | None = None) -> dict:
     data = kafka_store.get_cluster_data(cluster_id)
     if data is None:
         return {"empty": True}
+    topics = data["topics"]
+    consumer_groups = data["consumer_groups"]
     return {
-        "cluster": data["cluster"],
+        "cluster": {
+            **data["cluster"],
+            "topic_count": len(topics),
+            "consumer_group_count": len(consumer_groups),
+        },
         "brokers": data["brokers"],
         "anomalies": data["anomalies"],
+        "topic_count": len(topics),
+        "consumer_group_count": len(consumer_groups),
     }
 
 
