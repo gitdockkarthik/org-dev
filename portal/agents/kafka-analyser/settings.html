@@ -781,10 +781,48 @@
       addRow('Consumer groups', cfg.consumer_group_count != null ? String(cfg.consumer_group_count) : '—');
       addRow('Topics', cfg.topic_count != null ? String(cfg.topic_count) : '—');
       addRow('Connectors', cfg.connector_count != null ? String(cfg.connector_count) : '—');
-      el.insertAdjacentHTML('beforeend',
-        '<div class="hint" style="margin-top:8px;color:var(--text-muted)">' +
-        'Showing status for last synced cluster. All enabled clusters sync together.' +
-        '</div>');
+    }
+
+    async function renderPerClusterSyncStatus() {
+      const el = $('sync-status');
+      try {
+        await portalReady;
+        const res = await fetch(`${PROXY}/settings/clusters`, { headers: authHeaders() });
+        const d = await res.json();
+        const clusters = (d.clusters || []).filter(c => c.enabled);
+        if (!clusters.length) return;
+
+        // Add per-cluster section
+        const section = document.createElement('div');
+        section.style.cssText = 'margin-top:14px;border-top:1px solid var(--border);padding-top:12px';
+        section.innerHTML = '<div style="font-size:.78rem;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Per-Cluster Status</div>';
+
+        for (const c of clusters) {
+          try {
+            const ovRes = await fetch(`${PROXY}/dashboard/overview?cluster_id=${c.id}`, { headers: authHeaders() });
+            const ov = ovRes.ok ? await ovRes.json() : null;
+            const cluster = ov && ov.cluster ? ov.cluster : {};
+            const statusColor = cluster.status === 'healthy' ? 'var(--success)' : 'var(--warn)';
+            section.innerHTML += `
+              <div style="background:var(--navy-2);border:1px solid var(--border);border-radius:var(--r-xs);padding:10px 12px;margin-bottom:8px">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+                  <span style="font-weight:600;font-size:.85rem">${c.name}</span>
+                  <span style="font-size:.75rem;color:${statusColor};font-weight:600">${cluster.status || 'unknown'}</span>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;font-size:.78rem;color:var(--text-muted)">
+                  <span>Brokers: <strong style="color:var(--text)">${cluster.broker_count || '—'}</strong></span>
+                  <span>Topics: <strong style="color:var(--text)">${ov ? (ov.topics ? ov.topics.length : '—') : '—'}</strong></span>
+                  <span>Groups: <strong style="color:var(--text)">${ov ? (ov.consumer_groups ? ov.consumer_groups.length : '—') : '—'}</strong></span>
+                </div>
+              </div>`;
+          } catch(e) {
+            section.innerHTML += `<div style="font-size:.8rem;color:var(--text-muted);margin-bottom:6px">${c.name}: unavailable</div>`;
+          }
+        }
+        el.appendChild(section);
+      } catch(e) {
+        // silently fail — per-cluster status is optional
+      }
     }
 
     async function loadSettings() {
@@ -829,6 +867,7 @@
         if (cfg.retention_threshold_pct  != null) $('retention-threshold').value  = cfg.retention_threshold_pct;
 
         renderSyncStatus(cfg);
+        renderPerClusterSyncStatus();
       } catch (err) {
         $('sync-status').innerHTML =
           '<span style="color:#b91c1c;font-size:.875rem">Failed to load settings: ' + err.message + '</span>';
