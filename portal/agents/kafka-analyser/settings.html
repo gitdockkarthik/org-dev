@@ -250,14 +250,14 @@
     <nav class="tab-nav" role="tablist">
       <button class="tab-btn active" data-tab="data-source" role="tab">Data Source</button>
       <button class="tab-btn" data-tab="thresholds" role="tab">Alert Thresholds</button>
-      <button class="tab-btn" data-tab="enterprise" role="tab">
+      <button class="tab-btn" data-tab="enterprise" role="tab" style="display:none">
         Enterprise Kafka <span class="phase-badge">Phase 3</span>
       </button>
       <button class="tab-btn" data-tab="rag" role="tab">
-        RAG &amp; Intelligence <span class="phase-badge">Phase 4</span>
+        RAG &amp; Intelligence <span class="phase-badge">Phase 2</span>
       </button>
       <button class="tab-btn" data-tab="autonomous" role="tab">
-        Autonomous <span class="phase-badge red">Phase 5</span>
+        Autonomous <span class="phase-badge">Phase 3</span>
       </button>
     </nav>
 
@@ -298,7 +298,7 @@
           <label class="radio-card locked-card" id="card-msk">
             <input type="radio" name="source" value="msk" disabled />
             <div class="radio-card-body">
-              <div class="radio-card-label">AWS MSK <span class="phase-badge">Phase 3</span></div>
+              <div class="radio-card-label">AWS MSK</div>
               <div class="radio-card-desc">AWS Managed Streaming for Kafka via CloudWatch</div>
             </div>
           </label>
@@ -781,6 +781,10 @@
       addRow('Consumer groups', cfg.consumer_group_count != null ? String(cfg.consumer_group_count) : '—');
       addRow('Topics', cfg.topic_count != null ? String(cfg.topic_count) : '—');
       addRow('Connectors', cfg.connector_count != null ? String(cfg.connector_count) : '—');
+      el.insertAdjacentHTML('beforeend',
+        '<div class="hint" style="margin-top:8px;color:var(--text-muted)">' +
+        'Showing status for last synced cluster. All enabled clusters sync together.' +
+        '</div>');
     }
 
     async function loadSettings() {
