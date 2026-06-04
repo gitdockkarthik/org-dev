@@ -188,6 +188,7 @@
       const res = await fetch(url, {
         ...opts,
         headers: { ..._authHeaders(), ...opts.headers },
+        cache: 'no-store',
       });
       if (!res.ok) {
         const e = await res.json().catch(() => ({ detail: res.statusText }));
