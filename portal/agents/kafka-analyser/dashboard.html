@@ -155,6 +155,9 @@
       <button class="tab-btn"                 data-tab="connectors"      onclick="switchTab('connectors',this)">Connectors</button>
       <button class="tab-btn"                 data-tab="insights"        onclick="switchTab('insights',this)">AI Insights</button>
       <button class="tab-btn"                 data-tab="schema-registry" onclick="switchTab('schema-registry',this)">Schema Registry</button>
+      <button class="tab-btn"                 data-tab="zookeeper"       onclick="switchTab('zookeeper',this)">ZooKeeper</button>
+      <button class="tab-btn"                 data-tab="kafka-connect"   onclick="switchTab('kafka-connect',this)">Kafka Connect</button>
+      <button class="tab-btn"                 data-tab="mirrormaker"     onclick="switchTab('mirrormaker',this)">MirrorMaker</button>
     </div>
 
     <div id="tab-overview"        class="tab-panel tab-panel--active"></div>
@@ -164,6 +167,9 @@
     <div id="tab-connectors"      class="tab-panel"></div>
     <div id="tab-insights"        class="tab-panel"></div>
     <div id="tab-schema-registry" class="tab-panel"></div>
+    <div id="tab-zookeeper" class="tab-panel"></div>
+    <div id="tab-kafka-connect" class="tab-panel"></div>
+    <div id="tab-mirrormaker" class="tab-panel"></div>
   </div>
 
   <script src="/js/config.js?v=3"></script>
@@ -306,6 +312,21 @@
           case 'schema-registry': {
             const d = await api('/dashboard/schema-registry');
             renderSchemaRegistry(d);
+            break;
+          }
+          case 'zookeeper': {
+            const d = await api('/dashboard/zookeeper');
+            renderZooKeeper(d);
+            break;
+          }
+          case 'kafka-connect': {
+            const d = await api('/dashboard/kafka-connect');
+            renderKafkaConnect(d);
+            break;
+          }
+          case 'mirrormaker': {
+            const d = await api('/dashboard/mirrormaker');
+            renderMirrorMaker(d);
             break;
           }
         }
@@ -585,41 +606,102 @@
 
     // ── Tab 5: Connectors ─────────────────────────────────────────────────────
 
-    function renderConnectors(data) {
-      if (data.empty) {
-        document.getElementById('tab-connectors').innerHTML = emptyState('🔗', 'No data', 'Generate synthetic data first.');
+    function renderKafkaConnect(data) {
+      const el = document.getElementById('tab-kafka-connect');
+
+      if (data.status === 'not_configured') {
+        el.innerHTML = emptyState('🔌', 'Kafka Connect not configured',
+          'Edit the cluster in Settings and add a Kafka Connect URL.');
         return;
       }
+      if (data.status === 'unreachable') {
+        el.innerHTML = emptyState('❌', 'Kafka Connect unreachable',
+          `Could not connect to ${data.url}`);
+        return;
+      }
+
+      const s = data.summary || {};
       const connectors = data.connectors || [];
 
+      const stateColor = {
+        'RUNNING': 'var(--success)',
+        'FAILED': 'var(--danger)',
+        'PAUSED': 'var(--warn)',
+        'UNASSIGNED': '#6366f1',
+        'UNKNOWN': 'var(--text-muted)',
+      };
+
       const rows = connectors.map(c => {
-        const failed = c.failed_tasks || 0;
-        const total  = c.total_tasks  || 1;
-        const healthy = total - failed;
-        const pct = Math.round((healthy / total) * 100);
-        const barColor = failed > 0 ? 'var(--danger)' : 'var(--success)';
-        const stateColor = c.state === 'FAILED' ? 'color:var(--danger);font-weight:700' : c.state === 'RUNNING' ? 'color:var(--success);font-weight:600' : '';
+        const taskBar = c.total_tasks > 0 ? `
+          <div style="display:flex;gap:2px;margin-top:4px">
+            ${Array.from({length: c.total_tasks}, (_, i) => {
+              const task = c.tasks[i] || {};
+              const color = stateColor[task.state || 'RUNNING'] || 'var(--success)';
+              return `<div style="width:12px;height:6px;border-radius:2px;background:${color}" title="Task ${i}: ${task.state}"></div>`;
+            }).join('')}
+          </div>` : '';
         return `<tr>
-          <td style="font-weight:600">${c.connector_name}</td>
-          <td style="font-size:.78rem;color:var(--text-muted);text-transform:uppercase;font-weight:600">${c.connector_type}</td>
-          <td style="${stateColor}">${c.state}</td>
-          <td style="text-align:center">${healthy}/${total}</td>
-          <td style="text-align:center;color:${failed > 0 ? 'var(--danger)' : 'var(--text-muted)'};font-weight:${failed > 0 ? '700' : '400'}">${failed}</td>
-          <td style="min-width:120px">
-            <div class="task-bar-wrap">
-              <div class="progress-bar" style="flex:1">
-                <div class="progress-bar__fill" style="width:${pct}%;background:${barColor}"></div>
-              </div>
-              <span class="task-label">${pct}%</span>
-            </div>
+          <td style="font-weight:600"><code style="font-size:.8rem">${c.name}</code></td>
+          <td style="font-size:.78rem;color:var(--text-muted)">${c.connector_class || c.type || '-'}</td>
+          <td>
+            <span style="color:${stateColor[c.state]||'var(--text-muted)'};font-weight:700;font-size:.82rem">
+              ${c.state}
+            </span>
           </td>
-        </tr>`;
+          <td style="text-align:center">${c.running_tasks}/${c.total_tasks}</td>
+          <td style="text-align:center;color:${c.failed_tasks > 0 ? 'var(--danger)' : 'var(--text-muted)'}">
+            ${c.failed_tasks > 0 ? `<strong>${c.failed_tasks}</strong>` : '0'}
+          </td>
+          <td>${taskBar}</td>
+        </tr>
+        ${c.trace ? `<tr><td colspan="6" style="padding:4px 12px 8px;font-size:.75rem;color:var(--danger);font-family:monospace">${c.trace}</td></tr>` : ''}`;
       }).join('') || `<tr><td colspan="6" class="data-table__empty">No connectors configured</td></tr>`;
 
-      document.getElementById('tab-connectors').innerHTML = `
+      el.innerHTML = `
+        <div class="kpi-grid" style="margin-bottom:18px">
+          <div class="kpi ${s.failed > 0 ? 'kpi--danger' : 'kpi--success'}">
+            <div class="kpi__label">Status</div>
+            <div class="kpi__value" style="font-size:1.1rem">
+              ${s.failed > 0 ? '⚠️' : '✅'} ${data.status}
+            </div>
+            <div class="kpi__sub">${data.url}</div>
+          </div>
+          <div class="kpi kpi--success">
+            <div class="kpi__label">Running</div>
+            <div class="kpi__value">${s.running || 0}</div>
+            <div class="kpi__sub">of ${data.connector_count} connectors</div>
+          </div>
+          <div class="kpi ${s.failed > 0 ? 'kpi--danger' : ''}">
+            <div class="kpi__label">Failed</div>
+            <div class="kpi__value">${s.failed || 0}</div>
+            <div class="kpi__sub">${s.failed_tasks || 0} failed tasks</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi__label">Paused</div>
+            <div class="kpi__value">${s.paused || 0}</div>
+            <div class="kpi__sub">${s.total_tasks || 0} total tasks</div>
+          </div>
+        </div>
+        <div class="filter-bar">
+          <span class="dash-label">State:</span>
+          <span class="filter-chip active" onclick="filterConnectors('all',this)">All</span>
+          <span class="filter-chip" onclick="filterConnectors('RUNNING',this)">Running</span>
+          <span class="filter-chip" onclick="filterConnectors('FAILED',this)">Failed</span>
+          <span class="filter-chip" onclick="filterConnectors('PAUSED',this)">Paused</span>
+          <input class="filter-input" id="connector-search" placeholder="Search connector…" oninput="filterConnectorSearch(this.value)" />
+        </div>
         <div class="data-table-wrap">
           <table class="data-table">
-            <thead><tr><th>Name</th><th>Type</th><th>State</th><th style="text-align:center">Tasks</th><th style="text-align:center">Failed</th><th>Task Health</th></tr></thead>
+            <thead>
+              <tr>
+                <th>Connector</th>
+                <th>Class</th>
+                <th>State</th>
+                <th style="text-align:center">Tasks Running</th>
+                <th style="text-align:center">Failed</th>
+                <th>Task Health</th>
+              </tr>
+            </thead>
             <tbody>${rows}</tbody>
           </table>
         </div>`;
@@ -796,6 +878,28 @@
       });
     }
 
+    function filterConnectors(state, el) {
+      document.querySelectorAll('.filter-bar .filter-chip').forEach(c => {
+        if (c.onclick && c.onclick.toString().includes('filterConnectors')) c.classList.remove('active');
+      });
+      el.classList.add('active');
+      const rows = document.querySelectorAll('#tab-kafka-connect tbody tr:not([style*="font-family:monospace"])');
+      rows.forEach(row => {
+        if (state === 'all') { row.style.display = ''; return; }
+        const stateCell = row.querySelector('td:nth-child(3)');
+        const match = stateCell && stateCell.textContent.trim() === state;
+        row.style.display = match ? '' : 'none';
+      });
+    }
+
+    function filterConnectorSearch(val) {
+      const rows = document.querySelectorAll('#tab-kafka-connect tbody tr');
+      rows.forEach(row => {
+        const text = row.textContent.toLowerCase();
+        row.style.display = text.includes(val.toLowerCase()) ? '' : 'none';
+      });
+    }
+
     function renderSchemaRegistry(data) {
       const el = document.getElementById('tab-schema-registry');
       if (data.status === 'not_configured') {
@@ -883,6 +987,246 @@
             <tbody>${rows}</tbody>
           </table>
         </div>`;
+    }
+
+    function renderZooKeeper(data) {
+      const el = document.getElementById('tab-zookeeper');
+
+      if (data.mode === 'kraft' || data.status === 'not_configured') {
+        el.innerHTML = `
+          <div class="anomaly-card" style="border-color:#3b82f6;border-width:2px;max-width:600px">
+            <div style="font-size:1.1rem;font-weight:700;color:#3b82f6;margin-bottom:8px">
+              ⚡ KRaft Mode
+            </div>
+            <div style="font-size:.88rem;color:var(--text);line-height:1.6">
+              ${data.message || 'This cluster is running in KRaft mode — no ZooKeeper required.'}
+            </div>
+            <div style="margin-top:12px;font-size:.8rem;color:var(--text-muted)">
+              KRaft (Kafka Raft) is the modern consensus protocol built into Kafka,
+              replacing ZooKeeper for metadata management. Available since Kafka 3.3+.
+            </div>
+          </div>`;
+        return;
+      }
+
+      if (data.status === 'unreachable' || data.status === 'error') {
+        el.innerHTML = emptyState('❌', 'ZooKeeper unreachable',
+          data.error || `Could not connect to ${data.url}`);
+        return;
+      }
+
+      const m = data.metrics || {};
+      const statusColor = data.status === 'healthy' ? 'var(--success)' : 'var(--warn)';
+      const modeColor = {
+        'leader': '#FF6B35',
+        'follower': '#3b82f6',
+        'standalone': 'var(--success)',
+      }[data.server_mode] || 'var(--text-muted)';
+
+      const warnings = (data.warnings || []).map(w =>
+        `<div style="color:var(--warn);font-size:.83rem;margin-top:4px">⚠ ${w}</div>`
+      ).join('');
+
+      el.innerHTML = `
+        <div class="kpi-grid" style="margin-bottom:18px">
+          <div class="kpi">
+            <div class="kpi__label">Status</div>
+            <div class="kpi__value" style="font-size:1.1rem;color:${statusColor}">
+              ${data.status === 'healthy' ? '✅' : '⚠️'} ${data.status}
+            </div>
+            <div class="kpi__sub">${data.url}</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi__label">Server Mode</div>
+            <div class="kpi__value" style="font-size:1.1rem;color:${modeColor};text-transform:uppercase">
+              ${data.server_mode || 'unknown'}
+            </div>
+            <div class="kpi__sub">${data.version || ''}</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi__label">Connections</div>
+            <div class="kpi__value">${m.connections || 0}</div>
+            <div class="kpi__sub">active clients</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi__label">ZNodes</div>
+            <div class="kpi__value">${(m.znode_count || 0).toLocaleString()}</div>
+            <div class="kpi__sub">${(m.watch_count || 0).toLocaleString()} watches</div>
+          </div>
+        </div>
+        ${warnings}
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px">
+          <div class="anomaly-card">
+            <div style="font-weight:600;font-size:.85rem;margin-bottom:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">Latency</div>
+            <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+              <span style="font-size:.85rem">Avg Latency</span>
+              <span style="font-weight:600">${m.avg_latency_ms || 0}ms</span>
+            </div>
+            <div style="display:flex;justify-content:space-between">
+              <span style="font-size:.85rem">Max Latency</span>
+              <span style="font-weight:600">${m.max_latency_ms || 0}ms</span>
+            </div>
+          </div>
+          <div class="anomaly-card">
+            <div style="font-weight:600;font-size:.85rem;margin-bottom:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">Throughput</div>
+            <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+              <span style="font-size:.85rem">Packets Received</span>
+              <span style="font-weight:600">${(m.packets_received || 0).toLocaleString()}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between">
+              <span style="font-size:.85rem">Packets Sent</span>
+              <span style="font-weight:600">${(m.packets_sent || 0).toLocaleString()}</span>
+            </div>
+          </div>
+          <div class="anomaly-card">
+            <div style="font-weight:600;font-size:.85rem;margin-bottom:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">Storage</div>
+            <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+              <span style="font-size:.85rem">Data Size</span>
+              <span style="font-weight:600">${fmtBytes(m.data_size_bytes || 0)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between">
+              <span style="font-size:.85rem">Ephemerals</span>
+              <span style="font-weight:600">${(m.ephemerals_count || 0).toLocaleString()}</span>
+            </div>
+          </div>
+          <div class="anomaly-card">
+            <div style="font-weight:600;font-size:.85rem;margin-bottom:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">Resources</div>
+            <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+              <span style="font-size:.85rem">File Descriptors</span>
+              <span style="font-weight:600">${m.open_file_descriptors || 0}/${m.max_file_descriptors || 0}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between">
+              <span style="font-size:.85rem">Outstanding Req</span>
+              <span style="font-weight:600">${m.outstanding_requests || 0}</span>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    function renderMirrorMaker(data) {
+      const el = document.getElementById('tab-mirrormaker');
+
+      if (!data.detected) {
+        el.innerHTML = `
+          <div class="anomaly-card" style="max-width:600px">
+            <div style="font-size:1rem;font-weight:700;margin-bottom:8px">🔄 No Replication Detected</div>
+            <div style="font-size:.88rem;color:var(--text-muted);line-height:1.6">
+              ${data.message || 'No MirrorMaker replication detected on this cluster.'}
+            </div>
+            <div style="margin-top:16px;font-size:.82rem;color:var(--text-muted)">
+              <strong>Detection method:</strong><br>
+              • MM1: consumer groups matching <code>mirror-*</code> or <code>mm1-*</code> patterns<br>
+              • MM2: consumer groups matching <code>mm2-*</code> or <code>*.checkpoint.internal</code> patterns<br>
+              • MM2: internal topics matching <code>*.heartbeats</code> or <code>*.checkpoints.internal</code>
+            </div>
+          </div>`;
+        return;
+      }
+
+      const modeColors = {
+        'mm1': '#f59e0b',
+        'mm2': '#3b82f6',
+        'both': '#8b5cf6',
+      };
+      const modeColor = modeColors[data.mode] || 'var(--text)';
+
+      const mm1Html = data.mm1 ? `
+        <div class="anomaly-card" style="margin-bottom:14px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <div style="font-weight:700;font-size:.95rem;color:#f59e0b">⚡ MirrorMaker 1</div>
+            <span class="sev sev--${data.mm1.status === 'healthy' ? 'healthy' : 'warning'}">${data.mm1.status.toUpperCase()}</span>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+            <div>
+              <div style="font-size:.73rem;color:var(--text-muted);font-weight:600;text-transform:uppercase">Consumer Groups</div>
+              <div style="font-size:1.4rem;font-weight:700">${data.mm1.group_count}</div>
+            </div>
+            <div>
+              <div style="font-size:.73rem;color:var(--text-muted);font-weight:600;text-transform:uppercase">Total Lag</div>
+              <div style="font-size:1.4rem;font-weight:700;color:${data.mm1.total_lag > 10000 ? 'var(--danger)' : 'var(--success)'}">${data.mm1.total_lag.toLocaleString()}</div>
+            </div>
+          </div>
+          <div style="font-size:.8rem;color:var(--text-muted)">
+            <strong>Groups:</strong> ${data.mm1.consumer_groups.slice(0,5).join(', ')}${data.mm1.consumer_groups.length > 5 ? ` +${data.mm1.consumer_groups.length - 5} more` : ''}
+          </div>
+        </div>` : '';
+
+      const mm2Html = data.mm2 ? `
+        <div class="anomaly-card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <div style="font-weight:700;font-size:.95rem;color:#3b82f6">⚡ MirrorMaker 2</div>
+            <span class="sev sev--${data.mm2.status === 'healthy' ? 'healthy' : 'warning'}">${data.mm2.status.toUpperCase()}</span>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+            <div>
+              <div style="font-size:.73rem;color:var(--text-muted);font-weight:600;text-transform:uppercase">Consumer Groups</div>
+              <div style="font-size:1.4rem;font-weight:700">${data.mm2.group_count}</div>
+            </div>
+            <div>
+              <div style="font-size:.73rem;color:var(--text-muted);font-weight:600;text-transform:uppercase">Internal Topics</div>
+              <div style="font-size:1.4rem;font-weight:700">${data.mm2.topic_count}</div>
+            </div>
+            <div>
+              <div style="font-size:.73rem;color:var(--text-muted);font-weight:600;text-transform:uppercase">Total Lag</div>
+              <div style="font-size:1.4rem;font-weight:700;color:${data.mm2.total_lag > 10000 ? 'var(--danger)' : 'var(--success)'}">${data.mm2.total_lag.toLocaleString()}</div>
+            </div>
+          </div>
+          ${data.mm2.internal_topics.length > 0 ? `
+          <div style="font-size:.8rem;color:var(--text-muted);margin-top:8px">
+            <strong>Internal Topics:</strong> ${data.mm2.internal_topics.slice(0,3).join(', ')}${data.mm2.internal_topics.length > 3 ? ` +${data.mm2.internal_topics.length - 3} more` : ''}
+          </div>` : ''}
+        </div>` : '';
+
+      const crossClusterHtml = data.cross_cluster ? `
+        <div class="anomaly-card" style="margin-top:14px">
+          <div style="font-weight:700;font-size:.95rem;margin-bottom:12px">
+            🔄 Cross-Cluster Replication
+            <span style="font-size:.78rem;font-weight:400;color:var(--text-muted);margin-left:8px">
+              ${data.cross_cluster.source_cluster} → ${data.cross_cluster.target_cluster}
+            </span>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+            <div>
+              <div style="font-size:.73rem;color:var(--text-muted);font-weight:600;text-transform:uppercase">Topics Replicated</div>
+              <div style="font-size:1.4rem;font-weight:700">${data.cross_cluster.total_topics_replicated}</div>
+            </div>
+          </div>
+          ${data.cross_cluster.topic_replication.length > 0 ? `
+          <div class="data-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Topic</th>
+                  <th style="text-align:right">Source Messages</th>
+                  <th style="text-align:right">Target Messages</th>
+                  <th style="text-align:right">Lag</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${data.cross_cluster.topic_replication.map(t => `
+                  <tr>
+                    <td><code style="font-size:.8rem">${t.topic}</code></td>
+                    <td style="text-align:right">${t.source_messages.toLocaleString()}</td>
+                    <td style="text-align:right">${t.target_messages.toLocaleString()}</td>
+                    <td style="text-align:right;color:${t.lag > 1000 ? 'var(--danger)' : 'var(--success)'};font-weight:600">
+                      ${t.lag.toLocaleString()}
+                    </td>
+                    <td><span class="sev sev--${t.status === 'healthy' ? 'healthy' : 'warning'}">${t.status.toUpperCase()}</span></td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>` : '<div style="color:var(--text-muted);font-size:.85rem">No matching topics found between clusters.</div>'}
+        </div>` : '';
+
+      el.innerHTML = `
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px">
+          <div style="font-size:1.1rem;font-weight:700">Replication Mode:</div>
+          <span style="background:${modeColor}22;color:${modeColor};padding:4px 14px;border-radius:20px;font-size:.85rem;font-weight:700;text-transform:uppercase">${data.mode}</span>
+        </div>
+        ${mm1Html}
+        ${mm2Html}
+        ${crossClusterHtml}`;
     }
 
     async function init() {

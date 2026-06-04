@@ -246,6 +246,8 @@ class PostgresBackend(StorageBackend):
         "schema_registry_url",
         "zookeeper_url",
         "kafka_connect_url",
+        "mirror_source_cluster_id",
+        "mirror_mode",
     )
 
     @staticmethod
@@ -281,6 +283,8 @@ class PostgresBackend(StorageBackend):
             "schema_registry_url": row.schema_registry_url or "",
             "zookeeper_url": row.zookeeper_url or "",
             "kafka_connect_url": row.kafka_connect_url or "",
+            "mirror_source_cluster_id": row.mirror_source_cluster_id,
+            "mirror_mode": row.mirror_mode or "none",
         }
 
     async def save_cluster(self, cluster: dict) -> dict:

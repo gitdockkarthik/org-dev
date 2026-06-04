@@ -132,6 +132,8 @@ class ClusterPayload(BaseModel):
     schema_registry_url: str = ""
     zookeeper_url: str = ""
     kafka_connect_url: str = ""
+    mirror_source_cluster_id: int | None = None
+    mirror_mode: str = "none"
     enabled: bool = False
 
 

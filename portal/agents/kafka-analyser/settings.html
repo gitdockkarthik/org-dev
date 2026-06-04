@@ -396,6 +396,20 @@
             <label for="cf-connect-url">Kafka Connect URL <span style="font-size:.75rem;color:var(--text-muted)">(optional)</span></label>
             <input type="text" id="cf-connect-url" placeholder="http://kafka-connect:8083" />
           </div>
+          <div class="form-row">
+            <label for="cf-mirror-mode">MirrorMaker Mode <span style="font-size:.75rem;color:var(--text-muted)">(optional)</span></label>
+            <select id="cf-mirror-mode" class="dash-select" style="width:100%">
+              <option value="none">None — no replication</option>
+              <option value="mm1">MirrorMaker 1 — legacy replication</option>
+              <option value="mm2">MirrorMaker 2 — modern replication (upgrade path)</option>
+            </select>
+          </div>
+          <div class="form-row" id="cf-mirror-source-row" style="display:none">
+            <label for="cf-mirror-source">Source Cluster <span style="font-size:.75rem;color:var(--text-muted)">(cluster replicating FROM)</span></label>
+            <select id="cf-mirror-source" class="dash-select" style="width:100%">
+              <option value="">Select source cluster…</option>
+            </select>
+          </div>
 
           <!-- Kerberos fields — shown for sasl_gssapi -->
           <div id="cf-gssapi-fields" class="hidden">
@@ -865,6 +879,15 @@
         const d = await r.json();
         _clusters = d.clusters || [];
         renderClusters();
+
+        // Populate mirror source dropdown
+        const mirrorSel = document.getElementById('cf-mirror-source');
+        const currentVal = mirrorSel.value;
+        mirrorSel.innerHTML = '<option value="">Select source cluster…</option>' +
+          (d.clusters || []).map(c =>
+            `<option value="${c.id}">${c.name} (${c.environment})</option>`
+          ).join('');
+        if (currentVal) mirrorSel.value = currentVal;
       } catch(e) {
         console.error('Failed to load clusters', e);
       }
@@ -905,6 +928,10 @@
       document.getElementById('cf-sr-url').value = c.schema_registry_url || '';
       document.getElementById('cf-zk-url').value = c.zookeeper_url || '';
       document.getElementById('cf-connect-url').value = c.kafka_connect_url || '';
+      document.getElementById('cf-mirror-mode').value = c.mirror_mode || 'none';
+      document.getElementById('cf-mirror-source').value = c.mirror_source_cluster_id || '';
+      document.getElementById('cf-mirror-source-row').style.display =
+        (c.mirror_mode && c.mirror_mode !== 'none') ? '' : 'none';
       updateAuthFields(c.auth_type);
       document.getElementById('cluster-form-card').classList.remove('hidden');
       document.getElementById('cluster-form-card').scrollIntoView({behavior:'smooth'});
@@ -933,6 +960,11 @@
       updateAuthFields(this.value);
     });
 
+    document.getElementById('cf-mirror-mode').addEventListener('change', function() {
+      document.getElementById('cf-mirror-source-row').style.display =
+        this.value !== 'none' ? '' : 'none';
+    });
+
     document.getElementById('btn-add-cluster').addEventListener('click', () => {
       document.getElementById('cluster-form-title').textContent = 'Add Cluster';
       document.getElementById('cf-editing-id').value = '';
@@ -946,6 +978,9 @@
       document.getElementById('cf-sr-url').value = '';
       document.getElementById('cf-zk-url').value = '';
       document.getElementById('cf-connect-url').value = '';
+      document.getElementById('cf-mirror-mode').value = 'none';
+      document.getElementById('cf-mirror-source').value = '';
+      document.getElementById('cf-mirror-source-row').style.display = 'none';
       updateAuthFields('none');
       document.getElementById('cluster-form-card').classList.remove('hidden');
       document.getElementById('cluster-form-card').scrollIntoView({behavior:'smooth'});
@@ -1009,6 +1044,9 @@
         schema_registry_url: document.getElementById('cf-sr-url').value.trim(),
         zookeeper_url: document.getElementById('cf-zk-url').value.trim(),
         kafka_connect_url: document.getElementById('cf-connect-url').value.trim(),
+        mirror_source_cluster_id: document.getElementById('cf-mirror-source').value ?
+          parseInt(document.getElementById('cf-mirror-source').value) : null,
+        mirror_mode: document.getElementById('cf-mirror-mode').value,
         enabled: false,
       };
       if (!payload.name || !payload.bootstrap_servers) {

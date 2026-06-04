@@ -43,6 +43,8 @@ class KafkaCluster(Base):
     schema_registry_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     zookeeper_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     kafka_connect_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    mirror_source_cluster_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    mirror_mode: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     config_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="unchecked")

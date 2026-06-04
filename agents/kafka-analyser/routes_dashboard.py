@@ -72,7 +72,6 @@ async def get_insights(cluster_id: str | None = None) -> dict:
 async def get_schema_registry(cluster_id: str | None = None) -> dict:
     """Fetch Schema Registry subjects, versions and compatibility."""
     from storage import get_backend
-    from config import settings
 
     # Get cluster's schema registry URL
     sr_url = None
@@ -95,6 +94,118 @@ async def get_schema_registry(cluster_id: str | None = None) -> dict:
     from tools.schema_registry import SchemaRegistryCollector
     collector = SchemaRegistryCollector(sr_url)
     return await collector.collect()
+
+
+@router.get("/dashboard/zookeeper")
+async def get_zookeeper(cluster_id: str | None = None) -> dict:
+    """Fetch ZooKeeper stats or detect KRaft mode."""
+    from storage import get_backend
+
+    zk_url = None
+    if cluster_id:
+        try:
+            cluster = await get_backend().get_cluster(int(cluster_id))
+            if cluster:
+                zk_url = cluster.get("zookeeper_url", "")
+        except Exception:
+            pass
+
+    if not zk_url:
+        return {
+            "mode": "kraft",
+            "status": "not_configured",
+            "message": "No ZooKeeper URL configured. This cluster may be running in KRaft mode (no ZooKeeper needed), or add a ZooKeeper URL in cluster Settings.",
+        }
+
+    from tools.zookeeper import ZooKeeperCollector
+    collector = ZooKeeperCollector(zk_url)
+    return await collector.collect()
+
+
+@router.get("/dashboard/kafka-connect")
+async def get_kafka_connect(cluster_id: str | None = None) -> dict:
+    """Fetch Kafka Connect cluster status and connector details."""
+    from storage import get_backend
+
+    connect_url = None
+    if cluster_id:
+        try:
+            cluster = await get_backend().get_cluster(int(cluster_id))
+            if cluster:
+                connect_url = cluster.get("kafka_connect_url", "")
+        except Exception:
+            pass
+
+    if not connect_url:
+        return {
+            "status": "not_configured",
+            "message": "No Kafka Connect URL configured for this cluster. Edit the cluster in Settings to add one.",
+            "connector_count": 0,
+            "connectors": [],
+        }
+
+    from tools.kafka_connect import KafkaConnectCollector
+    collector = KafkaConnectCollector(connect_url)
+    return await collector.collect()
+
+
+@router.get("/dashboard/mirrormaker")
+async def get_mirrormaker(cluster_id: str | None = None) -> dict:
+    """Detect MirrorMaker replication and compare source/target lag."""
+    data = kafka_store.get_cluster_data(cluster_id)
+    if data is None:
+        return {
+            "detected": False,
+            "mode": "none",
+            "message": "No cluster data available. Run a sync first.",
+        }
+
+    from tools.mirrormaker import detect_mirrormaker
+    result = detect_mirrormaker(data)
+
+    # If cluster has a configured mirror source, add cross-cluster comparison
+    if cluster_id:
+        try:
+            from storage import get_backend
+            cluster = await get_backend().get_cluster(int(cluster_id))
+            if cluster:
+                mirror_mode = cluster.get("mirror_mode", "none")
+                source_id = cluster.get("mirror_source_cluster_id")
+
+                if mirror_mode != "none" and source_id:
+                    source_data = kafka_store.get_cluster_data(str(source_id))
+                    if source_data:
+                        # Compare topic lag between source and target
+                        source_topics = {t.get("name"): t for t in source_data.get("topics", [])}
+                        target_topics = {t.get("name"): t for t in data.get("topics", [])}
+
+                        replication_lag = []
+                        for topic, src in source_topics.items():
+                            if topic in target_topics:
+                                src_msgs = src.get("total_messages", 0)
+                                tgt_msgs = target_topics[topic].get("total_messages", 0)
+                                lag = max(0, src_msgs - tgt_msgs)
+                                replication_lag.append({
+                                    "topic": topic,
+                                    "source_messages": src_msgs,
+                                    "target_messages": tgt_msgs,
+                                    "lag": lag,
+                                    "status": "healthy" if lag < 1000 else "lagging",
+                                })
+
+                        result["detected"] = True
+                        result["mode"] = mirror_mode
+                        result["cross_cluster"] = {
+                            "source_cluster": source_data.get("cluster", {}).get("name", "unknown"),
+                            "target_cluster": data.get("cluster", {}).get("name", "unknown"),
+                            "topic_replication": replication_lag,
+                            "total_topics_replicated": len(replication_lag),
+                        }
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("MirrorMaker cross-cluster comparison failed: %s", exc)
+
+    return result
 
 
 @router.post("/dashboard/insights/narrative")
