@@ -64,6 +64,12 @@
     .genuine-table td.msg-cell .msg-text { display: inline-block; white-space: normal; overflow: visible; word-break: break-word; max-width: 100%; vertical-align: middle; }
     .genuine-table td.msg-cell .msg-copy { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); display: none; cursor: pointer; border: none; background: var(--bg, #fff); padding: 0 4px; font-size: .85rem; line-height: 1; border-radius: 4px; box-shadow: 0 0 4px rgba(0,0,0,.15); }
     .genuine-table td.msg-cell:hover .msg-copy { display: inline-block; }
+    /* Noise Analysis tables — same resizable columns + copy-on-hover message cells as Genuine */
+    .noise-table th { resize: horizontal; overflow: auto; min-width: 60px; }
+    .noise-table td.msg-cell { position: relative; white-space: normal; overflow: visible; word-break: break-word; max-width: none; }
+    .noise-table td.msg-cell .msg-text { display: inline-block; white-space: normal; overflow: visible; word-break: break-word; max-width: 100%; vertical-align: middle; }
+    .noise-table td.msg-cell .msg-copy { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); display: none; cursor: pointer; border: none; background: var(--bg, #fff); padding: 0 4px; font-size: .85rem; line-height: 1; border-radius: 4px; box-shadow: 0 0 4px rgba(0,0,0,.15); }
+    .noise-table td.msg-cell:hover .msg-copy { display: inline-block; }
   </style>
 </head>
 <body>
@@ -321,15 +327,15 @@
           <div class="chart-card"><div class="chart-card__title">Top Noisy Sources</div><div class="chart-wrap"><canvas id="srcChart"></canvas></div></div>
           <div class="chart-card"><div class="chart-card__title">Noise Score by Service</div><div class="chart-wrap"><canvas id="scoreChart"></canvas></div></div>
         </div>
-        <div class="data-table-wrap"><table class="data-table">
+        <div class="data-table-wrap"><table class="data-table noise-table">
           <thead><tr><th>Alert Alias</th><th>Fire Count</th></tr></thead>
-          <tbody>${s.repeat_offenders.map(r=>`<tr><td><code>${r.alias}</code></td><td>${r.count}</td></tr>`).join('') || '<tr><td colspan="2" class="data-table__empty">No repeat offenders</td></tr>'}</tbody>
+          <tbody>${s.repeat_offenders.map(r=>`<tr><td class="msg-cell"><span class="msg-text"><code>${r.alias}</code></span><button class="msg-copy" title="Copy" onclick="copyMsgCell(this)">📋</button></td><td>${r.count}</td></tr>`).join('') || '<tr><td colspan="2" class="data-table__empty">No repeat offenders</td></tr>'}</tbody>
         </table></div>
-        <div class="data-table-wrap" style="margin-top:16px"><table class="data-table">
+        <div class="data-table-wrap" style="margin-top:16px"><table class="data-table noise-table">
           <caption style="text-align:left;padding:14px 14px 0;font-size:.87rem;font-weight:600">Suppression Recommendations</caption>
           <thead><tr><th>Alert</th><th>Occurrences</th><th>Action</th></tr></thead>
           <tbody>${s.suppression_recommendations.length
-            ? s.suppression_recommendations.map(r=>`<tr><td><code>${r.alias}</code></td><td>${r.count}</td><td><span class="badge badge--deprecated">Suppress</span></td></tr>`).join('')
+            ? s.suppression_recommendations.map(r=>`<tr><td class="msg-cell"><span class="msg-text"><code>${r.alias}</code></span><button class="msg-copy" title="Copy" onclick="copyMsgCell(this)">📋</button></td><td>${r.count}</td><td><span class="badge badge--deprecated">Suppress</span></td></tr>`).join('')
             : '<tr><td colspan="3" class="data-table__empty">No strong suppression candidates</td></tr>'
           }</tbody>
         </table></div>`;
@@ -352,18 +358,16 @@
           <div class="kpi kpi--danger"><div class="kpi__label">Open Alerts</div><div class="kpi__value">${s.unresolved_count || s.unresolved_genuine.length}</div><div class="kpi__sub">showing top 50 of ${s.unresolved_count || s.unresolved_genuine.length} total${(s.unresolved_count || 0) > 500 ? ' · ⚠️ High open alert count — review OpsGenie closure policy' : ''}</div></div>
           <div class="kpi kpi--warn"><div class="kpi__label">P1/P2</div><div class="kpi__value">${s.high_severity_count ?? s.high_severity_genuine.length}</div><div class="kpi__sub">showing top 50 of ${s.high_severity_count ?? s.high_severity_genuine.length} total · high severity</div></div>
         </div>
-        <div class="chart-grid">
-          <div class="data-table-wrap"><table class="data-table genuine-table">
-            <caption style="text-align:left;padding:14px 14px 0;font-size:.87rem;font-weight:600">High Severity Genuine Alerts</caption>
-            <thead><tr><th>Message</th><th>Source</th><th>Priority</th></tr></thead>
-            <tbody>${s.high_severity_genuine.map(a=>`<tr><td class="msg-cell"><span class="msg-text">${a.message}</span><button class="msg-copy" title="Copy message" onclick="copyMsgCell(this)">📋</button></td><td>${a.source}</td><td><span class="${priClass(a.priority)}">${a.priority}</span></td></tr>`).join('') || '<tr><td colspan="3" class="data-table__empty">None</td></tr>'}</tbody>
-          </table></div>
-          <div class="chart-card"><div class="chart-card__title">Team Alert Breakdown</div><div class="chart-wrap"><canvas id="teamChart"></canvas></div></div>
-        </div>
         <div class="data-table-wrap"><table class="data-table genuine-table">
           <caption style="text-align:left;padding:14px 14px 0;font-size:.87rem;font-weight:600">Unresolved Genuine Alerts</caption>
           <thead><tr><th>Message</th><th>Source</th><th>Priority</th><th>Team</th></tr></thead>
-          <tbody>${s.unresolved_genuine.map(a=>`<tr><td class="msg-cell"><span class="msg-text">${a.message}</span><button class="msg-copy" title="Copy message" onclick="copyMsgCell(this)">📋</button></td><td>${a.source}</td><td><span class="${priClass(a.priority)}">${a.priority}</span></td><td>${cleanTeam((a.teams||['—'])[0])}</td></tr>`).join('') || '<tr><td colspan="4" class="data-table__empty">All genuine alerts resolved</td></tr>'}</tbody>
+          <tbody>${s.unresolved_genuine.map(a=>`<tr><td class="msg-cell" style="white-space:normal;overflow:visible;word-break:break-word"><span class="msg-text" style="white-space:normal;overflow:visible;word-break:break-word">${a.message}</span><button class="msg-copy" title="Copy message" onclick="copyMsgCell(this)">📋</button></td><td>${a.source}</td><td><span class="${priClass(a.priority)}">${a.priority}</span></td><td>${cleanTeam((a.teams||['—'])[0])}</td></tr>`).join('') || '<tr><td colspan="4" class="data-table__empty">All genuine alerts resolved</td></tr>'}</tbody>
+        </table></div>
+        <div class="chart-card" style="margin-top:16px"><div class="chart-card__title">Team Alert Breakdown</div><div class="chart-wrap"><canvas id="teamChart"></canvas></div></div>
+        <div class="data-table-wrap" style="margin-top:16px"><table class="data-table genuine-table">
+          <caption style="text-align:left;padding:14px 14px 0;font-size:.87rem;font-weight:600">High Severity Genuine Alerts</caption>
+          <thead><tr><th>Message</th><th>Source</th><th>Priority</th></tr></thead>
+          <tbody>${s.high_severity_genuine.map(a=>`<tr><td class="msg-cell"><span class="msg-text">${a.message}</span><button class="msg-copy" title="Copy message" onclick="copyMsgCell(this)">📋</button></td><td>${a.source}</td><td><span class="${priClass(a.priority)}">${a.priority}</span></td></tr>`).join('') || '<tr><td colspan="3" class="data-table__empty">None</td></tr>'}</tbody>
         </table></div>`;
       setTimeout(() => {
         destroyChart('team');
