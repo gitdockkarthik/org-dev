@@ -52,6 +52,12 @@
     .heatmap__labels { display: grid; grid-template-columns: repeat(24, 1fr); gap: 3px; }
     .heatmap__labels span { font-size: .6rem; text-align: center; color: var(--text-dim); }
     @media (max-width: 768px) { .subnav { padding: 0 20px; } .content { padding: 20px; } .chart-grid { grid-template-columns: 1fr; } }
+    /* Genuine Alerts tables — resizable columns + copy-on-hover message cells */
+    .genuine-table th { resize: horizontal; overflow: auto; min-width: 60px; }
+    .genuine-table td.msg-cell { position: relative; }
+    .genuine-table td.msg-cell .msg-text { display: inline-block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; vertical-align: middle; }
+    .genuine-table td.msg-cell .msg-copy { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); display: none; cursor: pointer; border: none; background: var(--bg, #fff); padding: 0 4px; font-size: .85rem; line-height: 1; border-radius: 4px; box-shadow: 0 0 4px rgba(0,0,0,.15); }
+    .genuine-table td.msg-cell:hover .msg-copy { display: inline-block; }
   </style>
 </head>
 <body>
@@ -178,6 +184,15 @@
         <div class="empty-state__sub">${sub}</div></div>`;
     }
     function priClass(p) { return `pri pri--${(p||'p5').toLowerCase()}`; }
+    function copyMsgCell(btn) {
+      const txt = btn.parentElement.querySelector('.msg-text')?.textContent || '';
+      navigator.clipboard.writeText(txt).then(() => {
+        const orig = btn.textContent;
+        btn.textContent = '✅';
+        btn.title = 'Copied!';
+        setTimeout(() => { btn.textContent = orig; btn.title = 'Copy message'; }, 1000);
+      });
+    }
 
     // ── Data Quality Insights (Overview tab) ──
     function dqRec(text) {
@@ -318,17 +333,17 @@
           <div class="kpi kpi--warn"><div class="kpi__label">P1/P2</div><div class="kpi__value">${s.high_severity_count ?? s.high_severity_genuine.length}</div><div class="kpi__sub">showing top 50 of ${s.high_severity_count ?? s.high_severity_genuine.length} total · high severity</div></div>
         </div>
         <div class="chart-grid">
-          <div class="data-table-wrap"><table class="data-table">
+          <div class="data-table-wrap"><table class="data-table genuine-table">
             <caption style="text-align:left;padding:14px 14px 0;font-size:.87rem;font-weight:600">High Severity Genuine Alerts</caption>
             <thead><tr><th>Message</th><th>Source</th><th>Priority</th></tr></thead>
-            <tbody>${s.high_severity_genuine.map(a=>`<tr><td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.message}</td><td>${a.source}</td><td><span class="${priClass(a.priority)}">${a.priority}</span></td></tr>`).join('') || '<tr><td colspan="3" class="data-table__empty">None</td></tr>'}</tbody>
+            <tbody>${s.high_severity_genuine.map(a=>`<tr><td class="msg-cell" style="max-width:220px"><span class="msg-text">${a.message}</span><button class="msg-copy" title="Copy message" onclick="copyMsgCell(this)">📋</button></td><td>${a.source}</td><td><span class="${priClass(a.priority)}">${a.priority}</span></td></tr>`).join('') || '<tr><td colspan="3" class="data-table__empty">None</td></tr>'}</tbody>
           </table></div>
           <div class="chart-card"><div class="chart-card__title">Team Alert Breakdown</div><div class="chart-wrap"><canvas id="teamChart"></canvas></div></div>
         </div>
-        <div class="data-table-wrap"><table class="data-table">
+        <div class="data-table-wrap"><table class="data-table genuine-table">
           <caption style="text-align:left;padding:14px 14px 0;font-size:.87rem;font-weight:600">Unresolved Genuine Alerts</caption>
           <thead><tr><th>Message</th><th>Source</th><th>Priority</th><th>Team</th></tr></thead>
-          <tbody>${s.unresolved_genuine.map(a=>`<tr><td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.message}</td><td>${a.source}</td><td><span class="${priClass(a.priority)}">${a.priority}</span></td><td>${cleanTeam((a.teams||['—'])[0])}</td></tr>`).join('') || '<tr><td colspan="4" class="data-table__empty">All genuine alerts resolved</td></tr>'}</tbody>
+          <tbody>${s.unresolved_genuine.map(a=>`<tr><td class="msg-cell" style="max-width:240px"><span class="msg-text">${a.message}</span><button class="msg-copy" title="Copy message" onclick="copyMsgCell(this)">📋</button></td><td>${a.source}</td><td><span class="${priClass(a.priority)}">${a.priority}</span></td><td>${cleanTeam((a.teams||['—'])[0])}</td></tr>`).join('') || '<tr><td colspan="4" class="data-table__empty">All genuine alerts resolved</td></tr>'}</tbody>
         </table></div>`;
       setTimeout(() => {
         destroyChart('team');
