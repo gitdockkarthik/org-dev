@@ -359,7 +359,7 @@
           <div class="kpi kpi--warn"><div class="kpi__label">P1/P2</div><div class="kpi__value">${s.high_severity_count ?? s.high_severity_genuine.length}</div><div class="kpi__sub">showing top 50 of ${s.high_severity_count ?? s.high_severity_genuine.length} total · high severity</div></div>
         </div>
         <div class="chart-card" style="margin-top:16px"><div class="chart-card__title">Team Alert Breakdown</div><div class="chart-wrap"><canvas id="teamChart"></canvas></div></div>
-        <div class="data-table-wrap" style="margin-top:16px"><table class="data-table genuine-table">
+        <div class="data-table-wrap" style="margin-top:16px"><table class="data-table genuine-table" style="table-layout:auto">
           <caption style="text-align:left;padding:14px 14px 0;font-size:.87rem;font-weight:600">High Severity Genuine Alerts</caption>
           <thead><tr><th>Message</th><th>Source</th><th>Priority</th></tr></thead>
           <tbody>${s.high_severity_genuine.map(a=>`<tr><td class="msg-cell" style="white-space:normal;overflow:visible;word-break:break-word;max-width:none"><span class="msg-text" style="white-space:normal;overflow:visible;word-break:break-word">${a.message}</span><button class="msg-copy" title="Copy message" onclick="copyMsgCell(this)">📋</button></td><td>${a.source}</td><td><span class="${priClass(a.priority)}">${a.priority}</span></td></tr>`).join('') || '<tr><td colspan="3" class="data-table__empty">None</td></tr>'}</tbody>
