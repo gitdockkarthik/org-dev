@@ -358,16 +358,16 @@
           <div class="kpi kpi--danger"><div class="kpi__label">Open Alerts</div><div class="kpi__value">${s.unresolved_count || s.unresolved_genuine.length}</div><div class="kpi__sub">showing top 50 of ${s.unresolved_count || s.unresolved_genuine.length} total${(s.unresolved_count || 0) > 500 ? ' · ⚠️ High open alert count — review OpsGenie closure policy' : ''}</div></div>
           <div class="kpi kpi--warn"><div class="kpi__label">P1/P2</div><div class="kpi__value">${s.high_severity_count ?? s.high_severity_genuine.length}</div><div class="kpi__sub">showing top 50 of ${s.high_severity_count ?? s.high_severity_genuine.length} total · high severity</div></div>
         </div>
-        <div class="data-table-wrap"><table class="data-table genuine-table">
-          <caption style="text-align:left;padding:14px 14px 0;font-size:.87rem;font-weight:600">Unresolved Genuine Alerts</caption>
-          <thead><tr><th>Message</th><th>Source</th><th>Priority</th><th>Team</th></tr></thead>
-          <tbody>${s.unresolved_genuine.map(a=>`<tr><td class="msg-cell" style="white-space:normal;overflow:visible;word-break:break-word"><span class="msg-text" style="white-space:normal;overflow:visible;word-break:break-word">${a.message}</span><button class="msg-copy" title="Copy message" onclick="copyMsgCell(this)">📋</button></td><td>${a.source}</td><td><span class="${priClass(a.priority)}">${a.priority}</span></td><td>${cleanTeam((a.teams||['—'])[0])}</td></tr>`).join('') || '<tr><td colspan="4" class="data-table__empty">All genuine alerts resolved</td></tr>'}</tbody>
-        </table></div>
         <div class="chart-card" style="margin-top:16px"><div class="chart-card__title">Team Alert Breakdown</div><div class="chart-wrap"><canvas id="teamChart"></canvas></div></div>
         <div class="data-table-wrap" style="margin-top:16px"><table class="data-table genuine-table">
           <caption style="text-align:left;padding:14px 14px 0;font-size:.87rem;font-weight:600">High Severity Genuine Alerts</caption>
           <thead><tr><th>Message</th><th>Source</th><th>Priority</th></tr></thead>
-          <tbody>${s.high_severity_genuine.map(a=>`<tr><td class="msg-cell"><span class="msg-text">${a.message}</span><button class="msg-copy" title="Copy message" onclick="copyMsgCell(this)">📋</button></td><td>${a.source}</td><td><span class="${priClass(a.priority)}">${a.priority}</span></td></tr>`).join('') || '<tr><td colspan="3" class="data-table__empty">None</td></tr>'}</tbody>
+          <tbody>${s.high_severity_genuine.map(a=>`<tr><td class="msg-cell" style="white-space:normal;overflow:visible;word-break:break-word;max-width:none"><span class="msg-text" style="white-space:normal;overflow:visible;word-break:break-word">${a.message}</span><button class="msg-copy" title="Copy message" onclick="copyMsgCell(this)">📋</button></td><td>${a.source}</td><td><span class="${priClass(a.priority)}">${a.priority}</span></td></tr>`).join('') || '<tr><td colspan="3" class="data-table__empty">None</td></tr>'}</tbody>
+        </table></div>
+        <div class="data-table-wrap" style="margin-top:16px"><table class="data-table genuine-table" style="table-layout:auto">
+          <caption style="text-align:left;padding:14px 14px 0;font-size:.87rem;font-weight:600">Unresolved Genuine Alerts</caption>
+          <thead><tr><th style="max-width:none;width:100%">Message</th><th>Source</th><th>Priority</th><th>Team</th></tr></thead>
+          <tbody>${s.unresolved_genuine.map(a=>`<tr><td class="msg-cell" style="white-space:normal;overflow:visible;word-break:break-word"><span class="msg-text" style="white-space:normal;overflow:visible;word-break:break-word">${a.message}</span><button class="msg-copy" title="Copy message" onclick="copyMsgCell(this)">📋</button></td><td>${a.source}</td><td><span class="${priClass(a.priority)}">${a.priority}</span></td><td>${cleanTeam((a.teams||['—'])[0])}</td></tr>`).join('') || '<tr><td colspan="4" class="data-table__empty">All genuine alerts resolved</td></tr>'}</tbody>
         </table></div>`;
       setTimeout(() => {
         destroyChart('team');
