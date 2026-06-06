@@ -65,6 +65,14 @@ def get_latest_csv() -> str | None:
         return _reports[0]["_csv"] if _reports else None
 
 
+def get_report_csv(report_id: int) -> str | None:
+    """Return the raw CSV text for a specific report_id, or None if not found."""
+    for r in _reports:
+        if r["id"] == report_id:
+            return r.get("_csv")
+    return None
+
+
 def get_latest_meta() -> dict[str, Any] | None:
     with _lock:
         return _public(_reports[0]) if _reports else None
