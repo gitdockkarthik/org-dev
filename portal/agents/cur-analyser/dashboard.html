@@ -1513,6 +1513,23 @@
     }
 
     function buildInsightsPrompt() {
+      const activeFilterSummary = [];
+      const f = _activeFilters;
+      if (f.dateFrom || f.dateTo)
+        activeFilterSummary.push(`Date: ${f.dateFrom||'*'} to ${f.dateTo||'*'}`);
+      if (f.environments.length)
+        activeFilterSummary.push(`Environment: ${f.environments.join(', ')}`);
+      if (f.services.length)
+        activeFilterSummary.push(`Service: ${f.services.join(', ')}`);
+      if (f.accounts.length)
+        activeFilterSummary.push(`Account: ${f.accounts.join(', ')}`);
+      if (f.regions.length)
+        activeFilterSummary.push(`Region: ${f.regions.join(', ')}`);
+
+      const filterContext = activeFilterSummary.length
+        ? `\n\nNote: This analysis is based on FILTERED data. Active filters: ${activeFilterSummary.join(' | ')}`
+        : '\n\nNote: This analysis covers the full unfiltered report.';
+
       const sav = DASH.savings_opportunities || {};
       const payload = {
         total_cost: DASH.total_cost,
@@ -1548,7 +1565,7 @@ Based on the On-Demand share and top services, recommend RI/SP commitments.
 Here is the dashboard data as JSON:
 \`\`\`json
 ${JSON.stringify(payload, null, 2)}
-\`\`\``;
+\`\`\`${filterContext}`;
     }
 
     async function generateInsights(force = false) {
