@@ -23,7 +23,7 @@ import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from config import settings
@@ -383,6 +383,77 @@ class PostgresBackend(StorageBackend):
                 await session.commit()
         except Exception:
             logger.exception("PostgresBackend.update_cluster_status: failed for id=%s", cluster_id)
+
+    async def save_topic_metrics(self, cluster_id: int, topics: list[dict], collected_at) -> None:
+        """Insert per-topic metrics snapshot into kafka_topic_metrics table."""
+        from database import SessionLocal
+        if SessionLocal is None or not topics:
+            return
+        try:
+            async with SessionLocal() as session:
+                for t in topics:
+                    await session.execute(
+                        text(
+                            """INSERT INTO kafka_topic_metrics
+                            (time, cluster_id, topic, partition_count, replication_factor,
+                             messages_in_per_sec, bytes_in_per_sec, bytes_out_per_sec,
+                             total_messages, size_bytes, retention_bytes, retention_pct)
+                            VALUES (:time, :cluster_id, :topic, :partition_count, :replication_factor,
+                             :messages_in_per_sec, :bytes_in_per_sec, :bytes_out_per_sec,
+                             :total_messages, :size_bytes, :retention_bytes, :retention_pct)"""
+                        ),
+                        {
+                            "time": collected_at,
+                            "cluster_id": cluster_id,
+                            "topic": t.get("name", ""),
+                            "partition_count": t.get("partition_count", 0),
+                            "replication_factor": t.get("replication_factor", 0),
+                            "messages_in_per_sec": t.get("messages_in_per_sec", 0.0),
+                            "bytes_in_per_sec": t.get("bytes_in_per_sec", 0.0),
+                            "bytes_out_per_sec": t.get("bytes_out_per_sec", 0.0),
+                            "total_messages": t.get("total_messages", 0),
+                            "size_bytes": t.get("size_bytes", 0),
+                            "retention_bytes": t.get("retention_bytes", -1),
+                            "retention_pct": t.get("retention_pct", 0.0),
+                        }
+                    )
+                await session.commit()
+        except Exception:
+            logger.exception("PostgresBackend.save_topic_metrics: failed for cluster_id=%r", cluster_id)
+
+    async def get_topic_history(self, cluster_id: int, hours: float = 24.0) -> list[dict]:
+        """Return per-topic metrics snapshots within the time window."""
+        from database import SessionLocal
+        if SessionLocal is None:
+            return []
+        try:
+            async with SessionLocal() as session:
+                result = await session.execute(
+                    text(
+                        """SELECT time, topic, messages_in_per_sec, bytes_in_per_sec,
+                           bytes_out_per_sec, size_bytes
+                           FROM kafka_topic_metrics
+                           WHERE cluster_id = :cluster_id
+                           AND time >= NOW() - ((:hours) * INTERVAL '1 hour')
+                           ORDER BY time ASC"""
+                    ),
+                    {"cluster_id": cluster_id, "hours": float(hours)}
+                )
+                rows = result.fetchall()
+                return [
+                    {
+                        "time": row.time.isoformat(),
+                        "topic": row.topic,
+                        "messages_in_per_sec": row.messages_in_per_sec,
+                        "bytes_in_per_sec": row.bytes_in_per_sec,
+                        "bytes_out_per_sec": row.bytes_out_per_sec,
+                        "size_bytes": row.size_bytes,
+                    }
+                    for row in rows
+                ]
+        except Exception:
+            logger.exception("PostgresBackend.get_topic_history: failed for cluster_id=%r", cluster_id)
+            return []
 
 
 # ── Factory ─────────────────────────────────────────────────────────────────

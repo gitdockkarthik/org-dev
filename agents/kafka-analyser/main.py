@@ -205,6 +205,18 @@ async def _collection_loop() -> None:
                         source_type=c.get("source_type", "kafka_internal"),
                         cluster_id=str(c.get("id", "default")),
                     )
+                    from datetime import datetime, timezone
+                    from storage import get_backend
+                    topics = data.get("topics", [])
+                    if topics and c.get("id"):
+                        try:
+                            await get_backend().save_topic_metrics(
+                                cluster_id=int(c["id"]),
+                                topics=topics,
+                                collected_at=datetime.now(timezone.utc),
+                            )
+                        except Exception as _te:
+                            logger.warning("save_topic_metrics failed for cluster %s: %s", c["name"], _te)
                     logger.info(
                         "Collection loop: synced cluster '%s' (id=%s)",
                         c["name"], c.get("id"),
@@ -258,6 +270,18 @@ async def lifespan(app: FastAPI):
                         source_type=c.get("source_type", "kafka_internal"),
                         cluster_id=str(c.get("id", "default")),
                     )
+                    from datetime import datetime, timezone
+                    from storage import get_backend
+                    topics = data.get("topics", [])
+                    if topics and c.get("id"):
+                        try:
+                            await get_backend().save_topic_metrics(
+                                cluster_id=int(c["id"]),
+                                topics=topics,
+                                collected_at=datetime.now(timezone.utc),
+                            )
+                        except Exception as _te:
+                            logger.warning("save_topic_metrics failed for cluster %s: %s", c["name"], _te)
                     logger.info(
                         "Startup: synced cluster '%s' (id=%s) — brokers=%d, topics=%d",
                         c["name"], c.get("id"),

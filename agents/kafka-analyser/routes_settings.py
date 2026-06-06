@@ -311,6 +311,22 @@ async def sync_metrics() -> dict:
                     source_type=c.get("source_type", "kafka_internal"),
                     cluster_id=str(c.get("id", "default"))
                 )
+                # Persist topic metrics to PostgreSQL for historical trending
+                from datetime import datetime, timezone
+                collected_at = datetime.now(timezone.utc)
+                topics = data.get("topics", [])
+                if topics and c.get("id"):
+                    try:
+                        await get_backend().save_topic_metrics(
+                            cluster_id=int(c["id"]),
+                            topics=topics,
+                            collected_at=collected_at,
+                        )
+                    except Exception as _te:
+                        import logging
+                        logging.getLogger(__name__).warning(
+                            "save_topic_metrics failed for cluster %s: %s", c["name"], _te
+                        )
                 last_meta = kafka_store.get_sync_meta(str(c.get("id", "default")))
             except Exception as exc:
                 import logging
