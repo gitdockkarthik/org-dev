@@ -99,6 +99,10 @@
     .ai-content ul { margin:6px 0 6px 18px; }
     .ai-content li { margin:3px 0; }
     .ai-content code { background:var(--navy-2); padding:1px 5px; border-radius:3px; font-size:.85em; }
+    /* Comparison-mode card (multi-report view) */
+    :root { --card: var(--navy-1); }
+    .card { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); padding: 18px 20px; }
+    .card canvas { max-height: 360px; }
     @media (max-width: 900px) { .chart-grid--2 { grid-template-columns: 1fr; } }
     @media (max-width: 768px) { .subnav { padding: 0 20px; } .content { padding: 20px; } .chart-grid { grid-template-columns: 1fr; } .cov-row { grid-template-columns:110px 1fr 70px; } .cov-row__cost { display:none; } }
   </style>
@@ -130,8 +134,51 @@
         <div class="page-heading__sub">AWS cost &amp; usage breakdown by account, environment, service and tag</div>
       </div>
       <div class="dash-controls" id="reportControls" style="display:none">
-        <span class="dash-label" id="viewingLabel">Viewing report:</span>
-        <select class="dash-select" id="reportSelect" onchange="onReportChange()"></select>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:.85rem;color:var(--text-muted)">
+            Viewing report:
+          </span>
+          <div style="position:relative">
+            <button id="reportPickerBtn"
+              onclick="toggleReportPicker()"
+              style="background:var(--card);border:1px solid var(--border);
+                     border-radius:6px;padding:6px 12px;cursor:pointer;
+                     color:var(--text);font-size:.85rem;min-width:220px;
+                     text-align:left;display:flex;justify-content:space-between;
+                     align-items:center">
+              <span id="reportPickerLabel">Loading...</span>
+              <span>▾</span>
+            </button>
+            <div id="reportPickerDropdown"
+              style="display:none;position:absolute;right:0;top:110%;
+                     background:var(--card);border:1px solid var(--border);
+                     border-radius:8px;padding:8px;min-width:320px;
+                     z-index:100;box-shadow:0 4px 20px rgba(0,0,0,.15)">
+              <div style="font-size:.75rem;color:var(--text-muted);
+                          padding:4px 8px 8px;border-bottom:1px solid
+                          var(--border);margin-bottom:6px">
+                Select one report to view, or multiple to compare
+              </div>
+              <div id="reportPickerList"></div>
+              <div style="padding-top:8px;border-top:1px solid var(--border);
+                          margin-top:6px;display:flex;gap:8px">
+                <button onclick="applyReportSelection()"
+                  style="flex:1;background:var(--primary,#EA580C);color:#fff;
+                         border:none;border-radius:6px;padding:6px;
+                         cursor:pointer;font-size:.82rem">
+                  Apply
+                </button>
+                <button onclick="clearReportSelection()"
+                  style="flex:1;background:var(--card);
+                         border:1px solid var(--border);border-radius:6px;
+                         padding:6px;cursor:pointer;font-size:.82rem;
+                         color:var(--text)">
+                  Clear
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -177,6 +224,12 @@
       <div id="tab-trends"       class="tab-panel"></div>
       <div id="tab-insights"     class="tab-panel"></div>
     </div>
+
+    <!-- Comparison mode view (2+ reports selected) -->
+    <div id="compareWrap" style="display:none">
+      <div class="info-bar" id="info-bar" style="margin-bottom:22px"></div>
+      <div id="dash-content"></div>
+    </div>
   </div>
 
   <script src="/js/config.js?v=3"></script>
@@ -190,6 +243,15 @@
     let REPORTS = [];       // /reports list
     let ROWS = [];          // raw rows for the active report (for cross-tabs)
     let REPORT_ID = null;   // active report_id (from URL) or null = latest
+    let currentReportId = null;    // active single-report id (compare-aware code)
+    let _selectedReportIds = [];   // currently selected report IDs
+    let _allReports = [];          // all available reports from /reports
+    let _compareData = null;       // comparison payload from /reports/compare
+    let _isCompareMode = false;    // true when 2+ reports selected
+    const COLORS = [
+      '#6366f1','#f59e0b','#10b981','#ef4444','#3b82f6',
+      '#8b5cf6','#ec4899','#14b8a6','#f97316','#84cc16'
+    ];
     const charts = {};
     const _loaded = new Set();
     let _insightsTs = null;
@@ -1062,6 +1124,649 @@ ${JSON.stringify(payload, null, 2)}
         <div class="info-bar__item"><span class="info-bar__k">Total Cost</span><span class="info-bar__v" style="color:var(--accent)">${fmtUSD(DASH.total_cost)}</span></div>`;
     }
 
+    // ── Multi-report comparison mode ───────────────────────────────────────────────
+
+    // Single-report load reuses the existing URL-driven flow (full reload → init()).
+    function loadDashboard(id) {
+      window.location.search = id != null ? `?report_id=${id}` : '';
+    }
+
+    function toggleReportPicker() {
+      const dd = document.getElementById('reportPickerDropdown');
+      dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+    }
+
+    function populateReportPicker(reports) {
+      _allReports = reports;
+      const list = document.getElementById('reportPickerList');
+      list.innerHTML = reports.map(r => `
+        <label style="display:flex;align-items:center;gap:8px;
+                      padding:6px 8px;border-radius:4px;cursor:pointer;
+                      font-size:.82rem;color:var(--text)"
+               onmouseover="this.style.background='var(--navy-3,#f3f4f6)'"
+               onmouseout="this.style.background='transparent'">
+          <input type="checkbox" value="${r.id}"
+            ${_selectedReportIds.includes(r.id) ? 'checked' : ''}
+            onchange="onReportCheckChange()"
+            style="accent-color:var(--primary,#EA580C)">
+          <span style="flex:1">
+            [${r.id}] ${r.filename}
+            <span style="font-size:.72rem;color:var(--text-muted);
+                         display:block">
+              ${r.row_count} rows ·
+              ${new Date(r.created_at).toLocaleDateString()}
+            </span>
+          </span>
+          <span style="color:var(--text-muted);font-size:.75rem">
+            $${Number(r.total_cost).toLocaleString('en-US',
+              {minimumFractionDigits:0,maximumFractionDigits:0})}
+          </span>
+        </label>
+      `).join('');
+    }
+
+    function onReportCheckChange() {
+      const checked = [...document.querySelectorAll(
+        '#reportPickerList input[type=checkbox]:checked'
+      )].map(el => parseInt(el.value));
+      _selectedReportIds = checked;
+
+      const btn = document.getElementById('reportPickerBtn');
+      const label = document.getElementById('reportPickerLabel');
+      if (checked.length === 0) {
+        label.textContent = 'Select a report...';
+      } else if (checked.length === 1) {
+        const r = _allReports.find(x => x.id === checked[0]);
+        label.textContent = r ?
+          `${r.filename} — $${Number(r.total_cost)
+            .toLocaleString('en-US',{maximumFractionDigits:0})}`
+          : `Report ${checked[0]}`;
+      } else {
+        label.textContent = `${checked.length} reports selected — Compare`;
+      }
+    }
+
+    async function applyReportSelection() {
+      document.getElementById('reportPickerDropdown').style.display = 'none';
+      if (_selectedReportIds.length === 0) return;
+
+      if (_selectedReportIds.length === 1) {
+        // Single report mode
+        _isCompareMode = false;
+        _compareData = null;
+        currentReportId = _selectedReportIds[0];
+        await loadDashboard(currentReportId);
+      } else {
+        // Compare mode
+        _isCompareMode = true;
+        await loadCompareMode(_selectedReportIds);
+      }
+    }
+
+    function clearReportSelection() {
+      _selectedReportIds = [];
+      document.querySelectorAll(
+        '#reportPickerList input[type=checkbox]'
+      ).forEach(el => el.checked = false);
+      document.getElementById('reportPickerLabel').textContent =
+        'Select a report...';
+    }
+
+    async function loadCompareMode(ids) {
+      // Reveal the comparison view, hide the single-report dashboard
+      document.getElementById('emptyState').style.display = 'none';
+      document.getElementById('loadingState').style.display = 'none';
+      document.getElementById('dashboard').style.display = 'none';
+      document.getElementById('compareWrap').style.display = 'block';
+      showLoading();
+      try {
+        const res = await fetch(
+          `${PROXY}/reports/compare?ids=${ids.join(',')}`,
+          { headers: _authHeaders(), cache: 'no-store' }
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        _compareData = await res.json();
+        _isCompareMode = true;
+        renderCompareMode();
+      } catch(e) {
+        showError(`Failed to load comparison: ${e.message}`);
+      }
+    }
+
+    function showLoading() {
+      document.getElementById('dash-content').innerHTML = `
+        <div style="text-align:center;padding:60px;color:var(--text-muted)">
+          <div style="font-size:2rem;margin-bottom:12px">⏳</div>
+          <div>Loading comparison data...</div>
+        </div>`;
+    }
+
+    function showError(msg) {
+      document.getElementById('dash-content').innerHTML = `
+        <div style="text-align:center;padding:60px;color:var(--danger,#dc2626)">
+          ${msg}
+        </div>`;
+    }
+
+    function renderCompareMode() {
+      const cd = _compareData;
+      if (!cd) return;
+      const reports = cd.reports;
+      const compat = cd.compatibility;
+
+      // Update info bar
+      const infoBar = document.getElementById('info-bar');
+      if (infoBar) {
+        infoBar.innerHTML = `
+          <div style="display:flex;gap:24px;flex-wrap:wrap;
+                      align-items:center">
+            <div>
+              <div style="font-size:.72rem;color:var(--text-muted);
+                          text-transform:uppercase;letter-spacing:.05em">
+                MODE
+              </div>
+              <div style="font-weight:600;color:var(--primary,#EA580C)">
+                Comparing ${reports.length} Reports
+              </div>
+            </div>
+            ${reports.map((r,i) => `
+              <div>
+                <div style="font-size:.72rem;color:var(--text-muted);
+                            text-transform:uppercase">
+                  Report ${i+1}
+                </div>
+                <div style="font-weight:600;color:${COLORS[i]}">
+                  ${r.filename}
+                </div>
+                <div style="font-size:.78rem;color:var(--text-muted)">
+                  $${Number(r.total_cost).toLocaleString('en-US',
+                    {minimumFractionDigits:2,maximumFractionDigits:2})}
+                  · ${r.row_count} rows
+                </div>
+              </div>
+            `).join('')}
+          </div>`;
+      }
+
+      // Render unavailability notice if any
+      const unavail = cd.unavailable_features.filter(u => !u.available);
+      const unavailHtml = unavail.length ? `
+        <div style="background:var(--amber-bg,#fffbeb);border:1px solid
+                    #fcd34d;border-radius:8px;padding:12px 16px;
+                    margin-bottom:16px;font-size:.82rem;color:#92400e">
+          <strong>⚠️ Partial comparison</strong> — some features are
+          unavailable because not all selected reports contain the
+          required columns:
+          <ul style="margin:6px 0 0 16px">
+            ${unavail.map(u => `
+              <li><strong>${u.feature}</strong> — not available in:
+              ${u.missing_in.join(', ')}</li>
+            `).join('')}
+          </ul>
+        </div>` : '';
+
+      // Render all comparison sections
+      const content = document.getElementById('dash-content');
+      content.innerHTML = unavailHtml + `
+        ${renderCompareSummary(reports)}
+        ${compat.has_service ? renderCompareServices(reports) : ''}
+        ${compat.has_date ? renderCompareTrend(reports) : ''}
+        ${compat.has_account ? renderCompareAccounts(reports) : ''}
+        ${compat.has_environment ? renderCompareEnvironments(reports) : ''}
+        ${compat.has_service_category ? renderCompareCategories(reports) : ''}
+        ${compat.has_tags ? renderCompareTags(reports) : ''}
+        ${compat.has_pricing_term ? renderComparePricing(reports) : ''}
+        ${compat.has_region ? renderCompareRegions(reports) : ''}
+        ${renderCompareSavings(reports)}
+      `;
+
+      // Init all charts
+      initCompareCharts(reports, compat);
+    }
+
+    function fmt$(n) {
+      return '$' + Number(n).toLocaleString('en-US',
+        {minimumFractionDigits:2,maximumFractionDigits:2});
+    }
+
+    function renderCompareSummary(reports) {
+      return `
+        <div class="card" style="margin-bottom:16px">
+          <div style="font-size:.95rem;font-weight:600;
+                      margin-bottom:12px">Cost Summary</div>
+          <div style="display:grid;
+                      grid-template-columns:repeat(${reports.length},1fr);
+                      gap:12px">
+            ${reports.map((r,i) => `
+              <div style="background:var(--navy-2,#f9fafb);
+                          border-radius:8px;padding:16px;
+                          border-left:4px solid ${COLORS[i]}">
+                <div style="font-size:.78rem;color:var(--text-muted);
+                            margin-bottom:4px">${r.filename}</div>
+                <div style="font-size:1.6rem;font-weight:700;
+                            color:${COLORS[i]}">
+                  ${fmt$(r.total_cost)}
+                </div>
+                <div style="font-size:.78rem;color:var(--text-muted);
+                            margin-top:4px">
+                  ${r.row_count.toLocaleString()} line items
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>`;
+    }
+
+    function renderCompareServices(reports) {
+      // Build unified service list across all reports
+      const allServices = [...new Set(
+        reports.flatMap(r => r.service_breakdown.map(s => s.service))
+      )].slice(0, 15);
+
+      return `
+        <div class="card" style="margin-bottom:16px">
+          <div style="font-size:.95rem;font-weight:600;
+                      margin-bottom:12px">Cost by Service</div>
+          <canvas id="compareServiceChart" height="120"></canvas>
+          <div class="data-table-wrap" style="margin-top:16px">
+            <table class="data-table" style="width:100%">
+              <thead><tr>
+                <th>SERVICE</th>
+                ${reports.map((r,i) => `
+                  <th style="color:${COLORS[i]}">${r.filename}</th>
+                `).join('')}
+              </tr></thead>
+              <tbody>
+                ${allServices.map(svc => `
+                  <tr>
+                    <td>${svc}</td>
+                    ${reports.map(r => {
+                      const s = r.service_breakdown.find(
+                        x => x.service === svc);
+                      return `<td>${s ? fmt$(s.cost) : '—'}</td>`;
+                    }).join('')}
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>`;
+    }
+
+    function renderCompareTrend(reports) {
+      return `
+        <div class="card" style="margin-bottom:16px">
+          <div style="font-size:.95rem;font-weight:600;
+                      margin-bottom:12px">Monthly Cost Trend</div>
+          <canvas id="compareTrendChart" height="80"></canvas>
+        </div>`;
+    }
+
+    function renderCompareAccounts(reports) {
+      const allAccounts = [...new Set(
+        reports.flatMap(r =>
+          r.account_breakdown.map(a => a.account_name || a.account_id))
+      )];
+      return `
+        <div class="card" style="margin-bottom:16px">
+          <div style="font-size:.95rem;font-weight:600;
+                      margin-bottom:12px">Cost by Account</div>
+          <canvas id="compareAccountChart" height="100"></canvas>
+          <div class="data-table-wrap" style="margin-top:16px">
+            <table class="data-table" style="width:100%">
+              <thead><tr>
+                <th>ACCOUNT</th>
+                ${reports.map((r,i) => `
+                  <th style="color:${COLORS[i]}">${r.filename}</th>
+                `).join('')}
+              </tr></thead>
+              <tbody>
+                ${allAccounts.map(acct => `<tr>
+                  <td>${acct}</td>
+                  ${reports.map(r => {
+                    const a = r.account_breakdown.find(
+                      x => (x.account_name||x.account_id) === acct);
+                    return `<td>${a ? fmt$(a.cost) : '—'}</td>`;
+                  }).join('')}
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>`;
+    }
+
+    function renderCompareEnvironments(reports) {
+      const allEnvs = [...new Set(
+        reports.flatMap(r =>
+          r.environment_breakdown.map(e => e.environment))
+      )];
+      return `
+        <div class="card" style="margin-bottom:16px">
+          <div style="font-size:.95rem;font-weight:600;
+                      margin-bottom:12px">Cost by Environment</div>
+          <canvas id="compareEnvChart" height="80"></canvas>
+          <div class="data-table-wrap" style="margin-top:16px">
+            <table class="data-table" style="width:100%">
+              <thead><tr>
+                <th>ENVIRONMENT</th>
+                ${reports.map((r,i) => `
+                  <th style="color:${COLORS[i]}">${r.filename}</th>
+                `).join('')}
+              </tr></thead>
+              <tbody>
+                ${allEnvs.map(env => `<tr>
+                  <td>${env}</td>
+                  ${reports.map(r => {
+                    const e = r.environment_breakdown.find(
+                      x => x.environment === env);
+                    return `<td>${e ? fmt$(e.cost) : '—'}</td>`;
+                  }).join('')}
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>`;
+    }
+
+    function renderCompareCategories(reports) {
+      const allCats = [...new Set(
+        reports.flatMap(r =>
+          r.service_category_breakdown.map(c => c.category))
+      )];
+      return `
+        <div class="card" style="margin-bottom:16px">
+          <div style="font-size:.95rem;font-weight:600;
+                      margin-bottom:12px">Cost by Service Category</div>
+          <canvas id="compareCatChart" height="80"></canvas>
+          <div class="data-table-wrap" style="margin-top:16px">
+            <table class="data-table" style="width:100%">
+              <thead><tr>
+                <th>CATEGORY</th>
+                ${reports.map((r,i) => `
+                  <th style="color:${COLORS[i]}">${r.filename}</th>
+                `).join('')}
+              </tr></thead>
+              <tbody>
+                ${allCats.map(cat => `<tr>
+                  <td>${cat}</td>
+                  ${reports.map(r => {
+                    const c = r.service_category_breakdown.find(
+                      x => x.category === cat);
+                    return `<td>${c ? fmt$(c.cost) : '—'}</td>`;
+                  }).join('')}
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>`;
+    }
+
+    function renderCompareTags(reports) {
+      return `
+        <div class="card" style="margin-bottom:16px">
+          <div style="font-size:.95rem;font-weight:600;
+                      margin-bottom:12px">Tag Coverage Comparison</div>
+          <div style="display:grid;
+                      grid-template-columns:repeat(${reports.length},1fr);
+                      gap:16px">
+            ${reports.map((r,i) => {
+              const uc = r.untagged_resources || {};
+              const tags = uc.tag_coverage || [];
+              return `
+                <div style="border-left:4px solid ${COLORS[i]};
+                            padding-left:12px">
+                  <div style="font-size:.82rem;font-weight:600;
+                              margin-bottom:8px;color:${COLORS[i]}">
+                    ${r.filename}
+                  </div>
+                  <div style="font-size:.78rem;color:var(--text-muted);
+                              margin-bottom:6px">
+                    Overall: ${uc.overall_coverage_pct || 0}%
+                  </div>
+                  ${tags.map(t => `
+                    <div style="margin-bottom:4px">
+                      <div style="display:flex;justify-content:space-between;
+                                  font-size:.75rem;margin-bottom:2px">
+                        <span>${t.tag.replace('tag_','')}</span>
+                        <span>${t.coverage_pct}%</span>
+                      </div>
+                      <div style="height:4px;background:var(--border);
+                                  border-radius:2px">
+                        <div style="height:4px;border-radius:2px;width:
+                                    ${t.coverage_pct}%;background:${
+                                      t.coverage_pct>=80?'#16a34a':
+                                      t.coverage_pct>=50?'#f59e0b':'#dc2626'
+                                    }"></div>
+                      </div>
+                    </div>
+                  `).join('')}
+                </div>`;
+            }).join('')}
+          </div>
+        </div>`;
+    }
+
+    function renderComparePricing(reports) {
+      return `
+        <div class="card" style="margin-bottom:16px">
+          <div style="font-size:.95rem;font-weight:600;
+                      margin-bottom:12px">Pricing Term Comparison</div>
+          <div class="data-table-wrap">
+            <table class="data-table" style="width:100%">
+              <thead><tr>
+                <th>PRICING TERM</th>
+                ${reports.map((r,i) => `
+                  <th style="color:${COLORS[i]}">${r.filename}</th>
+                `).join('')}
+              </tr></thead>
+              <tbody>
+                ${['OnDemand','Reserved','Spot'].map(term => `<tr>
+                  <td>${term}</td>
+                  ${reports.map(r => {
+                    const p = r.pricing_term_breakdown.find(
+                      x => x.pricing_term === term);
+                    return `<td>${p ?
+                      fmt$(p.cost)+' ('+p.pct_of_total+'%)' : '—'}</td>`;
+                  }).join('')}
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>`;
+    }
+
+    function renderCompareRegions(reports) {
+      const allRegions = [...new Set(
+        reports.flatMap(r => r.region_breakdown.map(x => x.region))
+      )];
+      return `
+        <div class="card" style="margin-bottom:16px">
+          <div style="font-size:.95rem;font-weight:600;
+                      margin-bottom:12px">Cost by Region</div>
+          <div class="data-table-wrap">
+            <table class="data-table" style="width:100%">
+              <thead><tr>
+                <th>REGION</th>
+                ${reports.map((r,i) => `
+                  <th style="color:${COLORS[i]}">${r.filename}</th>
+                `).join('')}
+              </tr></thead>
+              <tbody>
+                ${allRegions.map(reg => `<tr>
+                  <td>${reg}</td>
+                  ${reports.map(r => {
+                    const x = r.region_breakdown.find(
+                      y => y.region === reg);
+                    return `<td>${x ? fmt$(x.cost) : '—'}</td>`;
+                  }).join('')}
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>`;
+    }
+
+    function renderCompareSavings(reports) {
+      return `
+        <div class="card" style="margin-bottom:16px">
+          <div style="font-size:.95rem;font-weight:600;
+                      margin-bottom:12px">💡 Savings Opportunities</div>
+          <div style="display:grid;
+                      grid-template-columns:repeat(${reports.length},1fr);
+                      gap:16px">
+            ${reports.map((r,i) => {
+              const s = r.savings_opportunities || {};
+              return `
+                <div style="border-left:4px solid ${COLORS[i]};
+                            padding-left:12px">
+                  <div style="font-size:.82rem;font-weight:600;
+                              color:${COLORS[i]};margin-bottom:8px">
+                    ${r.filename}
+                  </div>
+                  ${(s.savings_signals||[]).map(sig => `
+                    <div style="font-size:.78rem;color:var(--text-muted);
+                                margin-bottom:4px">⚠️ ${sig}</div>
+                  `).join('')}
+                </div>`;
+            }).join('')}
+          </div>
+        </div>`;
+    }
+
+    function initCompareCharts(reports, compat) {
+      // Service comparison chart
+      if (compat.has_service) {
+        const allSvcs = [...new Set(
+          reports.flatMap(r => r.service_breakdown.map(s => s.service))
+        )].slice(0, 10);
+        const ctx = document.getElementById('compareServiceChart');
+        if (ctx) new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: allSvcs,
+            datasets: reports.map((r,i) => ({
+              label: r.filename,
+              data: allSvcs.map(s => {
+                const x = r.service_breakdown.find(y => y.service===s);
+                return x ? x.cost : 0;
+              }),
+              backgroundColor: COLORS[i] + 'cc',
+            })),
+          },
+          options: {
+            responsive: true,
+            plugins: { legend: { position: 'top' } },
+            scales: { x: { stacked: false }, y: { stacked: false } },
+          },
+        });
+      }
+
+      // Trend comparison chart
+      if (compat.has_date) {
+        const allMonths = [...new Set(
+          reports.flatMap(r => r.monthly_trend.map(m => m.month))
+        )].sort();
+        const ctx = document.getElementById('compareTrendChart');
+        if (ctx) new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: allMonths,
+            datasets: reports.map((r,i) => ({
+              label: r.filename,
+              data: allMonths.map(m => {
+                const x = r.monthly_trend.find(y => y.month===m);
+                return x ? x.cost : 0;
+              }),
+              borderColor: COLORS[i],
+              backgroundColor: COLORS[i] + '22',
+              tension: 0.3,
+              fill: false,
+            })),
+          },
+          options: { responsive: true,
+                     plugins: { legend: { position: 'top' } } },
+        });
+      }
+
+      // Account chart
+      if (compat.has_account) {
+        const allAccts = [...new Set(
+          reports.flatMap(r =>
+            r.account_breakdown.map(a => a.account_name||a.account_id))
+        )];
+        const ctx = document.getElementById('compareAccountChart');
+        if (ctx) new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: allAccts,
+            datasets: reports.map((r,i) => ({
+              label: r.filename,
+              data: allAccts.map(acct => {
+                const x = r.account_breakdown.find(
+                  a => (a.account_name||a.account_id)===acct);
+                return x ? x.cost : 0;
+              }),
+              backgroundColor: COLORS[i] + 'cc',
+            })),
+          },
+          options: { responsive: true,
+                     plugins: { legend: { position: 'top' } } },
+        });
+      }
+
+      // Environment chart
+      if (compat.has_environment) {
+        const allEnvs = [...new Set(
+          reports.flatMap(r =>
+            r.environment_breakdown.map(e => e.environment))
+        )];
+        const ctx = document.getElementById('compareEnvChart');
+        if (ctx) new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: allEnvs,
+            datasets: reports.map((r,i) => ({
+              label: r.filename,
+              data: allEnvs.map(env => {
+                const x = r.environment_breakdown.find(
+                  e => e.environment===env);
+                return x ? x.cost : 0;
+              }),
+              backgroundColor: COLORS[i] + 'cc',
+            })),
+          },
+          options: { responsive: true,
+                     plugins: { legend: { position: 'top' } } },
+        });
+      }
+
+      // Category chart
+      if (compat.has_service_category) {
+        const allCats = [...new Set(
+          reports.flatMap(r =>
+            r.service_category_breakdown.map(c => c.category))
+        )];
+        const ctx = document.getElementById('compareCatChart');
+        if (ctx) new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: allCats,
+            datasets: reports.map((r,i) => ({
+              label: r.filename,
+              data: allCats.map(cat => {
+                const x = r.service_category_breakdown.find(
+                  c => c.category===cat);
+                return x ? x.cost : 0;
+              }),
+              backgroundColor: COLORS[i] + 'cc',
+            })),
+          },
+          options: { responsive: true,
+                     plugins: { legend: { position: 'top' } } },
+        });
+      }
+    }
+
     // ── Init ───────────────────────────────────────────────────────────────────────
     async function init() {
       await portalReady;
@@ -1090,7 +1795,20 @@ ${JSON.stringify(payload, null, 2)}
           try { ROWS = await api(`/reports/${activeId}/data`); } catch (_) { ROWS = []; }
         }
 
-        populateSelector(filename);
+        // Multi-select report picker (single-report mode on first load)
+        currentReportId = activeId;
+        _selectedReportIds = activeId != null ? [activeId] : [];
+        if (REPORTS.length) {
+          populateReportPicker(REPORTS);
+          const lbl = document.getElementById('reportPickerLabel');
+          if (lbl) {
+            lbl.textContent = filename
+              ? `${filename}${activeId != null ? ' — ' + fmtUSD0(DASH.total_cost) : ''}`
+              : 'Select a report...';
+          }
+          document.getElementById('reportControls').style.display = 'flex';
+        }
+
         buildInfoBar(filename);
         document.getElementById('dashboard').style.display = 'block';
         _loaded.add('overview');
@@ -1104,6 +1822,15 @@ ${JSON.stringify(payload, null, 2)}
           </div>`;
       }
     }
+
+    // Close the report picker dropdown when clicking outside
+    document.addEventListener('click', e => {
+      if (!e.target.closest('#reportPickerBtn') &&
+          !e.target.closest('#reportPickerDropdown')) {
+        const dd = document.getElementById('reportPickerDropdown');
+        if (dd) dd.style.display = 'none';
+      }
+    });
 
     init();
   </script>
