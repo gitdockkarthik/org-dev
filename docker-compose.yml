@@ -91,6 +91,22 @@ services:
     depends_on:
       - backend
 
+  # ── MCP Server ────────────────────────────────────────────────────────────────
+  # Model Context Protocol gateway — exposes all agents as MCP tools.
+  mcp-server:
+    build: ./mcp-server
+    restart: unless-stopped
+    ports:
+      - "8005:8005"
+    environment:
+      KAFKA_ANALYSER_URL: http://kafka-analyser:8003
+      ALERT_ANALYSER_URL: http://alert-analyser:8001
+      CUR_ANALYSER_URL: http://cur-analyser:8002
+    depends_on:
+      - kafka-analyser
+      - alert-analyser
+      - cur-analyser
+
   # ── Agent: Kafka Analyser ───────────────────────────────────────────────────
   kafka-analyser:
     build:
