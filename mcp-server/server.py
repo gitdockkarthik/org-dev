@@ -16,10 +16,7 @@ KAFKA_URL = os.environ.get("KAFKA_ANALYSER_URL", "http://kafka-analyser:8003")
 ALERT_URL = os.environ.get("ALERT_ANALYSER_URL", "http://alert-analyser:8001")
 CUR_URL = os.environ.get("CUR_ANALYSER_URL", "http://cur-analyser:8002")
 
-mcp = FastMCP(
-    "Operative Intelligence",
-    description="Multi-agent observability platform — Kafka, Alert, and CUR analysers",
-)
+mcp = FastMCP("Operative Intelligence")
 
 _client = httpx.AsyncClient(timeout=30.0)
 
