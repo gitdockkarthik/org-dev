@@ -181,10 +181,21 @@
 
     // ── API helper ───────────────────────────────────────────────────────────
 
+    function _getHours() {
+      const v = document.getElementById('ctrl-time').value;
+      if (v === '1h') return 1;
+      if (v === '6h') return 6;
+      if (v === '24h') return 24;
+      if (v === '7d') return 168;
+      return null;
+    }
     async function api(path, opts = {}) {
-      const url = _currentClusterId
-        ? `${PROXY}${path}?cluster_id=${_currentClusterId}`
-        : `${PROXY}${path}`;
+      const params = new URLSearchParams();
+      if (_currentClusterId) params.set('cluster_id', _currentClusterId);
+      const hours = _getHours();
+      if (hours) params.set('hours', hours);
+      const qs = params.toString();
+      const url = qs ? `${PROXY}${path}?${qs}` : `${PROXY}${path}`;
       const res = await fetch(url, {
         ...opts,
         headers: { ..._authHeaders(), ...opts.headers },
@@ -1315,6 +1326,12 @@
       loadTab('overview');
     }
 
+    document.getElementById('ctrl-time').addEventListener('change', () => {
+      _loaded.clear();
+      const activeBtn = document.querySelector('.tab-btn--active');
+      const activeTab = activeBtn ? activeBtn.dataset.tab : 'overview';
+      loadTab(activeTab);
+    });
     init();
   </script>
 </body>
