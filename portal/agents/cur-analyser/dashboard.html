@@ -944,20 +944,34 @@
         renderCompareMode();
       } else {
         const filtered = applyFilters(_rawRows);
+        if (filtered.length === 0) {
+          // Show no-data state on active tab
+          const activePanel = document.querySelector('.tab-panel--active');
+          if (activePanel) {
+            Object.keys(charts).forEach(k => destroyChart(k));
+            activePanel.innerHTML = `
+              <div style="text-align:center;padding:60px;
+                          color:var(--text-muted)">
+                <div style="font-size:2rem;margin-bottom:12px">🔍</div>
+                <div style="font-weight:600;margin-bottom:6px">
+                  No data matches the selected filters
+                </div>
+                <div style="font-size:.85rem">
+                  Try removing some filters or expanding the date range
+                </div>
+              </div>`;
+          }
+          return;
+        }
         const computed = computeFromRows(filtered);
         if (computed) {
           DASH = { ...DASH, ...computed };
-          // Destroy ALL existing charts before re-rendering
           Object.keys(charts).forEach(k => destroyChart(k));
-          // Clear ALL tab panels HTML so they re-render fresh
           document.querySelectorAll('.tab-panel').forEach(p => {
             if (!p.id.includes('insights')) p.innerHTML = '';
           });
-          // Clear loaded cache
           _loaded.clear();
-          // Re-render active tab
-          const activePanel = document.querySelector(
-            '.tab-panel--active');
+          const activePanel = document.querySelector('.tab-panel--active');
           if (activePanel) {
             const tabName = activePanel.id.replace('tab-','');
             _loaded.add(tabName);
