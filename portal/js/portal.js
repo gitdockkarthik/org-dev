@@ -137,72 +137,44 @@ async function invokeAgent(slug, message, sessionId, context, onChunk, onDone, o
 
   let res;
   try {
-    res = await fetch(`${BACKEND_URL}/api/invoke/${encodeURIComponent(slug)}`, {
+    res = await fetch(`${BACKEND_URL}/api/agents/${encodeURIComponent(slug)}/proxy/invoke/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify({
         session_id: sessionId,
         user_message: message,
         context: context || {},
-        history: [],   // backend loads history from DB by session_id
+        history: [],
       }),
     });
   } catch (err) {
     onError(err);
     return;
   }
-
-  console.log('[invoke] response status:', res.status, res.headers.get('content-type'));
-
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: res.statusText }));
     onError(new Error(body.detail || `HTTP ${res.status}`));
     return;
   }
-
-  // Consume via ReadableStream — positions code for SSE upgrade later
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
-  let raw = '';
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      raw += decoder.decode(value, { stream: true });
+      const lines = decoder.decode(value, { stream: true }).split('\n');
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const data = line.slice(6);
+        if (data === '[DONE]') { onDone({}); return; }
+        if (data.startsWith('[ERROR]')) { onError(new Error(data.slice(7).trim())); return; }
+        const text = data.replace(/\\n/g, '\n');
+        onChunk(text);
+      }
     }
-    raw += decoder.decode();
   } catch (err) {
     onError(err);
-    return;
   }
-
-  console.log('[invoke] raw body (' + raw.length + ' chars):', raw.slice(0, 500));
-
-  let data;
-  try { data = JSON.parse(raw); }
-  catch (err) {
-    console.error('[invoke] JSON.parse failed:', err.message, '— raw was:', raw.slice(0, 200));
-    onError(new Error('Invalid response from server'));
-    return;
-  }
-
-  console.log('[invoke] parsed data keys:', Object.keys(data));
-  console.log('[invoke] data.response type:', typeof data.response, '— length:', (data.response || '').length);
-  console.log('[invoke] data.metadata:', data.metadata);
-
-  // Stream the text to the UI character-by-character
-  const text = data.response || '';
-  if (!text) {
-    console.warn('[invoke] data.response is empty — nothing to render. Full data:', data);
-  }
-  let i = 0;
-  const CHARS_PER_FRAME = 4;
-  function tick() {
-    for (let c = 0; c < CHARS_PER_FRAME && i < text.length; c++) onChunk(text[i++]);
-    if (i < text.length) requestAnimationFrame(tick);
-    else onDone(data);
-  }
-  requestAnimationFrame(tick);
 }
 
 // ── Markdown renderer ───────────────────────────────────────────────────────────

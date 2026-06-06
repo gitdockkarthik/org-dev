@@ -363,3 +363,72 @@ async def stream_insights(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.post("/invoke/stream")
+async def invoke_stream(
+    body: InvokeRequest,
+    x_anthropic_key: str | None = Header(default=None),
+):
+    import anthropic as _anthropic
+    ctx = body.context
+    if "raw_data" in ctx:
+        source = FileSource(ctx["raw_data"], ctx.get("format", "json"))
+        _alert_cache[body.session_id] = await source.load_alerts()
+    elif "alerts" in ctx:
+        _alert_cache[body.session_id] = ctx["alerts"]
+    alerts = _alert_cache.get(body.session_id, [])
+    if not alerts:
+        from report_store import get_latest_classified
+        cached = get_latest_classified()
+        if cached:
+            alerts = cached
+            _alert_cache[body.session_id] = alerts
+    has_data = bool(alerts)
+    alert_count = len(alerts)
+    classified = classify_alerts(alerts) if alerts else []
+    alert_summary = {
+        "total": len(classified),
+        "genuine": sum(1 for a in classified if a.get("classification") == "genuine"),
+        "noise": sum(1 for a in classified if a.get("classification") == "noise"),
+        "suspect": sum(1 for a in classified if a.get("classification") == "noise-suspect"),
+        "sample_noise": [
+            {"message": a.get("message", "")[:100], "source": a.get("source", ""),
+             "priority": a.get("priority", ""), "reasons": a.get("noise_reasons", [])}
+            for a in classified if a.get("classification") == "noise"
+        ][:20],
+        "sample_genuine": [
+            {"message": a.get("message", "")[:100], "source": a.get("source", ""),
+             "priority": a.get("priority", ""), "reasons": a.get("genuine_reasons", [])}
+            for a in classified if a.get("classification") == "genuine"
+        ][:20],
+    }
+    resolved_key = x_anthropic_key or settings.anthropic_api_key
+    system = _runner._build_system({
+        "session_id": body.session_id,
+        "has_data": has_data,
+        "alert_count": alert_count,
+        "alert_summary": alert_summary,
+    })
+    messages = _runner._build_messages(body.history, body.user_message)
+
+    async def event_stream():
+        try:
+            client = _anthropic.AsyncAnthropic(api_key=resolved_key)
+            async with client.messages.stream(
+                model=settings.model,
+                max_tokens=4096,
+                system=system,
+                messages=messages,
+            ) as stream:
+                async for text in stream.text_stream:
+                    yield f"data: {text.replace(chr(10), chr(92)+'n')}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            yield f"data: [ERROR] {str(e)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
