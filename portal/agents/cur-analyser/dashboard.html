@@ -944,7 +944,11 @@ ${JSON.stringify(payload, null, 2)}
       let fullText = '';
 
       try {
-        const session_id = crypto.randomUUID();
+        const session_id = (typeof crypto.randomUUID === 'function' ? crypto.randomUUID() :
+        'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+          var r = Math.random()*16|0;
+          return (c=='x'?r:(r&0x3|0x8)).toString(16);
+        }));
         const prompt = buildInsightsPrompt();
 
         const response = await fetch(
