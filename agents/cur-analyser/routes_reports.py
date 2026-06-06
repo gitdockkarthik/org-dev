@@ -12,7 +12,7 @@ from uuid import uuid4
 from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi import Query as FastAPIQuery
 
-from report_store import add_report, list_reports, get_report_rows, persist_report
+from report_store import add_report, list_reports, get_report_rows, get_report_csv, persist_report
 from tools.duckdb_engine import (
     get_total_cost, get_cost_by_service, get_daily_trend,
     get_cost_by_region, get_cost_by_account, get_cost_by_environment,
@@ -490,3 +490,39 @@ async def get_report_data(report_id: int) -> list[dict]:
     if rows is None:
         raise HTTPException(status_code=404, detail=f"Report {report_id} not found")
     return rows
+
+
+@router.get("/{report_id}/stream")
+async def stream_report_data(report_id: int):
+    from fastapi.responses import StreamingResponse
+    import json
+
+    csv_text = get_report_csv(report_id)
+    if csv_text is None:
+        raise HTTPException(status_code=404,
+            detail=f"Report {report_id} not found")
+
+    rows = get_report_rows(report_id)
+    if not rows:
+        raise HTTPException(status_code=404,
+            detail=f"Report {report_id} has no data")
+
+    async def generate():
+        # Send total count first
+        yield json.dumps({"total": len(rows)}) + "\n"
+        # Stream rows in chunks of 50
+        chunk_size = 50
+        for i in range(0, len(rows), chunk_size):
+            chunk = rows[i:i+chunk_size]
+            yield json.dumps({"rows": chunk,
+                            "offset": i,
+                            "count": len(chunk)}) + "\n"
+            import asyncio
+            await asyncio.sleep(0)  # yield control
+
+    return StreamingResponse(
+        generate(),
+        media_type="application/x-ndjson",
+        headers={"X-Accel-Buffering": "no",
+                 "Cache-Control": "no-cache"}
+    )

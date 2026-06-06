@@ -103,6 +103,29 @@
     :root { --card: var(--navy-1); }
     .card { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); padding: 18px 20px; }
     .card canvas { max-height: 360px; }
+    /* Filter bar controls */
+    .preset-btn {
+      font-size:.72rem;padding:3px 8px;border-radius:4px;
+      border:1px solid var(--border);cursor:pointer;
+      background:var(--navy-2,#f1f5f9);color:var(--text);
+    }
+    .preset-btn:hover { background:var(--primary,#EA580C);color:#fff; }
+    .filter-select {
+      border:1px solid var(--border);border-radius:4px;
+      padding:3px 6px;font-size:.78rem;
+      background:var(--bg,#fff);color:var(--text);
+      min-width:120px;max-width:160px;
+    }
+    .filter-chip {
+      display:inline-flex;align-items:center;gap:4px;
+      background:var(--primary,#EA580C);color:#fff;
+      border-radius:10px;padding:2px 8px;font-size:.72rem;
+    }
+    .filter-chip button {
+      background:none;border:none;color:#fff;cursor:pointer;
+      padding:0;font-size:.85rem;line-height:1;
+    }
+    #filterProgress { font-size:.75rem; }
     @media (max-width: 900px) { .chart-grid--2 { grid-template-columns: 1fr; } }
     @media (max-width: 768px) { .subnav { padding: 0 20px; } .content { padding: 20px; } .chart-grid { grid-template-columns: 1fr; } .cov-row { grid-template-columns:110px 1fr 70px; } .cov-row__cost { display:none; } }
   </style>
@@ -214,6 +237,89 @@
         <button class="tab-btn"                 data-tab="tags"        onclick="switchTab('tags',this)">Cost Centres &amp; Tags</button>
         <button class="tab-btn"                 data-tab="trends"      onclick="switchTab('trends',this)">Trends</button>
         <button class="tab-btn"                 data-tab="insights"    onclick="switchTab('insights',this)">AI Insights</button>
+      </div>
+
+      <div id="filterBar" style="background:var(--navy-1,#f8fafc);
+           border:1px solid var(--border);border-radius:8px;
+           margin:8px 0;padding:8px 12px">
+
+        <div style="display:flex;align-items:center;
+                    justify-content:space-between;cursor:pointer"
+             onclick="toggleFilterBar()">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:.85rem;font-weight:600">
+              🔍 Filters
+            </span>
+            <span id="filterBadge" style="display:none;
+              background:var(--primary,#EA580C);color:#fff;
+              border-radius:10px;padding:1px 7px;font-size:.72rem">
+              0
+            </span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span id="filterProgress" style="font-size:.75rem;
+              color:var(--text-muted);display:none">
+              Loading data...
+            </span>
+            <button onclick="event.stopPropagation();resetFilters()"
+              style="font-size:.75rem;color:var(--text-muted);
+                     background:none;border:none;cursor:pointer;
+                     padding:2px 6px">
+              Reset All
+            </button>
+            <span id="filterToggleIcon">▾</span>
+          </div>
+        </div>
+
+        <div id="filterControls" style="display:none;
+             margin-top:10px;display:none">
+
+          <!-- Date Range -->
+          <div style="margin-bottom:10px">
+            <div style="font-size:.72rem;font-weight:600;
+                        color:var(--text-muted);margin-bottom:4px;
+                        text-transform:uppercase">Date Range</div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;
+                        align-items:center">
+              <input type="date" id="fDateFrom"
+                onchange="onFilterChange()"
+                style="border:1px solid var(--border);border-radius:4px;
+                       padding:3px 6px;font-size:.78rem;
+                       background:var(--bg,#fff);color:var(--text)">
+              <span style="font-size:.78rem;color:var(--text-muted)">
+                to
+              </span>
+              <input type="date" id="fDateTo"
+                onchange="onFilterChange()"
+                style="border:1px solid var(--border);border-radius:4px;
+                       padding:3px 6px;font-size:.78rem;
+                       background:var(--bg,#fff);color:var(--text)">
+              <button onclick="setDatePreset('thisMonth')"
+                class="preset-btn">This Month</button>
+              <button onclick="setDatePreset('prevMonth')"
+                class="preset-btn">Prev Month</button>
+              <button onclick="setDatePreset('last3')"
+                class="preset-btn">Last 3 Months</button>
+              <button onclick="setDatePreset('all')"
+                class="preset-btn">All</button>
+            </div>
+          </div>
+
+          <!-- Filter dropdowns row -->
+          <div style="display:flex;flex-wrap:wrap;gap:8px">
+            <div id="fAccountWrap"></div>
+            <div id="fEnvWrap"></div>
+            <div id="fServiceWrap"></div>
+            <div id="fRegionWrap"></div>
+            <div id="fPricingWrap"></div>
+            <div id="fProductWrap"></div>
+            <div id="fTeamWrap"></div>
+          </div>
+
+          <!-- Active filter chips -->
+          <div id="filterChips" style="margin-top:8px;
+               display:flex;flex-wrap:wrap;gap:4px"></div>
+        </div>
       </div>
 
       <div id="tab-overview"     class="tab-panel tab-panel--active"></div>
@@ -388,6 +494,402 @@
                      tooltip: { callbacks: { label: c => `${c.label}: ${fmtUSD(c.parsed)}` } } },
         },
       });
+    }
+
+    // ── Raw data store ────────────────────────────────────────
+    let _rawRows = [];           // all rows for current report
+    let _rawRowsMap = {};        // report_id → rows for compare mode
+    let _loadProgress = 0;
+    let _loadTotal = 0;
+    let _activeFilters = {
+      dateFrom: null,
+      dateTo: null,
+      accounts: [],
+      environments: [],
+      services: [],
+      regions: [],
+      pricingTerms: [],
+      tagProducts: [],
+      tagTeams: [],
+    };
+
+    // ── Stream loader ─────────────────────────────────────────
+    async function streamReportRows(reportId, onProgress, onComplete) {
+      const res = await fetch(
+        `${PROXY}/reports/${reportId}/stream`,
+        { headers: _authHeaders(), cache: 'no-store' }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let allRows = [];
+      let total = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const msg = JSON.parse(line);
+            if (msg.total !== undefined) {
+              total = msg.total;
+              _loadTotal = total;
+            }
+            if (msg.rows) {
+              allRows = allRows.concat(msg.rows);
+              _loadProgress = allRows.length;
+              if (onProgress) onProgress(allRows.length, total);
+            }
+          } catch(e) {}
+        }
+      }
+      if (onComplete) onComplete(allRows);
+      return allRows;
+    }
+
+    // ── Filter helpers ────────────────────────────────────────
+    function applyFilters(rows) {
+      return rows.filter(r => {
+        const f = _activeFilters;
+        const date = r.line_item_usage_start_date ||
+                     r.usagestartdate || '';
+        const acct = r.line_item_usage_account_name ||
+                     r.line_item_usage_account_id || '';
+        const env  = r.tag_Environment || r.tag_environment || '';
+        const svc  = r.line_item_product_code ||
+                     r.productname || '';
+        const reg  = r.product_region || r.region || '';
+        const term = r.pricing_term || '';
+        const prod = r.tag_Product || r.tag_product || '';
+        const team = r.tag_Team || r.tag_team || '';
+
+        if (f.dateFrom && date < f.dateFrom) return false;
+        if (f.dateTo   && date > f.dateTo)   return false;
+        if (f.accounts.length &&
+            !f.accounts.includes(acct)) return false;
+        if (f.environments.length &&
+            !f.environments.includes(env)) return false;
+        if (f.services.length &&
+            !f.services.includes(svc)) return false;
+        if (f.regions.length &&
+            !f.regions.includes(reg)) return false;
+        if (f.pricingTerms.length &&
+            !f.pricingTerms.includes(term)) return false;
+        if (f.tagProducts.length &&
+            !f.tagProducts.includes(prod)) return false;
+        if (f.tagTeams.length &&
+            !f.tagTeams.includes(team)) return false;
+        return true;
+      });
+    }
+
+    // ── Client-side aggregations ──────────────────────────────
+    function getCostCol(row) {
+      return parseFloat(
+        row.line_item_unblended_cost ||
+        row.unblended_cost || 0
+      );
+    }
+
+    function aggByKey(rows, keyFn, labelKey) {
+      const map = {};
+      for (const r of rows) {
+        const k = keyFn(r) || 'Unknown';
+        const c = getCostCol(r);
+        map[k] = (map[k] || 0) + c;
+      }
+      const total = Object.values(map).reduce((a,b)=>a+b,0);
+      return Object.entries(map)
+        .map(([k,cost]) => ({
+          [labelKey]: k,
+          cost: Math.round(cost*100)/100,
+          pct_of_total: Math.round(cost/total*1000)/10
+        }))
+        .sort((a,b) => b.cost - a.cost);
+    }
+
+    function computeFromRows(rows) {
+      if (!rows || !rows.length) return null;
+      const total = rows.reduce((s,r) => s+getCostCol(r), 0);
+
+      const byService = aggByKey(rows,
+        r => r.line_item_product_code || r.productname,
+        'service');
+
+      const byRegion = aggByKey(rows,
+        r => r.product_region || r.region,
+        'region');
+
+      const byAccount = aggByKey(rows,
+        r => r.line_item_usage_account_name ||
+             r.line_item_usage_account_id,
+        'account_name');
+
+      const byEnvironment = aggByKey(rows,
+        r => r.tag_Environment || r.tag_environment || 'Untagged',
+        'environment');
+
+      const byCategory = aggByKey(rows,
+        r => r.service_category || '',
+        'category').filter(x => x.category);
+
+      const byPricing = aggByKey(rows,
+        r => r.pricing_term || '',
+        'pricing_term').filter(x => x.pricing_term);
+
+      const byProduct = aggByKey(rows,
+        r => r.tag_Product || r.tag_product || 'Untagged',
+        'tag_value');
+
+      const byTeam = aggByKey(rows,
+        r => r.tag_Team || r.tag_team || 'Untagged',
+        'tag_value');
+
+      const byCustomer = aggByKey(rows,
+        r => r.tag_Customer || r.tag_customer || 'Untagged',
+        'tag_value');
+
+      const byCostCentre = aggByKey(rows,
+        r => r.tag_CostCentre || r.tag_costcentre || 'Untagged',
+        'tag_value');
+
+      // Daily trend
+      const dayMap = {};
+      for (const r of rows) {
+        const d = (r.line_item_usage_start_date||'').slice(0,10);
+        if (d) dayMap[d] = (dayMap[d]||0) + getCostCol(r);
+      }
+      const daily_trend = Object.entries(dayMap)
+        .map(([date,cost]) => ({date, cost: Math.round(cost*100)/100}))
+        .sort((a,b) => a.date.localeCompare(b.date));
+
+      // Monthly trend
+      const monMap = {};
+      for (const r of rows) {
+        const m = (r.line_item_usage_start_date||'').slice(0,7);
+        if (m) monMap[m] = (monMap[m]||0) + getCostCol(r);
+      }
+      const monthly_trend = Object.entries(monMap)
+        .map(([month,cost]) => ({month, cost: Math.round(cost*100)/100}))
+        .sort((a,b) => a.month.localeCompare(b.month));
+
+      return {
+        total_cost: Math.round(total*100)/100,
+        row_count: rows.length,
+        top_service: byService[0] || null,
+        service_breakdown: byService.slice(0,15),
+        region_breakdown: byRegion,
+        account_breakdown: byAccount,
+        environment_breakdown: byEnvironment,
+        service_category_breakdown: byCategory,
+        tag_product_breakdown: byProduct,
+        tag_team_breakdown: byTeam,
+        tag_customer_breakdown: byCustomer,
+        tag_costcentre_breakdown: byCostCentre,
+        pricing_term_breakdown: byPricing,
+        daily_trend,
+        monthly_trend,
+      };
+    }
+
+    // ── Filter distinct values from raw rows ──────────────────
+    function getDistinctValues(rows, keyFn) {
+      return [...new Set(rows.map(keyFn).filter(Boolean))].sort();
+    }
+
+    // ── Filter bar UI + filtering ─────────────────────────────
+    let _filterBarOpen = false;
+    let _currentFilename = null;   // active report filename for the info bar
+
+    // Re-render the single-report dashboard from the (filtered) DASH object.
+    // Tab-based UI: rebuild the info bar and re-render the active tab.
+    function renderDashboard(data) {
+      if (data) DASH = data;
+      try { buildInfoBar(_currentFilename); } catch (_) {}
+      _loaded.clear();
+      const activeBtn = document.querySelector('.tab-btn--active');
+      const name = activeBtn ? activeBtn.dataset.tab : 'overview';
+      _loaded.add(name);
+      renderTab(name);
+    }
+
+    function toggleFilterBar() {
+      _filterBarOpen = !_filterBarOpen;
+      document.getElementById('filterControls').style.display =
+        _filterBarOpen ? 'block' : 'none';
+      document.getElementById('filterToggleIcon').textContent =
+        _filterBarOpen ? '▴' : '▾';
+    }
+
+    function setDatePreset(preset) {
+      const now = new Date();
+      const pad = n => String(n).padStart(2,'0');
+      const fmt = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+      let from, to;
+      if (preset === 'thisMonth') {
+        from = new Date(now.getFullYear(), now.getMonth(), 1);
+        to = now;
+      } else if (preset === 'prevMonth') {
+        from = new Date(now.getFullYear(), now.getMonth()-1, 1);
+        to = new Date(now.getFullYear(), now.getMonth(), 0);
+      } else if (preset === 'last3') {
+        from = new Date(now.getFullYear(), now.getMonth()-2, 1);
+        to = now;
+      } else {
+        from = null; to = null;
+      }
+      document.getElementById('fDateFrom').value = from ? fmt(from) : '';
+      document.getElementById('fDateTo').value = to ? fmt(to) : '';
+      onFilterChange();
+    }
+
+    function buildMultiSelect(wrapperId, label, values, filterKey) {
+      const wrap = document.getElementById(wrapperId);
+      if (!wrap || !values.length) return;
+      wrap.innerHTML = `
+        <select class="filter-select" multiple size="1"
+          title="${label}"
+          onchange="onMultiSelectChange(this,'${filterKey}')"
+          onfocus="this.size=Math.min(6,this.options.length)"
+          onblur="this.size=1">
+          <option value="" disabled>${label}</option>
+          ${values.map(v =>
+            `<option value="${v}">${v}</option>`
+          ).join('')}
+        </select>`;
+    }
+
+    function onMultiSelectChange(sel, filterKey) {
+      _activeFilters[filterKey] = [...sel.selectedOptions]
+        .map(o => o.value).filter(Boolean);
+      onFilterChange();
+    }
+
+    function onFilterChange() {
+      _activeFilters.dateFrom =
+        document.getElementById('fDateFrom').value || null;
+      _activeFilters.dateTo =
+        document.getElementById('fDateTo').value || null;
+
+      updateFilterBadge();
+      updateFilterChips();
+      applyFiltersAndRender();
+    }
+
+    function updateFilterBadge() {
+      const f = _activeFilters;
+      const count = [
+        f.dateFrom || f.dateTo ? 1 : 0,
+        f.accounts.length,
+        f.environments.length,
+        f.services.length,
+        f.regions.length,
+        f.pricingTerms.length,
+        f.tagProducts.length,
+        f.tagTeams.length,
+      ].reduce((a,b)=>a+b,0);
+
+      const badge = document.getElementById('filterBadge');
+      if (count > 0) {
+        badge.style.display = 'inline';
+        badge.textContent = count;
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+
+    function updateFilterChips() {
+      const chips = document.getElementById('filterChips');
+      const f = _activeFilters;
+      const items = [];
+
+      if (f.dateFrom || f.dateTo)
+        items.push({label:`Date: ${f.dateFrom||'*'} → ${f.dateTo||'*'}`,
+                    clear:()=>{
+                      f.dateFrom=null;f.dateTo=null;
+                      document.getElementById('fDateFrom').value='';
+                      document.getElementById('fDateTo').value='';
+                    }});
+
+      const addChips = (arr, key, prefix) => arr.forEach(v =>
+        items.push({label:`${prefix}: ${v}`,
+                    clear:()=>{
+                      _activeFilters[key] =
+                        _activeFilters[key].filter(x=>x!==v);
+                      // deselect in select element
+                      document.querySelectorAll(
+                        `.filter-select option[value="${v}"]`
+                      ).forEach(o => o.selected = false);
+                    }}));
+
+      addChips(f.accounts,     'accounts',     'Account');
+      addChips(f.environments, 'environments', 'Env');
+      addChips(f.services,     'services',     'Service');
+      addChips(f.regions,      'regions',      'Region');
+      addChips(f.pricingTerms, 'pricingTerms', 'Pricing');
+      addChips(f.tagProducts,  'tagProducts',  'Product');
+      addChips(f.tagTeams,     'tagTeams',     'Team');
+
+      chips.innerHTML = items.map((item,i) => `
+        <span class="filter-chip">
+          ${item.label}
+          <button onclick="removeChip(${i})">×</button>
+        </span>`).join('');
+
+      // Store chip clear functions
+      window._chipClearFns = items.map(i => i.clear);
+    }
+
+    function removeChip(idx) {
+      if (window._chipClearFns && window._chipClearFns[idx]) {
+        window._chipClearFns[idx]();
+        onFilterChange();
+      }
+    }
+
+    function resetFilters() {
+      _activeFilters = {
+        dateFrom:null, dateTo:null,
+        accounts:[], environments:[], services:[],
+        regions:[], pricingTerms:[], tagProducts:[], tagTeams:[],
+      };
+      document.getElementById('fDateFrom').value = '';
+      document.getElementById('fDateTo').value = '';
+      document.querySelectorAll('.filter-select option')
+        .forEach(o => o.selected = false);
+      updateFilterBadge();
+      updateFilterChips();
+      applyFiltersAndRender();
+    }
+
+    function applyFiltersAndRender() {
+      if (_isCompareMode) {
+        // Re-compute each report from its raw rows
+        const filtered = _compareData.reports.map(r => {
+          const rows = _rawRowsMap[r.id] || [];
+          const filteredRows = applyFilters(rows);
+          const computed = computeFromRows(filteredRows);
+          return { ...r, ...computed };
+        });
+        const updatedCompare = { ..._compareData, reports: filtered };
+        _compareData = updatedCompare;
+        renderCompareMode();
+      } else {
+        // Single report mode
+        const filtered = applyFilters(_rawRows);
+        const computed = computeFromRows(filtered);
+        if (computed) {
+          DASH = { ...DASH, ...computed };
+          renderDashboard(DASH);
+        }
+      }
     }
 
     // ── Tab switching ───────────────────────────────────────────────────────────
@@ -1228,6 +1730,15 @@ ${JSON.stringify(payload, null, 2)}
         _compareData = await res.json();
         _isCompareMode = true;
         renderCompareMode();
+
+        // For comparison mode — stream each report's rows for filtering
+        if (_isCompareMode && _compareData) {
+          for (const r of _compareData.reports) {
+            streamReportRows(r.id, null, rows => {
+              _rawRowsMap[r.id] = rows;
+            }).catch(() => {});
+          }
+        }
       } catch(e) {
         showError(`Failed to load comparison: ${e.message}`);
       }
@@ -1809,10 +2320,58 @@ ${JSON.stringify(payload, null, 2)}
           document.getElementById('reportControls').style.display = 'flex';
         }
 
+        _currentFilename = filename;
         buildInfoBar(filename);
         document.getElementById('dashboard').style.display = 'block';
         _loaded.add('overview');
         renderOverview();
+
+        // Stream raw rows for filtering
+        const progEl = document.getElementById('filterProgress');
+        if (progEl) {
+          progEl.style.display = 'inline';
+          progEl.textContent = 'Loading data...';
+        }
+        streamReportRows(
+          currentReportId,
+          (loaded, total) => {
+            if (progEl)
+              progEl.textContent = `Loading ${loaded}/${total} rows...`;
+          },
+          (rows) => {
+            _rawRows = rows;
+            if (progEl) progEl.style.display = 'none';
+            // Populate filter dropdowns from actual data
+            buildMultiSelect('fAccountWrap', 'Account',
+              getDistinctValues(rows,
+                r => r.line_item_usage_account_name ||
+                     r.line_item_usage_account_id),
+              'accounts');
+            buildMultiSelect('fEnvWrap', 'Environment',
+              getDistinctValues(rows,
+                r => r.tag_Environment || r.tag_environment),
+              'environments');
+            buildMultiSelect('fServiceWrap', 'Service',
+              getDistinctValues(rows,
+                r => r.line_item_product_code || r.productname),
+              'services');
+            buildMultiSelect('fRegionWrap', 'Region',
+              getDistinctValues(rows,
+                r => r.product_region || r.region),
+              'regions');
+            buildMultiSelect('fPricingWrap', 'Pricing Term',
+              getDistinctValues(rows, r => r.pricing_term),
+              'pricingTerms');
+            buildMultiSelect('fProductWrap', 'Product Tag',
+              getDistinctValues(rows,
+                r => r.tag_Product || r.tag_product),
+              'tagProducts');
+            buildMultiSelect('fTeamWrap', 'Team Tag',
+              getDistinctValues(rows,
+                r => r.tag_Team || r.tag_team),
+              'tagTeams');
+          }
+        ).catch(() => { if (progEl) progEl.style.display = 'none'; });
       } catch (e) {
         document.getElementById('loadingState').innerHTML = `
           <div class="empty-state" style="margin-top:60px">
