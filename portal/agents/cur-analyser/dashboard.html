@@ -753,18 +753,81 @@
     function buildMultiSelect(wrapperId, label, values, filterKey) {
       const wrap = document.getElementById(wrapperId);
       if (!wrap || !values.length) return;
+      const dropId = `drop_${filterKey}`;
+      const btnId  = `btn_${filterKey}`;
+
       wrap.innerHTML = `
-        <select class="filter-select" multiple size="1"
-          title="${label}"
-          onchange="onMultiSelectChange(this,'${filterKey}')"
-          onfocus="this.size=Math.min(6,this.options.length)"
-          onblur="this.size=1">
-          <option value="" disabled>${label}</option>
-          ${values.map(v =>
-            `<option value="${v}">${v}</option>`
-          ).join('')}
-        </select>`;
+        <div style="position:relative;display:inline-block">
+          <button id="${btnId}"
+            onclick="toggleDrop('${dropId}','${btnId}')"
+            style="border:1px solid var(--border);border-radius:4px;
+                   padding:4px 10px;font-size:.78rem;cursor:pointer;
+                   background:var(--bg,#fff);color:var(--text);
+                   min-width:120px;text-align:left;
+                   display:flex;justify-content:space-between;
+                   align-items:center;gap:6px">
+            <span id="${btnId}_label">${label}</span>
+            <span>▾</span>
+          </button>
+          <div id="${dropId}"
+            style="display:none;position:absolute;top:110%;left:0;
+                   background:var(--bg,#fff);border:1px solid var(--border);
+                   border-radius:6px;padding:6px;min-width:180px;
+                   z-index:200;box-shadow:0 4px 16px rgba(0,0,0,.12);
+                   max-height:200px;overflow-y:auto">
+            ${values.map(v => `
+              <label style="display:flex;align-items:center;gap:6px;
+                            padding:4px 6px;border-radius:4px;
+                            cursor:pointer;font-size:.78rem;
+                            color:var(--text)"
+                     onmouseover="this.style.background='var(--navy-3,#f3f4f6)'"
+                     onmouseout="this.style.background='transparent'">
+                <input type="checkbox" value="${v}"
+                  data-filter="${filterKey}"
+                  onchange="onCheckboxFilterChange('${filterKey}',
+                            '${btnId}_label','${label}')"
+                  style="accent-color:var(--primary,#EA580C)">
+                ${v}
+              </label>`).join('')}
+          </div>
+        </div>`;
     }
+
+    function toggleDrop(dropId, btnId) {
+      // Close all other dropdowns first
+      document.querySelectorAll('[id^="drop_"]').forEach(d => {
+        if (d.id !== dropId) d.style.display = 'none';
+      });
+      const d = document.getElementById(dropId);
+      d.style.display = d.style.display === 'none' ? 'block' : 'none';
+    }
+
+    function onCheckboxFilterChange(filterKey, labelId, label) {
+      const checked = [...document.querySelectorAll(
+        `input[data-filter="${filterKey}"]:checked`
+      )].map(el => el.value);
+      _activeFilters[filterKey] = checked;
+      const labelEl = document.getElementById(labelId);
+      if (labelEl) {
+        labelEl.textContent = checked.length
+          ? `${label} (${checked.length})`
+          : label;
+      }
+      onFilterChange();
+    }
+
+    // Close dropdowns when clicking outside
+    document.addEventListener('click', e => {
+      if (!e.target.closest('[id^="drop_"]') &&
+          !e.target.closest('[id^="btn_"]') &&
+          !e.target.closest('#reportPickerBtn') &&
+          !e.target.closest('#reportPickerDropdown')) {
+        document.querySelectorAll('[id^="drop_"]')
+          .forEach(d => d.style.display = 'none');
+        const dd = document.getElementById('reportPickerDropdown');
+        if (dd) dd.style.display = 'none';
+      }
+    });
 
     function onMultiSelectChange(sel, filterKey) {
       _activeFilters[filterKey] = [...sel.selectedOptions]
@@ -871,23 +934,35 @@
 
     function applyFiltersAndRender() {
       if (_isCompareMode) {
-        // Re-compute each report from its raw rows
         const filtered = _compareData.reports.map(r => {
           const rows = _rawRowsMap[r.id] || [];
           const filteredRows = applyFilters(rows);
           const computed = computeFromRows(filteredRows);
           return { ...r, ...computed };
         });
-        const updatedCompare = { ..._compareData, reports: filtered };
-        _compareData = updatedCompare;
+        _compareData = { ..._compareData, reports: filtered };
         renderCompareMode();
       } else {
-        // Single report mode
         const filtered = applyFilters(_rawRows);
         const computed = computeFromRows(filtered);
         if (computed) {
           DASH = { ...DASH, ...computed };
-          renderDashboard(DASH);
+          // Destroy ALL existing charts before re-rendering
+          Object.keys(charts).forEach(k => destroyChart(k));
+          // Clear ALL tab panels HTML so they re-render fresh
+          document.querySelectorAll('.tab-panel').forEach(p => {
+            if (!p.id.includes('insights')) p.innerHTML = '';
+          });
+          // Clear loaded cache
+          _loaded.clear();
+          // Re-render active tab
+          const activePanel = document.querySelector(
+            '.tab-panel--active');
+          if (activePanel) {
+            const tabName = activePanel.id.replace('tab-','');
+            _loaded.add(tabName);
+            renderTab(tabName);
+          }
         }
       }
     }
