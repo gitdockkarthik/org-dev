@@ -10,9 +10,16 @@ from datetime import date, timedelta
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import Query as FastAPIQuery
 
 from report_store import add_report, list_reports, get_report_rows, persist_report
-from tools.duckdb_engine import get_total_cost
+from tools.duckdb_engine import (
+    get_total_cost, get_cost_by_service, get_daily_trend,
+    get_cost_by_region, get_cost_by_account, get_cost_by_environment,
+    get_cost_by_service_category, get_cost_by_tag,
+    get_untagged_resources, get_cost_by_pricing_term,
+    get_mom_comparison, get_savings_opportunities
+)
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -308,6 +315,167 @@ async def upload_report(file: UploadFile) -> dict:
     )
     await persist_report(report["id"])
     return report
+
+
+def _detect_columns(csv_text: str) -> set[str]:
+    import io, csv
+    reader = csv.reader(io.StringIO(csv_text))
+    headers = next(reader, [])
+    return {h.lower().strip() for h in headers}
+
+def _report_capabilities(cols: set[str]) -> dict:
+    return {
+        "has_service":      any(c in cols for c in
+                                ["line_item_product_code",
+                                 "productname", "servicename"]),
+        "has_date":         any(c in cols for c in
+                                ["line_item_usage_start_date",
+                                 "usagestartdate"]),
+        "has_region":       any(c in cols for c in
+                                ["product_region", "region"]),
+        "has_account":      any(c in cols for c in
+                                ["line_item_usage_account_id",
+                                 "bill_payer_account_id"]),
+        "has_environment":  "tag_environment" in cols,
+        "has_tags":         any(c.startswith("tag_") for c in cols),
+        "has_org_unit":     "org_unit_name" in cols,
+        "has_pricing_term": "pricing_term" in cols,
+        "has_service_category": "service_category" in cols,
+        "has_cost_centre":  "tag_costcentre" in cols,
+        "has_customer":     "tag_customer" in cols,
+        "column_count":     len(cols),
+    }
+
+
+@router.get("/compare")
+async def compare_reports(
+    ids: str = FastAPIQuery(..., description="Comma-separated report IDs")
+) -> dict:
+    from report_store import list_reports, get_report_csv
+    all_reports = {r["id"]: r for r in list_reports()}
+
+    # Parse report IDs
+    try:
+        report_ids = [int(i.strip()) for i in ids.split(",") if i.strip()]
+    except ValueError:
+        raise HTTPException(status_code=400,
+            detail="ids must be comma-separated integers")
+
+    if len(report_ids) < 2:
+        raise HTTPException(status_code=400,
+            detail="At least 2 report IDs required for comparison")
+
+    # Load reports
+    reports_data = []
+    for rid in report_ids:
+        report = all_reports.get(rid)
+        if not report:
+            raise HTTPException(status_code=404,
+                detail=f"Report {rid} not found")
+        csv_text = get_report_csv(rid)
+        if not csv_text:
+            raise HTTPException(status_code=404,
+                detail=f"Report {rid} has no data — please re-upload")
+        cols = _detect_columns(csv_text)
+        caps = _report_capabilities(cols)
+        reports_data.append({
+            "id": rid,
+            "filename": report["filename"],
+            "row_count": report["row_count"],
+            "total_cost": report["total_cost"],
+            "created_at": str(report.get("created_at", "")),
+            "capabilities": caps,
+            "csv_text": csv_text,
+        })
+
+    # Build compatibility matrix
+    # A comparison is possible if ALL selected reports have the capability
+    all_caps = [r["capabilities"] for r in reports_data]
+    compatibility = {
+        cap: all(c.get(cap, False) for c in all_caps)
+        for cap in all_caps[0].keys()
+        if cap != "column_count"
+    }
+
+    # Build per-report summaries
+    summaries = []
+    for r in reports_data:
+        csv_text = r.pop("csv_text")
+        summary = {
+            "id": r["id"],
+            "filename": r["filename"],
+            "row_count": r["row_count"],
+            "total_cost": r["total_cost"],
+            "created_at": r["created_at"],
+            "capabilities": r["capabilities"],
+        }
+
+        # Always include
+        summary["service_breakdown"] = get_cost_by_service(
+            csv_text, limit=15) if r["capabilities"]["has_service"] else []
+        summary["daily_trend"] = get_daily_trend(
+            csv_text) if r["capabilities"]["has_date"] else []
+        summary["monthly_trend"] = []
+        if r["capabilities"]["has_date"]:
+            from tools.dashboard_builder import compute_dashboard
+            dd = compute_dashboard(csv_text)
+            summary["monthly_trend"] = dd.get("monthly_trend", [])
+        summary["region_breakdown"] = get_cost_by_region(
+            csv_text) if r["capabilities"]["has_region"] else []
+
+        # Conditional on capabilities
+        summary["account_breakdown"] = get_cost_by_account(
+            csv_text) if r["capabilities"]["has_account"] else []
+        summary["environment_breakdown"] = get_cost_by_environment(
+            csv_text) if r["capabilities"]["has_environment"] else []
+        summary["service_category_breakdown"] = get_cost_by_service_category(
+            csv_text) if r["capabilities"]["has_service_category"] else []
+        summary["tag_product"] = get_cost_by_tag(
+            csv_text, "tag_Product") if r["capabilities"]["has_tags"] else []
+        summary["tag_team"] = get_cost_by_tag(
+            csv_text, "tag_Team") if r["capabilities"]["has_tags"] else []
+        summary["tag_customer"] = get_cost_by_tag(
+            csv_text, "tag_Customer") if r["capabilities"]["has_customer"] else []
+        summary["tag_costcentre"] = get_cost_by_tag(
+            csv_text, "tag_CostCentre") if r["capabilities"]["has_cost_centre"] else []
+        summary["pricing_term_breakdown"] = get_cost_by_pricing_term(
+            csv_text) if r["capabilities"]["has_pricing_term"] else []
+        summary["untagged_resources"] = get_untagged_resources(
+            csv_text) if r["capabilities"]["has_tags"] else {}
+        summary["savings_opportunities"] = get_savings_opportunities(
+            csv_text) if r["capabilities"]["has_service"] else {}
+
+        summaries.append(summary)
+
+    # Unavailability notes
+    unavailable = []
+    cap_labels = {
+        "has_account":          "Account breakdown",
+        "has_environment":      "Environment breakdown",
+        "has_service_category": "Service category breakdown",
+        "has_tags":             "Tag coverage & breakdown",
+        "has_org_unit":         "Org unit breakdown",
+        "has_pricing_term":     "Pricing term breakdown",
+        "has_cost_centre":      "Cost centre breakdown",
+        "has_customer":         "Customer breakdown",
+    }
+    for cap, label in cap_labels.items():
+        missing = [r["filename"] for r in summaries
+                   if not r["capabilities"].get(cap, False)]
+        if missing:
+            unavailable.append({
+                "feature": label,
+                "missing_in": missing,
+                "available": compatibility.get(cap, False),
+            })
+
+    return {
+        "report_count": len(summaries),
+        "report_ids": report_ids,
+        "compatibility": compatibility,
+        "unavailable_features": unavailable,
+        "reports": summaries,
+    }
 
 
 @router.get("")
