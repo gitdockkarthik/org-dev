@@ -187,6 +187,7 @@ async def _collection_loop() -> None:
                         "sasl_mechanism": c.get("sasl_mechanism", "PLAIN"),
                         "tls_enabled": c.get("tls_enabled", False),
                         "cluster_label": c["name"],
+                        "jmx_port": c.get("jmx_port"),
                     })
                     try:
                         data = await collector.collect()
@@ -249,6 +250,7 @@ async def lifespan(app: FastAPI):
                         "sasl_mechanism": c.get("sasl_mechanism", "PLAIN"),
                         "tls_enabled": c.get("tls_enabled", False),
                         "cluster_label": c["name"],
+                        "jmx_port": c.get("jmx_port"),
                     })
                     data = await collector.collect()
                     _ks.set_cluster_data(
