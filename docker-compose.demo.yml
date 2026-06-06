@@ -34,6 +34,7 @@ services:
     restart: unless-stopped
     ports:
       - "9095:9095"
+      - "9999:9999"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper-demo:2181
@@ -78,9 +79,12 @@ services:
     restart: unless-stopped
     ports:
       - "9094:9094"
+      - "9998:9998"
     environment:
       KAFKA_BROKER_ID: 2
       KAFKA_ZOOKEEPER_CONNECT: zookeeper-nonprod:2181
+      KAFKA_JMX_PORT: 9998
+      KAFKA_JMX_HOSTNAME: kafka-nonprod
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9094
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-nonprod:9094
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
