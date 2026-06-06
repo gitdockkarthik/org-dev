@@ -39,14 +39,14 @@ def get_cluster_data(cluster_id: str | None = None, hours: int | None = None) ->
             return None
         snapshots = _history[cid]
         if hours:
-            cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=float(hours))
             snapshots = [s for s in snapshots if s["ts"] >= cutoff]
         if not snapshots:
             return None
         return snapshots[-1]["data"]
 
 
-def get_cluster_history(cluster_id: str | None = None, hours: int | None = None) -> list[dict[str, Any]]:
+def get_cluster_history(cluster_id: str | None = None, hours: float | None = None) -> list[dict[str, Any]]:
     """Return all snapshots within the time window for trending."""
     with _lock:
         cid = cluster_id or _last_active
@@ -54,7 +54,7 @@ def get_cluster_history(cluster_id: str | None = None, hours: int | None = None)
             return []
         snapshots = _history[cid]
         if hours:
-            cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=float(hours))
             snapshots = [s for s in snapshots if s["ts"] >= cutoff]
         return [{"data": s["data"], "collected_at": s["collected_at"]} for s in snapshots]
 

@@ -307,6 +307,50 @@ Be specific — use actual group names, numbers, and timeframes from the data.""
         }
 
 
+@router.get("/dashboard/topics/history")
+async def get_topics_history(cluster_id: str | None = None, hours: int | None = 24) -> dict:
+    """Return per-topic msgs/sec trend across snapshots for timeline chart."""
+    snapshots = kafka_store.get_cluster_history(cluster_id, hours=hours)
+    if not snapshots:
+        return {"empty": True, "series": []}
+
+    # Collect all topic names across snapshots
+    topic_names: list[str] = []
+    seen: set[str] = set()
+    for snap in snapshots:
+        for t in snap["data"].get("topics", []):
+            name = t.get("name", "")
+            if name and name not in seen and not name.startswith("_"):
+                seen.add(name)
+                topic_names.append(name)
+
+    # Build time labels
+    labels = [s["collected_at"] for s in snapshots]
+
+    # Build one dataset per topic (top 5 by max msgs/sec)
+    topic_maxes: dict[str, float] = {}
+    for name in topic_names:
+        vals = []
+        for snap in snapshots:
+            topics = snap["data"].get("topics", [])
+            match = next((t for t in topics if t.get("name") == name), None)
+            vals.append(match.get("messages_in_per_sec", 0.0) if match else 0.0)
+        topic_maxes[name] = max(vals) if vals else 0.0
+
+    top_topics = sorted(topic_maxes, key=lambda n: topic_maxes[n], reverse=True)[:5]
+
+    series = []
+    for name in top_topics:
+        vals = []
+        for snap in snapshots:
+            topics = snap["data"].get("topics", [])
+            match = next((t for t in topics if t.get("name") == name), None)
+            vals.append(round(match.get("messages_in_per_sec", 0.0), 3) if match else 0.0)
+        series.append({"topic": name, "values": vals})
+
+    return {"labels": labels, "series": series, "snapshot_count": len(snapshots)}
+
+
 @router.post("/dashboard/insights/narrative/stream")
 async def stream_insights_narrative(
     request: Request,
