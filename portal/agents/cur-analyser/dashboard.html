@@ -6,6 +6,7 @@
   <title>CUR Dashboard — UAP</title>
   <link rel="stylesheet" href="/css/style.css?v=3">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
   <style>
     body { background: var(--bg); }
     .subnav { display: flex; background: var(--navy-1); border-bottom: 1px solid var(--border); padding: 0 40px; }
@@ -13,35 +14,100 @@
     .subnav__link:hover { color: var(--text); }
     .subnav__link--active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
     .content { padding: 28px 40px; }
-    .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
-    .kpi-card { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); padding: 20px 24px; }
-    .kpi-card__label { font-size: .75rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; }
-    .kpi-card__value { font-size: 1.8rem; font-weight: 700; color: var(--text); line-height: 1; }
-    .kpi-card__sub { font-size: .8rem; color: var(--text-muted); margin-top: 6px; }
-    .charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
-    .chart-card { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); padding: 20px 24px; }
-    .chart-card__title { font-size: .88rem; font-weight: 600; margin-bottom: 16px; color: var(--text); }
-    .chart-wrap { position: relative; height: 260px; }
-    .section-card { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; margin-bottom: 16px; }
-    .section-card__header { padding: 14px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; font-weight: 600; font-size: .9rem; }
+    .page-heading { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 18px; gap: 16px; flex-wrap: wrap; }
+    .page-heading__title { font-size: 1.4rem; font-weight: 700; margin-bottom: 4px; }
+    .page-heading__sub { font-size: .88rem; color: var(--text-muted); }
+    /* KPI cards */
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(185px, 1fr)); gap: 14px; margin-bottom: 22px; }
+    .kpi { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); padding: 18px 20px; }
+    .kpi__label { font-size: .73rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }
+    .kpi__value { font-size: 1.7rem; font-weight: 700; line-height: 1.1; margin-bottom: 3px; word-break: break-word; }
+    .kpi__sub { font-size: .75rem; color: var(--text-muted); }
+    .kpi--danger  .kpi__value { color: var(--danger); }
+    .kpi--success .kpi__value { color: var(--success); }
+    .kpi--warn    .kpi__value { color: #d97706; }
+    .kpi--orange  .kpi__value { color: #FF6B35; }
+    .kpi--accent  .kpi__value { color: var(--accent); }
+    /* Tab bar — orange active */
+    .tab-bar { display: flex; gap: 4px; margin-bottom: 22px; background: var(--navy-2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 4px; width: fit-content; flex-wrap: wrap; }
+    .tab-btn { padding: 7px 16px; border: none; background: transparent; color: var(--text-muted); font-size: .83rem; font-weight: 500; border-radius: var(--r-xs); cursor: pointer; transition: background var(--t), color var(--t); white-space: nowrap; }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn--active { background: var(--navy-1); color: #FF6B35; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    .tab-panel { display: none; }
+    .tab-panel--active { display: block; }
+    /* Dashboard controls bar */
+    .dash-controls { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:16px; }
+    .dash-select { background:var(--navy-1); border:1px solid var(--border); border-radius:var(--r-xs); padding:6px 10px; font-size:.82rem; color:var(--text); cursor:pointer; max-width:340px; }
+    .dash-select:focus { outline:none; border-color:var(--accent); }
+    .dash-label { font-size:.78rem; color:var(--text-muted); font-weight:500; }
+    /* Info bar */
+    .info-bar { display:flex; flex-wrap:wrap; gap:22px; background:var(--navy-1); border:1px solid var(--border); border-radius:var(--r); padding:12px 20px; margin-bottom:22px; }
+    .info-bar__item { display:flex; flex-direction:column; gap:2px; }
+    .info-bar__k { font-size:.68rem; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); font-weight:600; }
+    .info-bar__v { font-size:.9rem; font-weight:600; color:var(--text); }
+    /* Tables */
+    .data-table-wrap { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); overflow-x: auto; margin-bottom: 16px; }
     .data-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
-    .data-table th { padding: 10px 14px; text-align: left; font-size: .72rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-dim); background: var(--navy-2); border-bottom: 1px solid var(--border); }
-    .data-table td { padding: 11px 14px; border-bottom: 1px solid var(--border); color: var(--text); }
+    .data-table th { padding: 10px 14px; text-align: left; font-size: .72rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-dim); background: var(--navy-2); border-bottom: 1px solid var(--border); white-space: nowrap; }
+    .data-table th.sortable { cursor: pointer; user-select: none; }
+    .data-table th.sortable:hover { color: var(--accent); }
+    .data-table td { padding: 11px 14px; border-bottom: 1px solid var(--border); color: var(--text); vertical-align: middle; }
     .data-table tr:last-child td { border-bottom: none; }
     .data-table tr:hover td { background: var(--navy-3); }
-    .pct-bar { height: 6px; border-radius: 3px; background: var(--accent); display: inline-block; min-width: 2px; }
-    @media (max-width: 900px) { .charts-row { grid-template-columns: 1fr; } }
-    @media (max-width: 768px) { .subnav { padding: 0 20px; } .content { padding: 20px; } }
+    .data-table__empty { padding: 32px; text-align: center; color: var(--text-dim); }
+    /* Charts */
+    .chart-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 16px; margin-bottom: 22px; }
+    .chart-grid--2 { grid-template-columns: 1fr 1fr; }
+    .chart-card { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); padding: 20px; margin-bottom: 16px; }
+    .chart-card__title { font-size: .87rem; font-weight: 600; margin-bottom: 14px; }
+    .chart-wrap { position: relative; height: 280px; }
+    .chart-wrap--tall { height: 340px; }
+    /* Section card */
+    .section-title { font-size: .95rem; font-weight: 700; margin: 8px 0 12px; }
+    .panel-card { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); padding: 18px 20px; margin-bottom: 16px; }
+    /* Progress bars */
+    .progress-bar { background: var(--navy-3); border-radius: 4px; height: 8px; overflow: hidden; width: 100%; min-width: 80px; }
+    .progress-bar__fill { height: 100%; border-radius: 4px; transition: width .3s; }
+    .pct-bar { height: 7px; border-radius: 3px; background: var(--accent); display: inline-block; min-width: 2px; }
+    /* Env badge */
+    .env-badge { display:inline-flex; align-items:center; padding:2px 9px; border-radius:4px; font-size:.72rem; font-weight:700; text-transform:uppercase; }
+    /* Stat badge */
+    .stat-badge { display:inline-flex; flex-direction:column; gap:3px; background:var(--navy-2); border:1px solid var(--border); border-radius:var(--r-sm); padding:12px 18px; min-width:130px; }
+    .stat-badge__v { font-size:1.5rem; font-weight:700; }
+    .stat-badge__l { font-size:.72rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:.04em; font-weight:600; }
+    /* Signals */
+    .signal-list { list-style:none; padding:0; margin:0; }
+    .signal-list li { display:flex; gap:10px; align-items:flex-start; padding:9px 0; border-bottom:1px solid var(--border); font-size:.86rem; color:var(--text); }
+    .signal-list li:last-child { border-bottom:none; }
+    .signal-icon { color:#d97706; flex-shrink:0; }
+    /* Copy button */
+    .copy-btn { background:none; border:1px solid var(--border); border-radius:var(--r-xs); color:var(--text-muted); cursor:pointer; font-size:.7rem; padding:2px 7px; margin-left:6px; }
+    .copy-btn:hover { border-color:var(--accent); color:var(--accent); }
+    /* Heatmap */
+    .heatmap { display:grid; gap:3px; overflow-x:auto; }
+    .heatmap__cell { width:100%; aspect-ratio:1; border-radius:3px; min-width:18px; }
+    .heatmap__rowlabel, .heatmap__collabel { font-size:.68rem; color:var(--text-muted); display:flex; align-items:center; justify-content:center; }
+    /* Coverage row */
+    .cov-row { display:grid; grid-template-columns:140px 1fr 90px 110px; gap:12px; align-items:center; padding:9px 0; border-bottom:1px solid var(--border); font-size:.84rem; }
+    .cov-row:last-child { border-bottom:none; }
+    .cov-row__name { font-weight:600; }
+    .ai-spinner { width:18px; height:18px; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; display:inline-block; animation:spin .7s linear infinite; vertical-align:middle; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .ai-section { margin-bottom:16px; }
+    .ai-content { font-size:.9rem; line-height:1.65; color:var(--text); }
+    .ai-content h1, .ai-content h2, .ai-content h3 { font-size:.95rem; margin:14px 0 6px; color:var(--accent); }
+    .ai-content ul { margin:6px 0 6px 18px; }
+    .ai-content li { margin:3px 0; }
+    .ai-content code { background:var(--navy-2); padding:1px 5px; border-radius:3px; font-size:.85em; }
+    @media (max-width: 900px) { .chart-grid--2 { grid-template-columns: 1fr; } }
+    @media (max-width: 768px) { .subnav { padding: 0 20px; } .content { padding: 20px; } .chart-grid { grid-template-columns: 1fr; } .cov-row { grid-template-columns:110px 1fr 70px; } .cov-row__cost { display:none; } }
   </style>
 </head>
 <body>
 
   <header class="topbar">
     <a href="/" class="topbar__brand">
-      <span style="font-size:1.1rem;
-      font-weight:700;color:#ffffff;
-      letter-spacing:1px;
-      font-family:inherit;">OPERATIVE</span>
+      <span style="font-size:1.1rem;font-weight:700;color:#ffffff;letter-spacing:1px;font-family:inherit;">OPERATIVE</span>
     </a>
     <nav class="topbar__nav">
       <a href="/" class="topbar__link">Agents</a>
@@ -58,65 +124,58 @@
   </nav>
 
   <div class="content">
+    <div class="page-heading">
+      <div>
+        <div class="page-heading__title">CUR Analyser</div>
+        <div class="page-heading__sub">AWS cost &amp; usage breakdown by account, environment, service and tag</div>
+      </div>
+      <div class="dash-controls" id="reportControls" style="display:none">
+        <span class="dash-label" id="viewingLabel">Viewing report:</span>
+        <select class="dash-select" id="reportSelect" onchange="onReportChange()"></select>
+      </div>
+    </div>
+
+    <!-- Empty state -->
     <div id="emptyState" style="display:none">
       <div class="empty-state" style="margin-top:60px">
         <div class="empty-state__icon">📊</div>
         <div class="empty-state__title">No CUR data yet</div>
         <div class="empty-state__sub">
-          <a href="/agents/cur-analyser/reports" style="color:var(--accent)">Upload a CUR CSV or generate sample data</a>
+          <a href="/agents/cur-analyser/reports" style="color:var(--accent)">Upload a CUR file (CSV / ZIP / Parquet) or generate sample data</a>
         </div>
       </div>
     </div>
 
-    <div id="dashboard" style="display:none">
-      <!-- KPI row -->
-      <div class="kpi-row">
-        <div class="kpi-card">
-          <div class="kpi-card__label">Total Cost</div>
-          <div class="kpi-card__value" id="kpiTotal">—</div>
-          <div class="kpi-card__sub" id="kpiRows"></div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-card__label">Top Service</div>
-          <div class="kpi-card__value" id="kpiTopSvc" style="font-size:1.1rem;line-height:1.3">—</div>
-          <div class="kpi-card__sub" id="kpiTopSvcCost"></div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-card__label">Services</div>
-          <div class="kpi-card__value" id="kpiSvcCount">—</div>
-          <div class="kpi-card__sub">distinct services</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-card__label">Date Range</div>
-          <div class="kpi-card__value" id="kpiDays" style="font-size:1.1rem;line-height:1.3">—</div>
-          <div class="kpi-card__sub" id="kpiDateRange"></div>
-        </div>
-      </div>
-
-      <!-- Charts -->
-      <div class="charts-row">
-        <div class="chart-card">
-          <div class="chart-card__title">Top Services by Cost</div>
-          <div class="chart-wrap"><canvas id="svcChart"></canvas></div>
-        </div>
-        <div class="chart-card">
-          <div class="chart-card__title">Daily Cost Trend</div>
-          <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
-        </div>
-      </div>
-
-      <!-- Service breakdown table -->
-      <div class="section-card">
-        <div class="section-card__header">Service Breakdown</div>
-        <div id="svcTable"></div>
-      </div>
-    </div>
-
+    <!-- Loading -->
     <div id="loadingState">
       <div class="empty-state" style="margin-top:60px">
         <div class="empty-state__icon">⏳</div>
         <div class="empty-state__title">Loading dashboard…</div>
       </div>
+    </div>
+
+    <!-- Dashboard -->
+    <div id="dashboard" style="display:none">
+      <!-- Info bar -->
+      <div class="info-bar" id="infoBar"></div>
+
+      <div class="tab-bar">
+        <button class="tab-btn tab-btn--active" data-tab="overview"    onclick="switchTab('overview',this)">Overview</button>
+        <button class="tab-btn"                 data-tab="accounts"    onclick="switchTab('accounts',this)">By Account</button>
+        <button class="tab-btn"                 data-tab="environments" onclick="switchTab('environments',this)">By Environment</button>
+        <button class="tab-btn"                 data-tab="services"    onclick="switchTab('services',this)">By Service</button>
+        <button class="tab-btn"                 data-tab="tags"        onclick="switchTab('tags',this)">Cost Centres &amp; Tags</button>
+        <button class="tab-btn"                 data-tab="trends"      onclick="switchTab('trends',this)">Trends</button>
+        <button class="tab-btn"                 data-tab="insights"    onclick="switchTab('insights',this)">AI Insights</button>
+      </div>
+
+      <div id="tab-overview"     class="tab-panel tab-panel--active"></div>
+      <div id="tab-accounts"     class="tab-panel"></div>
+      <div id="tab-environments" class="tab-panel"></div>
+      <div id="tab-services"     class="tab-panel"></div>
+      <div id="tab-tags"         class="tab-panel"></div>
+      <div id="tab-trends"       class="tab-panel"></div>
+      <div id="tab-insights"     class="tab-panel"></div>
     </div>
   </div>
 
@@ -126,132 +185,923 @@
     const SLUG  = 'cur-analyser';
     const PROXY = `${BACKEND_URL}/api/agents/${SLUG}/proxy`;
 
+    // ── State ──────────────────────────────────────────────────────────────────
+    let DASH = null;        // /dashboard payload
+    let REPORTS = [];       // /reports list
+    let ROWS = [];          // raw rows for the active report (for cross-tabs)
+    let REPORT_ID = null;   // active report_id (from URL) or null = latest
+    const charts = {};
+    const _loaded = new Set();
+    let _insightsTs = null;
+    const _insightsCache = {};    // keyed by report_id
+    const _insightsCacheTs = {};
+
+    // Service → category map (mirrors the synthetic generator) for client-side labelling
+    const SERVICE_CAT = {
+      'Amazon EC2':'Compute','Amazon ECS':'Compute','AWS Lambda':'Compute',
+      'Amazon RDS':'Database','Amazon DynamoDB':'Database','Amazon ElastiCache':'Database',
+      'Amazon S3':'Storage','Amazon ECR':'Storage',
+      'Amazon CloudFront':'Network','Amazon Route 53':'Network',
+      'AWS WAF':'Security','AWS Secrets Manager':'Security',
+      'Amazon CloudWatch':'Observability','Amazon Kinesis':'Streaming',
+      'Amazon OpenSearch Service':'Analytics',
+    };
+
+    const PALETTE = ['#6366f1','#FF6B35','#16a34a','#d97706','#3b82f6','#8b5cf6',
+                     '#ec4899','#14b8a6','#f59e0b','#ef4444','#64748b','#0ea5e9'];
+    const ENV_COLOR = { prod:'#dc2626', staging:'#d97706', nonprod:'#3b82f6', dev:'#16a34a', Untagged:'#64748b' };
+
+    // ── Helpers ─────────────────────────────────────────────────────────────────
     async function api(path) {
-      const res = await fetch(`${PROXY}${path}`, { headers: _authHeaders() });
+      const res = await fetch(`${PROXY}${path}`, { headers: _authHeaders(), cache: 'no-store' });
       if (!res.ok) {
         const e = await res.json().catch(() => ({ detail: res.statusText }));
         throw new Error(e.detail || `HTTP ${res.status}`);
       }
       return res.json();
     }
+    function fmtUSD(v) { return '$' + Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+    function fmtUSD0(v) { return '$' + Math.round(Number(v || 0)).toLocaleString('en-US'); }
+    function fmtPct(v) { return (Number(v || 0)).toFixed(1) + '%'; }
+    function fmtNum(n) { return Number(n || 0).toLocaleString('en-US'); }
+    function shortSvc(s) { return (s || '').replace('Amazon ', '').replace('AWS ', ''); }
+    function destroyChart(k) { if (charts[k]) { charts[k].destroy(); delete charts[k]; } }
+    function escapeHtml(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function covColor(pct) { return pct > 80 ? 'var(--success)' : pct >= 50 ? '#d97706' : 'var(--danger)'; }
+    function envColor(env) { return ENV_COLOR[env] || '#8b5cf6'; }
+    function emptyTable(cols, msg) { return `<tr><td colspan="${cols}" class="data-table__empty">${msg}</td></tr>`; }
 
-    function formatUSD(v) {
-      return '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    function dateRange() {
+      const t = (DASH && DASH.daily_trend) || [];
+      if (!t.length) return { first: '—', last: '—', days: 0 };
+      return { first: t[0].date, last: t[t.length - 1].date, days: t.length };
     }
 
-    let svcChart, trendChart;
+    function copyText(btn, text) {
+      const done = () => { const o = btn.textContent; btn.textContent = '✓'; setTimeout(() => btn.textContent = o, 1200); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+      } else { fallbackCopy(text, done); }
+    }
+    function fallbackCopy(text, done) {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch (_) {}
+      document.body.removeChild(ta); done();
+    }
 
-    async function load() {
-      await portalReady;
+    // ── Cross-tabs from raw rows ─────────────────────────────────────────────────
+    function rowCost(r) { return parseFloat(r.line_item_unblended_cost || r.line_item_blended_cost || 0) || 0; }
+    function rowEnv(r) { const e = (r.tag_Environment || '').trim(); return e || 'Untagged'; }
+
+    function envByMonth() {
+      // returns { months:[...], envs:[...], matrix: {env: {month: cost}} }
+      const months = new Set(), envs = new Set(), m = {};
+      ROWS.forEach(r => {
+        const d = (r.line_item_usage_start_date || '').slice(0, 7);
+        if (!d) return;
+        const env = rowEnv(r);
+        months.add(d); envs.add(env);
+        m[env] = m[env] || {};
+        m[env][d] = (m[env][d] || 0) + rowCost(r);
+      });
+      return { months: [...months].sort(), envs: [...envs], matrix: m };
+    }
+
+    function envByCategory() {
+      const cats = new Set(), envs = new Set(), m = {};
+      ROWS.forEach(r => {
+        const env = rowEnv(r);
+        const cat = (r.service_category || '').trim() || '—';
+        cats.add(cat); envs.add(env);
+        m[env] = m[env] || {};
+        m[env][cat] = (m[env][cat] || 0) + rowCost(r);
+      });
+      return { cats: [...cats].sort(), envs: [...envs].sort(), matrix: m };
+    }
+
+    function dayWeekHeatmap() {
+      // rows = day-of-week (Mon..Sun), cols = week index from first date
+      const t = (DASH.daily_trend || []).filter(d => d.date);
+      if (!t.length) return null;
+      const first = new Date(t[0].date + 'T00:00:00Z');
+      const cells = {}; let maxWeek = 0, maxCost = 0;
+      t.forEach(d => {
+        const dt = new Date(d.date + 'T00:00:00Z');
+        const week = Math.floor((dt - first) / (7 * 86400000));
+        let dow = dt.getUTCDay(); dow = dow === 0 ? 6 : dow - 1; // Mon=0 .. Sun=6
+        cells[`${dow}:${week}`] = (cells[`${dow}:${week}`] || 0) + d.cost;
+        if (week > maxWeek) maxWeek = week;
+        if (cells[`${dow}:${week}`] > maxCost) maxCost = cells[`${dow}:${week}`];
+      });
+      return { cells, weeks: maxWeek + 1, maxCost };
+    }
+
+    // ── Chart builders ────────────────────────────────────────────────────────────
+    function hbar(key, canvasId, labels, data, colors) {
+      const ctx = document.getElementById(canvasId);
+      if (!ctx) return;
+      destroyChart(key);
+      charts[key] = new Chart(ctx.getContext('2d'), {
+        type: 'bar',
+        data: { labels, datasets: [{ data, backgroundColor: colors || '#6366f1', borderRadius: 4 }] },
+        options: {
+          indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => fmtUSD(c.parsed.x) } } },
+          scales: { x: { ticks: { callback: v => '$' + Number(v).toLocaleString() } }, y: { grid: { display: false } } },
+        },
+      });
+    }
+    function donut(key, canvasId, labels, data) {
+      const ctx = document.getElementById(canvasId);
+      if (!ctx) return;
+      destroyChart(key);
+      charts[key] = new Chart(ctx.getContext('2d'), {
+        type: 'doughnut',
+        data: { labels, datasets: [{ data, backgroundColor: labels.map((_, i) => PALETTE[i % PALETTE.length]) }] },
+        options: {
+          responsive: true, maintainAspectRatio: false, cutout: '58%',
+          plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } },
+                     tooltip: { callbacks: { label: c => `${c.label}: ${fmtUSD(c.parsed)}` } } },
+        },
+      });
+    }
+
+    // ── Tab switching ───────────────────────────────────────────────────────────
+    function switchTab(name, btn) {
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('tab-panel--active'));
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('tab-btn--active'));
+      document.getElementById('tab-' + name).classList.add('tab-panel--active');
+      btn.classList.add('tab-btn--active');
+      if (!_loaded.has(name)) { _loaded.add(name); renderTab(name); }
+    }
+    function renderTab(name) {
       try {
-        const data = await api('/dashboard');
+        if (name === 'overview')     renderOverview();
+        if (name === 'accounts')     renderAccounts();
+        if (name === 'environments') renderEnvironments();
+        if (name === 'services')     renderServices();
+        if (name === 'tags')         renderTags();
+        if (name === 'trends')       renderTrends();
+        if (name === 'insights')     renderInsights();
+      } catch (e) {
+        document.getElementById('tab-' + name).innerHTML =
+          `<div class="empty-state" style="margin-top:30px"><div class="empty-state__icon">⚠</div>
+           <div class="empty-state__title">Failed to render</div>
+           <div class="empty-state__sub">${escapeHtml(e.message)}</div></div>`;
+      }
+    }
+
+    // ── TAB 1: Overview ───────────────────────────────────────────────────────────
+    function renderOverview() {
+      const svc = DASH.service_breakdown || [];
+      const total = DASH.total_cost || 0;
+      const top = DASH.top_service || svc[0] || null;
+      const dr = dateRange();
+      const sav = DASH.savings_opportunities || {};
+      const signals = sav.savings_signals || [];
+
+      const svcRows = svc.map(s => {
+        const pct = total ? (s.cost / total) * 100 : 0;
+        const barW = Math.min(100, total ? (s.cost / (svc[0].cost || 1)) * 100 : 0);
+        return `<tr>
+          <td style="font-weight:600">${escapeHtml(s.service)}</td>
+          <td style="font-weight:600;color:var(--accent)">${fmtUSD(s.cost)}</td>
+          <td>${fmtPct(pct)}</td>
+          <td style="min-width:160px"><div class="progress-bar"><div class="progress-bar__fill" style="width:${barW}%;background:var(--accent)"></div></div></td>
+        </tr>`;
+      }).join('') || emptyTable(4, 'No services');
+
+      const signalsHtml = signals.length
+        ? `<ul class="signal-list">${signals.map(s => `<li><span class="signal-icon">⚠</span><span>${escapeHtml(s)}</span></li>`).join('')}</ul>`
+        : `<div style="color:var(--success);font-size:.88rem">✅ No savings signals detected.</div>`;
+
+      document.getElementById('tab-overview').innerHTML = `
+        <div class="kpi-grid">
+          <div class="kpi kpi--accent">
+            <div class="kpi__label">Total Cost</div>
+            <div class="kpi__value">${fmtUSD(total)}</div>
+            <div class="kpi__sub">${fmtNum(DASH.row_count)} line items</div>
+          </div>
+          <div class="kpi kpi--orange">
+            <div class="kpi__label">Top Service</div>
+            <div class="kpi__value" style="font-size:1.15rem">${top ? escapeHtml(shortSvc(top.service)) : '—'}</div>
+            <div class="kpi__sub">${top ? fmtUSD(top.cost) : ''}</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi__label">Total Services</div>
+            <div class="kpi__value">${svc.length}</div>
+            <div class="kpi__sub">distinct services</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi__label">Date Range</div>
+            <div class="kpi__value" style="font-size:1.15rem">${dr.days}d</div>
+            <div class="kpi__sub">${dr.first} → ${dr.last}</div>
+          </div>
+        </div>
+
+        <div class="chart-grid chart-grid--2">
+          <div class="chart-card"><div class="chart-card__title">Top 10 Services by Cost</div>
+            <div class="chart-wrap"><canvas id="ovSvcChart"></canvas></div></div>
+          <div class="chart-card"><div class="chart-card__title">Monthly Cost Trend</div>
+            <div class="chart-wrap"><canvas id="ovTrendChart"></canvas></div></div>
+        </div>
+
+        <div class="panel-card">
+          <div class="section-title">💡 Savings Opportunities</div>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:16px">
+            <div class="stat-badge"><span class="stat-badge__v" style="color:#d97706">${fmtPct(sav.on_demand_pct)}</span><span class="stat-badge__l">On-Demand spend</span></div>
+            <div class="stat-badge"><span class="stat-badge__v" style="color:var(--danger)">${fmtPct(sav.untagged_pct)}</span><span class="stat-badge__l">Untagged (no owner)</span></div>
+            <div class="stat-badge"><span class="stat-badge__v">${fmtUSD0(sav.on_demand_cost)}</span><span class="stat-badge__l">On-Demand cost</span></div>
+          </div>
+          ${signalsHtml}
+        </div>
+
+        <div class="panel-card" style="padding:0;overflow:hidden">
+          <div class="section-title" style="padding:16px 20px 0">Service Breakdown</div>
+          <div class="data-table-wrap" style="border:none;margin:0">
+            <table class="data-table">
+              <thead><tr><th>Service</th><th>Cost</th><th>% of Total</th><th></th></tr></thead>
+              <tbody>${svcRows}</tbody>
+            </table>
+          </div>
+        </div>`;
+
+      const top10 = svc.slice(0, 10);
+      hbar('ovSvc', 'ovSvcChart', top10.map(s => shortSvc(s.service)), top10.map(s => s.cost), '#6366f1');
+
+      const mt = DASH.monthly_trend || [];
+      destroyChart('ovTrend');
+      const tctx = document.getElementById('ovTrendChart');
+      if (tctx) {
+        charts['ovTrend'] = new Chart(tctx.getContext('2d'), {
+          type: 'line',
+          data: { labels: mt.map(m => m.month), datasets: [{ label: 'Monthly Cost', data: mt.map(m => m.cost),
+            borderColor: '#FF6B35', backgroundColor: 'rgba(255,107,53,.12)', fill: true, tension: .35, pointRadius: 3 }] },
+          options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+            scales: { y: { ticks: { callback: v => '$' + Number(v).toLocaleString() } } } },
+        });
+      }
+    }
+
+    // ── TAB 2: By Account ──────────────────────────────────────────────────────────
+    function renderAccounts() {
+      const acc = DASH.account_breakdown || [];
+      const ou = DASH.org_unit_breakdown || [];
+      const total = DASH.total_cost || 0;
+
+      const accRows = acc.map(a => {
+        const pct = total ? (a.cost / total) * 100 : 0;
+        return `<tr>
+          <td><code style="font-size:.8rem">${escapeHtml(a.account_id)}</code></td>
+          <td style="font-weight:600">${escapeHtml(a.account_name || '—')}</td>
+          <td>${escapeHtml((ouFor(a.account_name) || '—'))}</td>
+          <td style="font-weight:600;color:var(--accent)">${fmtUSD(a.cost)}</td>
+          <td>${fmtPct(pct)}</td>
+          <td style="text-align:right">${fmtNum(a.row_count)}</td>
+        </tr>`;
+      }).join('') || emptyTable(6, 'No account data');
+
+      const ouRows = ou.map(o => `<tr>
+        <td style="font-weight:600">${escapeHtml(o.org_unit)}</td>
+        <td style="color:var(--accent);font-weight:600">${fmtUSD(o.cost)}</td>
+        <td>${fmtPct(o.pct_of_total)}</td></tr>`).join('') || emptyTable(3, 'No org-unit data');
+
+      document.getElementById('tab-accounts').innerHTML = `
+        <div class="kpi-grid">
+          <div class="kpi kpi--accent"><div class="kpi__label">Accounts</div><div class="kpi__value">${acc.length}</div><div class="kpi__sub">linked accounts</div></div>
+          <div class="kpi"><div class="kpi__label">Total Cost</div><div class="kpi__value" style="font-size:1.3rem">${fmtUSD(total)}</div><div class="kpi__sub">across all accounts</div></div>
+          <div class="kpi"><div class="kpi__label">Org Units</div><div class="kpi__value">${ou.length}</div><div class="kpi__sub">organizational units</div></div>
+        </div>
+        <div class="chart-card"><div class="chart-card__title">Cost per Account</div>
+          <div class="chart-wrap"><canvas id="accChart"></canvas></div></div>
+        <div class="panel-card" style="padding:0;overflow:hidden">
+          <div class="section-title" style="padding:16px 20px 0">Account Breakdown</div>
+          <div class="data-table-wrap" style="border:none;margin:0"><table class="data-table">
+            <thead><tr><th>Account ID</th><th>Name</th><th>Org Unit</th><th>Cost</th><th>% of Total</th><th style="text-align:right">Rows</th></tr></thead>
+            <tbody>${accRows}</tbody></table></div>
+        </div>
+        <div class="section-title">Org Unit Breakdown</div>
+        <div class="chart-grid chart-grid--2">
+          <div class="chart-card"><div class="chart-card__title">Cost by Org Unit</div>
+            <div class="chart-wrap"><canvas id="ouChart"></canvas></div></div>
+          <div class="panel-card" style="padding:0;overflow:hidden">
+            <div class="data-table-wrap" style="border:none;margin:0"><table class="data-table">
+              <thead><tr><th>Org Unit</th><th>Cost</th><th>% of Total</th></tr></thead>
+              <tbody>${ouRows}</tbody></table></div>
+          </div>
+        </div>`;
+
+      hbar('acc', 'accChart', acc.map(a => a.account_name || a.account_id), acc.map(a => a.cost),
+           acc.map((_, i) => PALETTE[i % PALETTE.length]));
+      donut('ou', 'ouChart', ou.map(o => o.org_unit), ou.map(o => o.cost));
+    }
+    let _acctOuMap = null;
+    function ouFor(name) {
+      if (_acctOuMap === null) {
+        _acctOuMap = {};
+        ROWS.forEach(r => {
+          const an = r.line_item_usage_account_name;
+          if (an && r.org_unit_name && !_acctOuMap[an]) _acctOuMap[an] = r.org_unit_name;
+        });
+      }
+      return _acctOuMap[name] || null;
+    }
+
+    // ── TAB 3: By Environment ───────────────────────────────────────────────────────
+    function renderEnvironments() {
+      const env = DASH.environment_breakdown || [];
+      const total = DASH.total_cost || 0;
+
+      const kpis = ['prod', 'staging', 'nonprod', 'dev'].map(name => {
+        const e = env.find(x => (x.environment || '').toLowerCase() === name);
+        const cost = e ? e.cost : 0; const pct = e ? e.pct_of_total : 0;
+        return `<div class="kpi"><div class="kpi__label"><span class="env-badge" style="background:${envColor(name)}22;color:${envColor(name)}">${name}</span></div>
+          <div class="kpi__value" style="font-size:1.25rem">${fmtUSD0(cost)}</div>
+          <div class="kpi__sub">${fmtPct(pct)} of total</div></div>`;
+      }).join('');
+
+      const rows = env.map(e => {
+        const c = envColor((e.environment || '').toLowerCase());
+        return `<tr>
+          <td><span class="env-badge" style="background:${c}22;color:${c}">${escapeHtml(e.environment)}</span></td>
+          <td style="font-weight:600;color:var(--accent)">${fmtUSD(e.cost)}</td>
+          <td>${fmtPct(e.pct_of_total)}</td>
+          <td>${escapeHtml(e.env_owner_team || '—')}</td>
+          <td style="font-size:.82rem;color:var(--text-muted)">${escapeHtml(e.env_owner_email || '—')}</td>
+        </tr>`;
+      }).join('') || emptyTable(5, 'No environment data');
+
+      // env × category matrix (computed from raw rows)
+      const ec = ROWS.length ? envByCategory() : null;
+      let matrixHtml;
+      if (ec && ec.envs.length) {
+        const header = `<th>Environment</th>${ec.cats.map(c => `<th style="text-align:right">${escapeHtml(c)}</th>`).join('')}<th style="text-align:right">Total</th>`;
+        const body = ec.envs.map(en => {
+          const row = ec.matrix[en] || {};
+          let rowTotal = 0;
+          const cells = ec.cats.map(c => { const v = row[c] || 0; rowTotal += v; return `<td style="text-align:right">${v ? fmtUSD0(v) : '—'}</td>`; }).join('');
+          const ce = envColor(en.toLowerCase());
+          return `<tr><td><span class="env-badge" style="background:${ce}22;color:${ce}">${escapeHtml(en)}</span></td>${cells}<td style="text-align:right;font-weight:600">${fmtUSD0(rowTotal)}</td></tr>`;
+        }).join('');
+        matrixHtml = `<div class="data-table-wrap"><table class="data-table"><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table></div>`;
+      } else {
+        matrixHtml = `<div class="data-table__empty">Line-level data unavailable for this report.</div>`;
+      }
+
+      document.getElementById('tab-environments').innerHTML = `
+        <div class="kpi-grid">${kpis}</div>
+        <div class="chart-card"><div class="chart-card__title">Cost by Environment per Month</div>
+          <div class="chart-wrap chart-wrap--tall"><canvas id="envMonthChart"></canvas></div></div>
+        <div class="panel-card" style="padding:0;overflow:hidden">
+          <div class="section-title" style="padding:16px 20px 0">Environment Ownership &amp; Cost</div>
+          <div class="data-table-wrap" style="border:none;margin:0"><table class="data-table">
+            <thead><tr><th>Environment</th><th>Cost</th><th>% of Total</th><th>Owner Team</th><th>Owner Email</th></tr></thead>
+            <tbody>${rows}</tbody></table></div>
+        </div>
+        <div class="section-title">Environment × Service Category</div>
+        ${matrixHtml}`;
+
+      // stacked bar: env per month
+      if (ROWS.length) {
+        const em = envByMonth();
+        destroyChart('envMonth');
+        const ctx = document.getElementById('envMonthChart');
+        if (ctx) {
+          charts['envMonth'] = new Chart(ctx.getContext('2d'), {
+            type: 'bar',
+            data: { labels: em.months, datasets: em.envs.map(en => ({
+              label: en, backgroundColor: envColor(en.toLowerCase()),
+              data: em.months.map(mo => Math.round((em.matrix[en] && em.matrix[en][mo]) || 0)) })) },
+            options: { responsive: true, maintainAspectRatio: false,
+              plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+                         tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmtUSD(c.parsed.y)}` } } },
+              scales: { x: { stacked: true }, y: { stacked: true, ticks: { callback: v => '$' + Number(v).toLocaleString() } } } },
+          });
+        }
+      } else {
+        const el = document.getElementById('envMonthChart');
+        if (el) el.parentElement.innerHTML = '<div class="data-table__empty">Line-level data unavailable for monthly split.</div>';
+      }
+    }
+
+    // ── TAB 4: By Service ────────────────────────────────────────────────────────────
+    let _svcSort = { col: 'cost', dir: 'desc' };
+    function renderServices() {
+      const cat = DASH.service_category_breakdown || [];
+      const svc = DASH.service_breakdown || [];
+      const res = DASH.top_resources || [];
+      const total = DASH.total_cost || 0;
+      const top = DASH.top_service || svc[0] || null;
+      const topCat = cat[0] || null;
+
+      const catRows = cat.map(c => `<tr>
+        <td style="font-weight:600">${escapeHtml(c.category)}</td>
+        <td>${escapeHtml(c.owner_team || '—')}</td>
+        <td style="font-size:.82rem;color:var(--text-muted)">${escapeHtml(c.owner_email || '—')}</td>
+        <td style="color:var(--accent);font-weight:600">${fmtUSD(c.cost)}</td>
+        <td>${fmtPct(c.pct_of_total)}</td></tr>`).join('') || emptyTable(5, 'No category data');
+
+      const resRows = res.map((r, i) => {
+        const full = r.resource_id || '';
+        const short = full.length > 28 ? full.slice(0, 14) + '…' + full.slice(-10) : full;
+        return `<tr>
+          <td><code style="font-size:.78rem" title="${escapeHtml(full)}">${escapeHtml(short)}</code>
+              <button class="copy-btn" onclick='copyText(this, ${JSON.stringify(full)})'>copy</button></td>
+          <td>${escapeHtml(shortSvc(r.service))}</td>
+          <td>${escapeHtml(r.region || '—')}</td>
+          <td>${escapeHtml(r.environment || '—')}</td>
+          <td>${escapeHtml(r.team || '—')}</td>
+          <td style="color:var(--accent);font-weight:600">${fmtUSD(r.cost)}</td>
+        </tr>`;
+      }).join('') || emptyTable(6, 'No resource data');
+
+      document.getElementById('tab-services').innerHTML = `
+        <div class="kpi-grid">
+          <div class="kpi kpi--accent"><div class="kpi__label">Total Services</div><div class="kpi__value">${svc.length}</div><div class="kpi__sub">distinct services</div></div>
+          <div class="kpi kpi--orange"><div class="kpi__label">Top Service</div><div class="kpi__value" style="font-size:1.15rem">${top ? escapeHtml(shortSvc(top.service)) : '—'}</div><div class="kpi__sub">${top ? fmtUSD(top.cost) : ''}</div></div>
+          <div class="kpi"><div class="kpi__label">Top Category</div><div class="kpi__value" style="font-size:1.15rem">${topCat ? escapeHtml(topCat.category) : '—'}</div><div class="kpi__sub">${topCat ? fmtUSD(topCat.cost) : ''}</div></div>
+        </div>
+        <div class="chart-card"><div class="chart-card__title">Cost by Service Category</div>
+          <div class="chart-wrap"><canvas id="catChart"></canvas></div></div>
+        <div class="panel-card" style="padding:0;overflow:hidden">
+          <div class="section-title" style="padding:16px 20px 0">Service Category &amp; Ownership</div>
+          <div class="data-table-wrap" style="border:none;margin:0"><table class="data-table">
+            <thead><tr><th>Category</th><th>Owner Team</th><th>Owner Email</th><th>Cost</th><th>% of Total</th></tr></thead>
+            <tbody>${catRows}</tbody></table></div>
+        </div>
+        <div class="section-title">Full Service Breakdown</div>
+        <div class="data-table-wrap"><table class="data-table">
+          <thead><tr>
+            <th class="sortable" onclick="sortSvc('service')">Service ⇅</th>
+            <th class="sortable" onclick="sortSvc('category')">Category ⇅</th>
+            <th class="sortable" onclick="sortSvc('cost')">Cost ⇅</th>
+            <th class="sortable" onclick="sortSvc('pct')">% of Total ⇅</th>
+          </tr></thead>
+          <tbody id="svcSortBody"></tbody>
+        </table></div>
+        <div class="section-title">Top 10 Resources</div>
+        <div class="data-table-wrap"><table class="data-table">
+          <thead><tr><th>Resource ID</th><th>Service</th><th>Region</th><th>Environment</th><th>Team</th><th>Cost</th></tr></thead>
+          <tbody>${resRows}</tbody></table></div>`;
+
+      hbar('cat', 'catChart', cat.map(c => `${c.category} · ${c.owner_team || ''}`.trim()), cat.map(c => c.cost),
+           cat.map((_, i) => PALETTE[i % PALETTE.length]));
+      renderSvcSortBody();
+    }
+    function sortSvc(col) {
+      if (_svcSort.col === col) _svcSort.dir = _svcSort.dir === 'asc' ? 'desc' : 'asc';
+      else { _svcSort.col = col; _svcSort.dir = col === 'service' || col === 'category' ? 'asc' : 'desc'; }
+      renderSvcSortBody();
+    }
+    function renderSvcSortBody() {
+      const total = DASH.total_cost || 0;
+      const rows = (DASH.service_breakdown || []).map(s => ({
+        service: s.service, category: SERVICE_CAT[s.service] || '—', cost: s.cost,
+        pct: total ? (s.cost / total) * 100 : 0,
+      }));
+      const { col, dir } = _svcSort, mul = dir === 'asc' ? 1 : -1;
+      rows.sort((a, b) => (typeof a[col] === 'string' ? a[col].localeCompare(b[col]) : a[col] - b[col]) * mul);
+      document.getElementById('svcSortBody').innerHTML = rows.map(r => `<tr>
+        <td style="font-weight:600">${escapeHtml(r.service)}</td>
+        <td>${escapeHtml(r.category)}</td>
+        <td style="color:var(--accent);font-weight:600">${fmtUSD(r.cost)}</td>
+        <td>${fmtPct(r.pct)}</td></tr>`).join('') || emptyTable(4, 'No services');
+    }
+
+    // ── TAB 5: Cost Centres & Tags ─────────────────────────────────────────────────
+    function renderTags() {
+      const ut = DASH.untagged_resources || { tag_coverage: [], overall_coverage_pct: 0 };
+      const cov = ut.tag_coverage || [];
+
+      const covRows = cov.map(c => {
+        const col = covColor(c.coverage_pct);
+        const label = c.tag.replace(/^tag_/, '');
+        return `<div class="cov-row">
+          <div class="cov-row__name">${escapeHtml(label)}</div>
+          <div class="progress-bar"><div class="progress-bar__fill" style="width:${c.coverage_pct}%;background:${col}"></div></div>
+          <div style="color:${col};font-weight:700">${fmtPct(c.coverage_pct)}</div>
+          <div class="cov-row__cost" style="color:var(--text-muted);font-size:.8rem">${fmtUSD0(c.untagged_cost)} untagged</div>
+        </div>`;
+      }).join('') || '<div class="data-table__empty">No tag columns found.</div>';
+
+      const overall = ut.overall_coverage_pct || 0;
+      const ocol = covColor(overall);
+
+      // recommendations from coverage gaps
+      const gaps = cov.filter(c => c.coverage_pct < 80).sort((a, b) => b.untagged_cost - a.untagged_cost);
+      const recs = gaps.length
+        ? gaps.map(c => `<li><span class="signal-icon">→</span><span>Improve <strong>${escapeHtml(c.tag.replace(/^tag_/, ''))}</strong> coverage (currently ${fmtPct(c.coverage_pct)}) — ${fmtUSD0(c.untagged_cost)} of spend is untagged.</span></li>`).join('')
+        : '<li><span style="color:var(--success)">✅</span><span>All tags above 80% coverage — tagging hygiene is healthy.</span></li>';
+
+      const tagSection = (title, breakdown, chartId) => {
+        const rows = (breakdown || []).map(t => `<tr><td style="font-weight:600">${escapeHtml(t.tag_value)}</td>
+          <td style="color:var(--accent);font-weight:600">${fmtUSD(t.cost)}</td><td>${fmtPct(t.pct_of_total)}</td></tr>`).join('')
+          || emptyTable(3, 'No data');
+        return `<div class="panel-card">
+          <div class="chart-card__title">${title}</div>
+          <div class="chart-wrap" style="height:220px"><canvas id="${chartId}"></canvas></div>
+          <div class="data-table-wrap" style="margin-top:12px"><table class="data-table">
+            <thead><tr><th>Value</th><th>Cost</th><th>% of Total</th></tr></thead><tbody>${rows}</tbody></table></div>
+        </div>`;
+      };
+
+      document.getElementById('tab-tags').innerHTML = `
+        <div class="panel-card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+            <div class="section-title" style="margin:0">Tag Coverage</div>
+            <div class="stat-badge" style="background:${ocol}18;border-color:${ocol}44">
+              <span class="stat-badge__v" style="color:${ocol}">${fmtPct(overall)}</span>
+              <span class="stat-badge__l">Overall coverage</span>
+            </div>
+          </div>
+          ${covRows}
+        </div>
+        <div class="chart-grid chart-grid--2">
+          ${tagSection('By Product', DASH.tag_product_breakdown, 'tagProdChart')}
+          ${tagSection('By Team', DASH.tag_team_breakdown, 'tagTeamChart')}
+          ${tagSection('By Customer', DASH.tag_customer_breakdown, 'tagCustChart')}
+          ${tagSection('By Cost Centre', DASH.tag_costcentre_breakdown, 'tagCCChart')}
+        </div>
+        <div class="panel-card" style="border-color:var(--accent)">
+          <div class="section-title" style="color:var(--accent)">🤖 AI Tagging Recommendations</div>
+          <div style="font-size:.86rem;color:var(--text-muted);margin-bottom:8px">Based on tag coverage analysis, the following improvements are recommended:</div>
+          <ul class="signal-list">${recs}</ul>
+        </div>`;
+
+      const bar = (id, data) => hbar(id, id, (data || []).map(t => t.tag_value), (data || []).map(t => t.cost),
+        (data || []).map((_, i) => PALETTE[i % PALETTE.length]));
+      bar('tagProdChart', DASH.tag_product_breakdown);
+      bar('tagTeamChart', DASH.tag_team_breakdown);
+      bar('tagCustChart', DASH.tag_customer_breakdown);
+      bar('tagCCChart', DASH.tag_costcentre_breakdown);
+    }
+
+    // ── TAB 6: Trends ─────────────────────────────────────────────────────────────
+    function renderTrends() {
+      const mt = DASH.monthly_trend || [];
+      const mom = DASH.mom_comparison || [];
+      const pricing = DASH.pricing_term_breakdown || [];
+      const region = DASH.region_breakdown || [];
+      const total = DASH.total_cost || 0;
+
+      // top service per month from mom_comparison (already ordered month, cost desc)
+      const topByMonth = {};
+      mom.forEach(r => { if (!topByMonth[r.month]) topByMonth[r.month] = r; });
+
+      const momRows = mt.map((m, i) => {
+        const prev = i > 0 ? mt[i - 1].cost : null;
+        const chg = prev ? ((m.cost - prev) / prev) * 100 : null;
+        const top = topByMonth[m.month];
+        const chgHtml = chg === null ? '<span style="color:var(--text-muted)">—</span>'
+          : chg > 0 ? `<span style="color:var(--danger);font-weight:600">▲ ${chg.toFixed(1)}%</span>`
+          : `<span style="color:var(--success);font-weight:600">▼ ${Math.abs(chg).toFixed(1)}%</span>`;
+        return `<tr><td style="font-weight:600">${escapeHtml(m.month)}</td>
+          <td style="color:var(--accent);font-weight:600">${fmtUSD(m.cost)}</td>
+          <td>${top ? escapeHtml(shortSvc(top.service)) : '—'}</td>
+          <td>${chgHtml}</td></tr>`;
+      }).join('') || emptyTable(4, 'No monthly data');
+
+      const priceRows = pricing.map(p => `<tr><td style="font-weight:600">${escapeHtml(p.pricing_term)}</td>
+        <td style="color:var(--accent);font-weight:600">${fmtUSD(p.cost)}</td>
+        <td>${fmtPct(p.pct_of_total)}</td><td style="text-align:right">${fmtNum(p.row_count)}</td></tr>`).join('')
+        || emptyTable(4, 'No pricing data');
+
+      const regionRows = region.map(r => {
+        const pct = total ? (r.cost / total) * 100 : 0;
+        return `<tr><td style="font-weight:600">${escapeHtml(r.region)}</td>
+          <td style="color:var(--accent);font-weight:600">${fmtUSD(r.cost)}</td><td>${fmtPct(pct)}</td></tr>`;
+      }).join('') || emptyTable(3, 'No region data');
+
+      // heatmap
+      const hm = dayWeekHeatmap();
+      const dows = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+      let heatHtml;
+      if (hm) {
+        const cols = hm.weeks;
+        const cells = [];
+        // header row
+        cells.push('<div class="heatmap__rowlabel"></div>');
+        for (let w = 0; w < cols; w++) cells.push(`<div class="heatmap__collabel">W${w + 1}</div>`);
+        for (let d = 0; d < 7; d++) {
+          cells.push(`<div class="heatmap__rowlabel" style="justify-content:flex-end;padding-right:4px">${dows[d]}</div>`);
+          for (let w = 0; w < cols; w++) {
+            const v = hm.cells[`${d}:${w}`] || 0;
+            const intensity = hm.maxCost ? v / hm.maxCost : 0;
+            const bg = v ? `rgba(99,102,241,${(0.15 + intensity * 0.85).toFixed(2)})` : 'var(--navy-2)';
+            cells.push(`<div class="heatmap__cell" style="background:${bg}" title="${dows[d]} W${w + 1}: ${fmtUSD(v)}"></div>`);
+          }
+        }
+        heatHtml = `<div class="heatmap" style="grid-template-columns:50px repeat(${cols}, minmax(18px,1fr))">${cells.join('')}</div>`;
+      } else {
+        heatHtml = '<div class="data-table__empty">No daily data for heatmap.</div>';
+      }
+
+      document.getElementById('tab-trends').innerHTML = `
+        <div class="chart-card"><div class="chart-card__title">Monthly Cost Trend</div>
+          <div class="chart-wrap"><canvas id="trMonthChart"></canvas></div></div>
+        <div class="panel-card" style="padding:0;overflow:hidden">
+          <div class="section-title" style="padding:16px 20px 0">Month-over-Month Comparison</div>
+          <div class="data-table-wrap" style="border:none;margin:0"><table class="data-table">
+            <thead><tr><th>Month</th><th>Total Cost</th><th>Top Service</th><th>MoM Change</th></tr></thead>
+            <tbody>${momRows}</tbody></table></div>
+        </div>
+        <div class="panel-card">
+          <div class="section-title">Daily Spend Heatmap <span style="font-weight:400;color:var(--text-muted);font-size:.8rem">(day of week × week)</span></div>
+          ${heatHtml}
+        </div>
+        <div class="chart-grid chart-grid--2">
+          <div class="panel-card">
+            <div class="chart-card__title">Pricing Term Breakdown</div>
+            <div class="chart-wrap" style="height:240px"><canvas id="priceChart"></canvas></div>
+            <div class="data-table-wrap" style="margin-top:12px"><table class="data-table">
+              <thead><tr><th>Term</th><th>Cost</th><th>% of Total</th><th style="text-align:right">Rows</th></tr></thead>
+              <tbody>${priceRows}</tbody></table></div>
+          </div>
+          <div class="panel-card">
+            <div class="chart-card__title">Region Breakdown</div>
+            <div class="chart-wrap" style="height:240px"><canvas id="regionChart"></canvas></div>
+            <div class="data-table-wrap" style="margin-top:12px"><table class="data-table">
+              <thead><tr><th>Region</th><th>Cost</th><th>% of Total</th></tr></thead>
+              <tbody>${regionRows}</tbody></table></div>
+          </div>
+        </div>`;
+
+      destroyChart('trMonth');
+      const mctx = document.getElementById('trMonthChart');
+      if (mctx) charts['trMonth'] = new Chart(mctx.getContext('2d'), {
+        type: 'line',
+        data: { labels: mt.map(m => m.month), datasets: [{ label: 'Monthly Cost', data: mt.map(m => m.cost),
+          borderColor: '#6366f1', backgroundColor: 'rgba(99,102,241,.12)', fill: true, tension: .35, pointRadius: 3 }] },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+          scales: { y: { ticks: { callback: v => '$' + Number(v).toLocaleString() } } } },
+      });
+
+      donut('price', 'priceChart', pricing.map(p => p.pricing_term), pricing.map(p => p.cost));
+      hbar('region', 'regionChart', region.map(r => r.region), region.map(r => r.cost),
+           region.map((_, i) => PALETTE[i % PALETTE.length]));
+    }
+
+    // ── TAB 7: AI Insights ──────────────────────────────────────────────────────────
+    function renderInsights() {
+      document.getElementById('tab-insights').innerHTML = `
+        <div class="panel-card" style="border-color:var(--accent)">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+            <div class="section-title" style="margin:0;color:var(--accent)">🤖 AI Cost Insights</div>
+            <button class="btn btn--primary" id="genInsightsBtn" onclick="generateInsights()">⚡ Generate Insights</button>
+          </div>
+          <div id="insightsTs" style="font-size:.78rem;color:var(--text-muted);margin-bottom:10px;display:none"></div>
+          <div id="insightsBody" class="ai-content" style="color:var(--text-muted)">
+            Click <strong>Generate Insights</strong> to have Claude analyse this report and produce an executive summary,
+            cost optimisation recommendations, tagging gaps, environment anomalies, and Reserved Instance / Savings Plan opportunities.
+          </div>
+        </div>`;
+    }
+
+    function buildInsightsPrompt() {
+      const sav = DASH.savings_opportunities || {};
+      const payload = {
+        total_cost: DASH.total_cost,
+        row_count: DASH.row_count,
+        date_range: dateRange(),
+        top_services: (DASH.service_breakdown || []).slice(0, 10),
+        service_categories: DASH.service_category_breakdown,
+        account_breakdown: DASH.account_breakdown,
+        environment_breakdown: DASH.environment_breakdown,
+        pricing_term_breakdown: DASH.pricing_term_breakdown,
+        tag_coverage: (DASH.untagged_resources || {}).tag_coverage,
+        overall_tag_coverage_pct: (DASH.untagged_resources || {}).overall_coverage_pct,
+        savings_opportunities: sav,
+        monthly_trend: DASH.monthly_trend,
+      };
+      return `You are a senior FinOps analyst. Analyse the following AWS Cost & Usage dashboard data and produce a concise report in markdown with these exact sections:
+
+## Executive Summary
+3-4 sentences summarising overall spend, biggest drivers, and headline concerns.
+
+## Top 3 Cost Optimisation Recommendations
+A numbered list; for each give an estimated monthly savings range in USD and the rationale.
+
+## Tagging Gaps & Remediation
+Identify the weakest tag coverage and concrete remediation steps.
+
+## Environment Spend Anomalies
+Call out any environment whose spend looks unusual relative to its purpose.
+
+## Reserved Instance / Savings Plan Opportunities
+Based on the On-Demand share and top services, recommend RI/SP commitments.
+
+Here is the dashboard data as JSON:
+\`\`\`json
+${JSON.stringify(payload, null, 2)}
+\`\`\``;
+    }
+
+    async function generateInsights(force = false) {
+      const btn = document.getElementById('genInsightsBtn');
+      const body = document.getElementById('insightsBody');
+      const tsEl = document.getElementById('insightsTs');
+      const reportId = REPORT_ID || 'latest';
+
+      // Show cached result if available and not forcing regenerate
+      if (!force && _insightsCache[reportId]) {
+        body.innerHTML = _insightsCache[reportId];
+        if (tsEl) {
+          tsEl.style.display = 'block';
+          tsEl.textContent = `Last generated: ${_insightsCacheTs[reportId]}`;
+        }
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = '⏳ Generating...';
+      body.innerHTML = '';
+
+      // Animated progress messages while waiting for first token
+      const progressMessages = [
+        'Analysing spend patterns...',
+        'Identifying cost drivers...',
+        'Reviewing tag coverage...',
+        'Evaluating savings opportunities...',
+        'Checking Reserved Instance potential...',
+        'Compiling environment anomalies...',
+        'Preparing FinOps recommendations...',
+      ];
+      let msgIdx = 0;
+      const progressEl = document.createElement('div');
+      progressEl.style.cssText =
+        'color:var(--text-muted);font-style:italic;padding:12px 0;';
+      progressEl.textContent = progressMessages[0];
+      body.appendChild(progressEl);
+
+      const progressInterval = setInterval(() => {
+        msgIdx = (msgIdx + 1) % progressMessages.length;
+        progressEl.textContent = progressMessages[msgIdx];
+      }, 2000);
+
+      let firstToken = false;
+      let fullText = '';
+
+      try {
+        const session_id = crypto.randomUUID();
+        const prompt = buildInsightsPrompt();
+
+        const response = await fetch(
+          `/api/agents/cur-analyser/proxy/invoke/stream-insights`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+            body: JSON.stringify({
+              session_id,
+              user_message: prompt,
+              history: [],
+              context: {},
+            }),
+          }
+        );
+
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split('\n');
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const data = line.slice(6);
+            if (data === '[DONE]') break;
+            if (data.startsWith('[ERROR]')) {
+              throw new Error(data.slice(7).trim());
+            }
+
+            // First token — clear progress indicator
+            if (!firstToken) {
+              firstToken = true;
+              clearInterval(progressInterval);
+              body.innerHTML = '';
+            }
+
+            // Unescape newlines and accumulate
+            const text = data.replace(/\\n/g, '\n');
+            fullText += text;
+
+            // Render markdown progressively
+            body.innerHTML = marked.parse(fullText);
+          }
+        }
+
+        // Cache the final rendered result
+        const ts = new Date().toLocaleString();
+        _insightsCache[reportId] = body.innerHTML;
+        if (!window._insightsCacheTs) window._insightsCacheTs = {};
+        window._insightsCacheTs[reportId] = ts;
+
+        if (tsEl) {
+          tsEl.style.display = 'block';
+          tsEl.textContent = `Last generated: ${ts}`;
+        }
+
+        // Change button to Regenerate
+        btn.textContent = '🔄 Regenerate Insights';
+        btn.disabled = false;
+        btn.onclick = () => generateInsights(true);
+
+      } catch (err) {
+        clearInterval(progressInterval);
+        body.innerHTML =
+          `<span style="color:var(--danger)">
+            Failed to generate insights: ${escapeHtml(err.message)}
+          </span>`;
+        btn.disabled = false;
+        btn.textContent = '⚡ Generate Insights';
+      }
+    }
+
+    // ── Report selector ───────────────────────────────────────────────────────────
+    function getReportIdParam() {
+      const p = new URLSearchParams(window.location.search).get('report_id');
+      return p ? parseInt(p, 10) : null;
+    }
+    function onReportChange() {
+      const v = document.getElementById('reportSelect').value;
+      window.location.search = v ? `?report_id=${v}` : '';
+    }
+    function populateSelector(activeFilename) {
+      const ctrl = document.getElementById('reportControls');
+      const sel = document.getElementById('reportSelect');
+      if (!REPORTS.length) { ctrl.style.display = 'none'; return; }
+      sel.innerHTML = REPORTS.map(r =>
+        `<option value="${r.id}" ${REPORT_ID === r.id ? 'selected' : ''}>${escapeHtml(r.filename)} — ${fmtUSD0(r.total_cost)}</option>`
+      ).join('');
+      // if no explicit report_id, pre-select the active (latest) one without forcing navigation
+      if (REPORT_ID === null && activeFilename) {
+        const match = REPORTS.find(r => r.filename === activeFilename);
+        if (match) sel.value = String(match.id);
+      }
+      document.getElementById('viewingLabel').textContent = 'Viewing report:';
+      ctrl.style.display = 'flex';
+    }
+
+    function buildInfoBar(filename) {
+      const dr = dateRange();
+      document.getElementById('infoBar').innerHTML = `
+        <div class="info-bar__item"><span class="info-bar__k">File</span><span class="info-bar__v">${escapeHtml(filename || '—')}</span></div>
+        <div class="info-bar__item"><span class="info-bar__k">Date Range</span><span class="info-bar__v">${dr.first} → ${dr.last}</span></div>
+        <div class="info-bar__item"><span class="info-bar__k">Total Rows</span><span class="info-bar__v">${fmtNum(DASH.row_count)}</span></div>
+        <div class="info-bar__item"><span class="info-bar__k">Total Cost</span><span class="info-bar__v" style="color:var(--accent)">${fmtUSD(DASH.total_cost)}</span></div>`;
+    }
+
+    // ── Init ───────────────────────────────────────────────────────────────────────
+    async function init() {
+      await portalReady;
+      REPORT_ID = getReportIdParam();
+      try {
+        REPORTS = await api('/reports').catch(() => []);
+        DASH = await api('/dashboard' + (REPORT_ID !== null ? `?report_id=${REPORT_ID}` : ''));
         document.getElementById('loadingState').style.display = 'none';
 
-        if (data.empty) {
+        if (!DASH || DASH.empty) {
           document.getElementById('emptyState').style.display = 'block';
           return;
         }
 
+        // Resolve active filename: selected report, else dashboard.report (latest)
+        let filename = null, activeId = REPORT_ID;
+        if (REPORT_ID !== null) {
+          const r = REPORTS.find(x => x.id === REPORT_ID);
+          filename = r ? r.filename : `Report ${REPORT_ID}`;
+        } else if (DASH.report) {
+          filename = DASH.report.filename; activeId = DASH.report.id;
+        }
+
+        // Fetch raw rows for cross-tabs (env×month, env×category) — best effort
+        if (activeId != null) {
+          try { ROWS = await api(`/reports/${activeId}/data`); } catch (_) { ROWS = []; }
+        }
+
+        populateSelector(filename);
+        buildInfoBar(filename);
         document.getElementById('dashboard').style.display = 'block';
-
-        const { summary, services, trend } = data;
-
-        // KPIs
-        document.getElementById('kpiTotal').textContent = formatUSD(summary.total_cost || 0);
-        document.getElementById('kpiRows').textContent = `${(summary.row_count || 0).toLocaleString()} line items`;
-
-        if (services && services.length) {
-          document.getElementById('kpiTopSvc').textContent = services[0].service;
-          document.getElementById('kpiTopSvcCost').textContent = formatUSD(services[0].cost);
-          document.getElementById('kpiSvcCount').textContent = services.length;
-        }
-
-        if (trend && trend.length) {
-          const first = trend[0].date;
-          const last  = trend[trend.length - 1].date;
-          document.getElementById('kpiDays').textContent = `${trend.length}d`;
-          document.getElementById('kpiDateRange').textContent = `${first} → ${last}`;
-        }
-
-        // Service bar chart
-        const svcLabels = (services || []).slice(0, 10).map(s => s.service.replace('Amazon ', '').replace('AWS ', ''));
-        const svcData   = (services || []).slice(0, 10).map(s => s.cost);
-        const ctx1 = document.getElementById('svcChart').getContext('2d');
-        if (svcChart) svcChart.destroy();
-        svcChart = new Chart(ctx1, {
-          type: 'bar',
-          data: {
-            labels: svcLabels,
-            datasets: [{ label: 'Cost (USD)', data: svcData, backgroundColor: '#6366f1', borderRadius: 4 }],
-          },
-          options: {
-            indexAxis: 'y',
-            responsive: true, maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
-            scales: {
-              x: { ticks: { callback: v => '$' + v.toLocaleString() }, grid: { color: '#e2e8f0' } },
-              y: { grid: { display: false } },
-            },
-          },
-        });
-
-        // Daily trend line chart
-        const trendLabels = (trend || []).map(t => t.date);
-        const trendData   = (trend || []).map(t => t.cost);
-        const ctx2 = document.getElementById('trendChart').getContext('2d');
-        if (trendChart) trendChart.destroy();
-        trendChart = new Chart(ctx2, {
-          type: 'line',
-          data: {
-            labels: trendLabels,
-            datasets: [{
-              label: 'Daily Cost',
-              data: trendData,
-              borderColor: '#6366f1',
-              backgroundColor: 'rgba(99,102,241,.12)',
-              fill: true, tension: 0.35, pointRadius: 3,
-            }],
-          },
-          options: {
-            responsive: true, maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
-            scales: {
-              x: { ticks: { maxTicksLimit: 10 }, grid: { color: '#e2e8f0' } },
-              y: { ticks: { callback: v => '$' + v.toLocaleString() }, grid: { color: '#e2e8f0' } },
-            },
-          },
-        });
-
-        // Service breakdown table
-        const totalCost = summary.total_cost || 1;
-        const maxBarCost = services && services.length ? services[0].cost : 1;
-        const rows = (services || []).map(s => {
-          const pct = ((s.cost / totalCost) * 100).toFixed(1);
-          const barW = Math.round((s.cost / maxBarCost) * 120);
-          return `<tr>
-            <td>${s.service}</td>
-            <td style="font-weight:600;color:var(--accent)">${formatUSD(s.cost)}</td>
-            <td>${pct}%</td>
-            <td><span class="pct-bar" style="width:${barW}px"></span></td>
-          </tr>`;
-        }).join('');
-        document.getElementById('svcTable').innerHTML = `
-          <div style="overflow-x:auto"><table class="data-table">
-            <thead><tr><th>Service</th><th>Cost</th><th>% of Total</th><th></th></tr></thead>
-            <tbody>${rows}</tbody>
-          </table></div>`;
-
+        _loaded.add('overview');
+        renderOverview();
       } catch (e) {
         document.getElementById('loadingState').innerHTML = `
           <div class="empty-state" style="margin-top:60px">
             <div class="empty-state__icon">⚠</div>
             <div class="empty-state__title">Failed to load dashboard</div>
-            <div class="empty-state__sub">${e.message}</div>
+            <div class="empty-state__sub">${escapeHtml(e.message)}</div>
           </div>`;
       }
     }
 
-    load();
+    init();
   </script>
 </body>
 </html>

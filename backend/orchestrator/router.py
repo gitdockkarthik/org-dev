@@ -5,6 +5,7 @@ from typing import Any
 import anthropic
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,7 +25,7 @@ from orchestrator.schemas import (
 router = APIRouter(prefix="/api", tags=["orchestrator"])
 
 _HISTORY_LIMIT = 40
-_INVOKE_TIMEOUT = 60.0
+_INVOKE_TIMEOUT = 120.0
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -299,20 +300,48 @@ async def proxy_agent_endpoint(
     if anthropic_key:
         fwd_headers["x-anthropic-key"] = anthropic_key
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        try:
-            resp = await client.request(
-                method=request.method,
-                url=url,
-                content=body or None,
-                headers=fwd_headers,
-                params=dict(request.query_params),
-            )
-        except httpx.RequestError as exc:
-            raise HTTPException(status_code=502, detail=f"Could not reach agent '{slug}': {exc}")
+    # Check if this is a streaming/SSE endpoint
+    is_stream = "stream" in path.lower()
 
-    return Response(
-        content=resp.content,
-        status_code=resp.status_code,
-        media_type=resp.headers.get("content-type", "application/json"),
-    )
+    if is_stream:
+        # Streaming response — use httpx streaming context
+        async def stream_generator():
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                async with client.stream(
+                    method=request.method,
+                    url=url,
+                    content=body or None,
+                    headers=fwd_headers,
+                    params=dict(request.query_params),
+                ) as resp:
+                    async for chunk in resp.aiter_bytes():
+                        yield chunk
+
+        return StreamingResponse(
+            stream_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+    else:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            try:
+                resp = await client.request(
+                    method=request.method,
+                    url=url,
+                    content=body or None,
+                    headers=fwd_headers,
+                    params=dict(request.query_params),
+                )
+            except httpx.RequestError as exc:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Could not reach agent '{slug}': {exc}")
+        return Response(
+            content=resp.content,
+            status_code=resp.status_code,
+            media_type=resp.headers.get(
+                "content-type", "application/json"),
+        )
