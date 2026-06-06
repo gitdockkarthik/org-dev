@@ -305,3 +305,76 @@ Be specific — use actual group names, numbers, and timeframes from the data.""
             "anomaly_count": len(anomalies),
             "critical_count": len(critical_anomalies),
         }
+
+
+@router.post("/dashboard/insights/narrative/stream")
+async def stream_insights_narrative(
+    request: Request,
+    cluster_id: str | None = None
+):
+    from fastapi.responses import StreamingResponse
+    import anthropic as _anthropic
+
+    data = kafka_store.get_cluster_data(cluster_id) if cluster_id else (
+        kafka_store.get_cluster_data(kafka_store.get_all_cluster_ids()[0])
+        if kafka_store.get_all_cluster_ids() else None
+    )
+    if not data:
+        async def empty():
+            yield 'data: No cluster data available. Run a sync first.\n\n'
+            yield 'data: [DONE]\n\n'
+        return StreamingResponse(empty(),
+            media_type="text/event-stream")
+
+    api_key = request.headers.get("x-anthropic-key", "") or \
+              os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        async def nokey():
+            yield 'data: Anthropic API key not configured.\n\n'
+            yield 'data: [DONE]\n\n'
+        return StreamingResponse(nokey(),
+            media_type="text/event-stream")
+
+    # Build same prompt as existing narrative endpoint
+    # Reuse the prompt building logic from get_insights_narrative
+    brokers = data.get("brokers", [])
+    topics  = data.get("topics", {})
+    groups  = data.get("consumer_groups", {})
+    anomalies = data.get("anomalies", [])
+
+    prompt = f"""You are a senior Kafka platform engineer.
+Analyse this Kafka cluster and produce a concise markdown report with:
+## Cluster Health Summary
+## Top 3 Issues & Recommendations
+## Consumer Group Health
+## Capacity & Performance Observations
+
+Cluster data:
+- Brokers: {len(brokers)} active
+- Topics: {len(topics)}
+- Consumer groups: {len(groups)}
+- Anomalies: {[a.get('description','') for a in anomalies[:5]]}
+- Broker details: {[{'id':b.get('id'),'heap':b.get('heap_pct'),'cpu':b.get('cpu_pct'),'urp':b.get('urp_count')} for b in brokers[:3]]}
+"""
+
+    async def event_stream():
+        try:
+            client = _anthropic.AsyncAnthropic(api_key=api_key)
+            async with client.messages.stream(
+                model="claude-sonnet-4-6",
+                max_tokens=2000,
+                messages=[{"role":"user","content":prompt}],
+            ) as stream:
+                async for text in stream.text_stream:
+                    escaped = text.replace("\n","\\n")
+                    yield f"data: {escaped}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            yield f"data: [ERROR] {str(e)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control":"no-cache",
+                 "X-Accel-Buffering":"no"},
+    )

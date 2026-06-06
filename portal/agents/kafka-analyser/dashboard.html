@@ -743,32 +743,82 @@
       document.getElementById('tab-insights').innerHTML = narrativeHtml + `<div class="anomaly-list">${cards}</div>`;
 
       // Bind narrative button
-      document.getElementById('btn-get-narrative').addEventListener('click', async () => {
+      document.getElementById('btn-get-narrative')
+        .addEventListener('click', async () => {
         const btn = document.getElementById('btn-get-narrative');
         const content = document.getElementById('narrative-content');
         btn.textContent = 'Analysing…';
         btn.disabled = true;
-        content.textContent = 'Generating AI analysis…';
+
+        // Progress messages
+        const progressMessages = [
+          'Analysing cluster health…',
+          'Reviewing broker metrics…',
+          'Checking consumer group health…',
+          'Identifying anomalies…',
+          'Preparing recommendations…',
+        ];
+        let msgIdx = 0;
+        content.style.fontStyle = 'italic';
+        content.style.color = 'var(--text-muted)';
+        content.textContent = progressMessages[0];
+        const progressInterval = setInterval(() => {
+          msgIdx = (msgIdx + 1) % progressMessages.length;
+          content.textContent = progressMessages[msgIdx];
+        }, 2000);
+
+        let fullText = '';
+        let firstToken = false;
+
         try {
           await portalReady;
-          const r = await fetch(`${PROXY}/dashboard/insights/narrative${_currentClusterId ? '?cluster_id=' + _currentClusterId : ''}`, {
+          const url = `${PROXY}/dashboard/insights/narrative/stream${
+            _currentClusterId ? '?cluster_id=' + _currentClusterId : ''}`;
+
+          const response = await fetch(url, {
             method: 'POST',
             headers: _authHeaders(),
           });
-          const d = await r.json();
-          if (d.narrative) {
-            // Convert markdown bold to HTML
-            const html = d.narrative
-              .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-              .replace(/\n/g, '<br>');
-            content.innerHTML = html;
-            btn.textContent = '↺ Refresh Analysis';
-          } else {
-            content.textContent = 'Analysis unavailable.';
-            btn.textContent = 'Generate Analysis';
+
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split('\n');
+            for (const line of lines) {
+              if (!line.startsWith('data: ')) continue;
+              const data = line.slice(6);
+              if (data === '[DONE]') break;
+              if (data.startsWith('[ERROR]')) {
+                throw new Error(data.slice(7).trim());
+              }
+              if (!firstToken) {
+                firstToken = true;
+                clearInterval(progressInterval);
+                content.style.fontStyle = 'normal';
+                content.style.color = 'var(--text)';
+                content.innerHTML = '';
+              }
+              const text = data.replace(/\\n/g, '\n');
+              fullText += text;
+              // Render markdown progressively
+              content.innerHTML = fullText
+                .replace(/^## (.*)/gm, '<h3 style="color:var(--accent);margin:12px 0 6px">$1</h3>')
+                .replace(/^### (.*)/gm, '<h4 style="margin:8px 0 4px">$1</h4>')
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\n/g, '<br>');
+            }
           }
+          btn.textContent = '↺ Refresh Analysis';
         } catch(e) {
-          content.textContent = 'Failed to generate analysis: ' + e.message;
+          clearInterval(progressInterval);
+          content.style.fontStyle = 'normal';
+          content.textContent = 'Failed: ' + e.message;
           btn.textContent = 'Generate Analysis';
         }
         btn.disabled = false;
