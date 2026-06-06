@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx
 from fastapi import FastAPI, Header
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -332,4 +333,33 @@ async def invoke(
         session_id=body.session_id,
         response=response_text,
         metadata=metadata,
+    )
+
+
+@app.post("/invoke/stream-insights")
+async def stream_insights(
+    body: InvokeRequest,
+    x_anthropic_key: str | None = Header(default=None),
+):
+    import anthropic as _anthropic
+    resolved_key = x_anthropic_key or settings.anthropic_api_key
+
+    async def event_stream():
+        try:
+            client = _anthropic.AsyncAnthropic(api_key=resolved_key)
+            async with client.messages.stream(
+                model="claude-sonnet-4-6",
+                max_tokens=4000,
+                messages=[{"role": "user", "content": body.user_message}],
+            ) as stream:
+                async for text in stream.text_stream:
+                    yield f"data: {text.replace(chr(10), chr(92)+'n')}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            yield f"data: [ERROR] {str(e)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
