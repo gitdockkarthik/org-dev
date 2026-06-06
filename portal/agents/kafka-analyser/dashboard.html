@@ -487,10 +487,7 @@
           <td style="text-align:center">${t.replication_factor}</td>
           <td>${fmtRate(t.messages_in_per_sec)}</td>
           <td style="font-size:.82rem;color:var(--text-muted)">${fmtBytes(t.bytes_in_per_sec || 0)}/s</td>
-          <td style="text-align:right">
-            ${t.retention_pct.toFixed(1)}%
-            ${retWarn ? '<span style="margin-left:4px;background:rgba(217,119,6,.12);color:#d97706;padding:1px 5px;border-radius:3px;font-size:.68rem;font-weight:700">WARN</span>' : ''}
-          </td>
+          <td style="text-align:right;font-size:.82rem">${fmtBytes(t.size_bytes || 0)}</td>
           <td><span class="sev sev--${t.status === 'warning' ? 'warning' : 'healthy'}">${t.status.toUpperCase()}</span></td>
         </tr>`;
       }).join('');
@@ -511,7 +508,7 @@
         </div>
         <div class="data-table-wrap">
           <table class="data-table">
-            <thead><tr><th>Topic</th><th style="text-align:center">Partitions</th><th style="text-align:center">RF</th><th>Msg/s</th><th>Bytes/s</th><th style="text-align:right">Retention</th><th>Status</th></tr></thead>
+            <thead><tr><th>Topic</th><th style="text-align:center">Partitions</th><th style="text-align:center">RF</th><th>Msg/s</th><th>Bytes/s</th><th style="text-align:right">Log Size</th><th>Status</th></tr></thead>
             <tbody>${rows}</tbody>
           </table>
         </div>`;
@@ -527,7 +524,7 @@
               datasets: [{
                 label: 'Messages/sec',
                 data: topics.map(t => t.messages_in_per_sec),
-                backgroundColor: topics.map(t => t.retention_pct >= 80 ? '#dc2626' : '#FF6B35'),
+                backgroundColor: topics.map(t => (t.size_bytes || 0) > 1073741824 ? '#dc2626' : '#FF6B35'),
               }],
             },
             options: {
@@ -572,7 +569,6 @@
             </div>
             ${metricRow('Heap', b.heap_pct)}
             ${metricRow('CPU', b.cpu_pct)}
-            ${metricRow('Disk', b.disk_pct)}
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px">
               <div class="bm">
                 <div class="bm__label">GC Pauses</div>
@@ -589,6 +585,30 @@
               <div class="bm">
                 <div class="bm__label">Req Idle %</div>
                 <div class="bm__value" style="font-size:.9rem;color:${b.request_handler_idle_pct < 30 ? 'var(--danger)' : 'var(--success)'}">${b.request_handler_idle_pct}%</div>
+              </div>
+              <div class="bm">
+                <div class="bm__label">Bytes In/s</div>
+                <div class="bm__value" style="font-size:.85rem">${fmtBytes(b.bytes_in_per_sec || 0)}/s</div>
+              </div>
+              <div class="bm">
+                <div class="bm__label">Bytes Out/s</div>
+                <div class="bm__value" style="font-size:.85rem">${fmtBytes(b.bytes_out_per_sec || 0)}/s</div>
+              </div>
+              <div class="bm">
+                <div class="bm__label">ISR Shrink/s</div>
+                <div class="bm__value" style="font-size:.85rem;color:${(b.isr_shrinks_per_sec || 0) > 0 ? 'var(--danger)' : 'var(--success)'}">${(b.isr_shrinks_per_sec || 0).toFixed(2)}</div>
+              </div>
+              <div class="bm">
+                <div class="bm__label">ISR Expand/s</div>
+                <div class="bm__value" style="font-size:.85rem;color:var(--success)">${(b.isr_expands_per_sec || 0).toFixed(2)}</div>
+              </div>
+              <div class="bm">
+                <div class="bm__label">Produce Latency</div>
+                <div class="bm__value" style="font-size:.85rem">${(b.produce_latency_ms || 0).toFixed(1)}ms</div>
+              </div>
+              <div class="bm">
+                <div class="bm__label">Fetch Latency</div>
+                <div class="bm__value" style="font-size:.85rem">${(b.fetch_latency_ms || 0).toFixed(1)}ms</div>
               </div>
             </div>
           </div>`;

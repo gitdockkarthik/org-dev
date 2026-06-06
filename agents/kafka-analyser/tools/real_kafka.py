@@ -100,7 +100,13 @@ class RealKafkaCollector(KafkaCollector):
                 cluster_info = admin.describe_cluster()
                 brokers = self._build_brokers(cluster_info)
 
-                topics, total_urp = self._build_topics(admin)
+                topic_jmx = None
+                if self.jmx_port:
+                    broker_host = cluster_info.get("brokers", [{}])[0].get("host", "")
+                    if broker_host:
+                        topic_names = [n for n in admin.list_topics() if not _is_internal_topic(n)]
+                        topic_jmx = self._query_topic_jmx(broker_host, self.jmx_port, topic_names)
+                topics, total_urp = self._build_topics(admin, topic_jmx)
                 consumer_groups = self._build_consumer_groups(admin, security)
 
                 cluster = self._build_cluster(cluster_info, len(brokers), total_urp)
@@ -146,7 +152,10 @@ class RealKafkaCollector(KafkaCollector):
     def _query_jmx(self, host: str, port: int) -> dict[str, Any]:
         """Query JMX MBeans from a single broker. Returns metric dict or defaults on failure."""
         defaults = {"heap_pct": 0.0, "cpu_pct": 0.0, "disk_pct": 0.0, "gc_pause_ms": 0,
-                     "messages_in_per_sec": 0.0, "request_handler_idle_pct": 100.0}
+                     "messages_in_per_sec": 0.0, "request_handler_idle_pct": 100.0,
+                     "bytes_in_per_sec": 0.0, "bytes_out_per_sec": 0.0,
+                     "isr_shrinks_per_sec": 0.0, "isr_expands_per_sec": 0.0,
+                     "produce_latency_ms": 0.0, "fetch_latency_ms": 0.0}
         try:
             import jpype
             from jpype import javax
@@ -196,14 +205,108 @@ class RealKafkaCollector(KafkaCollector):
                 req_idle = round(float(idle_obj) * 100, 1)
             except Exception:
                 req_idle = 100.0
+            # Bytes in/out per sec (broker aggregate)
+            bytes_in = 0.0
+            bytes_out = 0.0
+            try:
+                bytes_in = round(float(mbean.getAttribute(
+                    javax.management.ObjectName(
+                        "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec"), "OneMinuteRate")), 2)
+            except Exception:
+                pass
+            try:
+                bytes_out = round(float(mbean.getAttribute(
+                    javax.management.ObjectName(
+                        "kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec"), "OneMinuteRate")), 2)
+            except Exception:
+                pass
+            # ISR shrink/expand rate
+            isr_shrinks = 0.0
+            isr_expands = 0.0
+            try:
+                isr_shrinks = round(float(mbean.getAttribute(
+                    javax.management.ObjectName(
+                        "kafka.server:type=ReplicaManager,name=IsrShrinksPerSec"), "OneMinuteRate")), 4)
+            except Exception:
+                pass
+            try:
+                isr_expands = round(float(mbean.getAttribute(
+                    javax.management.ObjectName(
+                        "kafka.server:type=ReplicaManager,name=IsrExpandsPerSec"), "OneMinuteRate")), 4)
+            except Exception:
+                pass
+            # Produce/Fetch request latency (mean ms)
+            produce_latency_ms = 0.0
+            fetch_latency_ms = 0.0
+            try:
+                produce_latency_ms = round(float(mbean.getAttribute(
+                    javax.management.ObjectName(
+                        "kafka.network:type=RequestMetrics,name=TotalTimeMs,request=Produce"), "Mean")), 2)
+            except Exception:
+                pass
+            try:
+                fetch_latency_ms = round(float(mbean.getAttribute(
+                    javax.management.ObjectName(
+                        "kafka.network:type=RequestMetrics,name=TotalTimeMs,request=FetchConsumer"), "Mean")), 2)
+            except Exception:
+                pass
             connector.close()
             return {"heap_pct": heap_pct, "cpu_pct": cpu_pct, "disk_pct": 0.0,
                     "gc_pause_ms": gc_pause_ms, "messages_in_per_sec": messages_in,
-                    "request_handler_idle_pct": req_idle}
+                    "request_handler_idle_pct": req_idle,
+                    "bytes_in_per_sec": bytes_in, "bytes_out_per_sec": bytes_out,
+                    "isr_shrinks_per_sec": isr_shrinks, "isr_expands_per_sec": isr_expands,
+                    "produce_latency_ms": produce_latency_ms, "fetch_latency_ms": fetch_latency_ms}
         except Exception as exc:
             import logging
             logging.getLogger("kafka-analyser").warning(f"JMX query failed for {host}:{port}: {exc}")
             return defaults
+
+    def _query_topic_jmx(self, host: str, port: int, topic_names: list[str]) -> dict[str, dict]:
+        """Query per-topic JMX: log size, msgs/sec, bytes/sec."""
+        result: dict[str, dict] = {}
+        try:
+            import jpype
+            from jpype import javax
+            if not jpype.isJVMStarted():
+                jpype.startJVM(jpype.getDefaultJVMPath(), convertStrings=True)
+            url = javax.management.remote.JMXServiceURL(
+                f"service:jmx:rmi:///jndi/rmi://{host}:{port}/jmxrmi")
+            connector = javax.management.remote.JMXConnectorFactory.connect(url)
+            mbean = connector.getMBeanServerConnection()
+            try:
+                log_names = mbean.queryNames(
+                    javax.management.ObjectName("kafka.log:type=Log,name=Size,topic=*,partition=*"), None)
+                topic_sizes: dict[str, int] = {}
+                for obj_name in log_names:
+                    topic = str(obj_name.getKeyProperty("topic"))
+                    size = int(mbean.getAttribute(obj_name, "Value"))
+                    topic_sizes[topic] = topic_sizes.get(topic, 0) + size
+                for t in topic_names:
+                    if t not in result:
+                        result[t] = {}
+                    result[t]["size_bytes"] = topic_sizes.get(t, 0)
+            except Exception:
+                pass
+            for t in topic_names:
+                if t not in result:
+                    result[t] = {}
+                for metric, key in [("MessagesInPerSec", "messages_in_per_sec"),
+                                     ("BytesInPerSec", "bytes_in_per_sec"),
+                                     ("BytesOutPerSec", "bytes_out_per_sec")]:
+                    try:
+                        val = mbean.getAttribute(
+                            javax.management.ObjectName(
+                                f"kafka.server:type=BrokerTopicMetrics,name={metric},topic={t}"),
+                            "OneMinuteRate")
+                        result[t][key] = round(float(val), 2)
+                    except Exception:
+                        pass
+            connector.close()
+        except Exception as exc:
+            import logging
+            logging.getLogger("kafka-analyser").warning(f"Topic JMX query failed for {host}:{port}: {exc}")
+        return result
 
     def _build_brokers(self, cluster_info: dict[str, Any]) -> list[dict[str, Any]]:
         brokers: list[dict[str, Any]] = []
@@ -211,7 +314,10 @@ class RealKafkaCollector(KafkaCollector):
             host = node.get("host", "")
             metrics = self._query_jmx(host, self.jmx_port) if self.jmx_port else {
                 "heap_pct": 0.0, "cpu_pct": 0.0, "disk_pct": 0.0, "gc_pause_ms": 0,
-                "messages_in_per_sec": 0.0, "request_handler_idle_pct": 100.0}
+                "messages_in_per_sec": 0.0, "request_handler_idle_pct": 100.0,
+                "bytes_in_per_sec": 0.0, "bytes_out_per_sec": 0.0,
+                "isr_shrinks_per_sec": 0.0, "isr_expands_per_sec": 0.0,
+                "produce_latency_ms": 0.0, "fetch_latency_ms": 0.0}
             brokers.append({
                 "id": str(node.get("node_id")),
                 "host": host,
@@ -223,7 +329,7 @@ class RealKafkaCollector(KafkaCollector):
         return brokers
 
     def _build_topics(
-        self, admin: KafkaAdminClient
+        self, admin: KafkaAdminClient, topic_jmx: dict[str, dict] | None = None
     ) -> tuple[list[dict[str, Any]], int]:
         """Return (topics, total_under_replicated_partition_count)."""
         names = [n for n in admin.list_topics() if not _is_internal_topic(n)]
@@ -250,16 +356,17 @@ class RealKafkaCollector(KafkaCollector):
                     urp += 1
             total_urp += urp
 
+            jmx = (topic_jmx or {}).get(name, {})
             topics.append(
                 {
                     "name": name,
                     "partition_count": partition_count,
                     "replication_factor": replication_factor,
-                    "messages_in_per_sec": 0.0,
-                    "bytes_in_per_sec": 0.0,
-                    "bytes_out_per_sec": 0.0,
+                    "messages_in_per_sec": jmx.get("messages_in_per_sec", 0.0),
+                    "bytes_in_per_sec": jmx.get("bytes_in_per_sec", 0.0),
+                    "bytes_out_per_sec": jmx.get("bytes_out_per_sec", 0.0),
                     "total_messages": 0,
-                    "size_bytes": 0,
+                    "size_bytes": jmx.get("size_bytes", 0),
                     "retention_bytes": -1,
                     "retention_pct": 0.0,
                     "status": "degraded" if urp else "healthy",
