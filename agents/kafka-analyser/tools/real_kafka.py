@@ -39,6 +39,7 @@ class RealKafkaCollector(KafkaCollector):
         self.sasl_mechanism: str = config.get("sasl_mechanism") or "PLAIN"
         self.tls_enabled: bool = bool(config.get("tls_enabled", False))
         self.cluster_label: str = config.get("cluster_label") or "Kafka"
+        self.jmx_port: int | None = config.get("jmx_port")
 
     # ------------------------------------------------------------------ #
     # Config helpers                                                      #
@@ -142,24 +143,83 @@ class RealKafkaCollector(KafkaCollector):
             "status": "healthy" if total_urp == 0 else "degraded",
         }
 
+    def _query_jmx(self, host: str, port: int) -> dict[str, Any]:
+        """Query JMX MBeans from a single broker. Returns metric dict or defaults on failure."""
+        defaults = {"heap_pct": 0.0, "cpu_pct": 0.0, "disk_pct": 0.0, "gc_pause_ms": 0,
+                     "messages_in_per_sec": 0.0, "request_handler_idle_pct": 100.0}
+        try:
+            import jpype
+            from jpype import javax
+            if not jpype.isJVMStarted():
+                jpype.startJVM(jpype.getDefaultJVMPath(), convertStrings=True)
+            url = javax.management.remote.JMXServiceURL(
+                f"service:jmx:rmi:///jndi/rmi://{host}:{port}/jmxrmi")
+            connector = javax.management.remote.JMXConnectorFactory.connect(url)
+            mbean = connector.getMBeanServerConnection()
+            # Heap
+            heap = mbean.getAttribute(
+                javax.management.ObjectName("java.lang:type=Memory"), "HeapMemoryUsage")
+            heap_used = float(heap.get("used"))
+            heap_max = float(heap.get("max"))
+            heap_pct = round((heap_used / heap_max) * 100, 1) if heap_max > 0 else 0.0
+            # CPU
+            try:
+                cpu_raw = mbean.getAttribute(
+                    javax.management.ObjectName("java.lang:type=OperatingSystem"), "ProcessCpuLoad")
+                cpu_pct = round(float(cpu_raw) * 100, 1)
+            except Exception:
+                cpu_pct = 0.0
+            # GC pause count
+            try:
+                gc_names = mbean.queryNames(
+                    javax.management.ObjectName("java.lang:type=GarbageCollector,name=*"), None)
+                gc_total = 0
+                for gc_name in gc_names:
+                    gc_total += int(mbean.getAttribute(gc_name, "CollectionCount"))
+                gc_pause_ms = gc_total
+            except Exception:
+                gc_pause_ms = 0
+            # Messages in/sec
+            try:
+                msgs_obj = mbean.getAttribute(
+                    javax.management.ObjectName(
+                        "kafka.server:type=BrokerTopicMetrics,name=MessagesInPerSec"), "OneMinuteRate")
+                messages_in = round(float(msgs_obj), 2)
+            except Exception:
+                messages_in = 0.0
+            # Request handler idle %
+            try:
+                idle_obj = mbean.getAttribute(
+                    javax.management.ObjectName(
+                        "kafka.server:type=KafkaRequestHandlerPool,name=RequestHandlerAvgIdlePercent"),
+                    "OneMinuteRate")
+                req_idle = round(float(idle_obj) * 100, 1)
+            except Exception:
+                req_idle = 100.0
+            connector.close()
+            return {"heap_pct": heap_pct, "cpu_pct": cpu_pct, "disk_pct": 0.0,
+                    "gc_pause_ms": gc_pause_ms, "messages_in_per_sec": messages_in,
+                    "request_handler_idle_pct": req_idle}
+        except Exception as exc:
+            import logging
+            logging.getLogger("kafka-analyser").warning(f"JMX query failed for {host}:{port}: {exc}")
+            return defaults
+
     def _build_brokers(self, cluster_info: dict[str, Any]) -> list[dict[str, Any]]:
         brokers: list[dict[str, Any]] = []
         for node in cluster_info.get("brokers", []) or []:
-            brokers.append(
-                {
-                    "id": str(node.get("node_id")),
-                    "host": node.get("host", ""),
-                    "port": int(node.get("port", 0)),
-                    "heap_pct": 0.0,
-                    "cpu_pct": 0.0,
-                    "disk_pct": 0.0,
-                    "gc_pause_ms": 0,
-                    "urp_count": 0,
-                    "messages_in_per_sec": 0.0,
-                    "request_handler_idle_pct": 100.0,
-                    "status": "healthy",
-                }
-            )
+            host = node.get("host", "")
+            metrics = self._query_jmx(host, self.jmx_port) if self.jmx_port else {
+                "heap_pct": 0.0, "cpu_pct": 0.0, "disk_pct": 0.0, "gc_pause_ms": 0,
+                "messages_in_per_sec": 0.0, "request_handler_idle_pct": 100.0}
+            brokers.append({
+                "id": str(node.get("node_id")),
+                "host": host,
+                "port": int(node.get("port", 0)),
+                **metrics,
+                "urp_count": 0,
+                "status": "healthy",
+            })
         return brokers
 
     def _build_topics(

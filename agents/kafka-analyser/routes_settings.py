@@ -117,6 +117,7 @@ class TestConnectionPayload(BaseModel):
     sasl_mechanism: str = "PLAIN"
     tls_enabled: bool = False
     cluster_label: str = ""
+    jmx_port: int | None = None
 
 
 class ClusterPayload(BaseModel):
@@ -132,6 +133,7 @@ class ClusterPayload(BaseModel):
     schema_registry_url: str = ""
     zookeeper_url: str = ""
     kafka_connect_url: str = ""
+    jmx_port: int | None = None
     mirror_source_cluster_id: int | None = None
     mirror_mode: str = "none"
     enabled: bool = False
@@ -168,6 +170,7 @@ async def test_connection(payload: TestConnectionPayload) -> dict:
         "sasl_mechanism": payload.sasl_mechanism,
         "tls_enabled": payload.tls_enabled,
         "cluster_label": payload.cluster_label,
+        "jmx_port": getattr(payload, 'jmx_port', None),
     })
     try:
         data = await collector.collect()
@@ -251,6 +254,7 @@ async def test_cluster(cluster_id: int) -> dict:
             "sasl_mechanism": cluster.get("sasl_mechanism", "PLAIN"),
             "tls_enabled": cluster.get("tls_enabled", False),
             "cluster_label": cluster["name"],
+            "jmx_port": cluster.get("jmx_port"),
         })
         data = await collector.collect()
         await get_backend().update_cluster_status(
@@ -299,6 +303,7 @@ async def sync_metrics() -> dict:
                     "sasl_mechanism": c.get("sasl_mechanism", "PLAIN"),
                     "tls_enabled": c.get("tls_enabled", False),
                     "cluster_label": c["name"],
+                    "jmx_port": c.get("jmx_port"),
                 })
                 data = await collector.collect()
                 kafka_store.set_cluster_data(
