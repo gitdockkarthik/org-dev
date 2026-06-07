@@ -93,20 +93,20 @@ class MCPClient:
         if self._connected:
             return
         try:
-            # Get session URL
-            async with self._http.stream("GET", f"{MCP_SERVER_URL}/sse") as resp:
-                async for line in resp.aiter_lines():
-                    if line.startswith("data:"):
-                        self._session_url = line.replace("data: ", "").strip()
-                        break
+            self._sse_http = httpx.AsyncClient(timeout=None)
+            self._post_http = httpx.AsyncClient(timeout=30.0)
+
+            # Start SSE listener — it will set session_url
+            self._session_event = asyncio.Event()
+            self._sse_task = asyncio.create_task(self._listen_sse())
+
+            # Wait for session URL
+            await asyncio.wait_for(self._session_event.wait(), timeout=10.0)
 
             if not self._session_url:
                 raise RuntimeError("Failed to get MCP session URL")
 
-            # Start SSE listener in background
-            self._sse_task = asyncio.create_task(self._listen_sse())
-
-            # Initialize
+            # Initialize MCP protocol
             await self._send("initialize", {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {},
@@ -120,18 +120,24 @@ class MCPClient:
             raise
 
     async def _listen_sse(self):
-        """Background task: read SSE messages and resolve futures."""
+        """Background task: keep SSE stream open and resolve futures."""
         try:
-            async with self._http.stream("GET", f"{MCP_SERVER_URL}/sse", timeout=None) as resp:
+            async with self._sse_http.stream("GET", f"{MCP_SERVER_URL}/sse") as resp:
                 async for line in resp.aiter_lines():
-                    if line.startswith("data:") and "jsonrpc" in line:
-                        try:
-                            data = json.loads(line.replace("data: ", ""))
-                            msg_id = data.get("id")
-                            if msg_id and msg_id in self._results:
-                                self._results[msg_id].set_result(data)
-                        except json.JSONDecodeError:
-                            pass
+                    if line.startswith("data:"):
+                        raw = line[len("data: "):]
+                        if not self._session_url and raw.startswith("/"):
+                            self._session_url = raw.strip()
+                            self._session_event.set()
+                            continue
+                        if "jsonrpc" in raw:
+                            try:
+                                data = json.loads(raw)
+                                msg_id = data.get("id")
+                                if msg_id and msg_id in self._results:
+                                    self._results[msg_id].set_result(data)
+                            except json.JSONDecodeError:
+                                pass
         except Exception as exc:
             logger.warning("MCP SSE listener error: %s", exc)
             self._connected = False
@@ -146,7 +152,7 @@ class MCPClient:
         future = loop.create_future()
         self._results[msg_id] = future
 
-        await self._http.post(
+        await self._post_http.post(
             f"{MCP_SERVER_URL}{self._session_url}",
             json={"jsonrpc": "2.0", "id": msg_id, "method": method, "params": params},
         )
@@ -192,7 +198,10 @@ class MCPClient:
     async def close(self):
         if self._sse_task:
             self._sse_task.cancel()
-        await self._http.aclose()
+        if hasattr(self, '_sse_http'):
+            await self._sse_http.aclose()
+        if hasattr(self, '_post_http'):
+            await self._post_http.aclose()
 
 
 # ── Module-level singleton ──────────────────────────────────────────────
