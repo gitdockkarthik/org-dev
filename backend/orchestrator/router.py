@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from orchestrator.mcp_client import route_via_mcp
 from core.platform_cache import get_anthropic_key
 from core.security import require_api_key
 from models.agent import Agent, AgentStatus
@@ -302,6 +303,25 @@ async def proxy_agent_endpoint(
 
     # Check if this is a streaming/SSE endpoint
     is_stream = "stream" in path.lower()
+
+    # Route non-streaming calls through MCP (policy hub)
+    if not is_stream:
+        try:
+            mcp_result = await route_via_mcp(
+                slug, request.method, path, dict(request.query_params)
+            )
+            if mcp_result is not None:
+                import json as _json
+                return Response(
+                    content=_json.dumps(mcp_result),
+                    status_code=200,
+                    media_type="application/json",
+                )
+        except Exception as _mcp_exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "MCP route failed for %s/%s, falling back to direct: %s", slug, path, _mcp_exc
+            )
 
     if is_stream:
         # Streaming response — use httpx streaming context
