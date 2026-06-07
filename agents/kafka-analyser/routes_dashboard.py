@@ -327,18 +327,27 @@ async def get_topics_history(cluster_id: str | None = None, minutes: float = 144
         if not rows:
             return {"empty": True, "series": []}
         from collections import defaultdict
-        days: list[str] = sorted(set(r["day"] for r in rows))
+        from datetime import datetime, timedelta, timezone
+        # Always generate all 7 days regardless of data availability
+        today = datetime.now(timezone.utc).date()
+        all_days = [(today - timedelta(days=6-i)).isoformat() for i in range(7)]
         topic_data: dict[str, dict[str, float]] = defaultdict(dict)
         for r in rows:
             if not r["topic"].startswith("_"):
                 topic_data[r["topic"]][r["day"]] = r["avg_msgs"]
-        topic_maxes = {t: max(v.values()) for t, v in topic_data.items()}
-        top_topics = sorted(topic_maxes, key=lambda n: topic_maxes[n], reverse=True)[:5]
+        if topic_data:
+            topic_maxes = {t: max(v.values()) for t, v in topic_data.items()}
+            top_topics = sorted(topic_maxes, key=lambda n: topic_maxes[n], reverse=True)[:5]
+        else:
+            top_topics = []
         series = []
         for name in top_topics:
-            vals = [round(topic_data[name].get(d, 0.0), 3) for d in days]
+            vals = [round(topic_data[name].get(d, 0.0), 3) for d in all_days]
             series.append({"topic": name, "values": vals})
-        return {"labels": days, "series": series, "snapshot_count": len(days)}
+        # If no data at all, return empty series with 7-day labels
+        if not series:
+            return {"labels": all_days, "series": [], "snapshot_count": 7}
+        return {"labels": all_days, "series": series, "snapshot_count": 7}
 
     try:
         rows = await get_backend().get_topic_history(int(cluster_id), minutes=effective_minutes)
