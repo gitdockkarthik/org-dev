@@ -308,13 +308,17 @@ Be specific — use actual group names, numbers, and timeframes from the data.""
 
 
 @router.get("/dashboard/topics/history")
-async def get_topics_history(cluster_id: str | None = None, hours: float = 24.0) -> dict:
+async def get_topics_history(cluster_id: str | None = None, minutes: float = 1440.0, hours: float | None = None) -> dict:
     """Return per-topic msgs/sec trend from PostgreSQL for timeline chart."""
     from storage import get_backend
     if not cluster_id:
         return {"empty": True, "series": []}
+    # Support both minutes and legacy hours parameter
+    effective_minutes = minutes
+    if hours is not None:
+        effective_minutes = hours * 60
     try:
-        rows = await get_backend().get_topic_history(int(cluster_id), hours=hours)
+        rows = await get_backend().get_topic_history(int(cluster_id), minutes=effective_minutes)
     except Exception:
         return {"empty": True, "series": []}
     if not rows:

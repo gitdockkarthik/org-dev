@@ -421,7 +421,7 @@ class PostgresBackend(StorageBackend):
         except Exception:
             logger.exception("PostgresBackend.save_topic_metrics: failed for cluster_id=%r", cluster_id)
 
-    async def get_topic_history(self, cluster_id: int, hours: float = 24.0) -> list[dict]:
+    async def get_topic_history(self, cluster_id: int, minutes: float = 1440.0) -> list[dict]:
         """Return per-topic metrics snapshots within the time window."""
         from database import SessionLocal
         if SessionLocal is None:
@@ -434,10 +434,10 @@ class PostgresBackend(StorageBackend):
                            bytes_out_per_sec, size_bytes
                            FROM kafka_topic_metrics
                            WHERE cluster_id = :cluster_id
-                           AND time >= NOW() - ((:hours) * INTERVAL '1 hour')
+                           AND time >= NOW() - ((:minutes) * INTERVAL '1 minute')
                            ORDER BY time ASC"""
                     ),
-                    {"cluster_id": cluster_id, "hours": float(hours)}
+                    {"cluster_id": cluster_id, "minutes": float(minutes)}
                 )
                 rows = result.fetchall()
                 return [

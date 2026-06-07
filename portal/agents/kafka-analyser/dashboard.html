@@ -182,19 +182,21 @@
 
     // ── API helper ───────────────────────────────────────────────────────────
 
-    function _getHours() {
+    function _getMinutes() {
       const v = document.getElementById('ctrl-time').value;
-      if (v === '1h') return 1;
-      if (v === '6h') return 6;
-      if (v === '24h') return 24;
-      if (v === '7d') return 168;
-      return null;
+      if (v === '5m') return 5;
+      if (v === '1h') return 60;
+      if (v === '6h') return 360;
+      if (v === '24h') return 1440;
+      if (v === '7d') return 10080;
+      return 1440;
     }
+    function _getHours() { return _getMinutes() / 60; }
     async function api(path, opts = {}) {
       const params = new URLSearchParams();
       if (_currentClusterId) params.set('cluster_id', _currentClusterId);
-      const hours = _getHours();
-      if (hours) params.set('hours', hours);
+      const mins = _getMinutes();
+      if (mins) params.set('minutes', mins);
       const qs = params.toString();
       const url = qs ? `${PROXY}${path}?${qs}` : `${PROXY}${path}`;
       const res = await fetch(url, {
@@ -530,19 +532,29 @@
         const ctx = document.getElementById('topicChart')?.getContext('2d');
         if (!ctx) return;
         try {
-          const hours = _getHours();
+          const mins = _getMinutes();
           const qs = new URLSearchParams();
           if (_currentClusterId) qs.set('cluster_id', _currentClusterId);
-          if (hours) qs.set('hours', hours);
+          if (mins) qs.set('minutes', mins);
           const hist = await fetch(`${PROXY}/dashboard/topics/history?${qs.toString()}`,
             { headers: _authHeaders(), cache: 'no-store' }).then(r => r.json());
 
           if (!hist.empty && hist.series && hist.series.length > 0) {
             const colors = ['#FF6B35','#0D9488','#6366f1','#f59e0b','#16a34a'];
+            const timeVal = document.getElementById('ctrl-time').value;
             const labels = hist.labels.map(l => {
               const d = new Date(l);
-              return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              if (timeVal === '7d') return d.toLocaleDateString([], { weekday: 'short', day: 'numeric' });
+              if (timeVal === '24h') return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
             });
+            // Determine tick interval based on time range
+            let maxTicks = 10;
+            if (timeVal === '5m') maxTicks = 5;
+            else if (timeVal === '1h') maxTicks = 6;
+            else if (timeVal === '6h') maxTicks = 12;
+            else if (timeVal === '24h') maxTicks = 24;
+            else if (timeVal === '7d') maxTicks = 7;
             charts['topic'] = new Chart(ctx, {
               type: 'line',
               data: {
@@ -553,7 +565,7 @@
                   borderColor: colors[i % colors.length],
                   backgroundColor: colors[i % colors.length] + '22',
                   borderWidth: 2,
-                  pointRadius: 3,
+                  pointRadius: labels.length < 20 ? 3 : 1,
                   tension: 0.3,
                   fill: false,
                 })),
@@ -565,7 +577,7 @@
                   title: { display: false },
                 },
                 scales: {
-                  x: { ticks: { font: { size: 10 } } },
+                  x: { ticks: { maxTicksLimit: maxTicks, font: { size: 10 }, maxRotation: 45 } },
                   y: { ticks: { callback: v => fmtRate(v), font: { size: 10 } }, beginAtZero: true },
                 },
               },

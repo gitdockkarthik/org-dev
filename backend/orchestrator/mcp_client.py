@@ -65,6 +65,8 @@ def _extract_arguments(path: str, query_params: dict) -> dict:
     for key, value in query_params.items():
         if key == "cluster_id":
             args["cluster_id"] = value
+        elif key == "minutes":
+            args["minutes"] = float(value)
         elif key == "hours":
             args["hours"] = float(value)
         elif key == "report_id":

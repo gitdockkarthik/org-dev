@@ -67,11 +67,11 @@ async def kafka_topics(cluster_id: str | None = None) -> dict:
 
 
 @mcp.tool()
-async def kafka_topic_history(cluster_id: str, hours: float = 24.0) -> dict:
+async def kafka_topic_history(cluster_id: str, minutes: float = 1440.0) -> dict:
     """Get per-topic message rate history over time from PostgreSQL. Returns time-series data for trend charts."""
     return await _get(KAFKA_URL, "/dashboard/topics/history", {
         "cluster_id": cluster_id,
-        "hours": hours,
+        "minutes": minutes,
     })
 
 
