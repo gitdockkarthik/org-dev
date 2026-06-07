@@ -542,12 +542,22 @@
           if (!hist.empty && hist.series && hist.series.length > 0) {
             const colors = ['#FF6B35','#0D9488','#6366f1','#f59e0b','#16a34a'];
             const timeVal = document.getElementById('ctrl-time').value;
+            let _lastDateLabel = '';
             const labels = hist.labels.map(l => {
               const d = new Date(l);
-              if (timeVal === '7d') return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
-              if (timeVal === '24h') return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-              if (timeVal === '6h') return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-              if (timeVal === '1h') return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              if (timeVal === '7d') {
+                const dayLabel = d.toLocaleDateString([], { weekday: 'short', day: 'numeric' });
+                if (dayLabel === _lastDateLabel) return '';
+                _lastDateLabel = dayLabel;
+                return dayLabel;
+              }
+              if (timeVal === '24h') {
+                const hourLabel = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                return hourLabel;
+              }
+              if (timeVal === '6h' || timeVal === '1h') {
+                return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              }
               return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
             });
             // Determine tick interval based on time range
