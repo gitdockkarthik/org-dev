@@ -317,6 +317,29 @@ async def get_topics_history(cluster_id: str | None = None, minutes: float = 144
     effective_minutes = minutes
     if hours is not None:
         effective_minutes = hours * 60
+
+    # Use daily aggregation for 7-day view (10080 minutes)
+    if effective_minutes >= 10080:
+        try:
+            rows = await get_backend().get_topic_history_daily(int(cluster_id), days=7)
+        except Exception:
+            return {"empty": True, "series": []}
+        if not rows:
+            return {"empty": True, "series": []}
+        from collections import defaultdict
+        days: list[str] = sorted(set(r["day"] for r in rows))
+        topic_data: dict[str, dict[str, float]] = defaultdict(dict)
+        for r in rows:
+            if not r["topic"].startswith("_"):
+                topic_data[r["topic"]][r["day"]] = r["avg_msgs"]
+        topic_maxes = {t: max(v.values()) for t, v in topic_data.items()}
+        top_topics = sorted(topic_maxes, key=lambda n: topic_maxes[n], reverse=True)[:5]
+        series = []
+        for name in top_topics:
+            vals = [round(topic_data[name].get(d, 0.0), 3) for d in days]
+            series.append({"topic": name, "values": vals})
+        return {"labels": days, "series": series, "snapshot_count": len(days)}
+
     try:
         rows = await get_backend().get_topic_history(int(cluster_id), minutes=effective_minutes)
     except Exception:

@@ -455,6 +455,44 @@ class PostgresBackend(StorageBackend):
             logger.exception("PostgresBackend.get_topic_history: failed for cluster_id=%r", cluster_id)
             return []
 
+    async def get_topic_history_daily(self, cluster_id: int, days: int = 7) -> list[dict]:
+        """Return per-topic metrics aggregated by day for daily trend chart."""
+        from database import SessionLocal
+        if SessionLocal is None:
+            return []
+        try:
+            async with SessionLocal() as session:
+                result = await session.execute(
+                    text(
+                        """SELECT time::date as day, topic,
+                           AVG(messages_in_per_sec) as avg_msgs,
+                           MAX(messages_in_per_sec) as max_msgs,
+                           AVG(bytes_in_per_sec) as avg_bytes,
+                           MAX(size_bytes) as max_size
+                           FROM kafka_topic_metrics
+                           WHERE cluster_id = :cluster_id
+                           AND time >= NOW() - ((:days) * INTERVAL '1 day')
+                           GROUP BY day, topic
+                           ORDER BY day ASC, avg_msgs DESC"""
+                    ),
+                    {"cluster_id": cluster_id, "days": days}
+                )
+                rows = result.fetchall()
+                return [
+                    {
+                        "day": row.day.isoformat(),
+                        "topic": row.topic,
+                        "avg_msgs": round(float(row.avg_msgs), 3),
+                        "max_msgs": round(float(row.max_msgs), 3),
+                        "avg_bytes": round(float(row.avg_bytes), 3),
+                        "max_size": int(row.max_size),
+                    }
+                    for row in rows
+                ]
+        except Exception:
+            logger.exception("PostgresBackend.get_topic_history_daily: failed for cluster_id=%r", cluster_id)
+            return []
+
 
 # ── Factory ─────────────────────────────────────────────────────────────────
 def get_storage(agent_slug: str) -> StorageBackend:

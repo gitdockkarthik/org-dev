@@ -546,10 +546,7 @@
             const labels = hist.labels.map(l => {
               const d = new Date(l);
               if (timeVal === '7d') {
-                const dayLabel = d.toLocaleDateString([], { weekday: 'short', day: 'numeric' });
-                if (dayLabel === _lastDateLabel) return '';
-                _lastDateLabel = dayLabel;
-                return dayLabel;
+                return d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
               }
               if (timeVal === '24h') {
                 const hourLabel = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
