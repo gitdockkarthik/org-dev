@@ -10,13 +10,19 @@ Zero changes to agent code required.
 import os
 import httpx
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 # ── Config ──────────────────────────────────────────────────────────────
 KAFKA_URL = os.environ.get("KAFKA_ANALYSER_URL", "http://kafka-analyser:8003")
 ALERT_URL = os.environ.get("ALERT_ANALYSER_URL", "http://alert-analyser:8001")
 CUR_URL = os.environ.get("CUR_ANALYSER_URL", "http://cur-analyser:8002")
 
-mcp = FastMCP("Operative Intelligence")
+mcp = FastMCP(
+    "Operative Intelligence",
+    host="0.0.0.0",
+    port=8005,
+    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+)
 
 _client = httpx.AsyncClient(timeout=30.0)
 
@@ -185,6 +191,4 @@ async def platform_health() -> dict:
 
 
 if __name__ == "__main__":
-    import uvicorn
-    app = mcp.sse_app()
-    uvicorn.run(app, host="0.0.0.0", port=8005)
+    mcp.run(transport="sse")
