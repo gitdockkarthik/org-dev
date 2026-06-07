@@ -349,32 +349,73 @@ async def get_topics_history(cluster_id: str | None = None, minutes: float = 144
             return {"labels": all_days, "series": [], "snapshot_count": 7}
         return {"labels": all_days, "series": series, "snapshot_count": 7}
 
+    # Determine bucket size based on time range
+    from datetime import datetime, timedelta, timezone
+    if effective_minutes <= 5:
+        bucket_minutes = 1
+        total_buckets = 5
+    elif effective_minutes <= 60:
+        bucket_minutes = 10
+        total_buckets = 6
+    elif effective_minutes <= 360:
+        bucket_minutes = 30
+        total_buckets = 12
+    else:
+        bucket_minutes = 60
+        total_buckets = 24
+
     try:
-        rows = await get_backend().get_topic_history(int(cluster_id), minutes=effective_minutes)
+        rows = await get_backend().get_topic_history_bucketed(
+            int(cluster_id), minutes=effective_minutes, bucket_minutes=bucket_minutes
+        )
     except Exception:
         return {"empty": True, "series": []}
-    if not rows:
-        return {"empty": True, "series": []}
 
-    # Group by time then topic
+    # Generate all expected bucket timestamps (zero-filled). Keep parsed
+    # datetimes alongside the ISO labels so the snap loop below doesn't
+    # re-parse on every row.
+    now = datetime.now(timezone.utc)
+    # Round now down to current bucket boundary
+    now_minute = (now.minute // bucket_minutes) * bucket_minutes
+    bucket_end = now.replace(minute=now_minute, second=0, microsecond=0)
+    all_buckets = []          # ISO labels (returned to the client)
+    bucket_dts = []           # parsed datetimes (used for snapping)
+    for i in range(total_buckets - 1, -1, -1):
+        b = bucket_end - timedelta(minutes=i * bucket_minutes)
+        all_buckets.append(b.isoformat())
+        bucket_dts.append(b)
+
     from collections import defaultdict
-    times: list[str] = sorted(set(r["time"] for r in rows))
     topic_data: dict[str, dict[str, float]] = defaultdict(dict)
     for r in rows:
         if not r["topic"].startswith("_"):
-            topic_data[r["topic"]][r["time"]] = r["messages_in_per_sec"]
+            # Find closest bucket. Coerce naive timestamps to UTC so the
+            # subtraction never hits an aware/naive mismatch (the column is
+            # timestamptz, but a non-UTC session or naive backend could
+            # otherwise break this).
+            rt = datetime.fromisoformat(r["time"])
+            if rt.tzinfo is None:
+                rt = rt.replace(tzinfo=timezone.utc)
+            idx = min(
+                range(len(bucket_dts)),
+                key=lambda j: abs((bucket_dts[j] - rt).total_seconds()),
+            )
+            topic_data[r["topic"]][all_buckets[idx]] = r["avg_msgs"]
 
-    # Top 5 topics by max msgs/sec
-    topic_maxes = {t: max(v.values()) for t, v in topic_data.items()}
-    top_topics = sorted(topic_maxes, key=lambda n: topic_maxes[n], reverse=True)[:5]
+    if topic_data:
+        topic_maxes = {t: max(v.values()) for t, v in topic_data.items()}
+        top_topics = sorted(topic_maxes, key=lambda n: topic_maxes[n], reverse=True)[:5]
+    else:
+        top_topics = []
 
-    labels = [t for t in times]
     series = []
     for name in top_topics:
-        vals = [round(topic_data[name].get(ts, 0.0), 3) for ts in times]
+        vals = [round(topic_data[name].get(b, 0.0), 3) for b in all_buckets]
         series.append({"topic": name, "values": vals})
 
-    return {"labels": labels, "series": series, "snapshot_count": len(times)}
+    if not series:
+        return {"labels": all_buckets, "series": [], "snapshot_count": total_buckets}
+    return {"labels": all_buckets, "series": series, "snapshot_count": total_buckets}
 
 
 @router.post("/dashboard/insights/narrative/stream")

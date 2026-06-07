@@ -152,6 +152,23 @@ class MemoryBackend(StorageBackend):
             if last_tested_at is not None:
                 c["last_tested_at"] = last_tested_at
 
+    # ── Topic metrics (no-op) ─────────────────────────────────────────────
+    # The in-memory backend keeps no time-series store, so topic-history
+    # queries return empty and writes are dropped. This keeps the metrics
+    # collector and dashboard time-series endpoints working (showing empty
+    # charts) instead of raising AttributeError when STORAGE_BACKEND=memory.
+    async def save_topic_metrics(self, cluster_id: int, topics: list[dict], collected_at) -> None:
+        return None
+
+    async def get_topic_history(self, cluster_id: int, minutes: float = 1440.0) -> list[dict]:
+        return []
+
+    async def get_topic_history_daily(self, cluster_id: int, days: int = 7) -> list[dict]:
+        return []
+
+    async def get_topic_history_bucketed(self, cluster_id: int, minutes: float, bucket_minutes: int) -> list[dict]:
+        return []
+
 
 # ── Postgres backend ────────────────────────────────────────────────────────
 class PostgresBackend(StorageBackend):
@@ -491,6 +508,41 @@ class PostgresBackend(StorageBackend):
                 ]
         except Exception:
             logger.exception("PostgresBackend.get_topic_history_daily: failed for cluster_id=%r", cluster_id)
+            return []
+
+    async def get_topic_history_bucketed(self, cluster_id: int, minutes: float, bucket_minutes: int) -> list[dict]:
+        """Return per-topic metrics aggregated into fixed time buckets."""
+        from database import SessionLocal
+        if SessionLocal is None:
+            return []
+        try:
+            async with SessionLocal() as session:
+                result = await session.execute(
+                    text(
+                        """SELECT
+                           date_trunc('hour', time) + (FLOOR(EXTRACT(minute FROM time) / :bucket) * :bucket) * INTERVAL '1 minute' as bucket_time,
+                           topic,
+                           AVG(messages_in_per_sec) as avg_msgs,
+                           AVG(bytes_in_per_sec) as avg_bytes
+                           FROM kafka_topic_metrics
+                           WHERE cluster_id = :cluster_id
+                           AND time >= NOW() - ((:minutes) * INTERVAL '1 minute')
+                           GROUP BY bucket_time, topic
+                           ORDER BY bucket_time ASC"""
+                    ),
+                    {"cluster_id": cluster_id, "minutes": float(minutes), "bucket": bucket_minutes}
+                )
+                rows = result.fetchall()
+                return [
+                    {
+                        "time": row.bucket_time.isoformat(),
+                        "topic": row.topic,
+                        "avg_msgs": round(float(row.avg_msgs), 3),
+                    }
+                    for row in rows
+                ]
+        except Exception:
+            logger.exception("PostgresBackend.get_topic_history_bucketed: failed for cluster_id=%r", cluster_id)
             return []
 
 
