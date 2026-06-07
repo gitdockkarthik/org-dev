@@ -544,8 +544,10 @@
             const timeVal = document.getElementById('ctrl-time').value;
             const labels = hist.labels.map(l => {
               const d = new Date(l);
-              if (timeVal === '7d') return d.toLocaleDateString([], { weekday: 'short', day: 'numeric' });
+              if (timeVal === '7d') return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
               if (timeVal === '24h') return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              if (timeVal === '6h') return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              if (timeVal === '1h') return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
               return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
             });
             // Determine tick interval based on time range
