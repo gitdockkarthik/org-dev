@@ -473,7 +473,7 @@ Cluster data:
             client = _anthropic.AsyncAnthropic(api_key=api_key)
             async with client.messages.stream(
                 model="claude-sonnet-4-6",
-                max_tokens=2000,
+                max_tokens=8192,
                 messages=[{"role":"user","content":prompt}],
             ) as stream:
                 async for text in stream.text_stream:

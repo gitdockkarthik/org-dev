@@ -349,7 +349,7 @@ async def stream_insights(
             client = _anthropic.AsyncAnthropic(api_key=resolved_key)
             async with client.messages.stream(
                 model="claude-sonnet-4-6",
-                max_tokens=4000,
+                max_tokens=8192,
                 messages=[{"role": "user", "content": body.user_message}],
             ) as stream:
                 async for text in stream.text_stream:
@@ -417,7 +417,7 @@ async def invoke_stream(
             client = _anthropic.AsyncAnthropic(api_key=resolved_key)
             async with client.messages.stream(
                 model=settings.model,
-                max_tokens=4096,
+                max_tokens=8192,
                 system=system,
                 messages=messages,
             ) as stream:
