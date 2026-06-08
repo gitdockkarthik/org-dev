@@ -1225,17 +1225,9 @@
         <div class="section-title">Environment × Service Category</div>
         ${matrixHtml}`;
 
-      // stacked bar: env per month — use DASH data if ROWS not loaded yet
-      const envChartData = ROWS.length ? envByMonth() : (() => {
-        const env = DASH.environment_breakdown || [];
-        return {
-          months: ['Total'],
-          envs: env.map(e => e.environment).filter(Boolean),
-          matrix: Object.fromEntries(env.map(e => [e.environment, {'Total': e.cost}]))
-        };
-      })();
-      if (envChartData.envs.length) {
-        const em = envChartData;
+      // stacked bar: env per month
+      if (ROWS.length) {
+        const em = envByMonth();
         destroyChart('envMonth');
         const ctx = document.getElementById('envMonthChart');
         if (ctx) {
