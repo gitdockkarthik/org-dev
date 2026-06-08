@@ -493,9 +493,13 @@ Cluster data:
                 async for text in stream.text_stream:
                     escaped = text.replace("\n","\\n")
                     yield f"data: {escaped}\n\n"
-            stop_reason = stream.get_final_message().stop_reason if hasattr(stream, 'get_final_message') else "end_turn"
-            yield f"data: [STOP_REASON] {stop_reason}\n\n"
-            yield "data: [DONE]\n\n"
+                try:
+                    final_msg = await stream.get_final_message()
+                    stop_reason = final_msg.stop_reason
+                except Exception:
+                    stop_reason = "end_turn"
+                yield f"data: [STOP_REASON] {stop_reason}\n\n"
+                yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: [ERROR] {str(e)}\n\n"
 
