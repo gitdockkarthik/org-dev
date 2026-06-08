@@ -426,7 +426,7 @@
     function envByMonth() {
       // returns { months:[...], envs:[...], matrix: {env: {month: cost}} }
       const months = new Set(), envs = new Set(), m = {};
-      ROWS.forEach(r => {
+      _filteredRows.forEach(r => {
         const d = (r.line_item_usage_start_date || '').slice(0, 7);
         if (!d) return;
         const env = rowEnv(r);
@@ -439,7 +439,7 @@
 
     function envByCategory() {
       const cats = new Set(), envs = new Set(), m = {};
-      ROWS.forEach(r => {
+      _filteredRows.forEach(r => {
         const env = rowEnv(r);
         const cat = (r.service_category || '').trim() || '—';
         cats.add(cat); envs.add(env);
@@ -498,6 +498,7 @@
 
     // ── Raw data store ────────────────────────────────────────
     let _rawRows = [];           // all rows for current report
+    let _filteredRows = [];      // filtered rows — used by chart/matrix renders
     let _rawRowsMap = {};        // report_id → rows for compare mode
     let _loadProgress = 0;
     let _loadTotal = 0;
@@ -944,6 +945,7 @@
         renderCompareMode();
       } else {
         const filtered = applyFilters(_rawRows);
+        _filteredRows = filtered;
         if (filtered.length === 0) {
           // Show no-data state on active tab
           const activePanel = document.querySelector('.tab-panel--active');
@@ -1187,7 +1189,7 @@
       }).join('') || emptyTable(5, 'No environment data');
 
       // env × category matrix (computed from raw rows)
-      const ec = ROWS.length ? envByCategory() : (() => {
+      const ec = _filteredRows.length ? envByCategory() : (() => {
         const env = DASH.environment_breakdown || [];
         const cat = DASH.service_category_breakdown || [];
         if (!env.length || !cat.length) return null;
@@ -1226,7 +1228,7 @@
         ${matrixHtml}`;
 
       // stacked bar: env per month
-      if (ROWS.length) {
+      if (_filteredRows.length) {
         const em = envByMonth();
         destroyChart('envMonth');
         const ctx = document.getElementById('envMonthChart');
@@ -2456,6 +2458,7 @@ ${JSON.stringify(payload, null, 2)}
           (rows) => {
             _rawRows = rows;
             ROWS = rows;
+            _filteredRows = rows;
             if (progEl) progEl.style.display = 'none';
             // Re-render active row-dependent tab if ROWS arrived after tab was clicked
             const _streamActiveTab = document.querySelector('.tab-btn--active')?.dataset.tab;
