@@ -859,6 +859,7 @@
 
         let fullText = '';
         let sseBuffer = '';
+        let done_reading = false;
         let firstToken = false;
         let stopReason = 'end_turn';
 
@@ -879,7 +880,7 @@
 
           while (true) {
             const { done, value } = await reader.read();
-            if (done) break;
+            if (done || done_reading) break;
             const chunk = decoder.decode(value, { stream: true });
             sseBuffer += chunk;
             const lines = sseBuffer.split('\n');
@@ -891,7 +892,7 @@
                 stopReason = data.slice(14).trim();
                 continue;
               }
-              if (data === '[DONE]') break;
+              if (data === '[DONE]') { done_reading = true; break; }
               if (data.startsWith('[ERROR]')) {
                 throw new Error(data.slice(7).trim());
               }
