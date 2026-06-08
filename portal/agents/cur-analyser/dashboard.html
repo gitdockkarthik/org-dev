@@ -2455,6 +2455,7 @@ ${JSON.stringify(payload, null, 2)}
           },
           (rows) => {
             _rawRows = rows;
+            ROWS = rows;
             if (progEl) progEl.style.display = 'none';
             // Re-render active row-dependent tab if ROWS arrived after tab was clicked
             const _streamActiveTab = document.querySelector('.tab-btn--active')?.dataset.tab;
