@@ -27,16 +27,23 @@ mcp = FastMCP(
 _client = httpx.AsyncClient(timeout=30.0)
 
 
-async def _get(base_url: str, path: str, params: dict | None = None) -> dict:
+async def _get(base_url: str, path: str, params: dict | None = None):
     resp = await _client.get(f"{base_url}{path}", params=params)
     resp.raise_for_status()
-    return resp.json()
+    data = resp.json()
+    # Wrap lists in a dict so FastMCP serializes correctly
+    if isinstance(data, list):
+        return {"items": data, "count": len(data)}
+    return data
 
 
-async def _post(base_url: str, path: str, json: dict | None = None) -> dict:
+async def _post(base_url: str, path: str, json: dict | None = None):
     resp = await _client.post(f"{base_url}{path}", json=json)
     resp.raise_for_status()
-    return resp.json()
+    data = resp.json()
+    if isinstance(data, list):
+        return {"items": data, "count": len(data)}
+    return data
 
 
 @mcp.tool()

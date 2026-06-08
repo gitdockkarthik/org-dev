@@ -192,7 +192,11 @@ class MCPClient:
         for block in content:
             if block.get("type") == "text":
                 try:
-                    return json.loads(block["text"])
+                    parsed = json.loads(block["text"])
+                    # Unwrap list that was wrapped for MCP transport
+                    if isinstance(parsed, dict) and "items" in parsed and "count" in parsed:
+                        return parsed["items"]
+                    return parsed
                 except json.JSONDecodeError:
                     return {"text": block["text"]}
         return {}
