@@ -261,13 +261,27 @@ async def stream_insights(
             async with client.messages.stream(
                 model="claude-sonnet-4-6",
                 max_tokens=8192,
-                messages=[{"role": "user", "content": prompt}],
+                messages=(
+                    [
+                        {"role": "user", "content": prompt},
+                        {"role": "assistant", "content": body.context.get("continuation_of", "")},
+                        {"role": "user", "content": "Please continue the analysis from where you left off. Do not repeat what was already written."},
+                    ]
+                    if body.context.get("continuation_of")
+                    else [{"role": "user", "content": prompt}]
+                ),
             ) as stream:
                 async for text in stream.text_stream:
                     # SSE format: data: <chunk>\n\n
                     escaped = text.replace("\n", "\\n")
                     yield f"data: {escaped}\n\n"
-            yield "data: [DONE]\n\n"
+                try:
+                    final_msg = await stream.get_final_message()
+                    stop_reason = final_msg.stop_reason
+                except Exception:
+                    stop_reason = "end_turn"
+                yield f"data: [STOP_REASON] {stop_reason}\n\n"
+                yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: [ERROR] {str(e)}\n\n"
 

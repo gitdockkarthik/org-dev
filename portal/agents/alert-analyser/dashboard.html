@@ -498,6 +498,9 @@
       body.appendChild(pel);
       const pi = setInterval(() => { mi = (mi+1)%msgs.length; pel.textContent = msgs[mi]; }, 2000);
       let firstToken = false, fullText = '';
+      let sseBuffer = '';
+      let done_reading = false;
+      let stopReason = 'end_turn';
       try {
         const sid = (typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r=Math.random()*16|0; return (c=='x'?r:(r&0x3|0x8)).toString(16); }));
         const response = await fetch('/api/agents/alert-analyser/proxy/invoke/stream-insights', {
@@ -510,12 +513,15 @@
         const decoder = new TextDecoder();
         while (true) {
           const { done, value } = await reader.read();
-          if (done) break;
-          const lines = decoder.decode(value, { stream: true }).split('\n');
+          if (done || done_reading) break;
+          sseBuffer += decoder.decode(value, { stream: true });
+          const lines = sseBuffer.split('\n');
+          sseBuffer = lines.pop();
           for (const line of lines) {
             if (!line.startsWith('data: ')) continue;
-            const data = line.slice(6);
-            if (data === '[DONE]') break;
+            const data = line.slice(6).trimEnd();
+            if (data.startsWith('[STOP_REASON]')) { stopReason = data.slice(14).trim(); continue; }
+            if (data === '[DONE]') { done_reading = true; break; }
             if (data.startsWith('[ERROR]')) throw new Error(data.slice(7).trim());
             if (!firstToken) { firstToken = true; clearInterval(pi); body.innerHTML = ''; }
             fullText += data.replace(/\\n/g, '\n');
@@ -529,6 +535,56 @@
         btn.textContent = '🔄 Regenerate Insights';
         btn.disabled = false;
         btn.onclick = () => generateInsights(true);
+
+        // If the model hit the token cap, offer to continue
+        if (stopReason === 'max_tokens') {
+          const continueBtn = document.createElement('button');
+          continueBtn.className = 'btn btn--primary';
+          continueBtn.style.cssText = 'margin-top:8px';
+          continueBtn.textContent = 'Continue Analysis ›';
+          continueBtn.onclick = async () => {
+            continueBtn.remove();
+            btn.disabled = true;
+            stopReason = 'end_turn';
+            sseBuffer = '';
+            done_reading = false;
+            try {
+              const contResp = await fetch('/api/agents/alert-analyser/proxy/invoke/stream-insights', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+                body: JSON.stringify({ session_id: sid, user_message: buildInsightsPrompt(), history: [], context: { continuation_of: fullText } }),
+              });
+              if (!contResp.ok) throw new Error('HTTP ' + contResp.status);
+              const contReader = contResp.body.getReader();
+              const contDecoder = new TextDecoder();
+              while (true) {
+                const { done, value } = await contReader.read();
+                if (done || done_reading) break;
+                sseBuffer += contDecoder.decode(value, { stream: true });
+                const lines = sseBuffer.split('\n');
+                sseBuffer = lines.pop();
+                for (const line of lines) {
+                  if (!line.startsWith('data: ')) continue;
+                  const data = line.slice(6).trimEnd();
+                  if (data.startsWith('[STOP_REASON]')) { stopReason = data.slice(14).trim(); continue; }
+                  if (data === '[DONE]') { done_reading = true; break; }
+                  if (data.startsWith('[ERROR]')) { done_reading = true; break; }
+                  fullText += data.replace(/\\n/g, '\n');
+                  body.innerHTML = marked.parse(fullText);
+                }
+              }
+              _insightsCache = body.innerHTML;
+              btn.disabled = false;
+              if (stopReason === 'max_tokens') btn.parentElement.appendChild(continueBtn);
+            } catch(err) {
+              clearInterval(pi);
+              body.innerHTML += '<div style="color:var(--danger);margin-top:12px">Continuation failed: ' + (err.message || err) + '</div>';
+              btn.disabled = false;
+              btn.textContent = '⚡ Generate Insights';
+            }
+          };
+          btn.parentElement.appendChild(continueBtn);
+        }
       } catch(err) {
         clearInterval(pi);
         body.innerHTML = '<span style="color:var(--danger)">Failed: ' + err.message + '</span>';
