@@ -901,6 +901,13 @@
                 .replace(/^## (.*)/gm, '<h3 style="color:var(--accent);margin:12px 0 6px">$1</h3>')
                 .replace(/^### (.*)/gm, '<h4 style="margin:8px 0 4px">$1</h4>')
                 .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/^\|(.+)\|\s*$/gm, (_, row) => {
+                  const cells = row.split('|').map(c => c.trim());
+                  const isHeader = fullText.match(/\|[-| :]+\|/);
+                  return '<tr>' + cells.map(c => `<td style="padding:4px 10px;border:1px solid var(--border)">${c}</td>`).join('') + '</tr>';
+                })
+                .replace(/(<tr>.*<\/tr>)/gs, '<table style="border-collapse:collapse;margin:8px 0;font-size:.85rem;width:100%">$1</table>')
+                .replace(/<tr>[\s]*<td[^>]*>[-: |]+<\/td>[\s]*<\/tr>/g, '')
                 .replace(/\n/g, '<br>');
             }
           }
