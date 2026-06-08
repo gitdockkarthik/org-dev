@@ -223,7 +223,7 @@ def _generate_csv(n: int = 2000) -> str:
 
 @router.post("/generate-sample")
 async def generate_sample() -> dict:
-    csv_text = _generate_csv(300)
+    csv_text = _generate_csv(2000)
     summary = get_total_cost(csv_text)
     file_size = len(csv_text.encode())
     report = add_report(
