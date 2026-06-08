@@ -20,9 +20,13 @@ _reports: list[dict[str, Any]] = []
 _counter = 0
 
 
+def _normalise_key(k: str) -> str:
+    """Normalise CSV column names to snake_case for filter engine compatibility."""
+    return k.lower().replace("/", "_").replace(" ", "_").replace("-", "_").replace(".", "_")
+
 def _parse_rows(csv_text: str) -> list[dict[str, str]]:
     reader = csv.DictReader(io.StringIO(csv_text))
-    return [dict(row) for row in reader]
+    return [{_normalise_key(k): v for k, v in row.items()} for row in reader]
 
 
 # ── In-memory (sync) ──────────────────────────────────────────────────────────
