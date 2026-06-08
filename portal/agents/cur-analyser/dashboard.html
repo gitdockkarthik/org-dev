@@ -2456,6 +2456,10 @@ ${JSON.stringify(payload, null, 2)}
           (rows) => {
             _rawRows = rows;
             if (progEl) progEl.style.display = 'none';
+            // Re-render environment tab if active
+            if (document.querySelector('[data-tab="environments"]')?.classList.contains('tab-btn--active')) {
+              renderEnvironments();
+            }
             // Populate filter dropdowns from actual data
             buildMultiSelect('fAccountWrap', 'Account',
               getDistinctValues(rows,
