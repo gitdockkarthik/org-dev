@@ -6,6 +6,7 @@ the per-session CUR cache populated by main.py.
 """
 import io
 import json
+import re
 from typing import Any, ClassVar, Literal
 
 import duckdb
@@ -81,9 +82,24 @@ def _detect_account_col(columns: list[str]) -> str | None:
 
 # ── Core query functions (migrated from engine.py) ────────────────────────────
 
+def _normalise_col(k: str) -> str:
+    """Normalise slash-format CUR column names to snake_case preserving tag case.
+    lineItem/UsageAccountId -> line_item_usage_account_id
+    tag/Environment -> tag_Environment (preserve case after slash for DuckDB compatibility)
+    """
+    if "/" not in k:
+        return k  # Already normalised
+    prefix, _, rest = k.partition("/")
+    prefix = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', prefix).lower()
+    return f"{prefix}_{rest}"
+
+
 def _load_df(csv_text: str) -> tuple[pd.DataFrame, duckdb.DuckDBPyConnection]:
     con = duckdb.connect(database=":memory:")
     df = pd.read_csv(io.StringIO(csv_text))
+    # Normalise column names from slash format (external CUR exports)
+    if any("/" in col for col in df.columns):
+        df.columns = [_normalise_col(c) for c in df.columns]
     con.register("cur_data", df)
     return df, con
 
