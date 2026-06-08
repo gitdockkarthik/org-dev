@@ -897,18 +897,24 @@
               const text = data.replace(/\\n/g, '\n');
               fullText += text;
               // Render markdown progressively
-              content.innerHTML = fullText
+              const rendered = fullText
                 .replace(/^## (.*)/gm, '<h3 style="color:var(--accent);margin:12px 0 6px">$1</h3>')
                 .replace(/^### (.*)/gm, '<h4 style="margin:8px 0 4px">$1</h4>')
                 .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                .replace(/^\|(.+)\|\s*$/gm, (_, row) => {
-                  const cells = row.split('|').map(c => c.trim());
-                  const isHeader = fullText.match(/\|[-| :]+\|/);
-                  return '<tr>' + cells.map(c => `<td style="padding:4px 10px;border:1px solid var(--border)">${c}</td>`).join('') + '</tr>';
-                })
-                .replace(/(<tr>.*<\/tr>)/gs, '<table style="border-collapse:collapse;margin:8px 0;font-size:.85rem;width:100%">$1</table>')
-                .replace(/<tr>[\s]*<td[^>]*>[-: |]+<\/td>[\s]*<\/tr>/g, '')
                 .replace(/\n/g, '<br>');
+              // Convert markdown tables to HTML tables
+              content.innerHTML = rendered.replace(/(\|.+\|(<br>)?)+/g, tableBlock => {
+                const lines = tableBlock.split('<br>').filter(l => l.trim() && l.includes('|'));
+                const dataLines = lines.filter(l => !/^\|[-| :]+\|$/.test(l.trim()));
+                if (!dataLines.length) return '';
+                const rows = dataLines.map((line, i) => {
+                  const cells = line.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+                  const tag = i === 0 ? 'th' : 'td';
+                  const style = i === 0 ? 'padding:5px 10px;border:1px solid var(--border);background:var(--navy-1);font-weight:600' : 'padding:4px 10px;border:1px solid var(--border)';
+                  return '<tr>' + cells.map(c => `<${tag} style="${style}">${c}</${tag}>`).join('') + '</tr>';
+                }).join('');
+                return `<table style="border-collapse:collapse;margin:8px 0;font-size:.85rem;width:100%">${rows}</table>`;
+              });
             }
           }
           btn.textContent = '↺ Refresh Analysis';
