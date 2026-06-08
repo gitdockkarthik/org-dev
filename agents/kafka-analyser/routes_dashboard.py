@@ -423,6 +423,12 @@ async def stream_insights_narrative(
     request: Request,
     cluster_id: str | None = None
 ):
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    continuation_of = body.get("continuation_of", None)
     from fastapi.responses import StreamingResponse
     import anthropic as _anthropic
 
@@ -474,11 +480,21 @@ Cluster data:
             async with client.messages.stream(
                 model="claude-sonnet-4-6",
                 max_tokens=8192,
-                messages=[{"role":"user","content":prompt}],
+                messages=(
+                    [
+                        {"role": "user", "content": prompt},
+                        {"role": "assistant", "content": continuation_of},
+                        {"role": "user", "content": "Please continue the analysis from where you left off. Do not repeat what was already written."},
+                    ]
+                    if continuation_of
+                    else [{"role": "user", "content": prompt}]
+                ),
             ) as stream:
                 async for text in stream.text_stream:
                     escaped = text.replace("\n","\\n")
                     yield f"data: {escaped}\n\n"
+            stop_reason = stream.get_final_message().stop_reason if hasattr(stream, 'get_final_message') else "end_turn"
+            yield f"data: [STOP_REASON] {stop_reason}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: [ERROR] {str(e)}\n\n"

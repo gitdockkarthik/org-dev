@@ -859,6 +859,7 @@
 
         let fullText = '';
         let firstToken = false;
+        let stopReason = 'end_turn';
 
         try {
           await portalReady;
@@ -883,6 +884,10 @@
             for (const line of lines) {
               if (!line.startsWith('data: ')) continue;
               const data = line.slice(6);
+              if (data.startsWith('[STOP_REASON]')) {
+                stopReason = data.slice(14).trim();
+                continue;
+              }
               if (data === '[DONE]') break;
               if (data.startsWith('[ERROR]')) {
                 throw new Error(data.slice(7).trim());
@@ -918,6 +923,54 @@
             }
           }
           btn.textContent = '↺ Refresh Analysis';
+          btn.disabled = false;
+          if (stopReason === 'max_tokens') {
+            const continueBtn = document.createElement('button');
+            continueBtn.textContent = 'Continue Analysis ›';
+            continueBtn.className = 'dash-refresh-btn';
+            continueBtn.style.cssText = 'font-size:.8rem;padding:4px 12px;margin-left:8px;background:var(--accent);color:#fff;border:none;border-radius:4px;cursor:pointer';
+            continueBtn.onclick = async () => {
+              continueBtn.remove();
+              btn.textContent = 'Analysing…';
+              btn.disabled = true;
+              const prevText = fullText;
+              fullText = '';
+              firstToken = false;
+              stopReason = 'end_turn';
+              const contUrl = `${PROXY}/dashboard/insights/narrative/stream${_currentClusterId ? '?cluster_id=' + _currentClusterId : ''}`;
+              const contRes = await fetch(contUrl, {
+                method: 'POST',
+                headers: { ..._authHeaders(), 'Content-Type': 'application/json' },
+                body: JSON.stringify({ continuation_of: prevText }),
+              });
+              if (!contRes.ok) throw new Error(`HTTP ${contRes.status}`);
+              const contReader = contRes.body.getReader();
+              const contDecoder = new TextDecoder();
+              while (true) {
+                const { done, value } = await contReader.read();
+                if (done) break;
+                const chunk = contDecoder.decode(value, { stream: true });
+                for (const line of chunk.split('\n')) {
+                  if (!line.startsWith('data: ')) continue;
+                  const d = line.slice(6);
+                  if (d.startsWith('[STOP_REASON]')) { stopReason = d.slice(14).trim(); continue; }
+                  if (d === '[DONE]') break;
+                  if (d.startsWith('[ERROR]')) break;
+                  const t = d.replace(/\\n/g, '\n');
+                  fullText += t;
+                }
+              }
+              content.innerHTML = (prevText + fullText)
+                .replace(/^## (.*)/gm, '<h3 style="color:var(--accent);margin:12px 0 6px">$1</h3>')
+                .replace(/^### (.*)/gm, '<h4 style="margin:8px 0 4px">$1</h4>')
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\n/g, '<br>');
+              btn.textContent = '↺ Refresh Analysis';
+              btn.disabled = false;
+              if (stopReason === 'max_tokens') content.appendChild(continueBtn.cloneNode(true));
+            };
+            document.getElementById('ai-narrative-card').appendChild(continueBtn);
+          }
         } catch(e) {
           clearInterval(progressInterval);
           content.style.fontStyle = 'normal';
