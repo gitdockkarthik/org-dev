@@ -21,25 +21,30 @@ _reports: list[dict[str, Any]] = []
 _counter = 0
 
 
+def _needs_normalisation(columns: list[str]) -> bool:
+    """Check if columns have slash format (external CUR export) needing normalisation."""
+    return any("/" in col for col in columns)
+
 def _normalise_key(k: str) -> str:
-    """Normalise CSV column names to snake_case for filter engine compatibility.
+    """Normalise slash-format CUR column names to snake_case.
     lineItem/UsageAccountId -> line_item_usage_account_id
     product/region -> product_region
-    tag/Environment -> tag_environment
+    tag/Environment -> tag_Environment (preserve case after slash)
     """
-    # Split on slash first
-    k = k.replace("/", "_")
-    # Insert underscore before uppercase letters (camelCase -> snake_case)
-    k = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', k)
-    # Clean up
-    k = k.lower().replace(" ", "_").replace("-", "_").replace(".", "_")
-    # Collapse multiple underscores
-    k = re.sub(r'_+', '_', k)
-    return k.strip("_")
+    if "/" not in k:
+        return k  # Already normalised — return as-is
+    prefix, _, rest = k.partition("/")
+    # Convert camelCase prefix to snake_case
+    prefix = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', prefix).lower()
+    # Keep rest as-is to preserve tag_Environment, tag_Team etc.
+    return f"{prefix}_{rest}"
 
 def _parse_rows(csv_text: str) -> list[dict[str, str]]:
     reader = csv.DictReader(io.StringIO(csv_text))
-    return [{_normalise_key(k): v for k, v in row.items()} for row in reader]
+    rows = [dict(row) for row in reader]
+    if rows and _needs_normalisation(list(rows[0].keys())):
+        rows = [{_normalise_key(k): v for k, v in row.items()} for row in rows]
+    return rows
 
 
 # ── In-memory (sync) ──────────────────────────────────────────────────────────
