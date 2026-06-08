@@ -9,6 +9,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import re
 import threading
 from datetime import datetime, timezone
 from typing import Any
@@ -21,8 +22,20 @@ _counter = 0
 
 
 def _normalise_key(k: str) -> str:
-    """Normalise CSV column names to snake_case for filter engine compatibility."""
-    return k.lower().replace("/", "_").replace(" ", "_").replace("-", "_").replace(".", "_")
+    """Normalise CSV column names to snake_case for filter engine compatibility.
+    lineItem/UsageAccountId -> line_item_usage_account_id
+    product/region -> product_region
+    tag/Environment -> tag_environment
+    """
+    # Split on slash first
+    k = k.replace("/", "_")
+    # Insert underscore before uppercase letters (camelCase -> snake_case)
+    k = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', k)
+    # Clean up
+    k = k.lower().replace(" ", "_").replace("-", "_").replace(".", "_")
+    # Collapse multiple underscores
+    k = re.sub(r'_+', '_', k)
+    return k.strip("_")
 
 def _parse_rows(csv_text: str) -> list[dict[str, str]]:
     reader = csv.DictReader(io.StringIO(csv_text))
