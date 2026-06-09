@@ -1347,88 +1347,220 @@
       const s = data.summary || {};
       const connectors = data.connectors || [];
 
-      const stateColor = {
-        'RUNNING': 'var(--success)',
-        'FAILED': 'var(--danger)',
-        'PAUSED': 'var(--warn)',
-        'UNASSIGNED': '#6366f1',
-        'UNKNOWN': 'var(--text-muted)',
-      };
+      if (!connectors.length) {
+        el.innerHTML = `
+          <div class="filter-bar" style="color:var(--text-muted)">
+            ℹ️ No Kafka Connect configured — add Connect URL in cluster settings
+          </div>`;
+        return;
+      }
 
-      const rows = connectors.map(c => {
-        const taskBar = c.total_tasks > 0 ? `
-          <div style="display:flex;gap:2px;margin-top:4px">
-            ${Array.from({length: c.total_tasks}, (_, i) => {
-              const task = c.tasks[i] || {};
-              const color = stateColor[task.state || 'RUNNING'] || 'var(--success)';
-              return `<div style="width:12px;height:6px;border-radius:2px;background:${color}" title="Task ${i}: ${task.state}"></div>`;
-            }).join('')}
-          </div>` : '';
-        return `<tr>
-          <td style="font-weight:600"><code style="font-size:.8rem">${c.name}</code></td>
-          <td style="font-size:.78rem;color:var(--text-muted)">${c.connector_class || c.type || '-'}</td>
-          <td>
-            <span style="color:${stateColor[c.state]||'var(--text-muted)'};font-weight:700;font-size:.82rem">
-              ${c.state}
-            </span>
-          </td>
-          <td style="text-align:center">${c.running_tasks}/${c.total_tasks}</td>
-          <td style="text-align:center;color:${c.failed_tasks > 0 ? 'var(--danger)' : 'var(--text-muted)'}">
-            ${c.failed_tasks > 0 ? `<strong>${c.failed_tasks}</strong>` : '0'}
-          </td>
-          <td>${taskBar}</td>
-        </tr>
-        ${c.trace ? `<tr><td colspan="6" style="padding:4px 12px 8px;font-size:.75rem;color:var(--danger);font-family:monospace">${c.trace}</td></tr>` : ''}`;
-      }).join('') || `<tr><td colspan="6" class="data-table__empty">No connectors configured</td></tr>`;
+      // ── KPI cards ─────────────────────────────────────────────────────────────
+      const connectorCount = data.connector_count ?? connectors.length;
+      const runningCount   = s.running ?? connectors.filter(c => c.state === 'RUNNING').length;
+      const failedCount    = s.failed ?? connectors.filter(c => c.state === 'FAILED').length;
+      const totalTasks     = s.total_tasks ?? connectors.reduce((n, c) => n + (c.total_tasks || 0), 0);
+      const failedTasks    = s.failed_tasks ?? connectors.reduce((n, c) => n + (c.failed_tasks || 0), 0);
 
-      el.innerHTML = `
-        <div class="kpi-grid" style="margin-bottom:18px">
-          <div class="kpi ${s.failed > 0 ? 'kpi--danger' : 'kpi--success'}">
-            <div class="kpi__label">Status</div>
-            <div class="kpi__value" style="font-size:1.1rem">
-              ${s.failed > 0 ? '⚠️' : '✅'} ${data.status}
-            </div>
-            <div class="kpi__sub">${data.url}</div>
+      const connectKpis = `
+        <div class="kpi-grid">
+          <div class="kpi kpi--orange">
+            <div class="kpi__label">Total Connectors</div>
+            <div class="kpi__value">${connectorCount}</div>
+            <div class="kpi__sub">connectors</div>
           </div>
           <div class="kpi kpi--success">
             <div class="kpi__label">Running</div>
-            <div class="kpi__value">${s.running || 0}</div>
-            <div class="kpi__sub">of ${data.connector_count} connectors</div>
+            <div class="kpi__value">${runningCount}</div>
+            <div class="kpi__sub">connectors</div>
           </div>
-          <div class="kpi ${s.failed > 0 ? 'kpi--danger' : ''}">
+          <div class="kpi ${failedCount > 0 ? 'kpi--danger' : 'kpi--success'}">
             <div class="kpi__label">Failed</div>
-            <div class="kpi__value">${s.failed || 0}</div>
-            <div class="kpi__sub">${s.failed_tasks || 0} failed tasks</div>
+            <div class="kpi__value">${failedCount}</div>
+            <div class="kpi__sub">connectors</div>
           </div>
-          <div class="kpi">
-            <div class="kpi__label">Paused</div>
-            <div class="kpi__value">${s.paused || 0}</div>
-            <div class="kpi__sub">${s.total_tasks || 0} total tasks</div>
+          <div class="kpi kpi--orange">
+            <div class="kpi__label">Total Tasks</div>
+            <div class="kpi__value">${totalTasks}</div>
+            <div class="kpi__sub">tasks</div>
           </div>
+          <div class="kpi ${failedTasks > 0 ? 'kpi--danger' : 'kpi--success'}">
+            <div class="kpi__label">Failed Tasks</div>
+            <div class="kpi__value">${failedTasks}</div>
+            <div class="kpi__sub">tasks</div>
+          </div>
+        </div>`;
+
+      // ── Charts ────────────────────────────────────────────────────────────────
+      const connectCharts = `
+        <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:22px">
+          <div class="chart-card" style="flex:1;min-width:300px;margin-bottom:0">
+            <div class="chart-card__title">Connector Status Distribution</div>
+            <div class="chart-wrap" style="height:240px"><canvas id="connect-status-chart"></canvas></div>
+          </div>
+          <div class="chart-card" style="flex:1;min-width:300px;margin-bottom:0">
+            <div class="chart-card__title">Connectors by Type</div>
+            <div class="chart-wrap" style="height:240px"><canvas id="connect-type-chart"></canvas></div>
+          </div>
+        </div>`;
+
+      // ── Table helpers ───────────────────────────────────────────────────────
+      const shortClass = c => {
+        const cls = c.connector_class || c.type || '-';
+        return cls.includes('.') ? cls.split('.').pop() : cls;
+      };
+      const statusBadge = state => {
+        if (state === 'RUNNING') return `<span class="sev sev--healthy">RUNNING</span>`;
+        if (state === 'FAILED')  return `<span class="sev sev--critical">FAILED</span>`;
+        if (state === 'PAUSED')  return `<span class="sev sev--warning">PAUSED</span>`;
+        return `<span class="sev" style="background:rgba(100,116,139,.12);color:var(--text-muted)">${state || 'UNKNOWN'}</span>`;
+      };
+      const connectRowHtml = c => `<tr>
+          <td style="font-weight:600"><code style="font-size:.8rem">${c.name}</code></td>
+          <td style="font-size:.82rem;color:var(--text-muted);text-transform:capitalize">${c.type || '-'}</td>
+          <td style="font-size:.8rem"><code style="font-size:.78rem">${shortClass(c)}</code></td>
+          <td style="text-align:center;color:${c.failed_tasks > 0 ? 'var(--danger)' : 'var(--text)'}">${c.running_tasks ?? 0}/${c.total_tasks ?? 0}</td>
+          <td style="font-size:.8rem;color:var(--text-muted)">${c.worker_id || c.worker || '-'}</td>
+          <td>${statusBadge(c.state)}</td>
+        </tr>`;
+
+      el.innerHTML = connectKpis + connectCharts + `
+        <div class="filter-bar">
+          <span class="dash-label">Status:</span>
+          <span class="filter-chip active" onclick="window._connectSetStatus('all',this)">All</span>
+          <span class="filter-chip" onclick="window._connectSetStatus('RUNNING',this)">Running</span>
+          <span class="filter-chip" onclick="window._connectSetStatus('FAILED',this)">Failed</span>
+          <span class="filter-chip" onclick="window._connectSetStatus('PAUSED',this)">Paused</span>
+          <input class="filter-input" id="connector-search" placeholder="Search connector…" oninput="window._connectSearch(this.value)" />
         </div>
         <div class="filter-bar">
-          <span class="dash-label">State:</span>
-          <span class="filter-chip active" onclick="filterConnectors('all',this)">All</span>
-          <span class="filter-chip" onclick="filterConnectors('RUNNING',this)">Running</span>
-          <span class="filter-chip" onclick="filterConnectors('FAILED',this)">Failed</span>
-          <span class="filter-chip" onclick="filterConnectors('PAUSED',this)">Paused</span>
-          <input class="filter-input" id="connector-search" placeholder="Search connector…" oninput="filterConnectorSearch(this.value)" />
+          <span class="dash-label">Type:</span>
+          <span class="filter-chip active" onclick="window._connectSetType('all',this)">All</span>
+          <span class="filter-chip" onclick="window._connectSetType('source',this)">Source</span>
+          <span class="filter-chip" onclick="window._connectSetType('sink',this)">Sink</span>
         </div>
+        <div class="chart-card__title">Connector Inventory</div>
         <div class="data-table-wrap">
           <table class="data-table">
             <thead>
               <tr>
-                <th>Connector</th>
+                <th>Name</th>
+                <th>Type</th>
                 <th>Class</th>
-                <th>State</th>
-                <th style="text-align:center">Tasks Running</th>
-                <th style="text-align:center">Failed</th>
-                <th>Task Health</th>
+                <th style="text-align:center">Tasks</th>
+                <th>Worker</th>
+                <th>Status</th>
               </tr>
             </thead>
-            <tbody>${rows}</tbody>
+            <tbody id="connect-tbody"></tbody>
           </table>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px">
+          <span id="connect-count-label" class="dash-label"></span>
+          <button id="connect-show-more" class="btn btn--secondary btn--sm" onclick="window._connectShowMore()">Show More</button>
         </div>`;
+
+      // ── Self-contained table view: pagination + filters + search (AND) ────────
+      const CONNECT_PAGE = 20;
+      window._connectView = { status: 'all', type: 'all', search: '', visible: CONNECT_PAGE };
+
+      const connectMatches = (c, st) => {
+        if (st.status !== 'all' && c.state !== st.status) return false;
+        if (st.type !== 'all' && (c.type || '').toLowerCase() !== st.type) return false;
+        if (st.search && !(c.name || '').toLowerCase().includes(st.search.toLowerCase())) return false;
+        return true;
+      };
+
+      window._connectApplyView = function () {
+        const st = window._connectView;
+        const filtered = connectors.filter(c => connectMatches(c, st));
+        const shown = filtered.slice(0, st.visible);
+        const tbody = document.getElementById('connect-tbody');
+        if (tbody) {
+          tbody.innerHTML = shown.map(connectRowHtml).join('') ||
+            `<tr><td colspan="6" class="data-table__empty">No connectors match</td></tr>`;
+        }
+        const label = document.getElementById('connect-count-label');
+        if (label) label.textContent = `Showing ${shown.length} of ${filtered.length} connectors`;
+        const moreBtn = document.getElementById('connect-show-more');
+        if (moreBtn) moreBtn.style.display = shown.length < filtered.length ? '' : 'none';
+      };
+
+      const connectSetActiveChip = (el2) => {
+        el2.parentElement.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+        el2.classList.add('active');
+      };
+
+      window._connectSetStatus = function (status, el2) {
+        window._connectView.status = status;
+        window._connectView.visible = CONNECT_PAGE;
+        connectSetActiveChip(el2);
+        window._connectApplyView();
+      };
+      window._connectSetType = function (type, el2) {
+        window._connectView.type = type;
+        window._connectView.visible = CONNECT_PAGE;
+        connectSetActiveChip(el2);
+        window._connectApplyView();
+      };
+      window._connectSearch = function (val) {
+        window._connectView.search = val;
+        window._connectView.visible = CONNECT_PAGE;
+        window._connectApplyView();
+      };
+      window._connectShowMore = function () {
+        window._connectView.visible += CONNECT_PAGE;
+        window._connectApplyView();
+      };
+
+      window._connectApplyView();
+
+      // ── Doughnut charts ───────────────────────────────────────────────────────
+      setTimeout(() => {
+        if (window._connectStatusChart) { window._connectStatusChart.destroy(); window._connectStatusChart = null; }
+        const statusCtx = document.getElementById('connect-status-chart')?.getContext('2d');
+        if (statusCtx) {
+          const statusDefs = [
+            { label: 'Running',    color: '#4CAF50', count: connectors.filter(c => c.state === 'RUNNING').length },
+            { label: 'Failed',     color: '#F44336', count: connectors.filter(c => c.state === 'FAILED').length },
+            { label: 'Paused',     color: '#FF9800', count: connectors.filter(c => c.state === 'PAUSED').length },
+            { label: 'Unassigned', color: '#666',    count: connectors.filter(c => c.state === 'UNASSIGNED').length },
+          ].filter(d => d.count > 0);
+          window._connectStatusChart = new Chart(statusCtx, {
+            type: 'doughnut',
+            data: {
+              labels: statusDefs.map(d => d.label),
+              datasets: [{ data: statusDefs.map(d => d.count), backgroundColor: statusDefs.map(d => d.color), borderWidth: 0 }],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } },
+            },
+          });
+        }
+
+        if (window._connectTypeChart) { window._connectTypeChart.destroy(); window._connectTypeChart = null; }
+        const typeCtx = document.getElementById('connect-type-chart')?.getContext('2d');
+        if (typeCtx) {
+          const typeDefs = [
+            { label: 'Source', color: '#4FC3F7', count: connectors.filter(c => (c.type || '').toLowerCase() === 'source').length },
+            { label: 'Sink',   color: '#FF6B35', count: connectors.filter(c => (c.type || '').toLowerCase() === 'sink').length },
+          ].filter(d => d.count > 0);
+          window._connectTypeChart = new Chart(typeCtx, {
+            type: 'doughnut',
+            data: {
+              labels: typeDefs.map(d => d.label),
+              datasets: [{ data: typeDefs.map(d => d.count), backgroundColor: typeDefs.map(d => d.color), borderWidth: 0 }],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } },
+            },
+          });
+        }
+      }, 0);
     }
 
     // ── Tab 6: AI Insights ────────────────────────────────────────────────────
