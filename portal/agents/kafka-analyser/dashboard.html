@@ -475,13 +475,87 @@
         </div>
       `;
 
-      document.getElementById('tab-consumer-groups').innerHTML = cgFilters + `
+      const totalGroups   = groups.length;
+      const criticalCount = groups.filter(g => g.total_lag > 10000).length;
+      const warningCount  = groups.filter(g => g.total_lag > 1000 && g.total_lag <= 10000).length;
+      const healthyCount  = groups.filter(g => g.total_lag <= 1000).length;
+
+      const cgKpis = `
+        <div class="kpi-grid">
+          <div class="kpi kpi--orange">
+            <div class="kpi__label">Total Groups</div>
+            <div class="kpi__value">${totalGroups}</div>
+            <div class="kpi__sub">consumer groups</div>
+          </div>
+          <div class="kpi kpi--danger">
+            <div class="kpi__label">Critical</div>
+            <div class="kpi__value">${criticalCount}</div>
+            <div class="kpi__sub">lag &gt; 10,000</div>
+          </div>
+          <div class="kpi kpi--warn">
+            <div class="kpi__label">Warning</div>
+            <div class="kpi__value">${warningCount}</div>
+            <div class="kpi__sub">lag 1,001–10,000</div>
+          </div>
+          <div class="kpi kpi--success">
+            <div class="kpi__label">Healthy</div>
+            <div class="kpi__value">${healthyCount}</div>
+            <div class="kpi__sub">lag &le; 1,000</div>
+          </div>
+        </div>`;
+
+      const topLag = [...groups]
+        .sort((a, b) => (b.total_lag || 0) - (a.total_lag || 0))
+        .slice(0, 10);
+      const hasLag = groups.some(g => (g.total_lag || 0) > 0);
+
+      const cgChart = hasLag
+        ? `<div class="chart-card" style="margin-bottom:22px">
+             <div class="chart-card__title">Top 10 Consumer Groups by Lag</div>
+             <div class="chart-wrap" style="height:280px"><canvas id="cg-lag-chart"></canvas></div>
+           </div>`
+        : `<div class="filter-bar" style="color:var(--text-muted)">
+             ℹ️ No active consumer lag detected — consumers are keeping up or no active subscribers
+           </div>`;
+
+      document.getElementById('tab-consumer-groups').innerHTML = cgKpis + cgChart + cgFilters + `
         <div class="data-table-wrap">
           <table class="data-table">
             <thead><tr><th>Group</th><th>Topic</th><th>Total Lag</th><th>Trend</th><th>Rate/min</th><th>State</th><th>Status</th></tr></thead>
             <tbody>${rows}</tbody>
           </table>
         </div>`;
+
+      if (hasLag) {
+        setTimeout(() => {
+          if (window._cgLagChart) { window._cgLagChart.destroy(); window._cgLagChart = null; }
+          const ctx = document.getElementById('cg-lag-chart')?.getContext('2d');
+          if (!ctx) return;
+          window._cgLagChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+              labels: topLag.map(g => (g.group_id || g.group_name || 'Unknown')),
+              datasets: [{
+                label: 'Total Lag',
+                data: topLag.map(g => g.total_lag || 0),
+                backgroundColor: topLag.map(g =>
+                  g.total_lag > 10000 ? '#dc2626' : g.total_lag > 1000 ? '#d97706' : '#16a34a'),
+                borderWidth: 0,
+              }],
+            },
+            options: {
+              indexAxis: 'y',
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { display: false }, title: { display: false } },
+              scales: {
+                x: { ticks: { callback: v => fmtNum(v), font: { size: 10 } }, beginAtZero: true },
+                y: { ticks: { font: { size: 10 } } },
+              },
+            },
+          });
+        }, 0);
+      }
     }
 
     // ── Tab 3: Topics ─────────────────────────────────────────────────────────
