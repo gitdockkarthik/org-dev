@@ -1415,6 +1415,27 @@
         if (state === 'PAUSED')  return `<span class="sev sev--warning">PAUSED</span>`;
         return `<span class="sev" style="background:rgba(100,116,139,.12);color:var(--text-muted)">${state || 'UNKNOWN'}</span>`;
       };
+      const taskColor = { RUNNING: '#4CAF50', FAILED: '#F44336', PAUSED: '#FF9800', UNASSIGNED: '#666' };
+      const taskHealthRow = c => {
+        const count = c.total_tasks || (c.tasks ? c.tasks.length : 0);
+        const tasks = Array.from({ length: count }, (_, i) => (c.tasks && c.tasks[i]) || {});
+        const showSubRow = count > 1 || tasks.some(t => (t.state || 'RUNNING') !== 'RUNNING');
+        if (!showSubRow) return '';
+        const pills = tasks.map((t, i) => {
+          const state = t.state || 'RUNNING';
+          const color = taskColor[state] || '#666';
+          const titleParts = [`Task ${i}: ${state}`];
+          if (state === 'FAILED' && t.trace) titleParts.push(String(t.trace).slice(0, 200));
+          const title = titleParts.join(' — ').replace(/"/g, '&quot;');
+          return `<span title="${title}" style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${color}"></span>`;
+        }).join('');
+        return `<tr>
+          <td colspan="6" style="border-top:none;padding:2px 14px 8px 28px;font-size:.75rem">
+            <span style="color:var(--text-muted);margin-right:6px">Tasks:</span>
+            <span style="display:inline-flex;gap:2px;vertical-align:middle">${pills}</span>
+          </td>
+        </tr>`;
+      };
       const connectRowHtml = c => `<tr>
           <td style="font-weight:600"><code style="font-size:.8rem">${c.name}</code></td>
           <td style="font-size:.82rem;color:var(--text-muted);text-transform:capitalize">${c.type || '-'}</td>
@@ -1422,7 +1443,7 @@
           <td style="text-align:center;color:${c.failed_tasks > 0 ? 'var(--danger)' : 'var(--text)'}">${c.running_tasks ?? 0}/${c.total_tasks ?? 0}</td>
           <td style="font-size:.8rem;color:var(--text-muted)">${c.worker_id || c.worker || '-'}</td>
           <td>${statusBadge(c.state)}</td>
-        </tr>`;
+        </tr>${taskHealthRow(c)}`;
 
       el.innerHTML = connectKpis + connectCharts + `
         <div class="filter-bar">
