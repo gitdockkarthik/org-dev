@@ -610,11 +610,20 @@
       const groups = data.consumer_groups || [];
       const cgRowHtml = g => {
         const lagColor = g.lag_trend === 'growing' && g.total_lag > 10000 ? 'style="color:var(--danger);font-weight:700"' : '';
+        let trendHtml;
+        if (g.lag_trend === 'growing') {
+          const color = g.total_lag > 1000 ? 'var(--danger)' : '#d97706';
+          trendHtml = `<span style="color:${color};font-weight:600">↑ growing</span>`;
+        } else if (g.lag_trend === 'shrinking') {
+          trendHtml = `<span style="color:var(--success);font-weight:600">↓ shrinking</span>`;
+        } else {
+          trendHtml = `<span style="color:var(--text-muted)">→ stable</span>`;
+        }
         return `<tr>
           <td style="font-weight:600">${(g.group_id || g.group_name || 'Unknown')}</td>
           <td><code style="font-size:.8rem">${(g.topic || (g.partitions && g.partitions[0] && g.partitions[0].topic) || '-')}</code></td>
           <td ${lagColor}>${fmtNum(g.total_lag)}</td>
-          <td>${trendCell(g.lag_trend, g.lag_rate_per_min)}</td>
+          <td>${trendHtml}</td>
           <td style="font-size:.82rem;color:var(--text-muted)">${g.lag_rate_per_min > 0 ? '+' : ''}${fmtNum(g.lag_rate_per_min)}/min</td>
           <td>${stateBadge(g.state)}</td>
           <td><span class="sev sev--${g.total_lag > 10000 ? 'critical' : g.total_lag > 1000 ? 'warning' : 'healthy'}">${g.total_lag > 10000 ? 'CRITICAL' : g.total_lag > 1000 ? 'WARNING' : 'HEALTHY'}</span></td>
@@ -770,7 +779,10 @@
                 label: 'Total Lag',
                 data: topLag.map(g => g.total_lag || 0),
                 backgroundColor: topLag.map(g =>
-                  g.total_lag > 10000 ? '#dc2626' : g.total_lag > 1000 ? '#d97706' : '#16a34a'),
+                  g.total_lag > 10000 ? '#dc2626'
+                  : (g.total_lag > 1000 && g.lag_trend === 'growing') ? '#d97706'
+                  : g.total_lag > 1000 ? '#FFC107'
+                  : '#16a34a'),
                 borderWidth: 0,
               }],
             },
