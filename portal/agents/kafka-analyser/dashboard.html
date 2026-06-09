@@ -468,8 +468,8 @@
       const overviewCharts = `
         <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:22px">
           <div class="chart-card" style="flex:1;min-width:300px;margin-bottom:0">
-            <div class="chart-card__title">Messages/sec by Topic</div>
-            <div class="chart-wrap" style="height:220px"><canvas id="overview-msgs-chart"></canvas></div>
+            <div class="chart-card__title">Cluster Activity — Messages/sec Over Time</div>
+            <div class="chart-wrap" id="overview-activity-wrap" style="height:220px"><canvas id="overview-activity-chart"></canvas></div>
           </div>
           <div class="chart-card" style="flex:1;min-width:300px;margin-bottom:0">
             <div class="chart-card__title">Partition Distribution by Topic</div>
@@ -477,7 +477,6 @@
           </div>
         </div>`;
 
-      const topByMsgs  = [...topics].sort((a, b) => msgOf(b) - msgOf(a)).slice(0, 10);
       const topByParts = [...topics].sort((a, b) => partsOf(b) - partsOf(a)).slice(0, 10);
 
       // ── Broker health summary (compact) ─────────────────────────────────────
@@ -517,27 +516,64 @@
           </table>
         </div>`;
 
-      setTimeout(() => {
-        if (window._overviewMsgsChart) { window._overviewMsgsChart.destroy(); window._overviewMsgsChart = null; }
-        const msgsCtx = document.getElementById('overview-msgs-chart')?.getContext('2d');
-        if (msgsCtx) {
-          window._overviewMsgsChart = new Chart(msgsCtx, {
-            type: 'bar',
-            data: {
-              labels: topByMsgs.map(nameOf),
-              datasets: [{ label: 'Messages/sec', data: topByMsgs.map(msgOf), backgroundColor: '#FF6B35', borderWidth: 0 }],
-            },
-            options: {
-              indexAxis: 'y',
-              responsive: true,
-              maintainAspectRatio: false,
-              plugins: { legend: { display: false }, title: { display: false } },
-              scales: {
-                x: { ticks: { callback: v => fmtRate(v), font: { size: 10 } }, beginAtZero: true },
-                y: { ticks: { font: { size: 10 } } },
-              },
-            },
-          });
+      setTimeout(async () => {
+        if (window._overviewActivityChart) { window._overviewActivityChart.destroy(); window._overviewActivityChart = null; }
+        const activityWrap = document.getElementById('overview-activity-wrap');
+        const noData = () => {
+          if (activityWrap) {
+            activityWrap.innerHTML =
+              `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:.85rem">No historical data available</div>`;
+          }
+        };
+        const activityCtx = document.getElementById('overview-activity-chart')?.getContext('2d');
+        if (activityCtx) {
+          try {
+            const clusterId = window._currentClusterId
+              || (typeof _currentClusterId !== 'undefined' ? _currentClusterId : null)
+              || document.getElementById('ctrl-cluster')?.value;
+            const qs = new URLSearchParams();
+            qs.set('minutes', '1440');
+            if (clusterId) qs.set('cluster_id', clusterId);
+            const hist = await fetch(`${PROXY}/dashboard/topics/history?${qs.toString()}`,
+              { headers: _authHeaders(), cache: 'no-store' }).then(r => r.json());
+
+            if (hist.empty || !hist.series || !hist.series.length || !hist.labels || !hist.labels.length) {
+              noData();
+            } else {
+              const labels = hist.labels.map(l =>
+                new Date(l).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+              const totals = hist.labels.map((_, i) =>
+                hist.series.reduce((sum, s) => sum + ((s.values && s.values[i]) || 0), 0));
+              window._overviewActivityChart = new Chart(activityCtx, {
+                type: 'line',
+                data: {
+                  labels,
+                  datasets: [{
+                    label: 'Messages/sec',
+                    data: totals,
+                    borderColor: '#FF6B35',
+                    backgroundColor: 'rgba(255,107,53,0.1)',
+                    borderWidth: 2,
+                    pointRadius: labels.length < 20 ? 3 : 0,
+                    tension: 0.3,
+                    fill: true,
+                  }],
+                },
+                options: {
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: { legend: { display: false }, title: { display: false } },
+                  scales: {
+                    x: { ticks: { maxTicksLimit: 12, font: { size: 10 }, maxRotation: 45 } },
+                    y: { ticks: { callback: v => fmtRate(v), font: { size: 10 } }, beginAtZero: true },
+                  },
+                },
+              });
+            }
+          } catch (e) {
+            console.warn('Overview activity chart failed:', e);
+            noData();
+          }
         }
 
         if (window._overviewPartitionsChart) { window._overviewPartitionsChart.destroy(); window._overviewPartitionsChart = null; }
