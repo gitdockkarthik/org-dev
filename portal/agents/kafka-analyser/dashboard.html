@@ -452,7 +452,7 @@
         return;
       }
       const groups = data.consumer_groups || [];
-      const rows = groups.map(g => {
+      const cgRowHtml = g => {
         const lagColor = g.lag_trend === 'growing' && g.total_lag > 10000 ? 'style="color:var(--danger);font-weight:700"' : '';
         return `<tr>
           <td style="font-weight:600">${(g.group_id || g.group_name || 'Unknown')}</td>
@@ -463,15 +463,22 @@
           <td>${stateBadge(g.state)}</td>
           <td><span class="sev sev--${g.total_lag > 10000 ? 'critical' : g.total_lag > 1000 ? 'warning' : 'healthy'}">${g.total_lag > 10000 ? 'CRITICAL' : g.total_lag > 1000 ? 'WARNING' : 'HEALTHY'}</span></td>
         </tr>`;
-      }).join('') || `<tr><td colspan="7" class="data-table__empty">No consumer groups</td></tr>`;
+      };
 
       const cgFilters = `
         <div class="filter-bar">
           <span class="dash-label">State:</span>
-          <span class="filter-chip active" onclick="filterCG('all',this)">All</span>
-          <span class="filter-chip" onclick="filterCG('active',this)">Active</span>
-          <span class="filter-chip" onclick="filterCG('empty',this)">Empty</span>
-          <input class="filter-input" id="cg-search" placeholder="Search group…" oninput="filterCGSearch(this.value)" />
+          <span class="filter-chip active" onclick="window._cgSetState('all',this)">All</span>
+          <span class="filter-chip" onclick="window._cgSetState('active',this)">Active</span>
+          <span class="filter-chip" onclick="window._cgSetState('empty',this)">Empty</span>
+          <input class="filter-input" id="cg-search" placeholder="Search group…" oninput="window._cgSearch(this.value)" />
+        </div>
+        <div class="filter-bar">
+          <span class="dash-label">Health:</span>
+          <span class="filter-chip active" onclick="window._cgSetFilter('all',this)">All</span>
+          <span class="filter-chip" onclick="window._cgSetFilter('critical',this)">Critical</span>
+          <span class="filter-chip" onclick="window._cgSetFilter('warning',this)">Warning</span>
+          <span class="filter-chip" onclick="window._cgSetFilter('healthy',this)">Healthy</span>
         </div>
       `;
 
@@ -519,12 +526,80 @@
            </div>`;
 
       document.getElementById('tab-consumer-groups').innerHTML = cgKpis + cgChart + cgFilters + `
+        <div class="chart-card__title">Consumer Group Inventory</div>
         <div class="data-table-wrap">
           <table class="data-table">
             <thead><tr><th>Group</th><th>Topic</th><th>Total Lag</th><th>Trend</th><th>Rate/min</th><th>State</th><th>Status</th></tr></thead>
-            <tbody>${rows}</tbody>
+            <tbody id="cg-tbody"></tbody>
           </table>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px">
+          <span id="cg-count-label" class="dash-label"></span>
+          <button id="cg-show-more" class="btn btn--secondary btn--sm" onclick="window._cgShowMore()">Show More</button>
         </div>`;
+
+      // ── Self-contained consumer-group table view: pagination + filters + search (AND) ──
+      const CG_PAGE = 20;
+      window._cgView = { state: 'all', filter: 'all', search: '', visible: CG_PAGE };
+
+      const cgMatches = (g, st) => {
+        const name = (g.group_id || g.group_name || 'Unknown');
+        if (st.search && !name.toLowerCase().includes(st.search.toLowerCase())) return false;
+        const gState = (g.state || '').toLowerCase();
+        if (st.state === 'active' && gState === 'empty') return false;
+        if (st.state === 'empty' && gState !== 'empty') return false;
+        const lag = g.total_lag || 0;
+        switch (st.filter) {
+          case 'critical': return lag > 10000;
+          case 'warning':  return lag > 1000 && lag <= 10000;
+          case 'healthy':  return lag <= 1000;
+          default:         return true;
+        }
+      };
+
+      window._cgApplyView = function () {
+        const st = window._cgView;
+        const filtered = groups.filter(g => cgMatches(g, st));
+        const shown = filtered.slice(0, st.visible);
+        const tbody = document.getElementById('cg-tbody');
+        if (tbody) {
+          tbody.innerHTML = shown.map(cgRowHtml).join('') ||
+            `<tr><td colspan="7" class="data-table__empty">No consumer groups match</td></tr>`;
+        }
+        const label = document.getElementById('cg-count-label');
+        if (label) label.textContent = `Showing ${shown.length} of ${filtered.length} groups`;
+        const moreBtn = document.getElementById('cg-show-more');
+        if (moreBtn) moreBtn.style.display = shown.length < filtered.length ? '' : 'none';
+      };
+
+      const cgSetActiveChip = (el) => {
+        el.parentElement.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+        el.classList.add('active');
+      };
+
+      window._cgSetState = function (state, el) {
+        window._cgView.state = state;
+        window._cgView.visible = CG_PAGE; // reset Show More on filter change
+        cgSetActiveChip(el);
+        window._cgApplyView();
+      };
+      window._cgSetFilter = function (f, el) {
+        window._cgView.filter = f;
+        window._cgView.visible = CG_PAGE;
+        cgSetActiveChip(el);
+        window._cgApplyView();
+      };
+      window._cgSearch = function (val) {
+        window._cgView.search = val;
+        window._cgView.visible = CG_PAGE;
+        window._cgApplyView();
+      };
+      window._cgShowMore = function () {
+        window._cgView.visible += CG_PAGE;
+        window._cgApplyView();
+      };
+
+      window._cgApplyView();
 
       if (hasLag) {
         setTimeout(() => {
