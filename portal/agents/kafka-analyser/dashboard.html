@@ -589,7 +589,55 @@
         </div>
       `;
 
-      document.getElementById('tab-topics').innerHTML = topicFilters + `
+      const allTopics = data.topics || [];
+      const msgRate = t => (t.msgs_per_sec ?? t.messages_in_per_sec ?? 0);
+      const logSize = t => (t.log_size_bytes ?? t.size_bytes ?? 0);
+
+      const totalTopics  = allTopics.length;
+      const highTraffic  = allTopics.filter(t => msgRate(t) > 100).length;
+      const largeTopics  = allTopics.filter(t => logSize(t) > 1073741824).length;
+      const staleTopics  = allTopics.filter(t => msgRate(t) === 0).length;
+
+      const topicKpis = `
+        <div class="kpi-grid">
+          <div class="kpi kpi--orange">
+            <div class="kpi__label">Total Topics</div>
+            <div class="kpi__value">${totalTopics}</div>
+            <div class="kpi__sub">topics</div>
+          </div>
+          <div class="kpi kpi--success">
+            <div class="kpi__label">High Traffic</div>
+            <div class="kpi__value">${highTraffic}</div>
+            <div class="kpi__sub">&gt; 100 msgs/sec</div>
+          </div>
+          <div class="kpi kpi--warn">
+            <div class="kpi__label">Large Topics</div>
+            <div class="kpi__value">${largeTopics}</div>
+            <div class="kpi__sub">log size &gt; 1 GB</div>
+          </div>
+          <div class="kpi kpi--danger">
+            <div class="kpi__label">Stale</div>
+            <div class="kpi__value">${staleTopics}</div>
+            <div class="kpi__sub">no message traffic</div>
+          </div>
+        </div>`;
+
+      const topByMsgs = [...allTopics].sort((a, b) => msgRate(b) - msgRate(a)).slice(0, 10);
+      const topBySize = [...allTopics].sort((a, b) => logSize(b) - logSize(a)).slice(0, 10);
+
+      const topicBarCharts = `
+        <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:22px">
+          <div class="chart-card" style="flex:1;min-width:300px;margin-bottom:0">
+            <div class="chart-card__title">Top 10 Topics by Messages/sec</div>
+            <div class="chart-wrap" style="height:260px"><canvas id="topic-msgs-chart"></canvas></div>
+          </div>
+          <div class="chart-card" style="flex:1;min-width:300px;margin-bottom:0">
+            <div class="chart-card__title">Top 10 Topics by Log Size</div>
+            <div class="chart-wrap" style="height:260px"><canvas id="topic-size-chart"></canvas></div>
+          </div>
+        </div>`;
+
+      document.getElementById('tab-topics').innerHTML = topicKpis + topicBarCharts + topicFilters + `
         <div class="chart-card" style="margin-bottom:22px">
           <div class="chart-card__title">Top 10 Topics by Message Rate</div>
           <div class="chart-wrap"><canvas id="topicChart"></canvas></div>
@@ -680,6 +728,55 @@
           console.warn('Topic history chart failed:', e);
         }
       }, 50);
+
+      setTimeout(() => {
+        if (window._topicMsgsChart) { window._topicMsgsChart.destroy(); window._topicMsgsChart = null; }
+        const msgsCtx = document.getElementById('topic-msgs-chart')?.getContext('2d');
+        if (msgsCtx) {
+          window._topicMsgsChart = new Chart(msgsCtx, {
+            type: 'bar',
+            data: {
+              labels: topByMsgs.map(t => (t.name || t.topic || 'Unknown')),
+              datasets: [{ label: 'Messages/sec', data: topByMsgs.map(t => msgRate(t)), backgroundColor: '#FF6B35', borderWidth: 0 }],
+            },
+            options: {
+              indexAxis: 'y',
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { display: false }, title: { display: false } },
+              scales: {
+                x: { ticks: { callback: v => fmtRate(v), font: { size: 10 } }, beginAtZero: true },
+                y: { ticks: { font: { size: 10 } } },
+              },
+            },
+          });
+        }
+
+        if (window._topicSizeChart) { window._topicSizeChart.destroy(); window._topicSizeChart = null; }
+        const sizeCtx = document.getElementById('topic-size-chart')?.getContext('2d');
+        if (sizeCtx) {
+          const fmtSize = v => v >= 1073741824
+            ? (v / 1073741824).toFixed(1) + ' GB'
+            : (v / 1048576).toFixed(0) + ' MB';
+          window._topicSizeChart = new Chart(sizeCtx, {
+            type: 'bar',
+            data: {
+              labels: topBySize.map(t => (t.name || t.topic || 'Unknown')),
+              datasets: [{ label: 'Log Size', data: topBySize.map(t => logSize(t)), backgroundColor: '#4FC3F7', borderWidth: 0 }],
+            },
+            options: {
+              indexAxis: 'y',
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { display: false }, title: { display: false } },
+              scales: {
+                x: { ticks: { callback: v => fmtSize(v), font: { size: 10 } }, beginAtZero: true },
+                y: { ticks: { font: { size: 10 } } },
+              },
+            },
+          });
+        }
+      }, 0);
     }
 
     // ── Tab 4: Brokers ────────────────────────────────────────────────────────
