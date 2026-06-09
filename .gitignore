@@ -36,3 +36,4 @@ htmlcov/
 # Docker
 *.log
 config/kafka-sasl-jaas.conf
+.claude/
