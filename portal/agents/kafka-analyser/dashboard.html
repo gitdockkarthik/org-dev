@@ -1926,72 +1926,127 @@
       };
 
       const typeColors = {
-        'AVRO': '#ef4444',
-        'JSON': '#f59e0b',
-        'PROTOBUF': '#6366f1',
+        'AVRO': '#4FC3F7',
+        'JSON': '#FF6B35',
+        'PROTOBUF': '#9C27B0',
       };
 
       const subjects = data.subjects || [];
-      const rows = subjects.map(s => `
-        <tr>
-          <td style="font-weight:600"><code style="font-size:.8rem">${s.subject}</code></td>
-          <td style="text-align:center">${s.version_count}</td>
-          <td style="text-align:center">${s.latest_version}</td>
-          <td>
-            <span style="background:${typeColors[s.schema_type] || '#64748b'}22;
-                         color:${typeColors[s.schema_type] || '#64748b'};
-                         padding:2px 8px;border-radius:4px;font-size:.72rem;font-weight:700">
-              ${s.schema_type}
-            </span>
-          </td>
-          <td>
-            <span style="color:${compatColor[s.compatibility] || 'var(--text-muted)'};font-size:.82rem;font-weight:600">
-              ${s.compatibility}
-            </span>
-          </td>
-          <td style="font-size:.8rem;color:var(--text-muted)">${s.schema_id || '-'}</td>
-        </tr>`).join('') || `<tr><td colspan="6" class="data-table__empty">No subjects registered</td></tr>`;
+      const isHealthy = data.status === 'healthy';
 
-      el.innerHTML = `
-        <div class="kpi-grid" style="margin-bottom:18px">
-          <div class="kpi kpi--success">
+      // Schema type counts (from schema_types object, else derived from subjects)
+      let schemaTypes = data.schema_types;
+      if (!schemaTypes) {
+        schemaTypes = {};
+        subjects.forEach(s => {
+          const t = (s.schema_type || '').toUpperCase();
+          if (t) schemaTypes[t] = (schemaTypes[t] || 0) + 1;
+        });
+      }
+      const typeDefs = [
+        { label: 'AVRO',     color: '#4FC3F7', count: schemaTypes.AVRO || 0 },
+        { label: 'JSON',     color: '#FF6B35', count: schemaTypes.JSON || 0 },
+        { label: 'PROTOBUF', color: '#9C27B0', count: schemaTypes.PROTOBUF || 0 },
+      ].filter(d => d.count > 0);
+      const hasTypes = typeDefs.length > 0;
+
+      const srKpis = `
+        <div class="kpi-grid">
+          <div class="kpi ${isHealthy ? 'kpi--success' : 'kpi--danger'}">
             <div class="kpi__label">Status</div>
-            <div class="kpi__value" style="font-size:1.2rem">✅ ${data.status}</div>
-            <div class="kpi__sub">${data.url}</div>
+            <div class="kpi__value"><span class="sev sev--${isHealthy ? 'healthy' : 'critical'}">${(data.status || 'unknown').toUpperCase()}</span></div>
+            <div class="kpi__sub">${data.url || ''}</div>
           </div>
-          <div class="kpi">
+          <div class="kpi kpi--orange">
             <div class="kpi__label">Subjects</div>
-            <div class="kpi__value">${data.subject_count}</div>
+            <div class="kpi__value">${data.subject_count ?? subjects.length}</div>
             <div class="kpi__sub">registered schemas</div>
           </div>
-          <div class="kpi">
+          <div class="kpi kpi--orange">
             <div class="kpi__label">Total Versions</div>
             <div class="kpi__value">${data.total_versions || 0}</div>
             <div class="kpi__sub">across all subjects</div>
           </div>
-          <div class="kpi">
-            <div class="kpi__label">Global Compatibility</div>
-            <div class="kpi__value" style="font-size:1.1rem;color:${compatColor[data.global_compatibility] || 'var(--text)'}">
-              ${data.global_compatibility || 'BACKWARD'}
-            </div>
+          <div class="kpi kpi--orange">
+            <div class="kpi__label">Compatibility</div>
+            <div class="kpi__value" style="font-size:1.1rem;color:${compatColor[data.global_compatibility] || 'var(--text)'}">${data.global_compatibility || 'BACKWARD'}</div>
             <div class="kpi__sub">default policy</div>
           </div>
-        </div>
+        </div>`;
+
+      const srChart = hasTypes
+        ? `<div style="display:flex;margin-bottom:22px">
+             <div class="chart-card" style="flex:0 1 50%;min-width:300px">
+               <div class="chart-card__title">Schema Types Distribution</div>
+               <div class="chart-wrap" style="height:220px"><canvas id="sr-types-chart"></canvas></div>
+             </div>
+           </div>`
+        : `<div class="filter-bar" style="color:var(--text-muted)">ℹ️ No schemas registered yet</div>`;
+
+      const srRowHtml = s => `<tr>
+          <td style="font-weight:600"><code style="font-size:.8rem">${s.subject}</code></td>
+          <td style="text-align:center">${s.version_count ?? 0}</td>
+          <td><span style="color:${compatColor[s.compatibility] || 'var(--text-muted)'};font-size:.82rem;font-weight:600">${s.compatibility || '-'}</span></td>
+          <td><span style="background:${(typeColors[s.schema_type] || '#64748b')}22;color:${typeColors[s.schema_type] || '#64748b'};padding:2px 8px;border-radius:4px;font-size:.72rem;font-weight:700">${s.schema_type || '-'}</span></td>
+        </tr>`;
+
+      el.innerHTML = srKpis + srChart + `
+        <div class="chart-card__title">Subject Inventory</div>
         <div class="data-table-wrap">
           <table class="data-table">
             <thead>
               <tr>
-                <th>Subject</th>
+                <th>Subject Name</th>
                 <th style="text-align:center">Versions</th>
-                <th style="text-align:center">Latest</th>
-                <th>Type</th>
                 <th>Compatibility</th>
-                <th>Schema ID</th>
+                <th>Latest Schema Type</th>
               </tr>
             </thead>
-            <tbody>${rows}</tbody>
+            <tbody id="sr-tbody"></tbody>
           </table>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px">
+          <span id="sr-count-label" class="dash-label"></span>
+          <button id="sr-show-more" class="btn btn--secondary btn--sm" onclick="window._srShowMore()">Show More</button>
         </div>`;
+
+      const SR_PAGE = 20;
+      window._srView = { visible: SR_PAGE };
+      window._srApplyView = function () {
+        const shown = subjects.slice(0, window._srView.visible);
+        const tbody = document.getElementById('sr-tbody');
+        if (tbody) {
+          tbody.innerHTML = shown.map(srRowHtml).join('') ||
+            `<tr><td colspan="4" class="data-table__empty">No subjects registered — publish schemas to see them here</td></tr>`;
+        }
+        const label = document.getElementById('sr-count-label');
+        if (label) label.textContent = `Showing ${shown.length} of ${subjects.length} subjects`;
+        const moreBtn = document.getElementById('sr-show-more');
+        if (moreBtn) moreBtn.style.display = shown.length < subjects.length ? '' : 'none';
+      };
+      window._srShowMore = function () { window._srView.visible += SR_PAGE; window._srApplyView(); };
+      window._srApplyView();
+
+      if (hasTypes) {
+        setTimeout(() => {
+          if (window._srTypesChart) { window._srTypesChart.destroy(); window._srTypesChart = null; }
+          const ctx = document.getElementById('sr-types-chart')?.getContext('2d');
+          if (ctx) {
+            window._srTypesChart = new Chart(ctx, {
+              type: 'doughnut',
+              data: {
+                labels: typeDefs.map(d => d.label),
+                datasets: [{ data: typeDefs.map(d => d.count), backgroundColor: typeDefs.map(d => d.color), borderWidth: 0 }],
+              },
+              options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } },
+              },
+            });
+          }
+        }, 0);
+      }
     }
 
     function renderZooKeeper(data) {
@@ -2021,110 +2076,118 @@
       }
 
       const m = data.metrics || {};
-      const statusColor = data.status === 'healthy' ? 'var(--success)' : 'var(--warn)';
+      const isHealthy = data.status === 'healthy';
+      const avgLat = m.avg_latency_ms || 0;
+      const latClass = avgLat > 50 ? 'kpi--danger' : avgLat > 10 ? 'kpi--warn' : 'kpi--success';
       const modeColor = {
         'leader': '#FF6B35',
         'follower': '#3b82f6',
         'standalone': 'var(--success)',
       }[data.server_mode] || 'var(--text-muted)';
 
-      const warnings = (data.warnings || []).map(w =>
-        `<div style="color:var(--warn);font-size:.83rem;margin-top:4px">⚠ ${w}</div>`
-      ).join('');
-
-      el.innerHTML = `
-        <div class="kpi-grid" style="margin-bottom:18px">
-          <div class="kpi">
+      const zkKpis = `
+        <div class="kpi-grid">
+          <div class="kpi ${isHealthy ? 'kpi--success' : 'kpi--danger'}">
             <div class="kpi__label">Status</div>
-            <div class="kpi__value" style="font-size:1.1rem;color:${statusColor}">
-              ${data.status === 'healthy' ? '✅' : '⚠️'} ${data.status}
-            </div>
-            <div class="kpi__sub">${data.url}</div>
+            <div class="kpi__value"><span class="sev sev--${isHealthy ? 'healthy' : 'critical'}">${(data.status || 'unknown').toUpperCase()}</span></div>
+            <div class="kpi__sub">${data.url || ''}</div>
           </div>
-          <div class="kpi">
-            <div class="kpi__label">Server Mode</div>
-            <div class="kpi__value" style="font-size:1.1rem;color:${modeColor};text-transform:uppercase">
-              ${data.server_mode || 'unknown'}
-            </div>
+          <div class="kpi kpi--orange">
+            <div class="kpi__label">Mode</div>
+            <div class="kpi__value" style="font-size:1.1rem;text-transform:uppercase;color:${modeColor}">${data.server_mode || 'unknown'}</div>
             <div class="kpi__sub">${data.version || ''}</div>
           </div>
-          <div class="kpi">
+          <div class="kpi kpi--orange">
+            <div class="kpi__label">Znode Count</div>
+            <div class="kpi__value">${(m.znode_count || 0).toLocaleString()}</div>
+            <div class="kpi__sub">znodes</div>
+          </div>
+          <div class="kpi kpi--orange">
             <div class="kpi__label">Connections</div>
-            <div class="kpi__value">${m.connections || 0}</div>
+            <div class="kpi__value">${(m.connections || 0).toLocaleString()}</div>
             <div class="kpi__sub">active clients</div>
           </div>
-          <div class="kpi">
-            <div class="kpi__label">ZNodes</div>
-            <div class="kpi__value">${(m.znode_count || 0).toLocaleString()}</div>
-            <div class="kpi__sub">${(m.watch_count || 0).toLocaleString()} watches</div>
-          </div>
-        </div>
-        ${warnings}
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px">
-          <div class="anomaly-card">
-            <div style="font-weight:600;font-size:.85rem;margin-bottom:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">Latency</div>
-            <div style="display:flex;justify-content:space-between;margin-bottom:8px">
-              <span style="font-size:.85rem">Avg Latency</span>
-              <span style="font-weight:600">${m.avg_latency_ms || 0}ms</span>
-            </div>
-            <div style="display:flex;justify-content:space-between">
-              <span style="font-size:.85rem">Max Latency</span>
-              <span style="font-weight:600">${m.max_latency_ms || 0}ms</span>
-            </div>
-          </div>
-          <div class="anomaly-card">
-            <div style="font-weight:600;font-size:.85rem;margin-bottom:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">Throughput</div>
-            <div style="display:flex;justify-content:space-between;margin-bottom:8px">
-              <span style="font-size:.85rem">Packets Received</span>
-              <span style="font-weight:600">${(m.packets_received || 0).toLocaleString()}</span>
-            </div>
-            <div style="display:flex;justify-content:space-between">
-              <span style="font-size:.85rem">Packets Sent</span>
-              <span style="font-weight:600">${(m.packets_sent || 0).toLocaleString()}</span>
-            </div>
-          </div>
-          <div class="anomaly-card">
-            <div style="font-weight:600;font-size:.85rem;margin-bottom:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">Storage</div>
-            <div style="display:flex;justify-content:space-between;margin-bottom:8px">
-              <span style="font-size:.85rem">Data Size</span>
-              <span style="font-weight:600">${fmtBytes(m.data_size_bytes || 0)}</span>
-            </div>
-            <div style="display:flex;justify-content:space-between">
-              <span style="font-size:.85rem">Ephemerals</span>
-              <span style="font-weight:600">${(m.ephemerals_count || 0).toLocaleString()}</span>
-            </div>
-          </div>
-          <div class="anomaly-card">
-            <div style="font-weight:600;font-size:.85rem;margin-bottom:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">Resources</div>
-            <div style="display:flex;justify-content:space-between;margin-bottom:8px">
-              <span style="font-size:.85rem">File Descriptors</span>
-              <span style="font-weight:600">${m.open_file_descriptors || 0}/${m.max_file_descriptors || 0}</span>
-            </div>
-            <div style="display:flex;justify-content:space-between">
-              <span style="font-size:.85rem">Outstanding Req</span>
-              <span style="font-weight:600">${m.outstanding_requests || 0}</span>
-            </div>
+          <div class="kpi ${latClass}">
+            <div class="kpi__label">Avg Latency</div>
+            <div class="kpi__value">${avgLat}ms</div>
+            <div class="kpi__sub">avg request latency</div>
           </div>
         </div>`;
+
+      const zkCharts = `
+        <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:22px">
+          <div class="chart-card" style="flex:1;min-width:300px;margin-bottom:0">
+            <div class="chart-card__title">ZooKeeper Metrics</div>
+            <div class="chart-wrap" style="height:220px"><canvas id="zk-metrics-chart"></canvas></div>
+          </div>
+          <div class="chart-card" style="flex:1;min-width:300px;margin-bottom:0">
+            <div class="chart-card__title">Packets I/O</div>
+            <div class="chart-wrap" style="height:220px"><canvas id="zk-packets-chart"></canvas></div>
+          </div>
+        </div>`;
+
+      const warningBanners = (data.warnings || []).map(w =>
+        `<div class="filter-bar" style="color:#d97706;border-color:rgba(217,119,6,.35)">⚠ ${w}</div>`
+      ).join('');
+
+      const kv = (k, v) => `<div style="display:flex;justify-content:space-between;gap:16px"><span style="color:var(--text-muted)">${k}</span><span style="font-weight:600">${v}</span></div>`;
+      const zkDetail = `
+        <div class="chart-card__title">ZooKeeper Detail</div>
+        <div class="anomaly-card" style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px 28px">
+          ${kv('Version', data.version || '-')}
+          ${kv('URL', data.url || '-')}
+          ${kv('Max Latency', (m.max_latency_ms || 0) + 'ms')}
+          ${kv('Outstanding Requests', (m.outstanding_requests || 0).toLocaleString())}
+          ${kv('Data Size', fmtBytes(m.data_size_bytes || 0))}
+          ${kv('Open FDs / Max FDs', `${m.open_file_descriptors || 0} / ${m.max_file_descriptors || 0}`)}
+        </div>`;
+
+      el.innerHTML = zkKpis + zkCharts + warningBanners + zkDetail;
+
+      setTimeout(() => {
+        if (window._zkMetricsChart) { window._zkMetricsChart.destroy(); window._zkMetricsChart = null; }
+        const mCtx = document.getElementById('zk-metrics-chart')?.getContext('2d');
+        if (mCtx) {
+          window._zkMetricsChart = new Chart(mCtx, {
+            type: 'bar',
+            data: {
+              labels: ['Znodes', 'Watches', 'Ephemerals', 'Connections'],
+              datasets: [{ label: 'Count', data: [m.znode_count || 0, m.watch_count || 0, m.ephemerals_count || 0, m.connections || 0], backgroundColor: '#4FC3F7', borderWidth: 0 }],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { display: false }, title: { display: false } },
+              scales: { x: { ticks: { font: { size: 10 } } }, y: { beginAtZero: true, ticks: { callback: v => fmtNum(v), font: { size: 10 } } } },
+            },
+          });
+        }
+
+        if (window._zkPacketsChart) { window._zkPacketsChart.destroy(); window._zkPacketsChart = null; }
+        const pCtx = document.getElementById('zk-packets-chart')?.getContext('2d');
+        if (pCtx) {
+          window._zkPacketsChart = new Chart(pCtx, {
+            type: 'bar',
+            data: {
+              labels: ['Packets Received', 'Packets Sent'],
+              datasets: [{ label: 'Packets', data: [m.packets_received || 0, m.packets_sent || 0], backgroundColor: ['#4CAF50', '#FF6B35'], borderWidth: 0 }],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { display: false }, title: { display: false } },
+              scales: { x: { ticks: { font: { size: 10 } } }, y: { beginAtZero: true, ticks: { callback: v => fmtNum(v), font: { size: 10 } } } },
+            },
+          });
+        }
+      }, 0);
     }
 
     function renderMirrorMaker(data) {
       const el = document.getElementById('tab-mirrormaker');
 
       if (!data.detected) {
-        el.innerHTML = `
-          <div class="anomaly-card" style="max-width:600px">
-            <div style="font-size:1rem;font-weight:700;margin-bottom:8px">🔄 No Replication Detected</div>
-            <div style="font-size:.88rem;color:var(--text-muted);line-height:1.6">
-              ${data.message || 'No MirrorMaker replication detected on this cluster.'}
-            </div>
-            <div style="margin-top:16px;font-size:.82rem;color:var(--text-muted)">
-              <strong>Detection method:</strong><br>
-              • MM1: consumer groups matching <code>mirror-*</code> or <code>mm1-*</code> patterns<br>
-              • MM2: consumer groups matching <code>mm2-*</code> or <code>*.checkpoint.internal</code> patterns<br>
-              • MM2: internal topics matching <code>*.heartbeats</code> or <code>*.checkpoints.internal</code>
-            </div>
-          </div>`;
+        el.innerHTML = `<div class="filter-bar" style="color:var(--text-muted)">ℹ️ No MirrorMaker detected on this cluster</div>`;
         return;
       }
 
@@ -2135,103 +2198,99 @@
       };
       const modeColor = modeColors[data.mode] || 'var(--text)';
 
-      const mm1Html = data.mm1 ? `
-        <div class="anomaly-card" style="margin-bottom:14px">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-            <div style="font-weight:700;font-size:.95rem;color:#f59e0b">⚡ MirrorMaker 1</div>
-            <span class="sev sev--${data.mm1.status === 'healthy' ? 'healthy' : 'warning'}">${data.mm1.status.toUpperCase()}</span>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
-            <div>
-              <div style="font-size:.73rem;color:var(--text-muted);font-weight:600;text-transform:uppercase">Consumer Groups</div>
-              <div style="font-size:1.4rem;font-weight:700">${data.mm1.group_count}</div>
-            </div>
-            <div>
-              <div style="font-size:.73rem;color:var(--text-muted);font-weight:600;text-transform:uppercase">Total Lag</div>
-              <div style="font-size:1.4rem;font-weight:700;color:${data.mm1.total_lag > 10000 ? 'var(--danger)' : 'var(--success)'}">${data.mm1.total_lag.toLocaleString()}</div>
-            </div>
-          </div>
-          <div style="font-size:.8rem;color:var(--text-muted)">
-            <strong>Groups:</strong> ${data.mm1.consumer_groups.slice(0,5).join(', ')}${data.mm1.consumer_groups.length > 5 ? ` +${data.mm1.consumer_groups.length - 5} more` : ''}
-          </div>
-        </div>` : '';
+      const groupCount = (data.mm1 && data.mm1.group_count) ?? (data.mm2 && data.mm2.group_count) ?? 0;
+      const totalLag   = (data.mm1 && data.mm1.total_lag) ?? (data.mm2 && data.mm2.total_lag) ?? 0;
+      const mmStatus   = (data.mm1 && data.mm1.status) || (data.mm2 && data.mm2.status) || 'unknown';
+      const isHealthy  = mmStatus === 'healthy';
+      const lagClass   = totalLag > 10000 ? 'kpi--danger' : totalLag > 1000 ? 'kpi--warn' : 'kpi--success';
 
-      const mm2Html = data.mm2 ? `
-        <div class="anomaly-card">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-            <div style="font-weight:700;font-size:.95rem;color:#3b82f6">⚡ MirrorMaker 2</div>
-            <span class="sev sev--${data.mm2.status === 'healthy' ? 'healthy' : 'warning'}">${data.mm2.status.toUpperCase()}</span>
+      const mmKpis = `
+        <div class="kpi-grid">
+          <div class="kpi">
+            <div class="kpi__label">Mode</div>
+            <div class="kpi__value"><span style="background:${modeColor}22;color:${modeColor};padding:3px 12px;border-radius:20px;font-size:.95rem;font-weight:700;text-transform:uppercase">${data.mode || '-'}</span></div>
+            <div class="kpi__sub">replication mode</div>
           </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
-            <div>
-              <div style="font-size:.73rem;color:var(--text-muted);font-weight:600;text-transform:uppercase">Consumer Groups</div>
-              <div style="font-size:1.4rem;font-weight:700">${data.mm2.group_count}</div>
-            </div>
-            <div>
-              <div style="font-size:.73rem;color:var(--text-muted);font-weight:600;text-transform:uppercase">Internal Topics</div>
-              <div style="font-size:1.4rem;font-weight:700">${data.mm2.topic_count}</div>
-            </div>
-            <div>
-              <div style="font-size:.73rem;color:var(--text-muted);font-weight:600;text-transform:uppercase">Total Lag</div>
-              <div style="font-size:1.4rem;font-weight:700;color:${data.mm2.total_lag > 10000 ? 'var(--danger)' : 'var(--success)'}">${data.mm2.total_lag.toLocaleString()}</div>
-            </div>
+          <div class="kpi kpi--orange">
+            <div class="kpi__label">Consumer Groups</div>
+            <div class="kpi__value">${groupCount}</div>
+            <div class="kpi__sub">replication groups</div>
           </div>
-          ${data.mm2.internal_topics.length > 0 ? `
-          <div style="font-size:.8rem;color:var(--text-muted);margin-top:8px">
-            <strong>Internal Topics:</strong> ${data.mm2.internal_topics.slice(0,3).join(', ')}${data.mm2.internal_topics.length > 3 ? ` +${data.mm2.internal_topics.length - 3} more` : ''}
-          </div>` : ''}
-        </div>` : '';
+          <div class="kpi ${lagClass}">
+            <div class="kpi__label">Total Lag</div>
+            <div class="kpi__value">${fmtNum(totalLag)}</div>
+            <div class="kpi__sub">across groups</div>
+          </div>
+          <div class="kpi ${isHealthy ? 'kpi--success' : 'kpi--danger'}">
+            <div class="kpi__label">Status</div>
+            <div class="kpi__value"><span class="sev sev--${isHealthy ? 'healthy' : 'warning'}">${mmStatus.toUpperCase()}</span></div>
+            <div class="kpi__sub">health</div>
+          </div>
+        </div>`;
 
-      const crossClusterHtml = data.cross_cluster ? `
-        <div class="anomaly-card" style="margin-top:14px">
-          <div style="font-weight:700;font-size:.95rem;margin-bottom:12px">
-            🔄 Cross-Cluster Replication
-            <span style="font-size:.78rem;font-weight:400;color:var(--text-muted);margin-left:8px">
-              ${data.cross_cluster.source_cluster} → ${data.cross_cluster.target_cluster}
-            </span>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
-            <div>
-              <div style="font-size:.73rem;color:var(--text-muted);font-weight:600;text-transform:uppercase">Topics Replicated</div>
-              <div style="font-size:1.4rem;font-weight:700">${data.cross_cluster.total_topics_replicated}</div>
-            </div>
-          </div>
-          ${data.cross_cluster.topic_replication.length > 0 ? `
-          <div class="data-table-wrap">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Topic</th>
-                  <th style="text-align:right">Source Messages</th>
-                  <th style="text-align:right">Target Messages</th>
-                  <th style="text-align:right">Lag</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${data.cross_cluster.topic_replication.map(t => `
-                  <tr>
-                    <td><code style="font-size:.8rem">${t.topic}</code></td>
-                    <td style="text-align:right">${t.source_messages.toLocaleString()}</td>
-                    <td style="text-align:right">${t.target_messages.toLocaleString()}</td>
-                    <td style="text-align:right;color:${t.lag > 1000 ? 'var(--danger)' : 'var(--success)'};font-weight:600">
-                      ${t.lag.toLocaleString()}
-                    </td>
-                    <td><span class="sev sev--${t.status === 'healthy' ? 'healthy' : 'warning'}">${t.status.toUpperCase()}</span></td>
-                  </tr>`).join('')}
-              </tbody>
-            </table>
-          </div>` : '<div style="color:var(--text-muted);font-size:.85rem">No matching topics found between clusters.</div>'}
-        </div>` : '';
+      // Per-group lag bars (mm1 group names have no per-group lag → single "All Groups" bar)
+      const lagSrc = data.mm1 || data.mm2 || {};
+      const cgs = lagSrc.consumer_groups;
+      let lagBars;
+      if (Array.isArray(cgs) && cgs.length && typeof cgs[0] === 'object' && cgs[0] !== null) {
+        lagBars = cgs.map(g => ({ name: g.group_id || g.name || g.group || 'group', lag: g.lag ?? g.total_lag ?? 0 }));
+      } else {
+        lagBars = [{ name: 'All Groups', lag: totalLag }];
+      }
+      const barColor = lag => lag > 10000 ? '#dc2626' : lag > 1000 ? '#d97706' : '#16a34a';
 
-      el.innerHTML = `
-        <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px">
-          <div style="font-size:1.1rem;font-weight:700">Replication Mode:</div>
-          <span style="background:${modeColor}22;color:${modeColor};padding:4px 14px;border-radius:20px;font-size:.85rem;font-weight:700;text-transform:uppercase">${data.mode}</span>
-        </div>
-        ${mm1Html}
-        ${mm2Html}
-        ${crossClusterHtml}`;
+      const mmChart = `
+        <div style="display:flex;margin-bottom:22px">
+          <div class="chart-card" style="flex:0 1 50%;min-width:300px">
+            <div class="chart-card__title">MirrorMaker Consumer Group Lag</div>
+            <div class="chart-wrap" style="height:220px"><canvas id="mm-lag-chart"></canvas></div>
+          </div>
+        </div>`;
+
+      // Detail section
+      let mmDetail = '';
+      if (data.mm1) {
+        const badges = (data.mm1.consumer_groups || []).map(g => {
+          const name = (typeof g === 'object' && g) ? (g.group_id || g.name || g.group || 'group') : g;
+          return `<span style="background:#f59e0b22;color:#f59e0b;padding:3px 10px;border-radius:20px;font-size:.78rem;font-weight:600">${name}</span>`;
+        }).join(' ');
+        mmDetail += `
+          <div class="chart-card__title">MirrorMaker 1 — Consumer Groups</div>
+          <div class="anomaly-card" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px">${badges || '<span style="color:var(--text-muted)">No groups</span>'}</div>`;
+      }
+      if (data.mm2) {
+        const cc = data.cross_cluster;
+        const ccInfo = cc ? `${cc.source_cluster} → ${cc.target_cluster}` : 'Source/target cluster info not available';
+        mmDetail += `
+          <div class="chart-card__title">MirrorMaker 2 — Replication</div>
+          <div class="anomaly-card" style="margin-bottom:14px">
+            <div style="font-weight:600;margin-bottom:6px">${ccInfo}</div>
+            <div style="font-size:.82rem;color:var(--text-muted)">Internal topics: ${(data.mm2.internal_topics || []).length}${cc ? ` · Topics replicated: ${cc.total_topics_replicated ?? 0}` : ''}</div>
+          </div>`;
+      }
+
+      el.innerHTML = mmKpis + mmChart + mmDetail;
+
+      setTimeout(() => {
+        if (window._mmLagChart) { window._mmLagChart.destroy(); window._mmLagChart = null; }
+        const ctx = document.getElementById('mm-lag-chart')?.getContext('2d');
+        if (ctx) {
+          window._mmLagChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+              labels: lagBars.map(b => b.name),
+              datasets: [{ label: 'Lag', data: lagBars.map(b => b.lag), backgroundColor: lagBars.map(b => barColor(b.lag)), borderWidth: 0 }],
+            },
+            options: {
+              indexAxis: 'y',
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { display: false }, title: { display: false } },
+              scales: { x: { beginAtZero: true, ticks: { callback: v => fmtNum(v), font: { size: 10 } } }, y: { ticks: { font: { size: 10 } } } },
+            },
+          });
+        }
+      }, 0);
     }
 
     async function init() {
