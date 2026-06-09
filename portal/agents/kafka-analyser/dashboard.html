@@ -1001,7 +1001,139 @@
           </div>`;
       }).join('');
 
-      document.getElementById('tab-brokers').innerHTML = `<div class="broker-grid">${cards}</div>`;
+      // ── KPI cards ─────────────────────────────────────────────────────────────
+      const brokerCount  = brokers.length;
+      const healthyCount = brokers.filter(b => b.status === 'healthy').length;
+      const totalURPs    = brokers.reduce((s, b) => s + (b.urp_count || 0), 0);
+      const avgHeap      = brokerCount ? Math.round(brokers.reduce((s, b) => s + (b.heap_pct || 0), 0) / brokerCount) : 0;
+
+      const brokerKpis = `
+        <div class="kpi-grid">
+          <div class="kpi kpi--orange">
+            <div class="kpi__label">Total Brokers</div>
+            <div class="kpi__value">${brokerCount}</div>
+            <div class="kpi__sub">brokers</div>
+          </div>
+          <div class="kpi kpi--success">
+            <div class="kpi__label">Healthy</div>
+            <div class="kpi__value">${healthyCount}</div>
+            <div class="kpi__sub">status healthy</div>
+          </div>
+          <div class="kpi ${totalURPs > 0 ? 'kpi--danger' : 'kpi--success'}">
+            <div class="kpi__label">Under-Replicated Partitions</div>
+            <div class="kpi__value">${totalURPs}</div>
+            <div class="kpi__sub">total URPs</div>
+          </div>
+          <div class="kpi ${avgHeap > 80 ? 'kpi--danger' : 'kpi--orange'}">
+            <div class="kpi__label">Avg Heap %</div>
+            <div class="kpi__value">${avgHeap}%</div>
+            <div class="kpi__sub">across brokers</div>
+          </div>
+        </div>`;
+
+      // ── Charts ────────────────────────────────────────────────────────────────
+      const brokerCharts = `
+        <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:22px">
+          <div class="chart-card" style="flex:1;min-width:280px;margin-bottom:0">
+            <div class="chart-card__title">CPU &amp; Heap % by Broker</div>
+            <div class="chart-wrap" style="height:240px"><canvas id="broker-cpu-heap-chart"></canvas></div>
+          </div>
+          <div class="chart-card" style="flex:1;min-width:280px;margin-bottom:0">
+            <div class="chart-card__title">Network I/O by Broker</div>
+            <div class="chart-wrap" style="height:240px"><canvas id="broker-network-chart"></canvas></div>
+          </div>
+          <div class="chart-card" style="flex:1;min-width:280px;margin-bottom:0">
+            <div class="chart-card__title">Produce &amp; Fetch Latency by Broker</div>
+            <div class="chart-wrap" style="height:240px"><canvas id="broker-latency-chart"></canvas></div>
+          </div>
+        </div>`;
+
+      document.getElementById('tab-brokers').innerHTML = brokerKpis + brokerCharts + `
+        <div class="chart-card__title">Broker Detail</div>
+        <div class="broker-grid">${cards}</div>`;
+
+      const brokerLabels = brokers.map(b => 'Broker ' + (b.broker_id ?? b.id ?? '?'));
+
+      setTimeout(() => {
+        if (window._brokerCpuHeapChart) { window._brokerCpuHeapChart.destroy(); window._brokerCpuHeapChart = null; }
+        const cpuHeapCtx = document.getElementById('broker-cpu-heap-chart')?.getContext('2d');
+        if (cpuHeapCtx) {
+          window._brokerCpuHeapChart = new Chart(cpuHeapCtx, {
+            type: 'bar',
+            data: {
+              labels: brokerLabels,
+              datasets: [
+                { label: 'CPU %',  data: brokers.map(b => b.cpu_pct || 0),  backgroundColor: '#FF6B35', borderWidth: 0 },
+                { label: 'Heap %', data: brokers.map(b => b.heap_pct || 0), backgroundColor: '#4FC3F7', borderWidth: 0 },
+              ],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } }, title: { display: false } },
+              scales: {
+                x: { ticks: { font: { size: 10 } } },
+                y: { min: 0, max: 100, ticks: { callback: v => v + '%', font: { size: 10 } } },
+              },
+            },
+          });
+        }
+
+        if (window._brokerNetworkChart) { window._brokerNetworkChart.destroy(); window._brokerNetworkChart = null; }
+        const netCtx = document.getElementById('broker-network-chart')?.getContext('2d');
+        if (netCtx) {
+          const fmtNet = v => v >= 1048576
+            ? (v / 1048576).toFixed(1) + ' MB/s'
+            : (v / 1024).toFixed(1) + ' KB/s';
+          window._brokerNetworkChart = new Chart(netCtx, {
+            type: 'bar',
+            data: {
+              labels: brokerLabels,
+              datasets: [
+                { label: 'Bytes In',  data: brokers.map(b => b.bytes_in_per_sec || 0),  backgroundColor: '#4CAF50', borderWidth: 0 },
+                { label: 'Bytes Out', data: brokers.map(b => b.bytes_out_per_sec || 0), backgroundColor: '#FF9800', borderWidth: 0 },
+              ],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+                title: { display: false },
+                tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmtNet(c.parsed.y)}` } },
+              },
+              scales: {
+                x: { ticks: { font: { size: 10 } } },
+                y: { beginAtZero: true, ticks: { callback: v => fmtNet(v), font: { size: 10 } } },
+              },
+            },
+          });
+        }
+
+        if (window._brokerLatencyChart) { window._brokerLatencyChart.destroy(); window._brokerLatencyChart = null; }
+        const latCtx = document.getElementById('broker-latency-chart')?.getContext('2d');
+        if (latCtx) {
+          window._brokerLatencyChart = new Chart(latCtx, {
+            type: 'bar',
+            data: {
+              labels: brokerLabels,
+              datasets: [
+                { label: 'Produce Latency', data: brokers.map(b => b.produce_latency_ms || 0), backgroundColor: '#9C27B0', borderWidth: 0 },
+                { label: 'Fetch Latency',   data: brokers.map(b => b.fetch_latency_ms || 0),   backgroundColor: '#00BCD4', borderWidth: 0 },
+              ],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } }, title: { display: false } },
+              scales: {
+                x: { ticks: { font: { size: 10 } } },
+                y: { beginAtZero: true, ticks: { callback: v => v + 'ms', font: { size: 10 } } },
+              },
+            },
+          });
+        }
+      }, 0);
     }
 
     // ── Tab 5: Connectors ─────────────────────────────────────────────────────
