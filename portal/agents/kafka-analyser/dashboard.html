@@ -1127,7 +1127,7 @@
               </div>
               <div class="bm">
                 <div class="bm__label">Req Idle %</div>
-                <div class="bm__value" style="font-size:.9rem;color:${b.request_handler_idle_pct < 30 ? 'var(--danger)' : 'var(--success)'}">${b.request_handler_idle_pct}%</div>
+                <div class="bm__value" style="font-size:.9rem;color:${b.request_handler_idle_pct >= 80 ? 'var(--success)' : b.request_handler_idle_pct >= 50 ? '#d97706' : 'var(--danger)'}">${b.request_handler_idle_pct}%</div>
               </div>
               <div class="bm">
                 <div class="bm__label">Bytes In/s</div>
@@ -1162,6 +1162,9 @@
       const healthyCount = brokers.filter(b => b.status === 'healthy').length;
       const totalURPs    = brokers.reduce((s, b) => s + (b.urp_count || 0), 0);
       const avgHeap      = brokerCount ? Math.round(brokers.reduce((s, b) => s + (b.heap_pct || 0), 0) / brokerCount) : 0;
+      const totalISRShrinks = brokers.reduce((s, b) => s + (b.isr_shrinks_per_sec || 0), 0);
+      const avgReqIdle   = brokerCount ? Math.round(brokers.reduce((s, b) => s + (b.request_handler_idle_pct || 0), 0) / brokerCount) : 0;
+      const reqIdleClass = avgReqIdle < 50 ? 'kpi--danger' : avgReqIdle < 80 ? 'kpi--warn' : 'kpi--success';
 
       const brokerKpis = `
         <div class="kpi-grid">
@@ -1183,6 +1186,16 @@
           <div class="kpi ${avgHeap > 80 ? 'kpi--danger' : 'kpi--orange'}">
             <div class="kpi__label">Avg Heap %</div>
             <div class="kpi__value">${avgHeap}%</div>
+            <div class="kpi__sub">across brokers</div>
+          </div>
+          <div class="kpi ${totalISRShrinks > 0 ? 'kpi--danger' : 'kpi--success'}">
+            <div class="kpi__label">ISR Shrinks/sec</div>
+            <div class="kpi__value">${totalISRShrinks.toFixed(2)}</div>
+            <div class="kpi__sub">across brokers</div>
+          </div>
+          <div class="kpi ${reqIdleClass}">
+            <div class="kpi__label">Avg Request Handler Idle %</div>
+            <div class="kpi__value">${avgReqIdle}%</div>
             <div class="kpi__sub">across brokers</div>
           </div>
         </div>`;
@@ -1221,6 +1234,7 @@
               datasets: [
                 { label: 'CPU %',  data: brokers.map(b => b.cpu_pct || 0),  backgroundColor: '#FF6B35', borderWidth: 0 },
                 { label: 'Heap %', data: brokers.map(b => b.heap_pct || 0), backgroundColor: '#4FC3F7', borderWidth: 0 },
+                { label: 'Req Idle %', data: brokers.map(b => b.request_handler_idle_pct || 0), backgroundColor: '#4CAF50', borderWidth: 0 },
               ],
             },
             options: {
