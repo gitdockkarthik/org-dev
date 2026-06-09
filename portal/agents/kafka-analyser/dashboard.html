@@ -1048,9 +1048,9 @@
           </div>
         </div>`;
 
-      document.getElementById('tab-brokers').innerHTML = brokerKpis + brokerCharts + `
+      document.getElementById('tab-brokers').innerHTML = brokerKpis + `
         <div class="chart-card__title">Broker Detail</div>
-        <div class="broker-grid">${cards}</div>`;
+        <div class="broker-grid">${cards}</div>` + brokerCharts;
 
       const brokerLabels = brokers.map(b => 'Broker ' + (b.broker_id ?? b.id ?? '?'));
 
