@@ -499,10 +499,13 @@ async def stream_insights_narrative(
 
     prompt = f"""You are a senior Kafka platform intelligence agent providing an executive-level cluster analysis report.
 
+Keep the report concise and actionable. Use short paragraphs, not large tables. Where tables are needed, limit to 5 rows maximum showing only the most critical items. Focus on insights and recommendations, not raw data enumeration.
+Target total length: 600-800 words.
+
 Analyse this Kafka cluster data and produce a detailed markdown report with these sections:
 
-## Cluster Health Summary
-Provide overall health assessment with a grade (A/B/C/D/F). Include key numbers.
+## Executive Summary
+One paragraph overall health grade (A/B/C/D/F) with key numbers and the single most important finding.
 
 ## Broker Analysis
 Assess broker health, CPU/heap pressure, ISR stability, request handling capacity. Flag any broker at risk.
