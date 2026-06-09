@@ -798,6 +798,12 @@
       }
       const topics = (data.topics || []).slice(0, 10);
 
+      const topicStatusBadge = t => {
+        if (topicRf(t) < 2) return `<span class="sev sev--warning">UNDER-REP</span>`;
+        if (logSize(t) > 1000 && msgRate(t) === 0) return `<span class="sev" style="background:rgba(100,116,139,.12);color:var(--text-muted)">STALE</span>`;
+        return `<span class="sev sev--healthy">HEALTHY</span>`;
+      };
+
       const topicRowHtml = t => `<tr>
           <td style="font-weight:600"><code style="font-size:.8rem">${(t.name || t.topic || 'Unknown')}</code></td>
           <td style="text-align:center">${(t.partition_count || t.partitions || 0)}</td>
@@ -805,7 +811,7 @@
           <td>${fmtRate(t.messages_in_per_sec)}</td>
           <td style="font-size:.82rem;color:var(--text-muted)">${fmtBytes(t.bytes_in_per_sec || 0)}/s</td>
           <td style="text-align:right;font-size:.82rem">${fmtBytes(t.size_bytes || 0)}</td>
-          <td><span class="sev sev--${t.status === 'warning' ? 'warning' : 'healthy'}">${t.status.toUpperCase()}</span></td>
+          <td>${topicStatusBadge(t)}</td>
         </tr>`;
 
       const topicFilters = `
@@ -821,17 +827,20 @@
           <span class="filter-chip" onclick="window._setTopicFilter('anomalous',this)">Anomalous Only</span>
           <span class="filter-chip" onclick="window._setTopicFilter('high',this)">High Traffic</span>
           <span class="filter-chip" onclick="window._setTopicFilter('stale',this)">Stale</span>
+          <span class="filter-chip" onclick="window._setTopicFilter('underrep',this)">Under-replicated</span>
         </div>
       `;
 
       const allTopics = data.topics || [];
       const msgRate = t => (t.msgs_per_sec ?? t.messages_in_per_sec ?? 0);
       const logSize = t => (t.log_size_bytes ?? t.size_bytes ?? 0);
+      const topicRf = t => (t.replication_factor ?? t.rf ?? 0);
+      const topicParts = t => (t.partition_count ?? t.partitions ?? 0);
 
-      const totalTopics  = allTopics.length;
-      const highTraffic  = allTopics.filter(t => msgRate(t) > 100).length;
-      const largeTopics  = allTopics.filter(t => logSize(t) > 1073741824).length;
-      const staleTopics  = allTopics.filter(t => msgRate(t) === 0).length;
+      const totalTopics      = allTopics.length;
+      const highTraffic      = allTopics.filter(t => msgRate(t) > 0.001).length;
+      const underReplicated  = allTopics.filter(t => topicRf(t) < 2 || (logSize(t) === 0 && topicParts(t) > 1)).length;
+      const staleTopics      = allTopics.filter(t => logSize(t) > 0 && msgRate(t) === 0).length;
 
       const topicKpis = `
         <div class="kpi-grid">
@@ -843,17 +852,17 @@
           <div class="kpi kpi--success">
             <div class="kpi__label">High Traffic</div>
             <div class="kpi__value">${highTraffic}</div>
-            <div class="kpi__sub">&gt; 100 msgs/sec</div>
+            <div class="kpi__sub">&gt; 0.001 msgs/sec</div>
+          </div>
+          <div class="kpi ${underReplicated > 0 ? 'kpi--danger' : 'kpi--success'}">
+            <div class="kpi__label">Under-replicated</div>
+            <div class="kpi__value">${underReplicated}</div>
+            <div class="kpi__sub">RF &lt; 2 or empty partitions</div>
           </div>
           <div class="kpi kpi--warn">
-            <div class="kpi__label">Large Topics</div>
-            <div class="kpi__value">${largeTopics}</div>
-            <div class="kpi__sub">log size &gt; 1 GB</div>
-          </div>
-          <div class="kpi kpi--danger">
             <div class="kpi__label">Stale</div>
             <div class="kpi__value">${staleTopics}</div>
-            <div class="kpi__sub">no message traffic</div>
+            <div class="kpi__sub">has data, no traffic</div>
           </div>
         </div>`;
 
@@ -890,7 +899,6 @@
         </div>`;
 
       // ── Self-contained topic table view: pagination + filter group + search (AND) ──
-      const topicRf = t => (t.replication_factor ?? t.rf ?? 0);
       const TOPIC_PAGE = 20;
       window._topicView = { filter: 'all', userOnly: false, search: '', visible: TOPIC_PAGE };
 
@@ -900,9 +908,10 @@
         if (st.search && !name.toLowerCase().includes(st.search.toLowerCase())) return false;
         const r = msgRate(t), sz = logSize(t), rf = topicRf(t);
         switch (st.filter) {
-          case 'anomalous': return r === 0 || sz === 0 || rf < 2;
+          case 'anomalous': return (r === 0 && sz > 1000) || rf < 2 || (t.retention_pct != null && t.retention_pct > 80);
           case 'high':      return r > 0.001;
           case 'stale':     return r === 0 && sz > 0;
+          case 'underrep':  return rf < 2;
           default:          return true;
         }
       };
