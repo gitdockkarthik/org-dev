@@ -567,9 +567,7 @@
       }
       const topics = (data.topics || []).slice(0, 10);
 
-      const rows = (data.topics || []).map(t => {
-        const retWarn = t.retention_pct >= 80;
-        return `<tr>
+      const topicRowHtml = t => `<tr>
           <td style="font-weight:600"><code style="font-size:.8rem">${(t.name || t.topic || 'Unknown')}</code></td>
           <td style="text-align:center">${(t.partition_count || t.partitions || 0)}</td>
           <td style="text-align:center">${t.replication_factor}</td>
@@ -578,14 +576,20 @@
           <td style="text-align:right;font-size:.82rem">${fmtBytes(t.size_bytes || 0)}</td>
           <td><span class="sev sev--${t.status === 'warning' ? 'warning' : 'healthy'}">${t.status.toUpperCase()}</span></td>
         </tr>`;
-      }).join('');
 
       const topicFilters = `
         <div class="filter-bar">
           <span class="dash-label">Show:</span>
-          <span class="filter-chip active" onclick="filterTopics('all',this)">All</span>
-          <span class="filter-chip" onclick="filterTopics('user',this)">User Topics</span>
-          <input class="filter-input" id="topic-search" placeholder="Search topic…" oninput="filterTopicSearch(this.value)" />
+          <span class="filter-chip active" onclick="window._setTopicShow(false,this)">All</span>
+          <span class="filter-chip" onclick="window._setTopicShow(true,this)">User Topics</span>
+          <input class="filter-input" id="topic-search" placeholder="Search topic…" oninput="window._topicSearch(this.value)" />
+        </div>
+        <div class="filter-bar">
+          <span class="dash-label">Filter:</span>
+          <span class="filter-chip active" onclick="window._setTopicFilter('all',this)">All</span>
+          <span class="filter-chip" onclick="window._setTopicFilter('anomalous',this)">Anomalous Only</span>
+          <span class="filter-chip" onclick="window._setTopicFilter('high',this)">High Traffic</span>
+          <span class="filter-chip" onclick="window._setTopicFilter('stale',this)">Stale</span>
         </div>
       `;
 
@@ -642,12 +646,79 @@
           <div class="chart-card__title">Top 10 Topics by Message Rate</div>
           <div class="chart-wrap"><canvas id="topicChart"></canvas></div>
         </div>
+        <div class="chart-card__title">Topic Inventory</div>
         <div class="data-table-wrap">
           <table class="data-table">
             <thead><tr><th>Topic</th><th style="text-align:center">Partitions</th><th style="text-align:center">RF</th><th>Msg/s</th><th>Bytes/s</th><th style="text-align:right">Log Size</th><th>Status</th></tr></thead>
-            <tbody>${rows}</tbody>
+            <tbody id="topic-tbody"></tbody>
           </table>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px">
+          <span id="topic-count-label" class="dash-label"></span>
+          <button id="topic-show-more" class="btn btn--secondary btn--sm" onclick="window._topicShowMore()">Show More</button>
         </div>`;
+
+      // ── Self-contained topic table view: pagination + filter group + search (AND) ──
+      const topicRf = t => (t.replication_factor ?? t.rf ?? 0);
+      const TOPIC_PAGE = 20;
+      window._topicView = { filter: 'all', userOnly: false, search: '', visible: TOPIC_PAGE };
+
+      const topicMatches = (t, st) => {
+        const name = (t.name || t.topic || 'Unknown');
+        if (st.userOnly && name.startsWith('_')) return false;
+        if (st.search && !name.toLowerCase().includes(st.search.toLowerCase())) return false;
+        const r = msgRate(t), sz = logSize(t), rf = topicRf(t);
+        switch (st.filter) {
+          case 'anomalous': return r === 0 || sz === 0 || rf < 2;
+          case 'high':      return r > 0.001;
+          case 'stale':     return r === 0 && sz > 0;
+          default:          return true;
+        }
+      };
+
+      window._applyTopicView = function () {
+        const st = window._topicView;
+        const filtered = allTopics.filter(t => topicMatches(t, st));
+        const shown = filtered.slice(0, st.visible);
+        const tbody = document.getElementById('topic-tbody');
+        if (tbody) {
+          tbody.innerHTML = shown.map(topicRowHtml).join('') ||
+            `<tr><td colspan="7" class="data-table__empty">No topics match</td></tr>`;
+        }
+        const label = document.getElementById('topic-count-label');
+        if (label) label.textContent = `Showing ${shown.length} of ${filtered.length} topics`;
+        const moreBtn = document.getElementById('topic-show-more');
+        if (moreBtn) moreBtn.style.display = shown.length < filtered.length ? '' : 'none';
+      };
+
+      const setActiveChip = (el) => {
+        el.parentElement.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+        el.classList.add('active');
+      };
+
+      window._setTopicFilter = function (f, el) {
+        window._topicView.filter = f;
+        window._topicView.visible = TOPIC_PAGE; // reset Show More on filter change
+        setActiveChip(el);
+        window._applyTopicView();
+      };
+      window._setTopicShow = function (userOnly, el) {
+        window._topicView.userOnly = userOnly;
+        window._topicView.visible = TOPIC_PAGE;
+        setActiveChip(el);
+        window._applyTopicView();
+      };
+      window._topicSearch = function (val) {
+        window._topicView.search = val;
+        window._topicView.visible = TOPIC_PAGE;
+        window._applyTopicView();
+      };
+      window._topicShowMore = function () {
+        window._topicView.visible += TOPIC_PAGE;
+        window._applyTopicView();
+      };
+
+      window._applyTopicView();
 
       setTimeout(async () => {
         destroyChart('topic');
