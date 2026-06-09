@@ -1798,188 +1798,247 @@
       });
     }
 
-    // ── Reusable per-tab AI analysis panel ─────────────────────────────────────
+    // ── Reusable per-tab AI analysis drawer ────────────────────────────────────
     window._tabAICache = window._tabAICache || {};
-    window._renderTabAI = function (tabId, containerEl) {
-      if (!containerEl) return;
-      const clusterId = _currentClusterId || (document.getElementById('ctrl-cluster')?.value) || '';
-      const cacheKey = tabId + '_' + clusterId;
+    window._aiDrawerTab = null;
 
-      // Avoid duplicate panels on re-render
-      const existing = document.getElementById('tab-ai-' + tabId);
-      if (existing) existing.remove();
+    const _AI_TAB_NAMES = {
+      'brokers': 'Brokers',
+      'topics': 'Topics',
+      'consumer-groups': 'Consumer Groups',
+      'kafka-connect': 'Kafka Connect',
+      'zookeeper': 'ZooKeeper',
+      'schema-registry': 'Schema Registry',
+      'mirrormaker': 'MirrorMaker',
+    };
 
-      const panel = document.createElement('div');
-      panel.id = 'tab-ai-' + tabId;
-      panel.className = 'anomaly-card';
-      panel.style.cssText = 'margin-top:18px;border-color:var(--accent);border-width:2px';
-      panel.innerHTML = `
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-          <div style="font-weight:700;font-size:.95rem;color:var(--accent)">🤖 AI Analysis</div>
-          <button class="dash-refresh-btn" id="tab-ai-btn-${tabId}" style="font-size:.8rem;padding:4px 12px">Analyse</button>
+    const _aiRenderMd = (text) => {
+      const rendered = text
+        .replace(/^## (.*)/gm, '<h3 style="color:var(--accent);margin:12px 0 6px">$1</h3>')
+        .replace(/^### (.*)/gm, '<h4 style="margin:8px 0 4px">$1</h4>')
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/^---$/gm, '<hr style="margin:8px 0;border:none;border-top:1px solid var(--border)">')
+        .replace(/\n/g, '<br>');
+      return rendered.replace(/(\|.+\|(<br>)?)+/g, tableBlock => {
+        const lines = tableBlock.split('<br>').filter(l => l.trim() && l.includes('|'));
+        const dataLines = lines.filter(l => !/^\|[-| :]+\|$/.test(l.trim()));
+        if (!dataLines.length) return '';
+        const rows = dataLines.map((line, i) => {
+          const cells = line.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+          const tag = i === 0 ? 'th' : 'td';
+          const style = i === 0 ? 'padding:5px 10px;border:1px solid var(--border);background:var(--navy-1);font-weight:600' : 'padding:4px 10px;border:1px solid var(--border)';
+          return '<tr>' + cells.map(c => `<${tag} style="${style}">${c}</${tag}>`).join('') + '</tr>';
+        }).join('');
+        return `<table style="border-collapse:collapse;margin:8px 0;font-size:.85rem;width:100%">${rows}</table>`;
+      });
+    };
+
+    function _closeAIDrawer() {
+      const drawer = document.getElementById('ai-drawer');
+      if (drawer) drawer.style.transform = 'translateX(100%)';
+      const backdrop = document.getElementById('ai-drawer-backdrop');
+      if (backdrop) backdrop.style.display = 'none';
+    }
+
+    function _openAIDrawer() {
+      _ensureAIDrawer();
+      document.getElementById('ai-drawer-backdrop').style.display = 'block';
+      requestAnimationFrame(() => {
+        document.getElementById('ai-drawer').style.transform = 'translateX(0)';
+      });
+    }
+
+    function _ensureAIDrawer() {
+      if (document.getElementById('ai-drawer')) return;
+
+      const backdrop = document.createElement('div');
+      backdrop.id = 'ai-drawer-backdrop';
+      backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.2);z-index:999;display:none';
+      backdrop.addEventListener('click', _closeAIDrawer);
+      document.body.appendChild(backdrop);
+
+      const drawer = document.createElement('div');
+      drawer.id = 'ai-drawer';
+      drawer.style.cssText = 'position:fixed;top:0;right:0;height:100vh;width:32%;z-index:1000;'
+        + 'background:var(--navy-1);border-left:1px solid var(--border);'
+        + 'box-shadow:-4px 0 20px rgba(0,0,0,0.3);transform:translateX(100%);'
+        + 'transition:transform 0.3s ease;overflow-y:auto;padding:20px';
+      drawer.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:16px">
+          <div id="ai-drawer-title" style="font-weight:700;font-size:.95rem;color:var(--accent)">🤖 AI Analysis</div>
+          <div style="display:flex;gap:6px;flex-shrink:0">
+            <button class="dash-refresh-btn" id="ai-drawer-refresh" style="font-size:.8rem;padding:4px 10px">↺ Refresh</button>
+            <button class="dash-refresh-btn" id="ai-drawer-close" style="font-size:.9rem;padding:4px 10px">✕</button>
+          </div>
         </div>
-        <div id="tab-ai-content-${tabId}" style="font-size:.88rem;color:var(--text-muted);line-height:1.6;display:none"></div>`;
-      containerEl.appendChild(panel);
+        <div id="ai-drawer-content" style="font-size:.88rem;color:var(--text-muted);line-height:1.6"></div>`;
+      document.body.appendChild(drawer);
 
-      const btn = panel.querySelector('#tab-ai-btn-' + tabId);
-      const content = panel.querySelector('#tab-ai-content-' + tabId);
+      document.getElementById('ai-drawer-close').addEventListener('click', _closeAIDrawer);
+      document.getElementById('ai-drawer-refresh').addEventListener('click', () => {
+        const tabId = window._aiDrawerTab;
+        if (!tabId) return;
+        const clusterId = _currentClusterId || (document.getElementById('ctrl-cluster')?.value) || '';
+        delete window._tabAICache[tabId + '_' + clusterId];
+        _runAIDrawer(tabId);
+      });
+    }
 
-      const renderMd = (text) => {
-        const rendered = text
-          .replace(/^## (.*)/gm, '<h3 style="color:var(--accent);margin:12px 0 6px">$1</h3>')
-          .replace(/^### (.*)/gm, '<h4 style="margin:8px 0 4px">$1</h4>')
-          .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-          .replace(/^---$/gm, '<hr style="margin:8px 0;border:none;border-top:1px solid var(--border)">')
-          .replace(/\n/g, '<br>');
-        return rendered.replace(/(\|.+\|(<br>)?)+/g, tableBlock => {
-          const lines = tableBlock.split('<br>').filter(l => l.trim() && l.includes('|'));
-          const dataLines = lines.filter(l => !/^\|[-| :]+\|$/.test(l.trim()));
-          if (!dataLines.length) return '';
-          const rows = dataLines.map((line, i) => {
-            const cells = line.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
-            const tag = i === 0 ? 'th' : 'td';
-            const style = i === 0 ? 'padding:5px 10px;border:1px solid var(--border);background:var(--navy-1);font-weight:600' : 'padding:4px 10px;border:1px solid var(--border)';
-            return '<tr>' + cells.map(c => `<${tag} style="${style}">${c}</${tag}>`).join('') + '</tr>';
-          }).join('');
-          return `<table style="border-collapse:collapse;margin:8px 0;font-size:.85rem;width:100%">${rows}</table>`;
-        });
-      };
-
-      function addContinue(prevText) {
-        const continueBtn = document.createElement('button');
-        continueBtn.textContent = 'Continue Analysis ›';
-        continueBtn.className = 'dash-refresh-btn';
-        continueBtn.style.cssText = 'font-size:.8rem;padding:4px 12px;margin-top:10px;background:var(--accent);color:#fff;border:none;border-radius:4px;cursor:pointer';
-        continueBtn.onclick = async () => {
-          continueBtn.remove();
-          btn.textContent = 'Analysing…';
-          btn.disabled = true;
-          let contFull = '';
-          let stopReason = 'end_turn';
-          try {
-            const contUrl = `${PROXY}/dashboard/insights/tab-stream${clusterId ? '?cluster_id=' + clusterId : ''}`;
-            const contRes = await fetch(contUrl, {
-              method: 'POST',
-              headers: { ..._authHeaders(), 'Content-Type': 'application/json' },
-              body: JSON.stringify({ tab: tabId, continuation_of: prevText }),
-            });
-            if (!contRes.ok) throw new Error(`HTTP ${contRes.status}`);
-            const contReader = contRes.body.getReader();
-            const contDecoder = new TextDecoder();
-            while (true) {
-              const { done, value } = await contReader.read();
-              if (done) break;
-              const chunk = contDecoder.decode(value, { stream: true });
-              for (const line of chunk.split('\n')) {
-                if (!line.startsWith('data: ')) continue;
-                const d = line.slice(6);
-                if (d.startsWith('[STOP_REASON]')) { stopReason = d.slice(14).trim(); continue; }
-                if (d === '[DONE]') break;
-                if (d.startsWith('[ERROR]')) break;
-                contFull += d.replace(/\\n/g, '\n');
-              }
-              content.innerHTML = renderMd(prevText + contFull);
-            }
-            content.innerHTML = renderMd(prevText + contFull);
-            window._tabAICache[cacheKey] = content.innerHTML;
-            btn.textContent = '↺ Refresh';
-            btn.disabled = false;
-            if (stopReason === 'max_tokens') addContinue(prevText + contFull);
-          } catch (e) {
-            btn.textContent = '↺ Refresh';
-            btn.disabled = false;
-          }
-        };
-        content.parentElement.appendChild(continueBtn);
-      }
-
-      async function runAnalysis() {
-        content.style.display = '';
-        btn.textContent = 'Analysing…';
-        btn.disabled = true;
-        const progressMessages = [
-          'Analysing ' + tabId + '…',
-          'Reviewing metrics…',
-          'Identifying risks…',
-          'Preparing recommendations…',
-        ];
-        let msgIdx = 0;
-        content.style.fontStyle = 'italic';
-        content.style.color = 'var(--text-muted)';
-        content.textContent = progressMessages[0];
-        const progressInterval = setInterval(() => {
-          msgIdx = (msgIdx + 1) % progressMessages.length;
-          content.textContent = progressMessages[msgIdx];
-        }, 2000);
-
-        let fullText = '';
-        let sseBuffer = '';
-        let done_reading = false;
-        let firstToken = false;
+    function _aiAddContinue(tabId, prevText) {
+      const content = document.getElementById('ai-drawer-content');
+      const refreshBtn = document.getElementById('ai-drawer-refresh');
+      const continueBtn = document.createElement('button');
+      continueBtn.textContent = 'Continue Analysis ›';
+      continueBtn.className = 'dash-refresh-btn';
+      continueBtn.style.cssText = 'font-size:.8rem;padding:4px 12px;margin-top:10px;background:var(--accent);color:#fff;border:none;border-radius:4px;cursor:pointer';
+      continueBtn.onclick = async () => {
+        continueBtn.remove();
+        if (refreshBtn) refreshBtn.disabled = true;
+        const clusterId = _currentClusterId || (document.getElementById('ctrl-cluster')?.value) || '';
+        const cacheKey = tabId + '_' + clusterId;
+        let contFull = '';
         let stopReason = 'end_turn';
-
         try {
-          await portalReady;
-          const url = `${PROXY}/dashboard/insights/tab-stream${clusterId ? '?cluster_id=' + clusterId : ''}`;
-          const response = await fetch(url, {
+          const contUrl = `${PROXY}/dashboard/insights/tab-stream${clusterId ? '?cluster_id=' + clusterId : ''}`;
+          const contRes = await fetch(contUrl, {
             method: 'POST',
             headers: { ..._authHeaders(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tab: tabId }),
+            body: JSON.stringify({ tab: tabId, continuation_of: prevText }),
           });
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder();
+          if (!contRes.ok) throw new Error(`HTTP ${contRes.status}`);
+          const contReader = contRes.body.getReader();
+          const contDecoder = new TextDecoder();
           while (true) {
-            const { done, value } = await reader.read();
-            if (done || done_reading) break;
-            const chunk = decoder.decode(value, { stream: true });
-            sseBuffer += chunk;
-            const lines = sseBuffer.split('\n');
-            sseBuffer = lines.pop();
-            for (const line of lines) {
+            const { done, value } = await contReader.read();
+            if (done || window._aiDrawerTab !== tabId) break;
+            const chunk = contDecoder.decode(value, { stream: true });
+            for (const line of chunk.split('\n')) {
               if (!line.startsWith('data: ')) continue;
-              const dataLine = line.slice(6).trimEnd();
-              if (dataLine.startsWith('[STOP_REASON]')) { stopReason = dataLine.slice(14).trim(); continue; }
-              if (dataLine === '[DONE]') { done_reading = true; break; }
-              if (dataLine.startsWith('[ERROR]')) throw new Error(dataLine.slice(7).trim());
-              if (!firstToken) {
-                firstToken = true;
-                clearInterval(progressInterval);
-                content.style.fontStyle = 'normal';
-                content.style.color = 'var(--text)';
-                content.innerHTML = '';
-              }
-              fullText += dataLine.replace(/\\n/g, '\n');
-              content.innerHTML = renderMd(fullText);
+              const d = line.slice(6);
+              if (d.startsWith('[STOP_REASON]')) { stopReason = d.slice(14).trim(); continue; }
+              if (d === '[DONE]') break;
+              if (d.startsWith('[ERROR]')) break;
+              contFull += d.replace(/\\n/g, '\n');
             }
+            if (content) content.innerHTML = _aiRenderMd(prevText + contFull);
           }
-          clearInterval(progressInterval);
-          window._tabAICache[cacheKey] = content.innerHTML;
-          btn.textContent = '↺ Refresh';
-          btn.disabled = false;
-          if (stopReason === 'max_tokens') addContinue(fullText);
+          if (content) content.innerHTML = _aiRenderMd(prevText + contFull);
+          window._tabAICache[cacheKey] = content ? content.innerHTML : '';
+          if (refreshBtn) refreshBtn.disabled = false;
+          if (stopReason === 'max_tokens') _aiAddContinue(tabId, prevText + contFull);
         } catch (e) {
-          clearInterval(progressInterval);
-          content.style.fontStyle = 'normal';
-          content.style.color = 'var(--text)';
-          content.textContent = 'Failed: ' + e.message;
-          btn.textContent = 'Analyse';
-          btn.disabled = false;
+          if (refreshBtn) refreshBtn.disabled = false;
         }
-      }
+      };
+      content.parentElement.appendChild(continueBtn);
+    }
 
-      // Show cached result on revisit
+    async function _runAIDrawer(tabId) {
+      _ensureAIDrawer();
+      window._aiDrawerTab = tabId;
+      const clusterId = _currentClusterId || (document.getElementById('ctrl-cluster')?.value) || '';
+      const cacheKey = tabId + '_' + clusterId;
+      const titleEl = document.getElementById('ai-drawer-title');
+      const content = document.getElementById('ai-drawer-content');
+      const refreshBtn = document.getElementById('ai-drawer-refresh');
+      if (titleEl) titleEl.textContent = `🤖 AI Analysis — ${_AI_TAB_NAMES[tabId] || tabId}`;
+
+      // Show cached result if present
       if (window._tabAICache[cacheKey]) {
-        content.style.display = '';
+        content.style.fontStyle = 'normal';
         content.style.color = 'var(--text)';
         content.innerHTML = window._tabAICache[cacheKey];
-        btn.textContent = '↺ Refresh';
+        if (refreshBtn) refreshBtn.disabled = false;
+        return;
       }
 
-      btn.addEventListener('click', () => {
-        if (btn.textContent.includes('Refresh')) delete window._tabAICache[cacheKey];
-        runAnalysis();
-      });
+      const progressMessages = [
+        'Analysing ' + tabId + '…',
+        'Reviewing metrics…',
+        'Identifying risks…',
+        'Preparing recommendations…',
+      ];
+      let msgIdx = 0;
+      content.style.fontStyle = 'italic';
+      content.style.color = 'var(--text-muted)';
+      content.textContent = progressMessages[0];
+      const progressInterval = setInterval(() => {
+        msgIdx = (msgIdx + 1) % progressMessages.length;
+        if (window._aiDrawerTab === tabId) content.textContent = progressMessages[msgIdx];
+      }, 2000);
+
+      let fullText = '';
+      let sseBuffer = '';
+      let done_reading = false;
+      let firstToken = false;
+      let stopReason = 'end_turn';
+
+      if (refreshBtn) refreshBtn.disabled = true;
+      try {
+        await portalReady;
+        const url = `${PROXY}/dashboard/insights/tab-stream${clusterId ? '?cluster_id=' + clusterId : ''}`;
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { ..._authHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tab: tabId }),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done || done_reading) break;
+          if (window._aiDrawerTab !== tabId) { clearInterval(progressInterval); return; }
+          const chunk = decoder.decode(value, { stream: true });
+          sseBuffer += chunk;
+          const lines = sseBuffer.split('\n');
+          sseBuffer = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const dataLine = line.slice(6).trimEnd();
+            if (dataLine.startsWith('[STOP_REASON]')) { stopReason = dataLine.slice(14).trim(); continue; }
+            if (dataLine === '[DONE]') { done_reading = true; break; }
+            if (dataLine.startsWith('[ERROR]')) throw new Error(dataLine.slice(7).trim());
+            if (!firstToken) {
+              firstToken = true;
+              clearInterval(progressInterval);
+              content.style.fontStyle = 'normal';
+              content.style.color = 'var(--text)';
+              content.innerHTML = '';
+            }
+            fullText += dataLine.replace(/\\n/g, '\n');
+            content.innerHTML = _aiRenderMd(fullText);
+          }
+        }
+        clearInterval(progressInterval);
+        window._tabAICache[cacheKey] = content.innerHTML;
+        if (refreshBtn) refreshBtn.disabled = false;
+        if (stopReason === 'max_tokens') _aiAddContinue(tabId, fullText);
+      } catch (e) {
+        clearInterval(progressInterval);
+        content.style.fontStyle = 'normal';
+        content.style.color = 'var(--text)';
+        content.textContent = 'Failed: ' + e.message;
+        if (refreshBtn) refreshBtn.disabled = false;
+      }
+    }
+
+    window._renderTabAI = function (tabId, containerEl) {
+      if (!containerEl) return;
+      _ensureAIDrawer();
+      // Avoid duplicate buttons on re-render
+      const existing = document.getElementById('tab-ai-fab-' + tabId);
+      if (existing) existing.remove();
+
+      const fab = document.createElement('button');
+      fab.id = 'tab-ai-fab-' + tabId;
+      fab.textContent = '🤖 Analyse';
+      fab.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:900;'
+        + 'background:var(--navy-1);color:var(--accent);border:1px solid var(--accent);'
+        + 'border-radius:20px;padding:8px 16px;font-size:.82rem;font-weight:600;cursor:pointer;'
+        + 'box-shadow:0 2px 10px rgba(0,0,0,0.15)';
+      fab.addEventListener('click', () => { _openAIDrawer(); _runAIDrawer(tabId); });
+      containerEl.appendChild(fab);
     };
 
     // ── Init ──────────────────────────────────────────────────────────────────
