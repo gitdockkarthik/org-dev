@@ -452,26 +452,81 @@ async def stream_insights_narrative(
         return StreamingResponse(nokey(),
             media_type="text/event-stream")
 
-    # Build same prompt as existing narrative endpoint
-    # Reuse the prompt building logic from get_insights_narrative
     brokers = data.get("brokers", [])
-    topics  = data.get("topics", {})
-    groups  = data.get("consumer_groups", {})
+    topics = data.get("topics", {})
+    groups = data.get("consumer_groups", {})
     anomalies = data.get("anomalies", [])
 
-    prompt = f"""You are a senior Kafka platform engineer.
-Analyse this Kafka cluster and produce a concise markdown report with:
-## Cluster Health Summary
-## Top 3 Issues & Recommendations
-## Consumer Group Health
-## Capacity & Performance Observations
+    # Compute aggregates
+    total_partitions = sum(t.get("partition_count", 0) for t in topics)
+    total_urps = sum(b.get("urp_count", 0) for b in brokers)
+    avg_heap = round(sum(b.get("heap_pct", 0) for b in brokers) / max(len(brokers), 1), 1)
+    avg_cpu = round(sum(b.get("cpu_pct", 0) for b in brokers) / max(len(brokers), 1), 1)
+    avg_req_idle = round(sum(b.get("request_handler_idle_pct", 0) for b in brokers) / max(len(brokers), 1), 1)
 
-Cluster data:
-- Brokers: {len(brokers)} active
-- Topics: {len(topics)}
-- Consumer groups: {len(groups)}
-- Anomalies: {[a.get('description','') for a in anomalies[:5]]}
-- Broker details: {[{'id':b.get('id'),'heap':b.get('heap_pct'),'cpu':b.get('cpu_pct'),'urp':b.get('urp_count')} for b in brokers[:3]]}
+    # Top topics by traffic
+    sorted_by_msgs = sorted(topics, key=lambda t: t.get("messages_in_per_sec", 0), reverse=True)[:10]
+    top_topics = [{"name": t.get("name"), "msgs_sec": t.get("messages_in_per_sec", 0),
+                   "size_bytes": t.get("size_bytes", 0), "partitions": t.get("partition_count", 0),
+                   "rf": t.get("replication_factor", 0)} for t in sorted_by_msgs]
+
+    # Stale topics
+    stale_topics = [t.get("name") for t in topics if t.get("messages_in_per_sec", 0) == 0 and t.get("size_bytes", 0) > 1000]
+
+    # Consumer group health
+    critical_groups = [{"name": g.get("group_id") or g.get("name"), "lag": g.get("total_lag", 0),
+                        "trend": g.get("lag_trend")} for g in groups if g.get("total_lag", 0) > 10000]
+    warning_groups = [{"name": g.get("group_id") or g.get("name"), "lag": g.get("total_lag", 0)}
+                      for g in groups if 1000 < g.get("total_lag", 0) <= 10000]
+    healthy_groups = len([g for g in groups if g.get("total_lag", 0) <= 1000])
+
+    prompt = f"""You are a senior Kafka platform intelligence agent providing an executive-level cluster analysis report.
+
+Analyse this Kafka cluster data and produce a detailed markdown report with these sections:
+
+## Cluster Health Summary
+Provide overall health assessment with a grade (A/B/C/D/F). Include key numbers.
+
+## Broker Analysis
+Assess broker health, CPU/heap pressure, ISR stability, request handling capacity. Flag any broker at risk.
+
+## Topic Intelligence
+Identify high-traffic topics, stale topics (data but no traffic), under-replicated topics, and partition imbalance.
+
+## Consumer Lag Analysis
+Which consumer groups are falling behind? What is the business impact of growing lag? Risk of data loss if lag exceeds retention?
+
+## Anomaly Assessment
+Evaluate detected anomalies. Severity, likely root cause, and recommended response.
+
+## Capacity & Performance Outlook
+Broker headroom, partition growth trend, resource utilisation trajectory.
+
+## Recommended Actions
+Prioritised list with effort estimate (quick win / medium / large). Each action should have a clear "why" and "what happens if ignored".
+
+---
+CLUSTER DATA:
+
+Brokers ({len(brokers)} active):
+- Average Heap: {avg_heap}%
+- Average CPU: {avg_cpu}%
+- Average Request Handler Idle: {avg_req_idle}%
+- Under-replicated Partitions: {total_urps}
+- Broker details: {[{{'id': b.get('id'), 'heap': b.get('heap_pct'), 'cpu': b.get('cpu_pct'), 'urp': b.get('urp_count'), 'gc_pause_ms': b.get('gc_pause_ms'), 'produce_latency_ms': b.get('produce_latency_ms'), 'fetch_latency_ms': b.get('fetch_latency_ms'), 'bytes_in': b.get('bytes_in_per_sec'), 'bytes_out': b.get('bytes_out_per_sec'), 'isr_shrinks': b.get('isr_shrinks_per_sec'), 'req_idle': b.get('request_handler_idle_pct')}} for b in brokers]}
+
+Topics ({len(topics)} total, {total_partitions} partitions):
+- Top 10 by traffic: {top_topics}
+- Stale topics (data but no traffic): {stale_topics[:20]}
+- Low replication (RF=1): {len([t for t in topics if t.get('replication_factor', 0) == 1])} topics
+
+Consumer Groups ({len(groups)} total):
+- Critical (lag >10k): {critical_groups}
+- Warning (lag 1k-10k): {warning_groups}
+- Healthy (lag <1k): {healthy_groups} groups
+
+Anomalies ({len(anomalies)} detected):
+{[{{'severity': a.get('severity'), 'category': a.get('category'), 'description': a.get('description')}} for a in anomalies[:10]]}
 """
 
     async def event_stream():
