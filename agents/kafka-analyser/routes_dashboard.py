@@ -480,6 +480,23 @@ async def stream_insights_narrative(
                       for g in groups if 1000 < g.get("total_lag", 0) <= 10000]
     healthy_groups = len([g for g in groups if g.get("total_lag", 0) <= 1000])
 
+    # Pre-build structures (avoid dict literals inside f-string expressions)
+    broker_details = [{"id": b.get("id"), "heap": b.get("heap_pct"),
+        "cpu": b.get("cpu_pct"), "urp": b.get("urp_count"),
+        "gc_pause_ms": b.get("gc_pause_ms"),
+        "produce_latency_ms": b.get("produce_latency_ms"),
+        "fetch_latency_ms": b.get("fetch_latency_ms"),
+        "bytes_in": b.get("bytes_in_per_sec"),
+        "bytes_out": b.get("bytes_out_per_sec"),
+        "isr_shrinks": b.get("isr_shrinks_per_sec"),
+        "req_idle": b.get("request_handler_idle_pct")} for b in brokers]
+
+    anomaly_details = [{"severity": a.get("severity"),
+        "category": a.get("category"),
+        "description": a.get("description")} for a in anomalies[:10]]
+
+    low_rep_count = len([t for t in topics if t.get("replication_factor", 0) == 1])
+
     prompt = f"""You are a senior Kafka platform intelligence agent providing an executive-level cluster analysis report.
 
 Analyse this Kafka cluster data and produce a detailed markdown report with these sections:
@@ -513,12 +530,12 @@ Brokers ({len(brokers)} active):
 - Average CPU: {avg_cpu}%
 - Average Request Handler Idle: {avg_req_idle}%
 - Under-replicated Partitions: {total_urps}
-- Broker details: {[{{'id': b.get('id'), 'heap': b.get('heap_pct'), 'cpu': b.get('cpu_pct'), 'urp': b.get('urp_count'), 'gc_pause_ms': b.get('gc_pause_ms'), 'produce_latency_ms': b.get('produce_latency_ms'), 'fetch_latency_ms': b.get('fetch_latency_ms'), 'bytes_in': b.get('bytes_in_per_sec'), 'bytes_out': b.get('bytes_out_per_sec'), 'isr_shrinks': b.get('isr_shrinks_per_sec'), 'req_idle': b.get('request_handler_idle_pct')}} for b in brokers]}
+- Broker details: {broker_details}
 
 Topics ({len(topics)} total, {total_partitions} partitions):
 - Top 10 by traffic: {top_topics}
 - Stale topics (data but no traffic): {stale_topics[:20]}
-- Low replication (RF=1): {len([t for t in topics if t.get('replication_factor', 0) == 1])} topics
+- Low replication (RF=1): {low_rep_count} topics
 
 Consumer Groups ({len(groups)} total):
 - Critical (lag >10k): {critical_groups}
@@ -526,7 +543,7 @@ Consumer Groups ({len(groups)} total):
 - Healthy (lag <1k): {healthy_groups} groups
 
 Anomalies ({len(anomalies)} detected):
-{[{{'severity': a.get('severity'), 'category': a.get('category'), 'description': a.get('description')}} for a in anomalies[:10]]}
+{anomaly_details}
 """
 
     async def event_stream():
