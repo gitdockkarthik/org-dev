@@ -817,6 +817,7 @@
           });
         }, 0);
       }
+      window._renderTabAI('consumer-groups', document.getElementById('tab-consumer-groups'));
     }
 
     // ── Tab 3: Topics ─────────────────────────────────────────────────────────
@@ -1119,6 +1120,7 @@
           });
         }
       }, 0);
+      window._renderTabAI('topics', document.getElementById('tab-topics'));
     }
 
     // ── Tab 4: Brokers ────────────────────────────────────────────────────────
@@ -1344,6 +1346,7 @@
           });
         }
       }, 0);
+      window._renderTabAI('brokers', document.getElementById('tab-brokers'));
     }
 
     // ── Tab 5: Connectors ─────────────────────────────────────────────────────
@@ -1597,6 +1600,7 @@
           });
         }
       }, 0);
+      window._renderTabAI('kafka-connect', document.getElementById('tab-kafka-connect'));
     }
 
     // ── Tab 6: AI Insights ────────────────────────────────────────────────────
@@ -1793,6 +1797,190 @@
         btn.disabled = false;
       });
     }
+
+    // ── Reusable per-tab AI analysis panel ─────────────────────────────────────
+    window._tabAICache = window._tabAICache || {};
+    window._renderTabAI = function (tabId, containerEl) {
+      if (!containerEl) return;
+      const clusterId = _currentClusterId || (document.getElementById('ctrl-cluster')?.value) || '';
+      const cacheKey = tabId + '_' + clusterId;
+
+      // Avoid duplicate panels on re-render
+      const existing = document.getElementById('tab-ai-' + tabId);
+      if (existing) existing.remove();
+
+      const panel = document.createElement('div');
+      panel.id = 'tab-ai-' + tabId;
+      panel.className = 'anomaly-card';
+      panel.style.cssText = 'margin-top:18px;border-color:var(--accent);border-width:2px';
+      panel.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <div style="font-weight:700;font-size:.95rem;color:var(--accent)">🤖 AI Analysis</div>
+          <button class="dash-refresh-btn" id="tab-ai-btn-${tabId}" style="font-size:.8rem;padding:4px 12px">Analyse</button>
+        </div>
+        <div id="tab-ai-content-${tabId}" style="font-size:.88rem;color:var(--text-muted);line-height:1.6;display:none"></div>`;
+      containerEl.appendChild(panel);
+
+      const btn = panel.querySelector('#tab-ai-btn-' + tabId);
+      const content = panel.querySelector('#tab-ai-content-' + tabId);
+
+      const renderMd = (text) => {
+        const rendered = text
+          .replace(/^## (.*)/gm, '<h3 style="color:var(--accent);margin:12px 0 6px">$1</h3>')
+          .replace(/^### (.*)/gm, '<h4 style="margin:8px 0 4px">$1</h4>')
+          .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+          .replace(/^---$/gm, '<hr style="margin:8px 0;border:none;border-top:1px solid var(--border)">')
+          .replace(/\n/g, '<br>');
+        return rendered.replace(/(\|.+\|(<br>)?)+/g, tableBlock => {
+          const lines = tableBlock.split('<br>').filter(l => l.trim() && l.includes('|'));
+          const dataLines = lines.filter(l => !/^\|[-| :]+\|$/.test(l.trim()));
+          if (!dataLines.length) return '';
+          const rows = dataLines.map((line, i) => {
+            const cells = line.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+            const tag = i === 0 ? 'th' : 'td';
+            const style = i === 0 ? 'padding:5px 10px;border:1px solid var(--border);background:var(--navy-1);font-weight:600' : 'padding:4px 10px;border:1px solid var(--border)';
+            return '<tr>' + cells.map(c => `<${tag} style="${style}">${c}</${tag}>`).join('') + '</tr>';
+          }).join('');
+          return `<table style="border-collapse:collapse;margin:8px 0;font-size:.85rem;width:100%">${rows}</table>`;
+        });
+      };
+
+      function addContinue(prevText) {
+        const continueBtn = document.createElement('button');
+        continueBtn.textContent = 'Continue Analysis ›';
+        continueBtn.className = 'dash-refresh-btn';
+        continueBtn.style.cssText = 'font-size:.8rem;padding:4px 12px;margin-top:10px;background:var(--accent);color:#fff;border:none;border-radius:4px;cursor:pointer';
+        continueBtn.onclick = async () => {
+          continueBtn.remove();
+          btn.textContent = 'Analysing…';
+          btn.disabled = true;
+          let contFull = '';
+          let stopReason = 'end_turn';
+          try {
+            const contUrl = `${PROXY}/dashboard/insights/tab-stream${clusterId ? '?cluster_id=' + clusterId : ''}`;
+            const contRes = await fetch(contUrl, {
+              method: 'POST',
+              headers: { ..._authHeaders(), 'Content-Type': 'application/json' },
+              body: JSON.stringify({ tab: tabId, continuation_of: prevText }),
+            });
+            if (!contRes.ok) throw new Error(`HTTP ${contRes.status}`);
+            const contReader = contRes.body.getReader();
+            const contDecoder = new TextDecoder();
+            while (true) {
+              const { done, value } = await contReader.read();
+              if (done) break;
+              const chunk = contDecoder.decode(value, { stream: true });
+              for (const line of chunk.split('\n')) {
+                if (!line.startsWith('data: ')) continue;
+                const d = line.slice(6);
+                if (d.startsWith('[STOP_REASON]')) { stopReason = d.slice(14).trim(); continue; }
+                if (d === '[DONE]') break;
+                if (d.startsWith('[ERROR]')) break;
+                contFull += d.replace(/\\n/g, '\n');
+              }
+              content.innerHTML = renderMd(prevText + contFull);
+            }
+            content.innerHTML = renderMd(prevText + contFull);
+            window._tabAICache[cacheKey] = content.innerHTML;
+            btn.textContent = '↺ Refresh';
+            btn.disabled = false;
+            if (stopReason === 'max_tokens') addContinue(prevText + contFull);
+          } catch (e) {
+            btn.textContent = '↺ Refresh';
+            btn.disabled = false;
+          }
+        };
+        content.parentElement.appendChild(continueBtn);
+      }
+
+      async function runAnalysis() {
+        content.style.display = '';
+        btn.textContent = 'Analysing…';
+        btn.disabled = true;
+        const progressMessages = [
+          'Analysing ' + tabId + '…',
+          'Reviewing metrics…',
+          'Identifying risks…',
+          'Preparing recommendations…',
+        ];
+        let msgIdx = 0;
+        content.style.fontStyle = 'italic';
+        content.style.color = 'var(--text-muted)';
+        content.textContent = progressMessages[0];
+        const progressInterval = setInterval(() => {
+          msgIdx = (msgIdx + 1) % progressMessages.length;
+          content.textContent = progressMessages[msgIdx];
+        }, 2000);
+
+        let fullText = '';
+        let sseBuffer = '';
+        let done_reading = false;
+        let firstToken = false;
+        let stopReason = 'end_turn';
+
+        try {
+          await portalReady;
+          const url = `${PROXY}/dashboard/insights/tab-stream${clusterId ? '?cluster_id=' + clusterId : ''}`;
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: { ..._authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tab: tabId }),
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done || done_reading) break;
+            const chunk = decoder.decode(value, { stream: true });
+            sseBuffer += chunk;
+            const lines = sseBuffer.split('\n');
+            sseBuffer = lines.pop();
+            for (const line of lines) {
+              if (!line.startsWith('data: ')) continue;
+              const dataLine = line.slice(6).trimEnd();
+              if (dataLine.startsWith('[STOP_REASON]')) { stopReason = dataLine.slice(14).trim(); continue; }
+              if (dataLine === '[DONE]') { done_reading = true; break; }
+              if (dataLine.startsWith('[ERROR]')) throw new Error(dataLine.slice(7).trim());
+              if (!firstToken) {
+                firstToken = true;
+                clearInterval(progressInterval);
+                content.style.fontStyle = 'normal';
+                content.style.color = 'var(--text)';
+                content.innerHTML = '';
+              }
+              fullText += dataLine.replace(/\\n/g, '\n');
+              content.innerHTML = renderMd(fullText);
+            }
+          }
+          clearInterval(progressInterval);
+          window._tabAICache[cacheKey] = content.innerHTML;
+          btn.textContent = '↺ Refresh';
+          btn.disabled = false;
+          if (stopReason === 'max_tokens') addContinue(fullText);
+        } catch (e) {
+          clearInterval(progressInterval);
+          content.style.fontStyle = 'normal';
+          content.style.color = 'var(--text)';
+          content.textContent = 'Failed: ' + e.message;
+          btn.textContent = 'Analyse';
+          btn.disabled = false;
+        }
+      }
+
+      // Show cached result on revisit
+      if (window._tabAICache[cacheKey]) {
+        content.style.display = '';
+        content.style.color = 'var(--text)';
+        content.innerHTML = window._tabAICache[cacheKey];
+        btn.textContent = '↺ Refresh';
+      }
+
+      btn.addEventListener('click', () => {
+        if (btn.textContent.includes('Refresh')) delete window._tabAICache[cacheKey];
+        runAnalysis();
+      });
+    };
 
     // ── Init ──────────────────────────────────────────────────────────────────
 
@@ -2065,6 +2253,7 @@
           }
         }, 0);
       }
+      window._renderTabAI('schema-registry', document.getElementById('tab-schema-registry'));
     }
 
     function renderZooKeeper(data) {
@@ -2199,6 +2388,7 @@
           });
         }
       }, 0);
+      window._renderTabAI('zookeeper', document.getElementById('tab-zookeeper'));
     }
 
     function renderMirrorMaker(data) {
@@ -2309,6 +2499,7 @@
           });
         }
       }, 0);
+      window._renderTabAI('mirrormaker', document.getElementById('tab-mirrormaker'));
     }
 
     async function init() {

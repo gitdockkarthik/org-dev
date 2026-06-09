@@ -584,3 +584,213 @@ Anomalies ({len(anomalies)} detected):
         headers={"Cache-Control":"no-cache",
                  "X-Accel-Buffering":"no"},
     )
+
+
+@router.post("/dashboard/insights/tab-stream")
+async def stream_tab_insights(
+    request: Request,
+    cluster_id: str | None = None
+):
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    tab = body.get("tab", "")
+    continuation_of = body.get("continuation_of", None)
+    from fastapi.responses import StreamingResponse
+    import anthropic as _anthropic
+
+    data = kafka_store.get_cluster_data(cluster_id) if cluster_id else (
+        kafka_store.get_cluster_data(kafka_store.get_all_cluster_ids()[0])
+        if kafka_store.get_all_cluster_ids() else None
+    )
+    if not data:
+        async def empty():
+            yield 'data: No cluster data available. Run a sync first.\n\n'
+            yield 'data: [DONE]\n\n'
+        return StreamingResponse(empty(),
+            media_type="text/event-stream")
+
+    api_key = request.headers.get("x-anthropic-key", "") or \
+              os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        async def nokey():
+            yield 'data: Anthropic API key not configured.\n\n'
+            yield 'data: [DONE]\n\n'
+        return StreamingResponse(nokey(),
+            media_type="text/event-stream")
+
+    concise = "Keep it concise, 200-400 words. No tables. Short paragraphs."
+
+    if tab == "brokers":
+        brokers = data.get("brokers", [])
+        broker_details = [{"id": b.get("id"), "heap": b.get("heap_pct"),
+            "cpu": b.get("cpu_pct"), "urp": b.get("urp_count"),
+            "gc_pause_ms": b.get("gc_pause_ms"),
+            "produce_latency_ms": b.get("produce_latency_ms"),
+            "fetch_latency_ms": b.get("fetch_latency_ms"),
+            "bytes_in": b.get("bytes_in_per_sec"),
+            "bytes_out": b.get("bytes_out_per_sec"),
+            "isr_shrinks": b.get("isr_shrinks_per_sec"),
+            "req_idle": b.get("request_handler_idle_pct")} for b in brokers]
+        prompt = f"""You are a Kafka broker health specialist. Analyse these broker metrics and provide:
+## Health Assessment — overall broker health, any at risk
+## Key Concerns — CPU/heap pressure, GC issues, latency anomalies, ISR instability
+## Recommendations — prioritised actions for broker health
+{concise}
+
+BROKER DATA ({len(brokers)} brokers):
+{broker_details}
+"""
+
+    elif tab == "topics":
+        topics = data.get("topics", [])
+        total_partitions = sum(t.get("partition_count", 0) for t in topics)
+        sorted_by_msgs = sorted(topics, key=lambda t: t.get("messages_in_per_sec", 0), reverse=True)[:10]
+        top_topics = [{"name": t.get("name"), "msgs_sec": t.get("messages_in_per_sec", 0),
+                       "size_bytes": t.get("size_bytes", 0), "partitions": t.get("partition_count", 0),
+                       "rf": t.get("replication_factor", 0)} for t in sorted_by_msgs]
+        stale_topics = [t.get("name") for t in topics if t.get("messages_in_per_sec", 0) == 0 and t.get("size_bytes", 0) > 1000]
+        low_rep_count = len([t for t in topics if t.get("replication_factor", 0) == 1])
+        prompt = f"""You are a Kafka topic intelligence specialist. Analyse these topics and provide:
+## Topic Health Overview — traffic patterns, stale topics, partition balance
+## Risk Areas — under-replicated, orphaned, anomalous growth
+## Recommendations — cleanup candidates, replication fixes, partition rebalancing
+{concise}
+
+TOPIC DATA ({len(topics)} total, {total_partitions} partitions):
+- Top 10 by traffic: {top_topics}
+- Stale topics (data but no traffic): {stale_topics[:20]}
+- Low replication (RF=1): {low_rep_count} topics
+"""
+
+    elif tab == "consumer-groups":
+        groups = data.get("consumer_groups", [])
+        critical_groups = [{"name": g.get("group_id") or g.get("name"), "lag": g.get("total_lag", 0),
+                            "trend": g.get("lag_trend")} for g in groups if g.get("total_lag", 0) > 10000]
+        warning_groups = [{"name": g.get("group_id") or g.get("name"), "lag": g.get("total_lag", 0)}
+                          for g in groups if 1000 < g.get("total_lag", 0) <= 10000]
+        healthy_groups = len([g for g in groups if g.get("total_lag", 0) <= 1000])
+        prompt = f"""You are a Kafka consumer lag analyst. Analyse these consumer groups and provide:
+## Lag Assessment — which groups are critical, trend direction
+## Business Impact — what does this lag mean for data freshness and processing
+## Recommendations — how to reduce lag, which groups to prioritise
+{concise}
+
+CONSUMER GROUP DATA ({len(groups)} total):
+- Critical (lag >10k): {critical_groups}
+- Warning (lag 1k-10k): {warning_groups}
+- Healthy (lag <1k): {healthy_groups} groups
+"""
+
+    elif tab == "kafka-connect":
+        cdata = data.get("connectors", {})
+        connectors_list = cdata.get("connectors", []) if isinstance(cdata, dict) else (cdata or [])
+        connector_details = [{"name": c.get("name"), "state": c.get("state"), "type": c.get("type"),
+                              "running_tasks": c.get("running_tasks"), "total_tasks": c.get("total_tasks"),
+                              "failed_tasks": c.get("failed_tasks")} for c in connectors_list]
+        prompt = f"""You are a Kafka Connect pipeline specialist. Analyse these connectors and provide:
+## Pipeline Health — running/failed/paused breakdown
+## Risk Areas — connectors with failed tasks, type imbalance
+## Recommendations — which connectors need attention
+{concise}
+
+CONNECTOR DATA ({len(connector_details)} connectors):
+{connector_details}
+"""
+
+    elif tab == "zookeeper":
+        zk = data.get("zookeeper", {})
+        zk_metrics = zk.get("metrics", {}) if isinstance(zk, dict) else {}
+        zk_summary = {"status": zk.get("status") if isinstance(zk, dict) else None,
+                      "server_mode": zk.get("server_mode") if isinstance(zk, dict) else None,
+                      "metrics": zk_metrics}
+        prompt = f"""You are a ZooKeeper operations specialist. Analyse these metrics and provide:
+## ZooKeeper Health — latency, connections, znode pressure
+## Concerns — any metrics outside normal range
+## Recommendations — tuning or migration suggestions
+{concise}
+
+ZOOKEEPER DATA:
+{zk_summary}
+"""
+
+    elif tab == "schema-registry":
+        sr = data.get("schema_registry", {})
+        sr_summary = {"status": sr.get("status") if isinstance(sr, dict) else None,
+                      "subject_count": sr.get("subject_count") if isinstance(sr, dict) else None,
+                      "total_versions": sr.get("total_versions") if isinstance(sr, dict) else None,
+                      "global_compatibility": sr.get("global_compatibility") if isinstance(sr, dict) else None,
+                      "schema_types": sr.get("schema_types") if isinstance(sr, dict) else None}
+        prompt = f"""You are a Schema Registry governance specialist. Analyse and provide:
+## Registry Health — subject count, version sprawl, compatibility policy
+## Concerns — missing schemas, compatibility risks
+## Recommendations — governance improvements
+{concise}
+
+SCHEMA REGISTRY DATA:
+{sr_summary}
+"""
+
+    elif tab == "mirrormaker":
+        mm = data.get("mirrormaker", {})
+        mm_summary = {"detected": mm.get("detected") if isinstance(mm, dict) else None,
+                      "mode": mm.get("mode") if isinstance(mm, dict) else None,
+                      "mm1": mm.get("mm1") if isinstance(mm, dict) else None,
+                      "mm2": mm.get("mm2") if isinstance(mm, dict) else None}
+        prompt = f"""You are a Kafka replication specialist. Analyse MirrorMaker and provide:
+## Replication Health — mode, lag, group status
+## Risk Areas — lag growth, replication delay impact
+## Recommendations — lag reduction, monitoring suggestions
+{concise}
+
+MIRRORMAKER DATA:
+{mm_summary}
+"""
+
+    else:
+        prompt = f"""You are a Kafka platform specialist. Provide a concise analysis with:
+## Health Assessment
+## Concerns
+## Recommendations
+{concise}
+
+Unknown tab "{tab}" — no specific data available.
+"""
+
+    async def event_stream():
+        try:
+            client = _anthropic.AsyncAnthropic(api_key=api_key)
+            async with client.messages.stream(
+                model="claude-sonnet-4-6",
+                max_tokens=4096,
+                messages=(
+                    [
+                        {"role": "user", "content": prompt},
+                        {"role": "assistant", "content": continuation_of},
+                        {"role": "user", "content": "Please continue the analysis from where you left off. Do not repeat what was already written."},
+                    ]
+                    if continuation_of
+                    else [{"role": "user", "content": prompt}]
+                ),
+            ) as stream:
+                async for text in stream.text_stream:
+                    escaped = text.replace("\n","\\n")
+                    yield f"data: {escaped}\n\n"
+                try:
+                    final_msg = await stream.get_final_message()
+                    stop_reason = final_msg.stop_reason
+                except Exception:
+                    stop_reason = "end_turn"
+                yield f"data: [STOP_REASON] {stop_reason}\n\n"
+                yield "data: [DONE]\n\n"
+        except Exception as e:
+            yield f"data: [ERROR] {str(e)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control":"no-cache",
+                 "X-Accel-Buffering":"no"},
+    )
