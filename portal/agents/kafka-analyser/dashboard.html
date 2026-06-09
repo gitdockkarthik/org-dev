@@ -537,7 +537,7 @@
               || (typeof _currentClusterId !== 'undefined' ? _currentClusterId : null)
               || document.getElementById('ctrl-cluster')?.value;
             const qs = new URLSearchParams();
-            qs.set('minutes', '1440');
+            qs.set('minutes', String(_getMinutes()));
             if (clusterId) qs.set('cluster_id', clusterId);
             const hist = await fetch(`${PROXY}/dashboard/topics/history?${qs.toString()}`,
               { headers: _authHeaders(), cache: 'no-store' }).then(r => r.json());
