@@ -284,12 +284,13 @@
       try {
         switch (name) {
           case 'overview': {
-            const [ov, cg] = await Promise.all([
+            const [ov, cg, tp] = await Promise.all([
               api('/dashboard/overview'),
               api('/dashboard/consumer-groups').catch(() => ({ consumer_groups: [] })),
+              api('/dashboard/topics').catch(() => ({ topics: [] })),
             ]);
             _loaded.add(name);
-            renderOverview(ov, (cg.consumer_groups || []).length);
+            renderOverview(ov, (cg.consumer_groups || []), tp);
             break;
           }
           case 'consumer-groups': {
@@ -367,7 +368,7 @@
 
     // ── Tab 1: Cluster Overview ──────────────────────────────────────────────
 
-    function renderOverview(data, consumerGroupCount) {
+    function renderOverview(data, consumerGroups, topicsData) {
       if (data.empty) {
         document.getElementById('tab-overview').innerHTML = emptyState('🔌',
           'No cluster data loaded',
@@ -375,22 +376,115 @@
         return;
       }
 
-      const cluster  = data.cluster  || {};
-      const brokers  = data.brokers  || [];
+      const cluster   = data.cluster   || {};
+      const brokers   = data.brokers   || [];
       const anomalies = data.anomalies || [];
+      const groups    = consumerGroups || [];
+      const topics    = (topicsData && topicsData.topics) || [];
+      const connectors = (data.connectors || (topicsData && topicsData.connectors)) || [];
 
-      const totalURPs    = brokers.reduce((s, b) => s + (b.urp_count || 0), 0);
-      const healthScore  = cluster.health_score || 0;
-      const healthClass  = healthScore >= 80 ? 'kpi--success' : healthScore >= 60 ? 'kpi--warn' : 'kpi--danger';
-      const urpClass     = totalURPs > 0 ? 'kpi--danger' : 'kpi--success';
-      const criticalCount = cluster.critical_count || 0;
+      const msgOf   = t => (t.messages_in_per_sec ?? t.msgs_per_sec ?? 0);
+      const partsOf = t => (t.partition_count ?? t.partitions ?? 0);
+      const urpOf   = t => (t.under_replicated_partitions ?? t.urp_count ?? 0);
+      const nameOf  = t => (t.name || t.topic || 'Unknown');
 
-      const brokerCards = brokers.map(b => {
-        const statusColor = b.status === 'warning' ? '#d97706' : b.status === 'critical' ? 'var(--danger)' : 'var(--success)';
-        return `
+      const GREEN = '#16a34a', ORANGE = '#d97706', RED = '#dc2626';
+
+      // ── KPI metrics ─────────────────────────────────────────────────────────
+      const brokerCount      = cluster.broker_count || brokers.length;
+      const allBrokersHealthy = brokers.length > 0 && brokers.every(b => b.status === 'healthy');
+      const topicCount       = topics.length || cluster.topic_count || 0;
+      const totalPartitions  = topics.reduce((s, t) => s + partsOf(t), 0);
+      const consumerGroupCount = groups.length;
+      const totalURPs        = brokers.reduce((s, b) => s + (b.urp_count || 0), 0);
+      const healthScore      = cluster.health_score || 0;
+      const criticalCount    = cluster.critical_count || 0;
+
+      const healthClass = healthScore >= 100 ? 'kpi--success' : healthScore > 80 ? 'kpi--warn' : 'kpi--danger';
+
+      const kpis = `
+        <div class="kpi-grid">
+          <div class="kpi ${allBrokersHealthy ? 'kpi--success' : 'kpi--danger'}">
+            <div class="kpi__label">Brokers Online</div>
+            <div class="kpi__value">${brokers.length}/${brokerCount}</div>
+            <div class="kpi__sub">${cluster.name || 'cluster'}</div>
+          </div>
+          <div class="kpi kpi--orange">
+            <div class="kpi__label">Topics</div>
+            <div class="kpi__value">${topicCount}</div>
+            <div class="kpi__sub">topics</div>
+          </div>
+          <div class="kpi kpi--orange">
+            <div class="kpi__label">Partitions</div>
+            <div class="kpi__value">${fmtNum(totalPartitions)}</div>
+            <div class="kpi__sub">across all topics</div>
+          </div>
+          <div class="kpi kpi--orange">
+            <div class="kpi__label">Consumer Groups</div>
+            <div class="kpi__value">${consumerGroupCount}</div>
+            <div class="kpi__sub">active</div>
+          </div>
+          <div class="kpi ${totalURPs > 0 ? 'kpi--danger' : 'kpi--success'}">
+            <div class="kpi__label">Under-Replicated Partitions</div>
+            <div class="kpi__value">${totalURPs}</div>
+            <div class="kpi__sub">partitions</div>
+          </div>
+          <div class="kpi ${healthClass}">
+            <div class="kpi__label">Health Score</div>
+            <div class="kpi__value">${healthScore}</div>
+            <div class="kpi__sub">${criticalCount} critical issue${criticalCount !== 1 ? 's' : ''}</div>
+          </div>
+        </div>`;
+
+      // ── Cluster health strip ────────────────────────────────────────────────
+      const pill = (label, color) => `
+        <span style="display:inline-flex;align-items:center;gap:7px;padding:6px 13px;border-radius:999px;background:var(--navy-2);border:1px solid var(--border);font-size:.8rem;font-weight:600;color:var(--text)">
+          <span style="width:9px;height:9px;border-radius:50%;background:${color};flex-shrink:0"></span>${label}
+        </span>`;
+
+      const brokersColor = brokers.some(b => b.status !== 'healthy') ? RED : GREEN;
+
+      const anyTopicURP   = topics.some(t => urpOf(t) > 0 || t.status === 'critical');
+      const anyTopicStale = topics.some(t => msgOf(t) === 0);
+      const topicsColor   = anyTopicURP ? RED : anyTopicStale ? ORANGE : GREEN;
+
+      const criticalGroups = groups.filter(g => (g.total_lag || 0) > 10000).length;
+      const warningGroups  = groups.filter(g => (g.total_lag || 0) > 1000 && (g.total_lag || 0) <= 10000).length;
+      const lagColor = criticalGroups > 0 ? RED : warningGroups > 0 ? ORANGE : GREEN;
+
+      const connectorsPill = connectors.length
+        ? pill('Connectors', connectors.some(c => (c.state || c.status) === 'FAILED') ? RED : GREEN)
+        : '';
+
+      const healthStrip = `
+        <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:22px">
+          ${pill('Brokers', brokersColor)}
+          ${pill('Topics', topicsColor)}
+          ${pill('Consumer Lag', lagColor)}
+          ${connectorsPill}
+        </div>`;
+
+      // ── Charts ──────────────────────────────────────────────────────────────
+      const overviewCharts = `
+        <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:22px">
+          <div class="chart-card" style="flex:1;min-width:300px;margin-bottom:0">
+            <div class="chart-card__title">Messages/sec by Topic</div>
+            <div class="chart-wrap" style="height:220px"><canvas id="overview-msgs-chart"></canvas></div>
+          </div>
+          <div class="chart-card" style="flex:1;min-width:300px;margin-bottom:0">
+            <div class="chart-card__title">Partition Distribution by Topic</div>
+            <div class="chart-wrap" style="height:220px"><canvas id="overview-partitions-chart"></canvas></div>
+          </div>
+        </div>`;
+
+      const topByMsgs  = [...topics].sort((a, b) => msgOf(b) - msgOf(a)).slice(0, 10);
+      const topByParts = [...topics].sort((a, b) => partsOf(b) - partsOf(a)).slice(0, 10);
+
+      // ── Broker health summary (compact) ─────────────────────────────────────
+      const brokerCards = brokers.map(b => `
           <div class="broker-card">
             <div class="broker-card__header">
-              <span class="broker-card__name">${(b.broker_id || b.id || 'Broker')}</span>
+              <span class="broker-card__name">Broker ID: ${(b.broker_id ?? b.id ?? 'Broker')}</span>
               <span class="sev sev--${b.status === 'healthy' ? 'healthy' : b.status === 'warning' ? 'warning' : 'critical'}">${b.status.toUpperCase()}</span>
             </div>
             <div class="broker-metrics">
@@ -399,9 +493,9 @@
               <div class="bm"><div class="bm__label">URPs</div><div class="bm__value" style="color:${b.urp_count > 0 ? 'var(--danger)' : 'var(--success)'}">${b.urp_count}</div></div>
               <div class="bm"><div class="bm__label">GC Pauses</div><div class="bm__value" style="color:${(b.gc_pause_count ?? b.gc_pause_ms ?? 0) > 0 ? '#d97706' : 'var(--success)'}">${(b.gc_pause_count ?? b.gc_pause_ms ?? 0)}</div></div>
             </div>
-          </div>`;
-      }).join('');
+          </div>`).join('');
 
+      // ── Anomalies table ─────────────────────────────────────────────────────
       const anomalyRows = anomalies.length
         ? anomalies.map(a => `
             <tr>
@@ -411,37 +505,63 @@
             </tr>`).join('')
         : `<tr><td colspan="3" class="data-table__empty">✅ No active anomalies</td></tr>`;
 
-      document.getElementById('tab-overview').innerHTML = `
-        <div class="kpi-grid">
-          <div class="kpi kpi--success">
-            <div class="kpi__label">Brokers Online</div>
-            <div class="kpi__value">${brokers.length}/${cluster.broker_count || brokers.length}</div>
-            <div class="kpi__sub">${cluster.name || 'cluster'}</div>
-          </div>
-          <div class="kpi ${urpClass}">
-            <div class="kpi__label">Under-Replicated</div>
-            <div class="kpi__value">${totalURPs}</div>
-            <div class="kpi__sub">partitions</div>
-          </div>
-          <div class="kpi kpi--orange">
-            <div class="kpi__label">Consumer Groups</div>
-            <div class="kpi__value">${consumerGroupCount}</div>
-            <div class="kpi__sub">active</div>
-          </div>
-          <div class="kpi ${healthClass}">
-            <div class="kpi__label">Health Score</div>
-            <div class="kpi__value">${healthScore}</div>
-            <div class="kpi__sub">${criticalCount} critical issue${criticalCount !== 1 ? 's' : ''}</div>
-          </div>
-        </div>
-        <div style="font-size:.87rem;font-weight:600;margin-bottom:12px">Broker Status</div>
+      document.getElementById('tab-overview').innerHTML =
+        kpis + healthStrip + overviewCharts + `
+        <div class="chart-card__title">Broker Health</div>
         <div class="broker-grid">${brokerCards}</div>
+        <div class="chart-card__title">Active Anomalies</div>
         <div class="data-table-wrap">
           <table class="data-table">
             <thead><tr><th>Severity</th><th>Category</th><th>Description</th></tr></thead>
             <tbody>${anomalyRows}</tbody>
           </table>
         </div>`;
+
+      setTimeout(() => {
+        if (window._overviewMsgsChart) { window._overviewMsgsChart.destroy(); window._overviewMsgsChart = null; }
+        const msgsCtx = document.getElementById('overview-msgs-chart')?.getContext('2d');
+        if (msgsCtx) {
+          window._overviewMsgsChart = new Chart(msgsCtx, {
+            type: 'bar',
+            data: {
+              labels: topByMsgs.map(nameOf),
+              datasets: [{ label: 'Messages/sec', data: topByMsgs.map(msgOf), backgroundColor: '#FF6B35', borderWidth: 0 }],
+            },
+            options: {
+              indexAxis: 'y',
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { display: false }, title: { display: false } },
+              scales: {
+                x: { ticks: { callback: v => fmtRate(v), font: { size: 10 } }, beginAtZero: true },
+                y: { ticks: { font: { size: 10 } } },
+              },
+            },
+          });
+        }
+
+        if (window._overviewPartitionsChart) { window._overviewPartitionsChart.destroy(); window._overviewPartitionsChart = null; }
+        const partsCtx = document.getElementById('overview-partitions-chart')?.getContext('2d');
+        if (partsCtx) {
+          window._overviewPartitionsChart = new Chart(partsCtx, {
+            type: 'bar',
+            data: {
+              labels: topByParts.map(nameOf),
+              datasets: [{ label: 'Partitions', data: topByParts.map(partsOf), backgroundColor: '#4FC3F7', borderWidth: 0 }],
+            },
+            options: {
+              indexAxis: 'y',
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { display: false }, title: { display: false } },
+              scales: {
+                x: { ticks: { callback: v => fmtNum(v), font: { size: 10 } }, beginAtZero: true },
+                y: { ticks: { font: { size: 10 } } },
+              },
+            },
+          });
+        }
+      }, 0);
     }
 
     // ── Tab 2: Consumer Groups ────────────────────────────────────────────────
