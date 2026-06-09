@@ -2,7 +2,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -46,6 +46,11 @@ _DEFAULTS: dict = {
     "cluster_b_sasl_password": "",
     "cluster_b_sasl_mechanism": "PLAIN",
     "cluster_b_tls_enabled": True,
+    # Teams escalation
+    "teams_enabled": False,
+    "teams_webhook_url": "",
+    "teams_severity_filter": ["critical", "warning"],
+    "teams_cooldown_mins": 60,
 }
 
 # Write-through in-memory cache; populated from DB on startup.
@@ -107,6 +112,12 @@ class SettingsPayload(BaseModel):
     cluster_b_sasl_mechanism: str = "PLAIN"
     cluster_b_tls_enabled: bool = True
 
+    # Teams escalation
+    teams_enabled: bool = False
+    teams_webhook_url: str = ""
+    teams_severity_filter: list[str] = ["critical", "warning"]
+    teams_cooldown_mins: int = 60
+
 
 class TestConnectionPayload(BaseModel):
     cluster: str  # "a" | "b"
@@ -158,6 +169,51 @@ async def save_settings(payload: SettingsPayload) -> dict:
     for k, v in data.items():
         await _upsert(k, v)
     return {"ok": True}
+
+
+@router.post("/test-teams")
+async def test_teams_webhook(request: Request) -> dict:
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+
+    webhook_url = body.get("webhook_url", "").strip()
+    if not webhook_url:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="webhook_url required")
+
+    from shared.escalation import notifier as _escalation_notifier
+
+    test_anomaly = {
+        "severity": "info",
+        "category": "test",
+        "description": "This is a test message from Operative Intelligence. "
+                       "Teams escalation is configured correctly.",
+        "recommended_action": "No action required — this is a connectivity test.",
+    }
+
+    teams_cfg = {
+        "teams_enabled": True,
+        "teams_webhook_url": webhook_url,
+        "teams_severity_filter": ["critical", "warning", "info"],
+        "teams_cooldown_mins": 0,
+    }
+
+    success = await _escalation_notifier.escalate(
+        agent_name="Kafka Analyser",
+        cluster_name="Test",
+        anomaly=test_anomaly,
+        config=teams_cfg,
+        dashboard_url="",
+    )
+
+    if success:
+        return {"ok": True, "message": "Test message sent successfully"}
+    else:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=502, detail="Failed to send test message")
 
 
 @router.post("/test-connection")
@@ -328,6 +384,29 @@ async def sync_metrics() -> dict:
                             "save_topic_metrics failed for cluster %s: %s", c["name"], _te
                         )
                 last_meta = kafka_store.get_sync_meta(str(c.get("id", "default")))
+
+                # Detect anomalies and escalate
+                from tools.anomaly_detector import detect_anomalies as _detect_anomalies
+                from shared.escalation import notifier as _escalation_notifier
+
+                anomalies = _detect_anomalies(data)
+
+                teams_cfg = {
+                    "teams_enabled": _config.get("teams_enabled", False),
+                    "teams_webhook_url": _config.get("teams_webhook_url", ""),
+                    "teams_severity_filter": _config.get("teams_severity_filter",
+                                                         ["critical", "warning"]),
+                    "teams_cooldown_mins": _config.get("teams_cooldown_mins", 60),
+                }
+
+                for anomaly in anomalies:
+                    await _escalation_notifier.escalate(
+                        agent_name="Kafka Analyser",
+                        cluster_name=c["name"],
+                        anomaly=anomaly,
+                        config=teams_cfg,
+                        dashboard_url="",
+                    )
             except Exception as exc:
                 import logging
                 logging.getLogger(__name__).warning(

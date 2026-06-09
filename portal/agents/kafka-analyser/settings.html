@@ -513,6 +513,49 @@
       </div>
 
       <div class="card">
+        <div class="card-section">
+          <div class="card-section-title">Teams Escalation</div>
+
+          <div class="field">
+            <label>
+              <input type="checkbox" id="teams-enabled" />
+              Enable Teams escalation notifications
+            </label>
+          </div>
+
+          <div class="field">
+            <label for="teams-webhook-url">Webhook URL</label>
+            <input type="text" id="teams-webhook-url"
+                   placeholder="https://..." style="max-width:480px" />
+            <div class="hint">Power Automate or Incoming Webhook URL</div>
+          </div>
+
+          <div class="field">
+            <label>Severity Filter</label>
+            <div style="display:flex;gap:12px;margin-top:4px">
+              <label><input type="checkbox" id="teams-sev-critical" checked /> Critical</label>
+              <label><input type="checkbox" id="teams-sev-warning" checked /> Warning</label>
+              <label><input type="checkbox" id="teams-sev-info" /> Info</label>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="teams-cooldown">Cooldown (minutes)</label>
+            <input type="number" id="teams-cooldown" min="1" value="60"
+                   style="max-width:120px" />
+            <div class="hint">Minimum minutes between repeat escalations for the same anomaly type</div>
+          </div>
+
+          <div class="field">
+            <button class="btn btn-secondary" id="btn-test-teams" type="button">
+              Send Test Message
+            </button>
+            <span id="teams-test-msg" class="action-msg hidden"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
         <div class="actions">
           <button class="btn btn-primary" id="btn-save-thresholds">Save</button>
         </div>
@@ -698,6 +741,14 @@
         urp_threshold:           parseInt($('urp-threshold').value, 10),
         connector_alert_enabled: $('connector-alert').checked,
         retention_threshold_pct: parseInt($('retention-threshold').value, 10),
+        teams_enabled: $('teams-enabled').checked,
+        teams_webhook_url: $('teams-webhook-url').value.trim(),
+        teams_severity_filter: [
+          ...($('teams-sev-critical').checked ? ['critical'] : []),
+          ...($('teams-sev-warning').checked ? ['warning'] : []),
+          ...($('teams-sev-info').checked ? ['info'] : []),
+        ],
+        teams_cooldown_mins: parseInt($('teams-cooldown').value, 10) || 60,
       };
     }
 
@@ -766,6 +817,24 @@
         showMsg(msgEl, 'Thresholds saved.', 'ok');
       } catch (err) {
         showMsg(msgEl, 'Failed: ' + err.message, 'err');
+      }
+    });
+
+    $('btn-test-teams')?.addEventListener('click', async () => {
+      const msgEl = $('teams-test-msg');
+      const url = $('teams-webhook-url').value.trim();
+      if (!url) { showMsg(msgEl, 'Enter webhook URL first', 'err'); return; }
+      showMsg(msgEl, 'Sending…', 'info', 120000);
+      try {
+        const res = await fetch(`${PROXY}/settings/test-teams`, {
+          method: 'POST',
+          headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ webhook_url: url }),
+        });
+        if (res.ok) showMsg(msgEl, '✅ Test message sent', 'ok');
+        else showMsg(msgEl, '❌ Failed — check URL', 'err');
+      } catch (err) {
+        showMsg(msgEl, '❌ Failed — check URL', 'err');
       }
     });
 
@@ -851,6 +920,16 @@
         if (cfg.urp_threshold            != null) $('urp-threshold').value        = cfg.urp_threshold;
         if (cfg.connector_alert_enabled  != null) $('connector-alert').checked    = cfg.connector_alert_enabled;
         if (cfg.retention_threshold_pct  != null) $('retention-threshold').value  = cfg.retention_threshold_pct;
+
+        if ($('teams-enabled')) $('teams-enabled').checked = cfg.teams_enabled || false;
+        if ($('teams-webhook-url')) $('teams-webhook-url').value = cfg.teams_webhook_url || '';
+        if ($('teams-sev-critical')) $('teams-sev-critical').checked =
+          (cfg.teams_severity_filter || ['critical','warning']).includes('critical');
+        if ($('teams-sev-warning')) $('teams-sev-warning').checked =
+          (cfg.teams_severity_filter || ['critical','warning']).includes('warning');
+        if ($('teams-sev-info')) $('teams-sev-info').checked =
+          (cfg.teams_severity_filter || []).includes('info');
+        if ($('teams-cooldown')) $('teams-cooldown').value = cfg.teams_cooldown_mins || 60;
 
         $('sync-status').innerHTML = '';
         renderPerClusterSyncStatus();
