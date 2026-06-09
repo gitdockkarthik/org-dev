@@ -545,8 +545,21 @@
             if (hist.empty || !hist.series || !hist.series.length || !hist.labels || !hist.labels.length) {
               noData();
             } else {
-              const labels = hist.labels.map(l =>
-                new Date(l).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+              const timeVal = document.getElementById('ctrl-time').value;
+              let _lastDateLabel = '';
+              const labels = hist.labels.map(l => {
+                const d = new Date(l);
+                if (timeVal === '7d') {
+                  return d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
+                } else if (timeVal === '24h') {
+                  const dayLabel = d.toLocaleDateString([], { weekday: 'short' });
+                  const timeLabel = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                  if (dayLabel !== _lastDateLabel) { _lastDateLabel = dayLabel; return dayLabel + ' ' + timeLabel; }
+                  return timeLabel;
+                } else {
+                  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                }
+              });
               const totals = hist.labels.map((_, i) =>
                 hist.series.reduce((sum, s) => sum + ((s.values && s.values[i]) || 0), 0));
               window._overviewActivityChart = new Chart(activityCtx, {
