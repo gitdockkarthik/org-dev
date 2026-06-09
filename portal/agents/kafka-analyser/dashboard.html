@@ -799,8 +799,8 @@
       const topics = (data.topics || []).slice(0, 10);
 
       const topicStatusBadge = t => {
-        if (topicUnderRep(t)) return `<span class="sev sev--warning">UNDER-REP</span>`;
         if (logSize(t) > 1000 && msgRate(t) === 0) return `<span class="sev" style="background:rgba(100,116,139,.12);color:var(--text-muted)">STALE</span>`;
+        if (topicLowRep(t)) return `<span style="background:#666;color:#fff;padding:2px 8px;border-radius:4px;font-size:.72rem">LOW-REP</span>`;
         return `<span class="sev sev--healthy">HEALTHY</span>`;
       };
 
@@ -827,7 +827,7 @@
           <span class="filter-chip" onclick="window._setTopicFilter('anomalous',this)">Anomalous Only</span>
           <span class="filter-chip" onclick="window._setTopicFilter('high',this)">High Traffic</span>
           <span class="filter-chip" onclick="window._setTopicFilter('stale',this)">Stale</span>
-          <span class="filter-chip" onclick="window._setTopicFilter('underrep',this)">Under-replicated</span>
+          <span class="filter-chip" onclick="window._setTopicFilter('underrep',this)">Low Replication</span>
         </div>
       `;
 
@@ -836,14 +836,11 @@
       const logSize = t => (t.log_size_bytes ?? t.size_bytes ?? 0);
       const topicRf = t => (t.replication_factor ?? t.rf ?? 0);
       const topicParts = t => (t.partition_count ?? t.partitions ?? 0);
-      const topicUnderRep = t => {
-        const rf = topicRf(t), p = topicParts(t);
-        return (rf < p && p > 1) || rf === 0;
-      };
+      const topicLowRep = t => topicRf(t) === 1;
 
       const totalTopics      = allTopics.length;
       const highTraffic      = allTopics.filter(t => msgRate(t) > 0.001).length;
-      const underReplicated  = allTopics.filter(topicUnderRep).length;
+      const lowReplication   = allTopics.filter(topicLowRep).length;
       const staleTopics      = allTopics.filter(t => logSize(t) > 0 && msgRate(t) === 0).length;
 
       const topicKpis = `
@@ -858,10 +855,10 @@
             <div class="kpi__value">${highTraffic}</div>
             <div class="kpi__sub">&gt; 0.001 msgs/sec</div>
           </div>
-          <div class="kpi ${underReplicated > 0 ? 'kpi--danger' : 'kpi--success'}">
-            <div class="kpi__label">Under-replicated</div>
-            <div class="kpi__value">${underReplicated}</div>
-            <div class="kpi__sub">RF &lt; partitions</div>
+          <div class="kpi kpi--orange">
+            <div class="kpi__label">Low Replication</div>
+            <div class="kpi__value">${lowReplication}</div>
+            <div class="kpi__sub">RF = 1</div>
           </div>
           <div class="kpi kpi--warn">
             <div class="kpi__label">Stale</div>
@@ -912,10 +909,10 @@
         if (st.search && !name.toLowerCase().includes(st.search.toLowerCase())) return false;
         const r = msgRate(t), sz = logSize(t), rf = topicRf(t);
         switch (st.filter) {
-          case 'anomalous': return (r === 0 && sz > 1000) || topicUnderRep(t) || (t.retention_pct != null && t.retention_pct > 80);
+          case 'anomalous': return (r === 0 && sz > 1000) || topicLowRep(t) || (t.retention_pct != null && t.retention_pct > 80);
           case 'high':      return r > 0.001;
           case 'stale':     return r === 0 && sz > 0;
-          case 'underrep':  return topicUnderRep(t);
+          case 'underrep':  return topicLowRep(t);
           default:          return true;
         }
       };
