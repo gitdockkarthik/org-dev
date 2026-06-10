@@ -157,24 +157,29 @@
 
     async function loadContext() {
       try {
-        const overview = await api('/dashboard/overview');
         const clusters = await api('/settings/clusters');
-        const clusterName = clusters && clusters.length ? clusters[0].name : 'Unknown';
-        const clusterEnv = clusters && clusters.length ? clusters[0].environment : '';
+        const clusterList = clusters.clusters || clusters;
+        const firstCluster = clusterList && clusterList.length ? clusterList[0] : null;
+        const clusterName = firstCluster ? firstCluster.name : 'Unknown';
+        const clusterEnv = firstCluster ? firstCluster.environment : '';
+        const clusterId = firstCluster ? firstCluster.id : null;
+        const overviewUrl = clusterId ? `/dashboard/overview?cluster_id=${clusterId}` : '/dashboard/overview';
+        const overview = await api(overviewUrl);
+        const cluster = overview.cluster || overview;
         agentContext = {
           has_data: true,
           cluster_name: clusterName,
           cluster_env: clusterEnv,
-          broker_count: overview.broker_count || 0,
-          topic_count: overview.topic_count || 0,
-          consumer_group_count: overview.consumer_group_count || 0,
-          under_replicated_partitions: overview.under_replicated_partitions || 0,
-          cluster_health: overview.cluster_health || 'unknown',
+          cluster_id: clusterId,
+          broker_count: cluster.broker_count || 0,
+          topic_count: cluster.topic_count || 0,
+          consumer_group_count: cluster.consumer_group_count || 0,
+          cluster_health: cluster.health_score ? (cluster.health_score >= 80 ? 'healthy' : 'degraded') : (cluster.status || 'unknown'),
         };
         document.getElementById('ctx-info').innerHTML =
           `<div style="color:#4ade80;font-weight:600">✓ Cluster connected</div>` +
           `<div>${clusterName}${clusterEnv ? ' (' + clusterEnv + ')' : ''}</div>` +
-          `<div>${agentContext.broker_count} brokers</div>` +
+          `<div>${agentContext.broker_count} broker${agentContext.broker_count !== 1 ? 's' : ''}</div>` +
           `<div>${agentContext.topic_count} topics</div>` +
           `<div>${agentContext.consumer_group_count} consumer groups</div>` +
           `<div>Health: ${agentContext.cluster_health}</div>`;
