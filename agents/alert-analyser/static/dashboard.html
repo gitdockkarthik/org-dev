@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Alert Dashboard — UAP</title>
-  <link rel="stylesheet" href="/css/style.css?v=3">
+  <link rel="stylesheet" href="/static/css/style.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
   <style>
@@ -120,19 +120,22 @@
     <div id="tab-insights" class="tab-panel"></div>
   </div>
 
-  <script src="/js/config.js?v=3"></script>
-  <script src="/js/portal.js?v=3"></script>
   <script>
-    // ── Dual-mode detection: works inside Operative portal AND standalone ──
-    const _isPortal = (typeof window._authHeaders === 'function');
-    if (!_isPortal) {
+    // ── Standalone mode: stub portal dependencies ─────────────────────────
+    // In portal mode these are provided by config.js and portal.js.
+    // In standalone mode we define safe fallbacks so the page works without them.
+    if (typeof window._authHeaders !== 'function') {
       window.BACKEND_URL = '';
       window._authHeaders = () => ({});
+      window.portalReady = Promise.resolve();
     }
   </script>
   <script>
-    const SLUG  = 'alert-analyser';
+    // ── Dual-mode detection: works inside Operative portal AND standalone ──
     const _isPortalMode = (typeof window._authHeaders === 'function' && typeof window._authHeaders() === 'object');
+  </script>
+  <script>
+    const SLUG  = 'alert-analyser';
     const PROXY = _isPortalMode ? `${BACKEND_URL}/api/agents/${SLUG}/proxy` : '';
     const charts = {};
     let stats = null;
