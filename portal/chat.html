@@ -277,7 +277,11 @@
       await loadHistory();
 
       // Ready
-      headerStatus.textContent = agentContext.has_data ? 'Ready · report loaded' : 'Ready';
+      headerStatus.textContent = agentContext.has_data
+        ? (slug === 'kafka-analyser'
+            ? `Ready · ${agentContext.cluster_count || 0} cluster${agentContext.cluster_count !== 1 ? 's' : ''} loaded`
+            : 'Ready · report loaded')
+        : 'Ready';
       sendBtn.disabled = false;
       chatInput.focus();
     }
@@ -306,6 +310,13 @@
       } else if (slug === 'cur-analyser') {
         html += `<div>${(agentContext.row_count || 0).toLocaleString()} line items</div>`;
         html += `<div>$${Number(agentContext.total_cost || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>`;
+      } else if (slug === 'kafka-analyser') {
+        html = `<div style="color:var(--success);font-weight:600">✓ ${agentContext.cluster_count || 0} cluster${agentContext.cluster_count !== 1 ? 's' : ''} loaded</div>`;
+        (agentContext.clusters || []).forEach(c => {
+          html += `<div style="margin-top:.4rem;font-weight:600">${c.name}</div>`;
+          html += `<div style="color:#94a3b8">${c.environment} · ${c.broker_count} brokers · ${c.topic_count} topics</div>`;
+          html += `<div style="color:${c.health === 'healthy' ? 'var(--success)' : '#f59e0b'}">${c.health}</div>`;
+        });
       }
       info.innerHTML = html;
       section.style.display = 'block';
