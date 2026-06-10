@@ -221,6 +221,38 @@ async def _collection_loop() -> None:
                         "Collection loop: synced cluster '%s' (id=%s)",
                         c["name"], c.get("id"),
                     )
+                    # Detect anomalies and escalate to Teams
+                    try:
+                        from tools.anomaly_detector import detect_anomalies as _detect_anomalies
+                        from tools.escalation_notifier import send_anomaly_summary
+                        anomalies = _detect_anomalies(data, thresholds=_rs_config)
+                        if anomalies:
+                            teams_cfg = {
+                                "teams_enabled": _rs_config.get("teams_enabled", False),
+                                "teams_webhook_url": _rs_config.get("teams_webhook_url", ""),
+                                "teams_severity_filter": _rs_config.get("teams_severity_filter",
+                                                                         ["critical", "warning"]),
+                                "teams_cooldown_mins": _rs_config.get("teams_cooldown_mins", 10),
+                            }
+                            cooldown_key = f"summary_{c['name']}"
+                            import time
+                            now = time.time()
+                            if not hasattr(_collection_loop, '_summary_cooldown'):
+                                _collection_loop._summary_cooldown = {}
+                            last = _collection_loop._summary_cooldown.get(cooldown_key, 0)
+                            cooldown_mins = teams_cfg.get("teams_cooldown_mins", 10)
+                            if now - last >= cooldown_mins * 60:
+                                sent = await send_anomaly_summary(
+                                    agent_name="Kafka Analyser",
+                                    cluster_name=c["name"],
+                                    anomalies=anomalies,
+                                    config=teams_cfg,
+                                    dashboard_url="",
+                                )
+                                if sent:
+                                    _collection_loop._summary_cooldown[cooldown_key] = now
+                    except Exception as _esc_exc:
+                        logger.warning("Escalation failed for cluster '%s': %s", c["name"], _esc_exc)
                 except Exception as exc:
                     logger.warning(
                         "Collection loop: failed to sync cluster '%s': %s",
