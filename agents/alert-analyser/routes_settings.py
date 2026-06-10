@@ -174,6 +174,8 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
             combined_alerts = alerts
         report = add_report(filename, combined_alerts, classified)
         # Teams escalation for genuine P1/P2 unacknowledged alerts
+        new_count = len(new_alerts) if (existing and last_synced) else len(alerts)
+        logger.info("Escalation: new_alerts=%d since last sync", new_count)
         logger.info("Escalation block reached — teams_enabled=%s, classified=%d alerts",
                     _config.get("teams_enabled", False), len(classified))
         try:
