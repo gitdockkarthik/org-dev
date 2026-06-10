@@ -281,7 +281,7 @@
         <div class="card-title">Kafka Source</div>
         <div class="card-subtitle">Select the data source for Kafka metrics</div>
         <div class="radio-cards">
-          <label class="radio-card" id="card-synthetic">
+          <label class="radio-card" id="card-synthetic" style="display:none">
             <input type="radio" name="source" value="synthetic" />
             <div class="radio-card-body">
               <div class="radio-card-label">Synthetic Data</div>
@@ -905,7 +905,10 @@
           if (reg) reg.classList.remove('hidden');
           await loadClusters();
         } else {
-          selectSource(st);
+          selectSource('live');
+          const reg = $('cluster-registry');
+          if (reg) reg.classList.remove('hidden');
+          await loadClusters();
         }
 
         const intEl = $('collection-interval');
