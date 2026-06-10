@@ -191,8 +191,7 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
             for alert in classified:
                 if (alert.get("classification") == "genuine"
                         and alert.get("priority") in _config.get("esc_priorities", ["P1", "P2"])
-                        and not alert.get("acknowledged", False)
-                        and alert.get("status") == "open"):
+                        and not alert.get("acknowledged", False)):
                     priority = alert.get("priority", "P3")
                     severity = "critical" if priority == "P1" else "warning"
                     escalation_anomalies.append({
@@ -201,7 +200,7 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                         "description": (
                             f"{priority} alert: {alert.get('message', alert.get('alias', 'Unknown'))[:120]} "
                             f"— source: {alert.get('source', 'unknown')}, "
-                            f"open and unacknowledged."
+                            f"unacknowledged — immediate attention required."
                         ),
                         "recommended_action": "Acknowledge and investigate immediately.",
                     })
