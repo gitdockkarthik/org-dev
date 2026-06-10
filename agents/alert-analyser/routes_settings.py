@@ -229,8 +229,8 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                     if sent:
                         _run_opsgenie_sync._summary_cooldown[cooldown_key] = now
         except Exception as _esc_exc:
-            import logging
-            logging.getLogger(__name__).warning("Alert escalation failed: %s", _esc_exc)
+            import traceback
+            logger.error("Alert escalation failed: %s\n%s", _esc_exc, traceback.format_exc())
         _config["last_synced"] = datetime.now(timezone.utc).isoformat()
         _config["alert_count"] = len(combined_alerts)
         await _upsert("last_synced", _config["last_synced"])
