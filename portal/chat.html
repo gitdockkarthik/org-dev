@@ -180,6 +180,50 @@
           cur_data,
         };
       },
+      'kafka-analyser': async () => {
+        const base = `${BACKEND_URL}/api/agents/kafka-analyser/proxy`;
+        try {
+          const clustersRes = await fetch(`${base}/settings/clusters`, { headers: _authHeaders() });
+          if (!clustersRes.ok) return {};
+          const clustersResp = await clustersRes.json();
+          const clusterList = clustersResp.clusters || clustersResp;
+          if (!clusterList || !clusterList.length) return {};
+
+          const allClusters = [];
+          for (const c of clusterList) {
+            if (!c.enabled) continue;
+            try {
+              const ovRes = await fetch(`${base}/dashboard/overview?cluster_id=${c.id}`, { headers: _authHeaders() });
+              if (!ovRes.ok) continue;
+              const ov = await ovRes.json();
+              const cluster = ov.cluster || ov;
+              allClusters.push({
+                id: c.id,
+                name: c.name,
+                environment: c.environment || '',
+                broker_count: cluster.broker_count || 0,
+                topic_count: cluster.topic_count || 0,
+                consumer_group_count: cluster.consumer_group_count || 0,
+                health: cluster.health_score >= 80 ? 'healthy' : (cluster.health_score >= 50 ? 'degraded' : 'critical'),
+                status: cluster.status || 'unknown',
+              });
+            } catch (_) {}
+          }
+
+          if (!allClusters.length) return {};
+
+          return {
+            has_data: true,
+            clusters: allClusters,
+            cluster_count: allClusters.length,
+            summary: allClusters.map(c =>
+              `${c.name} (${c.environment}): ${c.broker_count} brokers, ${c.topic_count} topics, ${c.consumer_group_count} consumer groups, health=${c.health}`
+            ).join(' | '),
+          };
+        } catch (_) {
+          return {};
+        }
+      },
     };
 
     // ── DOM refs ───────────────────────────────────────────────────────────────
