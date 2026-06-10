@@ -36,6 +36,14 @@
 </head>
 <body>
 
+  <script>
+    if (typeof _isPortalMode !== 'undefined' && !_isPortalMode) {
+      document.addEventListener('DOMContentLoaded', function() {
+        var topbar = document.querySelector('.topbar');
+        if (topbar) topbar.style.display = 'none';
+      });
+    }
+  </script>
   <header class="topbar">
     <a href="/" class="topbar__brand">
       <span style="font-size:1.1rem;
