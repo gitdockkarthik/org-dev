@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     graph_username: str = Field(default="neo4j", alias="GRAPH_USERNAME")
     graph_password: str = Field(default="", alias="GRAPH_PASSWORD")
 
+    # ── Storage backend ──────────────────────────────────────────────────────
+    storage_backend: str = Field(default="postgres", alias="STORAGE_BACKEND")
+    storage_url: str = Field(default="", alias="STORAGE_URL")
+
     @property
     def agent_system_prompt(self) -> str:
         return (
