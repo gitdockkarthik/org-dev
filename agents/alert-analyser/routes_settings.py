@@ -179,6 +179,7 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
         try:
             from tools.escalation_notifier import send_anomaly_summary
             import time
+            logger.info("Escalation: imports OK")
 
             teams_cfg = {
                 "teams_enabled": _config.get("teams_enabled", False),
@@ -187,6 +188,7 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                                                        ["critical", "warning"]),
                 "teams_cooldown_mins": _config.get("teams_cooldown_mins", 10),
             }
+            logger.info("Escalation: teams_cfg built, enabled=%s", teams_cfg.get("teams_enabled"))
 
             # Build anomalies from genuine P1/P2 unacknowledged alerts
             escalation_anomalies = []
