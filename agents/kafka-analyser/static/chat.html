@@ -157,34 +157,51 @@
 
     async function loadContext() {
       try {
-        const clusters = await api('/settings/clusters');
-        const clusterList = clusters.clusters || clusters;
-        const firstCluster = clusterList && clusterList.length ? clusterList[0] : null;
-        const clusterName = firstCluster ? firstCluster.name : 'Unknown';
-        const clusterEnv = firstCluster ? firstCluster.environment : '';
-        const clusterId = firstCluster ? firstCluster.id : null;
-        const overviewUrl = clusterId ? `/dashboard/overview?cluster_id=${clusterId}` : '/dashboard/overview';
-        const overview = await api(overviewUrl);
-        const cluster = overview.cluster || overview;
+        const clustersResp = await api('/settings/clusters');
+        const clusterList = clustersResp.clusters || clustersResp;
+        if (!clusterList || !clusterList.length) {
+          document.getElementById('chat-status').textContent = 'Ready — no clusters configured';
+          return;
+        }
+
+        // Load overview for all enabled clusters
+        const allClusters = [];
+        for (const c of clusterList) {
+          if (!c.enabled) continue;
+          try {
+            const ov = await api(`/dashboard/overview?cluster_id=${c.id}`);
+            const cluster = ov.cluster || ov;
+            allClusters.push({
+              id: c.id,
+              name: c.name,
+              environment: c.environment || '',
+              broker_count: cluster.broker_count || 0,
+              topic_count: cluster.topic_count || 0,
+              consumer_group_count: cluster.consumer_group_count || 0,
+              health: cluster.health_score >= 80 ? 'healthy' : (cluster.health_score >= 50 ? 'degraded' : 'critical'),
+              status: cluster.status || 'unknown',
+            });
+          } catch (_) {}
+        }
+
+        if (!allClusters.length) {
+          document.getElementById('chat-status').textContent = 'Ready — no active clusters';
+          return;
+        }
+
         agentContext = {
           has_data: true,
-          cluster_name: clusterName,
-          cluster_env: clusterEnv,
-          cluster_id: clusterId,
-          broker_count: cluster.broker_count || 0,
-          topic_count: cluster.topic_count || 0,
-          consumer_group_count: cluster.consumer_group_count || 0,
-          cluster_health: cluster.health_score ? (cluster.health_score >= 80 ? 'healthy' : 'degraded') : (cluster.status || 'unknown'),
+          clusters: allClusters,
+          cluster_count: allClusters.length,
+          // Summary for Claude
+          summary: allClusters.map(c =>
+            `${c.name} (${c.environment}): ${c.broker_count} brokers, ${c.topic_count} topics, ${c.consumer_group_count} consumer groups, health=${c.health}`
+          ).join(' | '),
         };
-        document.getElementById('ctx-info').innerHTML =
-          `<div style="color:#4ade80;font-weight:600">✓ Cluster connected</div>` +
-          `<div>${clusterName}${clusterEnv ? ' (' + clusterEnv + ')' : ''}</div>` +
-          `<div>${agentContext.broker_count} broker${agentContext.broker_count !== 1 ? 's' : ''}</div>` +
-          `<div>${agentContext.topic_count} topics</div>` +
-          `<div>${agentContext.consumer_group_count} consumer groups</div>` +
-          `<div>Health: ${agentContext.cluster_health}</div>`;
-        document.getElementById('ctx-section').style.display = 'block';
-        document.getElementById('chat-status').textContent = 'Ready · cluster loaded';
+
+        document.getElementById('chat-status').textContent =
+          `Ready · ${allClusters.length} cluster${allClusters.length > 1 ? 's' : ''} loaded`;
+
       } catch (_) {
         document.getElementById('chat-status').textContent = 'Ready — no cluster data';
       }
