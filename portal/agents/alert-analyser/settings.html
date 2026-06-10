@@ -540,42 +540,63 @@
     <!-- TAB 3: Escalation (Phase 2, locked)                       -->
     <!-- ══════════════════════════════════════════════════════════ -->
     <div class="tab-panel" id="panel-escalation">
-      <div class="locked-info">
-        <strong>Phase 2</strong> — MS Teams escalation and HITL approval workflows. Configure
-        how genuine alerts are escalated to your team and how approvals are managed.
-        Available in Phase 2.
-      </div>
-      <div class="locked-content">
-        <div class="card">
-          <div class="toggle-wrap">
-            <input type="checkbox" id="esc-enable" class="toggle-input" disabled />
-            <label for="esc-enable" class="toggle-track"></label>
-            <span class="toggle-label">Enable MS Teams escalation</span>
-          </div>
+      <div class="card">
+        <div class="card-title">Teams Escalation</div>
+        <div style="display:flex;flex-direction:column;gap:1rem;margin-top:0.75rem">
+
           <div class="field">
-            <label for="esc-webhook">MS Teams Webhook URL</label>
-            <input type="text" id="esc-webhook" disabled placeholder="https://…" />
-            <div class="hint">Incoming webhook from your Teams channel</div>
+            <div class="toggle-row">
+              <input type="checkbox" id="teams-enabled" class="toggle-input" />
+              <label for="teams-enabled" class="toggle-track"></label>
+              <span class="toggle-label">Enable Teams escalation notifications</span>
+            </div>
           </div>
+
           <div class="field">
-            <label for="esc-severity">Escalate genuine alerts of severity</label>
-            <select id="esc-severity" disabled>
-              <option>P1 only</option>
-              <option>P1 and P2</option>
-              <option>P1, P2 and P3</option>
-            </select>
+            <label for="teams-webhook-url">Webhook URL</label>
+            <input type="text" id="teams-webhook-url" placeholder="https://..." style="max-width:480px" />
+            <div class="hint">Power Automate or Incoming Webhook URL</div>
           </div>
+
           <div class="field">
-            <label for="esc-approvers">HITL Approver Emails</label>
-            <input type="text" id="esc-approvers" disabled placeholder="alice@example.com, bob@example.com" />
-            <div class="hint">Comma separated. These users receive Teams approval cards.</div>
+            <label>Escalate alerts of priority</label>
+            <div style="display:flex;gap:12px;margin-top:4px">
+              <label><input type="checkbox" id="esc-p1" checked /> P1 Critical</label>
+              <label><input type="checkbox" id="esc-p2" checked /> P2 High</label>
+              <label><input type="checkbox" id="esc-p3" /> P3 Medium</label>
+            </div>
           </div>
+
           <div class="field">
-            <label for="esc-delay">Escalation delay (minutes)</label>
-            <input type="number" id="esc-delay" disabled value="5" style="max-width:120px" />
-            <div class="hint">Wait this many minutes before escalating to allow auto-resolution</div>
+            <label>Severity Filter</label>
+            <div style="display:flex;gap:12px;margin-top:4px">
+              <label><input type="checkbox" id="teams-sev-critical" checked /> Critical</label>
+              <label><input type="checkbox" id="teams-sev-warning" checked /> Warning</label>
+              <label><input type="checkbox" id="teams-sev-info" /> Info</label>
+            </div>
           </div>
+
+          <div class="field">
+            <label for="teams-cooldown">Cooldown (minutes)</label>
+            <input type="number" id="teams-cooldown" min="1" value="10" style="max-width:120px" />
+            <div class="hint">Minimum minutes between repeat escalations</div>
+          </div>
+
+          <div class="field">
+            <button class="btn btn-secondary" id="btn-test-teams" type="button">
+              Send Test Message
+            </button>
+            <span id="teams-test-msg" class="action-msg hidden"></span>
+          </div>
+
         </div>
+      </div>
+
+      <div class="card">
+        <div class="actions">
+          <button class="btn btn-primary" id="btn-save-escalation">Save</button>
+        </div>
+        <div id="escalation-msg" class="action-msg hidden"></div>
       </div>
     </div><!-- /#panel-escalation -->
 
@@ -932,6 +953,41 @@
       }
     });
 
+    // ── Teams Escalation ─────────────────────────────────────────────────────────
+
+    document.getElementById('btn-save-escalation')?.addEventListener('click', async () => {
+      const payload = {
+        teams_enabled: $('teams-enabled').checked,
+        teams_webhook_url: $('teams-webhook-url').value.trim(),
+        teams_severity_filter: [
+          ...($('teams-sev-critical').checked ? ['critical'] : []),
+          ...($('teams-sev-warning').checked ? ['warning'] : []),
+          ...($('teams-sev-info').checked ? ['info'] : []),
+        ],
+        teams_cooldown_mins: parseInt($('teams-cooldown').value, 10) || 10,
+        esc_priorities: [
+          ...($('esc-p1').checked ? ['P1'] : []),
+          ...($('esc-p2').checked ? ['P2'] : []),
+          ...($('esc-p3').checked ? ['P3'] : []),
+        ],
+      };
+      const res = await postSettings(payload);
+      showMsg($('escalation-msg'), res?.ok ? 'Saved' : 'Error', res?.ok ? 'ok' : 'err');
+    });
+
+    document.getElementById('btn-test-teams')?.addEventListener('click', async () => {
+      const url = $('teams-webhook-url').value.trim();
+      if (!url) { showMsg($('teams-test-msg'), 'Enter webhook URL first', 'err'); return; }
+      showMsg($('teams-test-msg'), 'Sending...', 'info');
+      const res = await fetch(`${PROXY}/settings/test-teams`, {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ webhook_url: url }),
+      });
+      const data = await res.json().catch(() => ({}));
+      showMsg($('teams-test-msg'), data.ok ? '✅ Test message sent' : '❌ Failed — check URL', data.ok ? 'ok' : 'err');
+    });
+
     // ── Render sync status section ───────────────────────────────────────────────
 
     function renderSyncStatus(cfg) {
@@ -1030,6 +1086,18 @@
         if (cfg.noise_classification_threshold != null) {
           $('noise-class-threshold').value = cfg.noise_classification_threshold;
         }
+
+        // Teams escalation
+        if ($('teams-enabled')) $('teams-enabled').checked = cfg.teams_enabled || false;
+        if ($('teams-webhook-url')) $('teams-webhook-url').value = cfg.teams_webhook_url || '';
+        if ($('teams-sev-critical')) $('teams-sev-critical').checked = (cfg.teams_severity_filter || ['critical','warning']).includes('critical');
+        if ($('teams-sev-warning')) $('teams-sev-warning').checked = (cfg.teams_severity_filter || ['critical','warning']).includes('warning');
+        if ($('teams-sev-info')) $('teams-sev-info').checked = (cfg.teams_severity_filter || []).includes('info');
+        if ($('teams-cooldown')) $('teams-cooldown').value = cfg.teams_cooldown_mins || 10;
+        const escPriorities = cfg.esc_priorities || ['P1', 'P2'];
+        if ($('esc-p1')) $('esc-p1').checked = escPriorities.includes('P1');
+        if ($('esc-p2')) $('esc-p2').checked = escPriorities.includes('P2');
+        if ($('esc-p3')) $('esc-p3').checked = escPriorities.includes('P3');
 
         // Sync status section
         renderSyncStatus(cfg);

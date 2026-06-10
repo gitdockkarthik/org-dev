@@ -3,7 +3,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -37,6 +37,11 @@ _DEFAULTS: dict = {
     "noise_suspect_threshold": -2,
     "opsgenie_base_url": "",
     "opsgenie_type": "standalone",
+    "teams_enabled": False,
+    "teams_webhook_url": "",
+    "teams_severity_filter": ["critical", "warning"],
+    "teams_cooldown_mins": 10,
+    "esc_priorities": ["P1", "P2"],
 }
 
 # Write-through in-memory cache; populated from DB on startup.
@@ -168,6 +173,62 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
             classified = classify_alerts(alerts)
             combined_alerts = alerts
         report = add_report(filename, combined_alerts, classified)
+        # Teams escalation for genuine P1/P2 unacknowledged alerts
+        try:
+            from tools.escalation_notifier import send_anomaly_summary
+            import time
+
+            teams_cfg = {
+                "teams_enabled": _config.get("teams_enabled", False),
+                "teams_webhook_url": _config.get("teams_webhook_url", ""),
+                "teams_severity_filter": _config.get("teams_severity_filter",
+                                                       ["critical", "warning"]),
+                "teams_cooldown_mins": _config.get("teams_cooldown_mins", 10),
+            }
+
+            # Build anomalies from genuine P1/P2 unacknowledged alerts
+            escalation_anomalies = []
+            for alert in classified:
+                if (alert.get("classification") == "genuine"
+                        and alert.get("priority") in _config.get("esc_priorities", ["P1", "P2"])
+                        and not alert.get("acknowledged", False)
+                        and alert.get("status") == "open"):
+                    priority = alert.get("priority", "P3")
+                    severity = "critical" if priority == "P1" else "warning"
+                    escalation_anomalies.append({
+                        "severity": severity,
+                        "category": f"genuine_{priority.lower()}",
+                        "description": (
+                            f"{priority} alert: {alert.get('message', alert.get('alias', 'Unknown'))[:120]} "
+                            f"— source: {alert.get('source', 'unknown')}, "
+                            f"open and unacknowledged."
+                        ),
+                        "recommended_action": "Acknowledge and investigate immediately.",
+                    })
+
+            # Deduplicate — keep top 8 by severity
+            escalation_anomalies = escalation_anomalies[:8]
+
+            if escalation_anomalies:
+                cooldown_key = "alert_analyser_summary"
+                cooldown_mins = teams_cfg.get("teams_cooldown_mins", 10)
+                now = time.time()
+                if not hasattr(_run_opsgenie_sync, '_summary_cooldown'):
+                    _run_opsgenie_sync._summary_cooldown = {}
+                last = _run_opsgenie_sync._summary_cooldown.get(cooldown_key, 0)
+                if now - last >= cooldown_mins * 60:
+                    sent = await send_anomaly_summary(
+                        agent_name="Alert Analyser",
+                        cluster_name="OpsGenie",
+                        anomalies=escalation_anomalies,
+                        config=teams_cfg,
+                        dashboard_url="http://kpi-internal.cloud.operative.com:3000/agents/alert-analyser/dashboard",
+                    )
+                    if sent:
+                        _run_opsgenie_sync._summary_cooldown[cooldown_key] = now
+        except Exception as _esc_exc:
+            import logging
+            logging.getLogger(__name__).warning("Alert escalation failed: %s", _esc_exc)
         _config["last_synced"] = datetime.now(timezone.utc).isoformat()
         _config["alert_count"] = len(combined_alerts)
         await _upsert("last_synced", _config["last_synced"])
@@ -232,6 +293,45 @@ async def save_settings(payload: SettingsPayload) -> dict:
         await _upsert(k, v)
     _sync_changed.set()  # wake the background loop to re-evaluate interval immediately
     return {"ok": True}
+
+
+@router.post("/test-teams")
+async def test_teams_webhook(request: Request) -> dict:
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    webhook_url = body.get("webhook_url", "").strip()
+    if not webhook_url:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="webhook_url required")
+    from tools.escalation_notifier import escalate as _escalate_teams
+    test_anomaly = {
+        "severity": "info",
+        "category": "test",
+        "description": "This is a test message from Operative Intelligence Alert Analyser. "
+                       "Teams escalation is configured correctly.",
+        "recommended_action": "No action required — this is a connectivity test.",
+    }
+    teams_cfg = {
+        "teams_enabled": True,
+        "teams_webhook_url": webhook_url,
+        "teams_severity_filter": ["critical", "warning", "info"],
+        "teams_cooldown_mins": 0,
+    }
+    success = await _escalate_teams(
+        agent_name="Alert Analyser",
+        cluster_name="Test",
+        anomaly=test_anomaly,
+        config=teams_cfg,
+        dashboard_url="",
+    )
+    if success:
+        return {"ok": True, "message": "Test message sent successfully"}
+    else:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=502, detail="Failed to send test message")
 
 
 @router.post("/sync")
