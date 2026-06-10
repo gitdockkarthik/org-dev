@@ -231,7 +231,7 @@
 <body>
 
   <script>
-    if (typeof _isPortalMode !== 'undefined' && !_isPortalMode) {
+    if (!window._isPortalEnv) {
       document.addEventListener('DOMContentLoaded', function() {
         var topbar = document.querySelector('.topbar');
         if (topbar) topbar.style.display = 'none';
