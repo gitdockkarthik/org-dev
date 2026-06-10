@@ -2,10 +2,13 @@
 import httpx
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+_cooldown_cache: dict[str, float] = {}
 
 SEVERITY_COLOUR = {
     "critical": "attention",   # red in Adaptive Cards
@@ -150,6 +153,20 @@ async def escalate(
     if severity not in severity_filter:
         logger.info("Skipping escalation — severity %s not in filter %s", severity, severity_filter)
         return False
+
+    cooldown_mins = config.get("teams_cooldown_mins", 60)
+    if cooldown_mins > 0:
+        cooldown_key = f"{anomaly.get('category', 'unknown')}_{anomaly.get('severity', 'info')}"
+        now = time.time()
+        last_sent = _cooldown_cache.get(cooldown_key, 0)
+        if now - last_sent < cooldown_mins * 60:
+            logger.info(
+                "Skipping escalation — cooldown active for %s (%.0f mins remaining)",
+                cooldown_key,
+                (cooldown_mins * 60 - (now - last_sent)) / 60,
+            )
+            return False
+        _cooldown_cache[cooldown_key] = now
 
     card = build_adaptive_card(agent_name, cluster_name, anomaly, dashboard_url)
     return await send_to_teams(webhook_url, card)
