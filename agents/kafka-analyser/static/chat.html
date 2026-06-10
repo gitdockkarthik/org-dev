@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kafka Analyser — Chat</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <style>
+    .chat-layout { display: flex; height: calc(100vh - 48px); overflow: hidden; }
+    .chat-sidebar { width: 260px; min-width: 260px; background: var(--navy-1, #0f1e3c); color: #e2e8f0; display: flex; flex-direction: column; padding: 1.25rem 1rem; gap: 1rem; overflow-y: auto; }
+    .chat-sidebar__desc { font-size: .8rem; color: #94a3b8; margin-top: .25rem; }
+    .chat-sidebar__section-label { font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; color: #64748b; margin-bottom: .25rem; }
+    .chat-sidebar__session { font-size: .75rem; color: #e2e8f0; word-break: break-all; font-family: monospace; }
+    .chat-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--bg, #f8fafc); }
+    .chat-header { padding: .75rem 1.25rem; border-bottom: 1px solid var(--border, #e2e8f0); background: #fff; }
+    .chat-header__name { font-weight: 700; font-size: .95rem; color: var(--text, #1e293b); }
+    .chat-header__status { font-size: .78rem; color: var(--text-muted, #64748b); margin-top: .1rem; }
+    .messages-wrap { flex: 1; overflow-y: auto; padding: 1.25rem; display: flex; flex-direction: column; gap: .75rem; }
+    .msg { display: flex; flex-direction: column; gap: .25rem; max-width: 80%; }
+    .msg--user { align-self: flex-end; }
+    .msg--assistant { align-self: flex-start; }
+    .msg__label { font-size: .7rem; color: var(--text-muted, #64748b); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+    .msg--user .msg__label { text-align: right; }
+    .msg__bubble { padding: .6rem .9rem; border-radius: 12px; font-size: .875rem; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+    .msg--user .msg__bubble { background: var(--accent, #0891b2); color: #fff; border-bottom-right-radius: 3px; }
+    .msg--assistant .msg__bubble { background: #fff; border: 1px solid var(--border, #e2e8f0); color: var(--text, #1e293b); border-bottom-left-radius: 3px; }
+    .msg--error .msg__bubble { background: #fef2f2; border-color: #fca5a5; color: #dc2626; }
+    .msg__tokens { font-size: .7rem; color: var(--text-muted, #64748b); margin-top: .2rem; }
+    .dots-loader span { animation: blink 1.2s infinite; opacity: 0; } .dots-loader span:nth-child(2) { animation-delay: .2s; } .dots-loader span:nth-child(3) { animation-delay: .4s; } @keyframes blink { 0%,80%,100% { opacity:0 } 40% { opacity:1 } }
+    .chat-input-area { padding: .75rem 1.25rem; border-top: 1px solid var(--border, #e2e8f0); background: #fff; }
+    .chat-input-form { display: flex; gap: .5rem; align-items: flex-end; }
+    .chat-input-textarea { flex: 1; resize: none; border: 1px solid var(--border, #e2e8f0); border-radius: 8px; padding: .6rem .8rem; font-size: .875rem; font-family: inherit; line-height: 1.5; max-height: 120px; overflow-y: auto; outline: none; }
+    .chat-input-textarea:focus { border-color: var(--accent, #0891b2); }
+    .chat-send-btn { padding: .6rem .9rem; background: var(--accent, #0891b2); color: #fff; border: none; border-radius: 8px; cursor: pointer; transition: opacity .15s; flex-shrink: 0; }
+    .chat-send-btn:disabled { opacity: .45; cursor: not-allowed; }
+    .chat-hint { font-size: .72rem; color: var(--text-muted, #64748b); margin-top: .35rem; }
+    .msg__bubble table { border-collapse: collapse; width: 100%; margin: .5rem 0; }
+    .msg__bubble th, .msg__bubble td { border: 1px solid var(--border, #e2e8f0); padding: .3rem .6rem; font-size: .82rem; }
+    .msg__bubble th { background: var(--bg, #f8fafc); font-weight: 600; }
+    .msg__bubble code { background: #f1f5f9; padding: .1rem .3rem; border-radius: 3px; font-size: .82rem; }
+    .msg__bubble pre { background: #1e293b; color: #e2e8f0; padding: .75rem; border-radius: 6px; overflow-x: auto; margin: .5rem 0; }
+    .msg__bubble pre code { background: none; color: inherit; padding: 0; }
+    @media (max-width: 640px) { .chat-sidebar { display: none; } .msg { max-width: 95%; } }
+  </style>
+</head>
+<body>
+
+  <script>
+    if (!window._isPortalEnv) {
+      window.BACKEND_URL = '';
+      window._authHeaders = () => ({});
+      window.portalReady = Promise.resolve();
+      window.showToast = (msg, type) => console.log('[toast]', type || 'info', msg);
+    }
+    const _isPortalMode = (typeof window._isPortalEnv !== 'undefined' && window._isPortalEnv === true);
+  </script>
+
+  <script>
+    if (!window._isPortalEnv) {
+      document.addEventListener('DOMContentLoaded', function() {
+        var topbar = document.querySelector('.topbar');
+        if (topbar) topbar.style.display = 'none';
+      });
+    }
+  </script>
+
+  <header class="topbar">
+    <a href="/" class="topbar__brand">
+      <span style="font-size:1.1rem;font-weight:700;color:#ffffff;letter-spacing:1px;font-family:inherit;">OPERATIVE</span>
+    </a>
+    <nav class="topbar__nav">
+      <a href="/" class="topbar__link">Agents</a>
+      <a href="/admin/" class="topbar__link">Admin</a>
+    </nav>
+    <div class="topbar__right" style="font-size:.85rem;color:var(--text-muted)">Kafka Analyser</div>
+  </header>
+
+  <nav class="subnav">
+    <a href="/chat?agent=kafka-analyser" data-standalone-href="chat.html" class="subnav__link subnav__link--active">💬 Chat</a>
+    <a href="/agents/kafka-analyser/dashboard" data-standalone-href="dashboard.html" class="subnav__link">📊 Dashboard</a>
+    <a href="/agents/kafka-analyser/reports" data-standalone-href="reports.html" class="subnav__link">📁 Reports</a>
+    <a href="/agents/kafka-analyser/settings" data-standalone-href="settings.html" class="subnav__link">⚙ Settings</a>
+  </nav>
+
+  <div class="chat-layout">
+
+    <aside class="chat-sidebar">
+      <div>
+        <div style="background:var(--accent,#0891b2);color:#fff;padding:.4rem .8rem;border-radius:6px;display:inline-block;font-size:1rem;font-weight:700">Kafka Analyser</div>
+        <div class="chat-sidebar__desc" style="margin-top:.5rem">Kafka cluster intelligence — ask anything about your clusters, topics, and consumers</div>
+      </div>
+      <div>
+        <div class="chat-sidebar__section-label">Model</div>
+        <div class="chat-sidebar__session">claude-sonnet-4-6</div>
+      </div>
+      <div>
+        <div class="chat-sidebar__section-label">Session ID</div>
+        <div class="chat-sidebar__session" id="sidebar-session">—</div>
+      </div>
+      <div id="ctx-section" style="display:none">
+        <div class="chat-sidebar__section-label">Cluster Context</div>
+        <div id="ctx-info" style="font-size:.78rem;color:#e2e8f0;line-height:1.7"></div>
+      </div>
+      <div style="margin-top:auto;display:flex;flex-direction:column;gap:.5rem">
+        <button id="new-session-btn" class="btn btn--secondary btn--full">↺ New Session</button>
+        <a href="dashboard.html" class="btn btn--ghost btn--full btn--sm" id="back-link">← Dashboard</a>
+      </div>
+    </aside>
+
+    <div class="chat-main">
+      <div class="chat-header">
+        <div>
+          <div class="chat-header__name">Kafka Analyser — Chat</div>
+          <div class="chat-header__status" id="chat-status">Loading context…</div>
+        </div>
+      </div>
+      <div class="messages-wrap" id="messages"></div>
+      <div class="chat-input-area">
+        <form class="chat-input-form" id="chat-form">
+          <textarea id="chat-input" class="chat-input-textarea"
+            placeholder="Ask about your Kafka clusters… (Enter to send, Shift+Enter for new line)"
+            rows="1" autocomplete="off"></textarea>
+          <button type="submit" id="send-btn" class="chat-send-btn" disabled>
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M2 8l12-6-6 12V9L2 8z" fill="currentColor"/>
+            </svg>
+          </button>
+        </form>
+        <div class="chat-hint">Enter to send · Shift+Enter for new line</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let sessionId = null;
+    let streaming = false;
+    let agentContext = {};
+    let history = [];
+
+    function getOrCreateSession() {
+      let sid = sessionStorage.getItem('session_kafka-analyser');
+      if (!sid) { sid = crypto.randomUUID ? crypto.randomUUID() : 'sess-' + Date.now() + '-' + Math.random().toString(36).slice(2); sessionStorage.setItem('session_kafka-analyser', sid); }
+      return sid;
+    }
+    function resetSession() {
+      const sid = crypto.randomUUID ? crypto.randomUUID() : 'sess-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+      sessionStorage.setItem('session_kafka-analyser', sid);
+      return sid;
+    }
+
+    async function api(path, opts = {}) {
+      const base = _isPortalMode ? `${BACKEND_URL}/api/agents/kafka-analyser/proxy` : '';
+      const res = await fetch(`${base}${path}`, { ...opts, headers: { ..._authHeaders(), ...opts.headers } });
+      if (!res.ok) { const e = await res.json().catch(() => ({ detail: res.statusText })); throw new Error(e.detail || `HTTP ${res.status}`); }
+      return res.json();
+    }
+
+    async function loadContext() {
+      try {
+        const overview = await api('/dashboard/overview');
+        const clusters = await api('/settings/clusters');
+        const clusterName = clusters && clusters.length ? clusters[0].name : 'Unknown';
+        const clusterEnv = clusters && clusters.length ? clusters[0].environment : '';
+        agentContext = {
+          has_data: true,
+          cluster_name: clusterName,
+          cluster_env: clusterEnv,
+          broker_count: overview.broker_count || 0,
+          topic_count: overview.topic_count || 0,
+          consumer_group_count: overview.consumer_group_count || 0,
+          under_replicated_partitions: overview.under_replicated_partitions || 0,
+          cluster_health: overview.cluster_health || 'unknown',
+        };
+        document.getElementById('ctx-info').innerHTML =
+          `<div style="color:#4ade80;font-weight:600">✓ Cluster connected</div>` +
+          `<div>${clusterName}${clusterEnv ? ' (' + clusterEnv + ')' : ''}</div>` +
+          `<div>${agentContext.broker_count} brokers</div>` +
+          `<div>${agentContext.topic_count} topics</div>` +
+          `<div>${agentContext.consumer_group_count} consumer groups</div>` +
+          `<div>Health: ${agentContext.cluster_health}</div>`;
+        document.getElementById('ctx-section').style.display = 'block';
+        document.getElementById('chat-status').textContent = 'Ready · cluster loaded';
+      } catch (_) {
+        document.getElementById('chat-status').textContent = 'Ready — no cluster data';
+      }
+    }
+
+    function renderMarkdown(text) {
+      let html = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      html = html.replace(/```[\w]*\n?([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+      html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+      html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+      html = html.replace(/^### (.+)$/gm, '<h3 style="margin:.5rem 0 .25rem">$1</h3>');
+      html = html.replace(/^## (.+)$/gm, '<h2 style="margin:.6rem 0 .3rem">$1</h2>');
+      html = html.replace(/^# (.+)$/gm, '<h1 style="margin:.7rem 0 .35rem">$1</h1>');
+      html = html.replace(/(\|[^\n]+\|\n)\|[-| :\-]+\|\n((?:\|[^\n]+\|\n?)+)/g, (match, header, body) => {
+        const headers = header.split('|').filter(c => c.trim()).map(c => `<th>${c.trim()}</th>`).join('');
+        const rows = body.trim().split('\n').filter(l => l.trim()).map(l =>
+          '<tr>' + l.split('|').filter(c => c.trim()).map(c => `<td>${c.trim()}</td>`).join('') + '</tr>'
+        ).join('');
+        return `<table><thead><tr>${headers}</tr></thead><tbody>${rows}</tbody></table>`;
+      });
+      html = html.replace(/^---$/gm, '<hr>');
+      html = html.replace(/^&gt; (.+)$/gm, '<blockquote style="border-left:3px solid var(--accent,#0891b2);padding-left:.75rem;color:var(--text-muted,#64748b);margin:.5rem 0">$1</blockquote>');
+      html = html.replace(/^[\*\-] (.+)$/gm, '<li>$1</li>');
+      html = html.replace(/(<li>[\s\S]*?<\/li>)(?!\s*<li>)/g, '<ul>$1</ul>');
+      html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+      html = html.replace(/\n{2,}/g, '</p><p>');
+      html = '<p>' + html + '</p>';
+      html = html.replace(/<p>\s*<\/p>/g, '');
+      html = html.replace(/<p>(<h[1-3]|<ul|<ol|<table|<blockquote|<hr|<pre)/g, '$1');
+      html = html.replace(/(<\/h[1-3]>|<\/ul>|<\/ol>|<\/table>|<\/blockquote>|<hr>|<\/pre>)<\/p>/g, '$1');
+      return html;
+    }
+
+    const messagesEl = document.getElementById('messages');
+
+    function appendMessage(role, text, opts = {}) {
+      const isUser = role === 'user';
+      const msgEl = document.createElement('div');
+      msgEl.className = `msg msg--${isUser ? 'user' : 'assistant'}`;
+      msgEl.innerHTML = `<div class="msg__label">${isUser ? 'You' : 'Kafka Analyser'}</div><div class="msg__bubble"></div>`;
+      const bubble = msgEl.querySelector('.msg__bubble');
+      if (isUser) { bubble.textContent = text; }
+      else if (opts.fromHistory) { bubble.innerHTML = renderMarkdown(text); }
+      else { bubble.textContent = ''; }
+      messagesEl.appendChild(msgEl);
+      if (!opts.noScroll) messagesEl.scrollTop = messagesEl.scrollHeight;
+      return { el: msgEl, bubble };
+    }
+
+    function appendLoadingBubble() {
+      const msgEl = document.createElement('div');
+      msgEl.className = 'msg msg--assistant';
+      msgEl.innerHTML = `<div class="msg__label">Kafka Analyser</div><div class="msg__bubble"><span class="dots-loader"><span>·</span><span>·</span><span>·</span></span></div>`;
+      messagesEl.appendChild(msgEl);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      return msgEl;
+    }
+
+    async function send() {
+      const text = document.getElementById('chat-input').value.trim();
+      if (!text || streaming) return;
+      document.getElementById('chat-input').value = '';
+      resizeTextarea();
+      streaming = true;
+      document.getElementById('send-btn').disabled = true;
+      document.getElementById('chat-status').textContent = 'Thinking…';
+
+      appendMessage('user', text);
+      history.push({ role: 'user', content: text });
+      const loadingEl = appendLoadingBubble();
+      const bubble = loadingEl.querySelector('.msg__bubble');
+      let rawText = '';
+      let replaced = false;
+
+      try {
+        const base = _isPortalMode ? `${BACKEND_URL}/api/agents/kafka-analyser/proxy` : '';
+        const res = await fetch(`${base}/invoke/stream`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+          body: JSON.stringify({ user_message: text, session_id: sessionId, context: agentContext, history })
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let sseBuffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          sseBuffer += decoder.decode(value, { stream: true });
+          const lines = sseBuffer.split('\n');
+          sseBuffer = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const chunk = line.slice(6);
+            if (chunk === '[DONE]') break;
+            if (chunk.startsWith('[ERROR]')) { throw new Error(chunk.slice(8)); }
+            if (!replaced) { bubble.textContent = ''; loadingEl.classList.add('streaming'); replaced = true; }
+            rawText += chunk.replace(/\\n/g, '\n');
+            bubble.textContent = rawText;
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+          }
+        }
+
+        loadingEl.classList.remove('streaming');
+        bubble.innerHTML = renderMarkdown(rawText);
+        history.push({ role: 'assistant', content: rawText });
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      } catch (err) {
+        loadingEl.classList.remove('streaming');
+        loadingEl.classList.add('msg--error');
+        loadingEl.querySelector('.msg__bubble').textContent = `Error: ${err.message}`;
+      }
+
+      streaming = false;
+      document.getElementById('send-btn').disabled = false;
+      document.getElementById('chat-status').textContent = agentContext.has_data ? 'Ready · cluster loaded' : 'Ready';
+      document.getElementById('chat-input').focus();
+    }
+
+    function resizeTextarea() {
+      const ta = document.getElementById('chat-input');
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
+    }
+
+    async function init() {
+      sessionId = getOrCreateSession();
+      document.getElementById('sidebar-session').textContent = sessionId;
+      if (!_isPortalMode) {
+        document.querySelectorAll('[data-standalone-href]').forEach(el => { el.href = el.dataset.standaloneHref; });
+        document.getElementById('back-link').href = 'dashboard.html';
+      } else {
+        document.getElementById('back-link').href = '/agents/kafka-analyser/dashboard';
+      }
+      await loadContext();
+      document.getElementById('send-btn').disabled = false;
+      document.getElementById('chat-input').focus();
+    }
+
+    document.getElementById('chat-form').addEventListener('submit', e => { e.preventDefault(); send(); });
+    document.getElementById('chat-input').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+    document.getElementById('chat-input').addEventListener('input', resizeTextarea);
+    document.getElementById('new-session-btn').addEventListener('click', () => {
+      if (streaming) return;
+      sessionId = resetSession();
+      document.getElementById('sidebar-session').textContent = sessionId;
+      history = [];
+      agentContext = {};
+      messagesEl.innerHTML = '';
+      document.getElementById('ctx-section').style.display = 'none';
+      document.getElementById('chat-status').textContent = 'Loading context…';
+      loadContext();
+    });
+
+    document.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>

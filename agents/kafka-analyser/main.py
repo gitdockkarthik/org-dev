@@ -341,7 +341,13 @@ async def lifespan(app: FastAPI):
 # ── App ───────────────────────────────────────────────────────────────────────
 
 app = FastAPI(title=settings.agent_name, version="0.1.0", lifespan=lifespan)
-app.mount("/ui", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="ui")
+app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
+
+from fastapi.responses import RedirectResponse
+
+@app.get("/")
+async def root():
+    return RedirectResponse(url="/static/dashboard.html")
 app.include_router(dashboard_router)
 app.include_router(reports_router)
 app.include_router(settings_router)
