@@ -1,19 +1,22 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Alert Analyser — Settings</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Alert Analyser — Settings — UAP</title>
+  <link rel="stylesheet" href="/css/style.css?v=3">
   <style>
+    .subnav { display: flex; background: var(--navy-1); border-bottom: 1px solid var(--border); padding: 0 40px; }
+    .subnav__link { display: inline-flex; align-items: center; gap: 6px; padding: 13px 16px; font-size: .85rem; color: var(--text-muted); border-bottom: 2px solid transparent; margin-bottom: -1px; text-decoration: none; transition: color var(--t), border-color var(--t); }
+    .subnav__link:hover { color: var(--text); }
+    .subnav__link--active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+    .content { padding: 1.5rem 2rem 3rem; max-width: none; }
+
+    /* ── Settings UI — identical to agents/alert-analyser/static/settings.html ── */
+
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #f1f5f9;
-      color: #334155;
-      min-height: 100vh;
-      padding: 2rem 1rem 4rem;
-    }
+    body { background: #f1f5f9; color: #334155; }
 
     .container { max-width: 720px; margin: 0 auto; }
 
@@ -132,7 +135,7 @@
     .opsfields.hidden { display: none; }
     .opsfields .field { margin-bottom: 0; }
 
-    /* ── OpsGenie type selector (compact radio pair) ── */
+    /* ── OpsGenie type selector ── */
     .ops-type-radios { display: flex; gap: 0.625rem; flex-wrap: wrap; margin-top: 0.25rem; }
     .ops-type-radio {
       border: 1.5px solid #e2e8f0; border-radius: 7px; padding: 0.625rem 0.875rem;
@@ -222,840 +225,905 @@
       .tab-btn { padding: 0.625rem 0.625rem; font-size: 0.8125rem; }
       .sync-row .field { flex: 1 1 100%; }
     }
+    @media (max-width: 768px) { .subnav { padding: 0 20px; } .content { padding: 1rem; } }
   </style>
 </head>
 <body>
-<div class="container">
 
-  <!-- Page header -->
-  <div class="page-header">
-    <h1>Alert Analyser — Settings</h1>
-    <p>Configure data source and agent behaviour</p>
-  </div>
+  <header class="topbar">
+    <a href="/" class="topbar__brand">
+      <span style="font-size:1.1rem;
+      font-weight:700;color:#ffffff;
+      letter-spacing:1px;
+      font-family:inherit;">OPERATIVE</span>
+    </a>
+    <nav class="topbar__nav">
+      <a href="/" class="topbar__link">Agents</a>
+      <a href="/admin/" class="topbar__link">Admin</a>
+    </nav>
+    <div class="topbar__right" style="font-size:.85rem;color:var(--text-muted)">Alert Analyser</div>
+  </header>
 
-  <!-- No-key banner -->
-  <div id="no-key-banner" class="banner-yellow hidden">
-    No Anthropic API key configured. Add your key to get started.
-  </div>
-
-  <!-- Tab navigation -->
-  <nav class="tab-nav" role="tablist">
-    <button class="tab-btn active" data-tab="data-source" role="tab">Data Source</button>
-    <button class="tab-btn" data-tab="noise-tuning" role="tab">Noise Tuning</button>
-    <button class="tab-btn" data-tab="escalation" role="tab">
-      Escalation <span class="phase-badge">Phase 2</span>
-    </button>
-    <button class="tab-btn" data-tab="rag" role="tab">
-      RAG &amp; Reasoning <span class="phase-badge">Phase 3</span>
-    </button>
-    <button class="tab-btn" data-tab="autonomous" role="tab">
-      Autonomous <span class="phase-badge red">Phase 4</span>
-    </button>
+  <nav class="subnav">
+    <a href="/chat?agent=alert-analyser" data-standalone-href="#" class="subnav__link">💬 Chat</a>
+    <a href="/agents/alert-analyser/dashboard" data-standalone-href="dashboard.html" class="subnav__link">📊 Dashboard</a>
+    <a href="/agents/alert-analyser/reports" data-standalone-href="reports.html" class="subnav__link">📁 Reports</a>
+    <a href="/agents/alert-analyser/settings" data-standalone-href="settings.html" class="subnav__link subnav__link--active">⚙ Settings</a>
   </nav>
 
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <!-- TAB 1: Data Source                                        -->
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <div class="tab-panel active" id="panel-data-source">
+  <div class="content">
+  <div class="container">
 
-    <!-- A: Anthropic API Key -->
-    <div class="card">
-      <div class="card-title">Anthropic API Key</div>
-      <div id="key-status" class="key-status hidden" style="margin-top:0.5rem"></div>
-      <div class="field" style="margin-top:0.75rem">
-        <label for="api-key-input">API Key</label>
-        <input type="password" id="api-key-input" placeholder="sk-ant-…" autocomplete="off" />
-      </div>
-      <div class="actions" style="margin-top:0.75rem">
-        <button class="btn btn-primary" id="save-api-key">Save</button>
-      </div>
-      <div id="api-key-msg" class="action-msg hidden"></div>
+    <!-- Page header -->
+    <div class="page-header">
+      <h1>Alert Analyser — Settings</h1>
+      <p>Configure data source and agent behaviour</p>
     </div>
 
-    <!-- B: Alert Source -->
-    <div class="card">
-      <div class="card-title">Alert Source</div>
-      <div class="card-subtitle">Select the source from which alerts will be fetched or uploaded</div>
+    <!-- No-key banner -->
+    <div id="no-key-banner" class="banner-yellow hidden">
+      No Anthropic API key configured. Add your key to get started.
+    </div>
 
-      <div class="radio-cards">
+    <!-- Tab navigation -->
+    <nav class="tab-nav" role="tablist">
+      <button class="tab-btn active" data-tab="data-source" role="tab">Data Source</button>
+      <button class="tab-btn" data-tab="noise-tuning" role="tab">Noise Tuning</button>
+      <button class="tab-btn" data-tab="escalation" role="tab">Escalation</button>
+      <button class="tab-btn" data-tab="rag" role="tab">
+        RAG &amp; Reasoning <span class="phase-badge">Phase 3</span>
+      </button>
+      <button class="tab-btn" data-tab="autonomous" role="tab">
+        Autonomous <span class="phase-badge red">Phase 4</span>
+      </button>
+    </nav>
 
-        <label class="radio-card" id="card-file">
-          <input type="radio" name="source" value="file" />
-          <div class="radio-card-body">
-            <div class="radio-card-label">File Upload</div>
-            <div class="radio-card-desc">Upload a JSON or CSV export from OpsGenie via the Reports page</div>
-          </div>
-        </label>
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- TAB 1: Data Source                                        -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <div class="tab-panel active" id="panel-data-source">
 
-        <label class="radio-card" id="card-opsgenie">
-          <input type="radio" name="source" value="standalone" />
-          <div class="radio-card-body">
-            <div class="radio-card-label">OpsGenie / JSM API</div>
-            <div class="radio-card-desc">Fetch alerts live from the Atlassian JSM Ops API using Basic Auth</div>
-            <div class="opsfields hidden" id="opsfields">
+      <!-- A: Anthropic API Key -->
+      <div class="card">
+        <div class="card-title">Anthropic API Key</div>
+        <div id="key-status" class="key-status hidden" style="margin-top:0.5rem"></div>
+        <div class="field" style="margin-top:0.75rem">
+          <label for="api-key-input">API Key</label>
+          <input type="password" id="api-key-input" placeholder="sk-ant-…" autocomplete="off" />
+        </div>
+        <div class="actions" style="margin-top:0.75rem">
+          <button class="btn btn-primary" id="save-api-key">Save</button>
+        </div>
+        <div id="api-key-msg" class="action-msg hidden"></div>
+      </div>
 
-              <!-- API Type selector -->
-              <div class="field">
-                <label>OpsGenie API Type</label>
-                <div class="ops-type-radios">
-                  <label class="ops-type-radio selected" id="ops-type-jsm-label">
-                    <input type="radio" name="opsgenie-type" id="opsgenie-type-jsm" value="jsm" checked />
-                    <div class="ops-type-body">
-                      <div class="ops-type-label">JSM OpsGenie (Atlassian)</div>
-                      <div class="ops-type-sub">Cloud ID + email + API token</div>
-                    </div>
-                  </label>
-                  <label class="ops-type-radio" id="ops-type-standalone-label">
-                    <input type="radio" name="opsgenie-type" id="opsgenie-type-standalone" value="standalone" />
-                    <div class="ops-type-body">
-                      <div class="ops-type-label">Standalone OpsGenie (Classic)</div>
-                      <div class="ops-type-sub">GenieKey authentication</div>
-                    </div>
-                  </label>
-                </div>
-              </div>
+      <!-- B: Alert Source -->
+      <div class="card">
+        <div class="card-title">Alert Source</div>
+        <div class="card-subtitle">Select the source from which alerts will be fetched or uploaded</div>
 
-              <!-- JSM-only fields -->
-              <div id="jsm-fields">
-                <div class="field">
-                  <label for="cloud-id">Cloud ID</label>
-                  <input type="text" id="cloud-id" placeholder="e.g. abc12345-…" />
-                  <div class="hint">Found in Atlassian Admin → Products → JSM Ops → API settings</div>
-                </div>
-                <div class="field">
-                  <label for="ds-email">Email</label>
-                  <input type="email" id="ds-email" placeholder="you@example.com" />
-                </div>
-                <div class="field">
-                  <label for="api-token">API Token</label>
-                  <input type="password" id="api-token" placeholder="API token" autocomplete="off" />
-                  <div class="hint">Generate at id.atlassian.com/manage-profile/security/api-tokens</div>
-                </div>
-              </div>
+        <div class="radio-cards">
 
-              <!-- Standalone-only fields -->
-              <div id="standalone-fields" style="display:none">
-                <div class="field">
-                  <label for="genie-key">GenieKey</label>
-                  <input type="password" id="genie-key" placeholder="Enter your OpsGenie GenieKey" autocomplete="off" />
-                  <div id="genie-key-status" class="hint" style="display:none;color:#15803d">GenieKey configured</div>
-                  <div class="hint">Found in OpsGenie Settings → API Key Management</div>
-                </div>
-              </div>
-
-              <!-- Custom API URL (both types) -->
-              <div class="field">
-                <label for="api-url">Custom API URL (optional)</label>
-                <input type="text" id="api-url" placeholder="Leave blank to use default OpsGenie URL" />
-                <div class="hint">Use for on-premise OpsGenie or mock testing. Leave blank for cloud OpsGenie.</div>
-              </div>
-
+          <label class="radio-card" id="card-file">
+            <input type="radio" name="source" value="file" />
+            <div class="radio-card-body">
+              <div class="radio-card-label">File Upload</div>
+              <div class="radio-card-desc">Upload a JSON or CSV export from OpsGenie via the Reports page</div>
             </div>
-          </div>
-        </label>
-
-        <label class="radio-card" id="card-synthetic">
-          <input type="radio" name="source" value="synthetic" />
-          <div class="radio-card-body">
-            <div class="radio-card-label">Synthetic Data</div>
-            <div class="radio-card-desc">Auto-generate realistic demo alerts — no credentials required</div>
-          </div>
-        </label>
-
-      </div>
-    </div>
-
-    <!-- C: Sync Schedule -->
-    <div class="card">
-      <div class="card-title">Sync Schedule</div>
-      <div class="sync-row" style="margin-top:0.75rem">
-        <div class="field">
-          <select id="sync-interval">
-            <option value="0">Disabled</option>
-            <option value="15">Every 15 minutes</option>
-            <option value="30">Every 30 minutes</option>
-            <option value="60">Every 60 minutes</option>
-          </select>
-        </div>
-        <span class="last-synced" id="last-synced-label">Loading…</span>
-      </div>
-    </div>
-
-    <!-- D: Sync Window -->
-    <div class="card">
-      <div class="card-title">Sync Window</div>
-      <div class="field" style="margin-top:0.75rem">
-        <select id="sync-window">
-          <option value="1">Last 1 day</option>
-          <option value="3">Last 3 days</option>
-          <option value="7" selected>Last 7 days</option>
-          <option value="14">Last 14 days</option>
-          <option value="30">Last 30 days</option>
-        </select>
-      </div>
-      <p class="hint" style="margin-top:0.25rem">
-        Controls how far back the first sync looks. Subsequent syncs fetch only new alerts since
-        the last sync. Use shorter windows during development to limit data volume.
-      </p>
-    </div>
-
-    <!-- E: Action Buttons -->
-    <div class="card">
-      <div class="actions">
-        <button class="btn btn-primary" id="btn-save-sync">Save &amp; Sync</button>
-        <button class="btn btn-secondary" id="btn-save-only">Save Only</button>
-      </div>
-      <div id="action-msg" class="action-msg hidden"></div>
-    </div>
-
-    <!-- F: Sync Status -->
-    <div class="card">
-      <div class="card-title">Sync Status</div>
-      <div id="sync-status" class="status-rows" style="margin-top:0.75rem">
-        <span style="color:#94a3b8;font-style:italic;font-size:.875rem">Loading…</span>
-      </div>
-      <div id="large-dataset-banner" class="banner-blue hidden">
-        Large dataset detected. Analysis may take longer than usual. Consider using a shorter
-        sync window for faster responses during development.
-      </div>
-    </div>
-
-  </div><!-- /#panel-data-source -->
-
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <!-- TAB 2: Noise Tuning                                       -->
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <div class="tab-panel" id="panel-noise-tuning">
-
-    <!-- Behaviour Thresholds -->
-    <div class="card">
-      <div class="card-title">Behaviour Thresholds</div>
-      <div style="margin-top:0.875rem;display:flex;flex-direction:column;gap:1rem">
-        <div class="field">
-          <label for="threshold-repeat">
-            Flag as noise if the same alert fires more than X times in 1 hour
           </label>
-          <input type="number" id="threshold-repeat" min="1" value="3" style="max-width:120px" />
-        </div>
-        <div class="field">
-          <label for="threshold-window">
-            Sliding window for repetition detection
+
+          <label class="radio-card" id="card-opsgenie">
+            <input type="radio" name="source" value="standalone" />
+            <div class="radio-card-body">
+              <div class="radio-card-label">OpsGenie / JSM API</div>
+              <div class="radio-card-desc">Fetch alerts live from the Atlassian JSM Ops API using Basic Auth</div>
+              <div class="opsfields hidden" id="opsfields">
+
+                <!-- API Type selector -->
+                <div class="field">
+                  <label>OpsGenie API Type</label>
+                  <div class="ops-type-radios">
+                    <label class="ops-type-radio selected" id="ops-type-jsm-label">
+                      <input type="radio" name="opsgenie-type" id="type-jsm" value="jsm" checked />
+                      <div class="ops-type-body">
+                        <div class="ops-type-label">JSM OpsGenie (Atlassian)</div>
+                        <div class="ops-type-sub">Cloud ID + email + API token</div>
+                      </div>
+                    </label>
+                    <label class="ops-type-radio" id="ops-type-standalone-label">
+                      <input type="radio" name="opsgenie-type" id="type-standalone" value="standalone" />
+                      <div class="ops-type-body">
+                        <div class="ops-type-label">Standalone OpsGenie (Classic)</div>
+                        <div class="ops-type-sub">GenieKey authentication</div>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+
+                <!-- JSM-only fields -->
+                <div id="jsm-fields">
+                  <div class="field">
+                    <label for="cloud-id">Cloud ID</label>
+                    <input type="text" id="cloud-id" placeholder="e.g. abc12345-…" />
+                    <div class="hint">Found in Atlassian Admin → Products → JSM Ops → API settings</div>
+                  </div>
+                  <div class="field">
+                    <label for="ds-email">Email</label>
+                    <input type="email" id="ds-email" placeholder="you@example.com" />
+                  </div>
+                  <div class="field">
+                    <label for="api-token">API Token</label>
+                    <input type="password" id="api-token" placeholder="API token" autocomplete="off" />
+                    <div class="hint">Generate at id.atlassian.com/manage-profile/security/api-tokens</div>
+                  </div>
+                </div>
+
+                <!-- Standalone-only fields -->
+                <div id="standalone-fields" style="display:none">
+                  <div class="field">
+                    <label for="genie-key-input">GenieKey</label>
+                    <input type="password" id="genie-key-input" placeholder="Enter your OpsGenie GenieKey" autocomplete="off" />
+                    <div id="genie-key-status" class="hint" style="display:none;color:#15803d">GenieKey configured</div>
+                    <div class="hint">Found in OpsGenie Settings → API Key Management</div>
+                  </div>
+                </div>
+
+                <!-- Custom API URL (both types) -->
+                <div class="field">
+                  <label for="api-url-input">Custom API URL (optional)</label>
+                  <input type="text" id="api-url-input" placeholder="Leave blank to use default OpsGenie URL" />
+                  <div class="hint">For on-premise or mock testing</div>
+                </div>
+
+              </div>
+            </div>
           </label>
-          <select id="threshold-window" style="max-width:200px">
-            <option value="5">5 minutes</option>
-            <option value="15">15 minutes</option>
-            <option value="30">30 minutes</option>
-            <option value="60" selected>1 hour (default)</option>
-            <option value="240">4 hours</option>
-            <option value="480">8 hours</option>
-          </select>
-          <p class="hint">
-            Time window for counting repeated alert firings. Default 1 hour suits most
-            environments. Use shorter windows for high-frequency systems.
-          </p>
-        </div>
-        <div class="card-section">
-          <div class="card-section-title">
-            Acknowledgement Weights
-          </div>
-          <p class="hint" style="margin-bottom:0.75rem">
-            Human engagement signal — acknowledged alerts are treated as more genuine.
-          </p>
-          <div class="field">
-            <label for="weight-unack">
-              Not acknowledged penalty
-            </label>
-            <input type="number" id="weight-unack" value="2" style="max-width:120px" />
-            <p class="hint">
-              Added to noise score when alert has never been acknowledged. Default +2.
-            </p>
-          </div>
-          <div class="field">
-            <label for="weight-ack">
-              Acknowledged bonus
-            </label>
-            <input type="number" id="weight-ack" value="2" style="max-width:120px" />
-            <p class="hint">
-              Subtracted from noise score when alert has been acknowledged. Default -2
-              (enter as positive number).
-            </p>
-          </div>
-        </div>
-        <div class="field">
-          <label for="threshold-close">
-            Flag as noise if alert auto-closes in fewer than X seconds
+
+          <label class="radio-card" id="card-synthetic">
+            <input type="radio" name="source" value="synthetic" />
+            <div class="radio-card-body">
+              <div class="radio-card-label">Synthetic Data</div>
+              <div class="radio-card-desc">Auto-generate realistic demo alerts — no credentials required</div>
+            </div>
           </label>
-          <input type="number" id="threshold-close" min="30" value="300" style="max-width:120px" />
-          <div class="hint">300 seconds = 5 minutes</div>
-        </div>
-      </div>
-    </div>
 
-    <!-- Priority Scoring Weights -->
-    <div class="card">
-      <div class="card-title">Priority Scoring Weights</div>
-      <div class="card-subtitle">
-        These are scoring weights — not filters. ALL alerts are always synced regardless of
-        priority. Negative values push toward genuine. Positive values push toward noise.
-      </div>
-      <div class="weights-row">
-        <div class="weight-field">
-          <label for="w-p1">P1</label>
-          <input type="number" id="w-p1" value="-3" />
-        </div>
-        <div class="weight-field">
-          <label for="w-p2">P2</label>
-          <input type="number" id="w-p2" value="-2" />
-        </div>
-        <div class="weight-field">
-          <label for="w-p3">P3</label>
-          <input type="number" id="w-p3" value="0" />
-        </div>
-        <div class="weight-field">
-          <label for="w-p4">P4</label>
-          <input type="number" id="w-p4" value="1" />
-        </div>
-        <div class="weight-field">
-          <label for="w-p5">P5</label>
-          <input type="number" id="w-p5" value="2" />
         </div>
       </div>
-    </div>
 
-    <!-- Classification Threshold -->
-    <div class="card">
-      <div class="card-title">Classification Threshold</div>
-      <div class="field" style="margin-top:0.75rem">
-        <label for="noise-class-threshold">Classify alert as noise if net score exceeds</label>
-        <input type="number" id="noise-class-threshold" value="0" style="max-width:120px" />
-        <div class="hint">
-          Lower value = stricter noise detection. Default 0 means any positive net score = noise.
-        </div>
-      </div>
-      <div class="field" style="margin-top:1rem">
-        <label for="noise-suspect-threshold">
-          Noise-Suspect threshold
-        </label>
-        <input type="number" id="noise-suspect-threshold" value="-2" style="max-width:120px" />
-        <p class="hint">
-          Alerts with score between this and the noise threshold are flagged as
-          Noise-Suspect — needing human review before suppression. Default -2.
-        </p>
-      </div>
-    </div>
-
-    <!-- Save -->
-    <div class="card">
-      <div class="actions">
-        <button class="btn btn-primary" id="btn-save-tuning">Save</button>
-      </div>
-      <div id="tuning-msg" class="action-msg hidden"></div>
-    </div>
-
-  </div><!-- /#panel-noise-tuning -->
-
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <!-- TAB 3: Escalation (Phase 2, locked)                       -->
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <div class="tab-panel" id="panel-escalation">
-    <div class="locked-info">
-      <strong>Phase 2</strong> — MS Teams escalation and HITL approval workflows. Configure
-      how genuine alerts are escalated to your team and how approvals are managed.
-      Available in Phase 2.
-    </div>
-    <div class="locked-content">
+      <!-- C: Sync Schedule -->
       <div class="card">
-        <div class="toggle-wrap">
-          <input type="checkbox" id="esc-enable" class="toggle-input" disabled />
-          <label for="esc-enable" class="toggle-track"></label>
-          <span class="toggle-label">Enable MS Teams escalation</span>
-        </div>
-        <div class="field">
-          <label for="esc-webhook">MS Teams Webhook URL</label>
-          <input type="text" id="esc-webhook" disabled placeholder="https://…" />
-          <div class="hint">Incoming webhook from your Teams channel</div>
-        </div>
-        <div class="field">
-          <label for="esc-severity">Escalate genuine alerts of severity</label>
-          <select id="esc-severity" disabled>
-            <option>P1 only</option>
-            <option>P1 and P2</option>
-            <option>P1, P2 and P3</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="esc-approvers">HITL Approver Emails</label>
-          <input type="text" id="esc-approvers" disabled placeholder="alice@example.com, bob@example.com" />
-          <div class="hint">Comma separated. These users receive Teams approval cards.</div>
-        </div>
-        <div class="field">
-          <label for="esc-delay">Escalation delay (minutes)</label>
-          <input type="number" id="esc-delay" disabled value="5" style="max-width:120px" />
-          <div class="hint">Wait this many minutes before escalating to allow auto-resolution</div>
-        </div>
-      </div>
-    </div>
-  </div><!-- /#panel-escalation -->
-
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <!-- TAB 4: RAG & Reasoning (Phase 3, locked)                  -->
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <div class="tab-panel" id="panel-rag">
-    <div class="locked-info">
-      <strong>Phase 3</strong> — Runbook-grounded AI reasoning using Confluence, Jira and
-      Qdrant vector store. The agent will retrieve relevant runbooks and past incidents to
-      ground its analysis and mitigation suggestions. Available in Phase 3.
-    </div>
-    <div class="locked-content">
-      <div class="card">
-        <div class="toggle-wrap">
-          <input type="checkbox" id="rag-enable" class="toggle-input" disabled />
-          <label for="rag-enable" class="toggle-track"></label>
-          <span class="toggle-label">Enable RAG &amp; Reasoning</span>
-        </div>
-        <div class="field">
-          <label for="rag-confluence-url">Confluence Space URL</label>
-          <input type="text" id="rag-confluence-url" disabled placeholder="https://…" />
-        </div>
-        <div class="field">
-          <label for="rag-confluence-token">Confluence API Token</label>
-          <input type="password" id="rag-confluence-token" disabled />
-        </div>
-        <div class="field">
-          <label for="rag-jira-key">Jira Project Key</label>
-          <input type="text" id="rag-jira-key" disabled placeholder="OPS" />
-        </div>
-        <div class="field">
-          <label for="rag-jira-token">Jira API Token</label>
-          <input type="password" id="rag-jira-token" disabled />
-        </div>
-        <div class="field">
-          <label for="rag-runbook-url">Runbook Store URL</label>
-          <input type="text" id="rag-runbook-url" disabled placeholder="https://…" />
-        </div>
-
-        <div class="card-section">
-          <div class="card-section-title">Qdrant Connection</div>
+        <div class="card-title">Sync Schedule</div>
+        <div class="sync-row" style="margin-top:0.75rem">
           <div class="field">
-            <label for="rag-qdrant-host">Qdrant Host</label>
-            <input type="text" id="rag-qdrant-host" disabled value="localhost" />
-          </div>
-          <div class="field">
-            <label for="rag-qdrant-port">Qdrant Port</label>
-            <input type="number" id="rag-qdrant-port" disabled value="6333" style="max-width:120px" />
-          </div>
-          <div class="field">
-            <label for="rag-qdrant-collection">Qdrant Collection Name</label>
-            <input type="text" id="rag-qdrant-collection" disabled placeholder="alerts" />
-          </div>
-          <div class="field">
-            <label for="rag-chunks">RAG Context Chunks</label>
-            <input type="number" id="rag-chunks" disabled value="5" style="max-width:120px" />
-            <div class="hint">Number of relevant chunks to retrieve per query</div>
-          </div>
-        </div>
-
-        <div class="card-section">
-          <div class="field">
-            <label for="rag-model">Reasoning Model</label>
-            <select id="rag-model" disabled>
-              <option value="claude-sonnet-4-6" selected>claude-sonnet-4-6 (recommended)</option>
-              <option value="claude-opus-4-6">claude-opus-4-6 (higher quality, slower)</option>
+            <select id="sync-interval">
+              <option value="0">Disabled</option>
+              <option value="15">Every 15 minutes</option>
+              <option value="30">Every 30 minutes</option>
+              <option value="60">Every 60 minutes</option>
             </select>
           </div>
+          <span class="last-synced" id="last-synced-label">Loading…</span>
         </div>
       </div>
-    </div>
-  </div><!-- /#panel-rag -->
 
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <!-- TAB 5: Autonomous (Phase 4, locked)                       -->
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <div class="tab-panel" id="panel-autonomous">
-    <div class="banner-amber">
-      ⚠️ Autonomous mode executes remediation actions without human approval. Enable only after
-      Phase 3 HITL workflows are validated and the scorecard consistently meets the configured
-      threshold. Irreversible actions may occur.
-    </div>
-    <div class="locked-content">
+      <!-- D: Sync Window -->
       <div class="card">
-        <div class="toggle-wrap">
-          <input type="checkbox" id="auto-enable" class="toggle-input" disabled />
-          <label for="auto-enable" class="toggle-track"></label>
-          <span class="toggle-label">Enable Autonomous Remediation</span>
+        <div class="card-title">Sync Window</div>
+        <div class="field" style="margin-top:0.75rem">
+          <select id="sync-window">
+            <option value="1">Last 1 day</option>
+            <option value="3">Last 3 days</option>
+            <option value="7" selected>Last 7 days</option>
+            <option value="14">Last 14 days</option>
+            <option value="30">Last 30 days</option>
+          </select>
         </div>
-        <div class="field">
-          <label for="auto-hitl-threshold">
-            Minimum HITL success rate to activate autonomous mode (%)
-          </label>
-          <input type="number" id="auto-hitl-threshold" disabled value="85" style="max-width:120px" />
-          <div class="hint">
-            Autonomous mode only activates when HITL approval success rate meets this threshold
+        <p class="hint" style="margin-top:0.25rem">
+          Controls how far back the first sync looks. Subsequent syncs fetch only new alerts since
+          the last sync. Use shorter windows during development to limit data volume.
+        </p>
+      </div>
+
+      <!-- E: Action Buttons -->
+      <div class="card">
+        <div class="actions">
+          <button class="btn btn-primary" id="btn-save-sync">Save &amp; Sync</button>
+          <button class="btn btn-secondary" id="btn-save-only">Save Only</button>
+        </div>
+        <div id="action-msg" class="action-msg hidden"></div>
+      </div>
+
+      <!-- F: Sync Status -->
+      <div class="card">
+        <div class="card-title">Sync Status</div>
+        <div id="sync-status" class="status-rows" style="margin-top:0.75rem">
+          <span style="color:#94a3b8;font-style:italic;font-size:.875rem">Loading…</span>
+        </div>
+        <div id="large-dataset-banner" class="banner-blue hidden">
+          Large dataset detected. Analysis may take longer than usual. Consider using a shorter
+          sync window for faster responses during development.
+        </div>
+      </div>
+
+    </div><!-- /#panel-data-source -->
+
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- TAB 2: Noise Tuning                                       -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <div class="tab-panel" id="panel-noise-tuning">
+
+      <!-- Behaviour Thresholds -->
+      <div class="card">
+        <div class="card-title">Behaviour Thresholds</div>
+        <div style="margin-top:0.875rem;display:flex;flex-direction:column;gap:1rem">
+          <div class="field">
+            <label for="threshold-repeat">
+              Flag as noise if the same alert fires more than X times in 1 hour
+            </label>
+            <input type="number" id="threshold-repeat" min="1" value="3" style="max-width:120px" />
           </div>
-        </div>
-        <div class="field">
-          <label for="auto-jenkins-url">Jenkins URL</label>
-          <input type="text" id="auto-jenkins-url" disabled placeholder="https://jenkins.example.com" />
-        </div>
-        <div class="field">
-          <label for="auto-jenkins-token">Jenkins API Token</label>
-          <input type="password" id="auto-jenkins-token" disabled />
-        </div>
-        <div class="field">
-          <label>Permitted autonomous actions</label>
-          <div class="checkbox-group">
-            <div class="checkbox-row">
-              <input type="checkbox" id="act-restart" disabled />
-              <label for="act-restart">Service restart</label>
-            </div>
-            <div class="checkbox-row">
-              <input type="checkbox" id="act-rollback" disabled />
-              <label for="act-rollback">Rollback deployment</label>
-            </div>
-            <div class="checkbox-row">
-              <input type="checkbox" id="act-scale" disabled />
-              <label for="act-scale">Scale resources</label>
-            </div>
-            <div class="checkbox-row">
-              <input type="checkbox" id="act-patch" disabled />
-              <label for="act-patch">Apply patch</label>
-            </div>
-          </div>
-        </div>
-        <div class="field">
-          <label for="auto-blast-radius">Maximum services affected per autonomous action</label>
-          <input type="number" id="auto-blast-radius" disabled value="3" style="max-width:120px" />
-          <div class="hint">
-            Safety limit — autonomous actions affecting more than this number of services
-            require human approval
+          <div class="field">
+            <label for="threshold-close">
+              Flag as noise if alert auto-closes in fewer than X seconds
+            </label>
+            <input type="number" id="threshold-close" min="30" value="300" style="max-width:120px" />
+
+            <label for="threshold-window">Sliding window for repeat detection (minutes)</label>
+            <select id="threshold-window" style="max-width:200px">
+              <option value="15">15 mins</option>
+              <option value="30">30 mins</option>
+              <option value="60" selected>60 mins</option>
+              <option value="120">120 mins</option>
+              <option value="240">240 mins</option>
+            </select>
+            <div class="hint">300 seconds = 5 minutes</div>
           </div>
         </div>
       </div>
-    </div>
-  </div><!-- /#panel-autonomous -->
 
-</div><!-- /.container -->
+      <!-- Priority Scoring Weights -->
+      <div class="card">
+        <div class="card-title">Priority Scoring Weights</div>
+        <div class="card-subtitle">
+          These are scoring weights — not filters. ALL alerts are always synced regardless of
+          priority. Negative values push toward genuine. Positive values push toward noise.
+        </div>
+        <div class="weights-row">
+          <div class="weight-field">
+            <label for="w-p1">P1</label>
+            <input type="number" id="w-p1" value="-3" />
+          </div>
+          <div class="weight-field">
+            <label for="w-p2">P2</label>
+            <input type="number" id="w-p2" value="-2" />
+          </div>
+          <div class="weight-field">
+            <label for="w-p3">P3</label>
+            <input type="number" id="w-p3" value="0" />
+          </div>
+          <div class="weight-field">
+            <label for="w-p4">P4</label>
+            <input type="number" id="w-p4" value="1" />
+          </div>
+          <div class="weight-field">
+            <label for="w-p5">P5</label>
+            <input type="number" id="w-p5" value="2" />
+          </div>
+        </div>
+      </div>
 
-<script>
-  const $ = id => document.getElementById(id);
+      <!-- Classification Threshold -->
+      <div class="card">
+        <div class="card-title">Classification Threshold</div>
+        <div class="field" style="margin-top:0.75rem">
+          <label for="noise-class-threshold">Classify alert as noise if net score exceeds</label>
+          <input type="number" id="noise-class-threshold" value="0" style="max-width:120px" />
+          <div class="hint">
+            Lower value = stricter noise detection. Default 0 means any positive net score = noise.
+          </div>
+        </div>
+      </div>
 
-  // ── Portal detection ─────────────────────────────────────────────────────────
-  // /ui/... is the standalone agent path; anything else is the portal.
+      <!-- Save -->
+      <div class="card">
+        <div class="actions">
+          <button class="btn btn-primary" id="btn-save-tuning">Save</button>
+        </div>
+        <div id="tuning-msg" class="action-msg hidden"></div>
+      </div>
 
-  const isStandaloneMode = window.location.pathname.startsWith('/ui/');
+    </div><!-- /#panel-noise-tuning -->
 
-  if (!isStandaloneMode) {
-    // Running inside portal — platform manages the Anthropic key, hide section.
-    const banner = $('no-key-banner');
-    if (banner) banner.style.display = 'none';
-    const apiKeyCard = $('save-api-key') && $('save-api-key').closest('.card');
-    if (apiKeyCard) apiKeyCard.style.display = 'none';
-  }
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- TAB 3: Escalation (Phase 2, locked)                       -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <div class="tab-panel" id="panel-escalation">
+      <div class="card">
+        <div class="card-title">Teams Escalation</div>
+        <div style="display:flex;flex-direction:column;gap:1rem;margin-top:0.75rem">
 
-  // ── Tab switching ────────────────────────────────────────────────────────────
+          <div class="field">
+            <label>
+              <input type="checkbox" id="teams-enabled" />
+              Enable Teams escalation notifications
+            </label>
+          </div>
 
-  document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-      btn.classList.add('active');
-      $('panel-' + btn.dataset.tab).classList.add('active');
-    });
-  });
+          <div class="field">
+            <label for="teams-webhook-url">Webhook URL</label>
+            <input type="text" id="teams-webhook-url" placeholder="https://..." style="max-width:480px" />
+            <div class="hint">Power Automate or Incoming Webhook URL</div>
+          </div>
 
-  // ── Helpers ──────────────────────────────────────────────────────────────────
+          <div class="field">
+            <label>Escalate alerts of priority</label>
+            <div style="display:flex;gap:12px;margin-top:4px">
+              <label><input type="checkbox" id="esc-p1" checked /> P1 Critical</label>
+              <label><input type="checkbox" id="esc-p2" checked /> P2 High</label>
+              <label><input type="checkbox" id="esc-p3" /> P3 Medium</label>
+            </div>
+          </div>
 
-  function showMsg(el, text, type, durationMs = 5000) {
-    el.textContent = text;
-    el.className = 'action-msg ' + type;
-    clearTimeout(el._t);
-    el._t = setTimeout(() => { el.className = 'action-msg hidden'; el.textContent = ''; }, durationMs);
-  }
+          <div class="field">
+            <label>Severity Filter</label>
+            <div style="display:flex;gap:12px;margin-top:4px">
+              <label><input type="checkbox" id="teams-sev-critical" checked /> Critical</label>
+              <label><input type="checkbox" id="teams-sev-warning" checked /> Warning</label>
+              <label><input type="checkbox" id="teams-sev-info" /> Info</label>
+            </div>
+          </div>
 
-  function fmtDatetime(iso) {
-    if (!iso) return 'Never';
-    try {
-      const d = new Date(iso);
-      return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
-        + ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    } catch { return iso; }
-  }
+          <div class="field">
+            <label for="teams-cooldown">Cooldown (minutes)</label>
+            <input type="number" id="teams-cooldown" min="1" value="10" style="max-width:120px" />
+            <div class="hint">Minimum minutes between repeat escalations</div>
+          </div>
 
-  // ── Radio card selection ─────────────────────────────────────────────────────
+          <div class="field">
+            <button class="btn btn-secondary" id="btn-test-teams" type="button">
+              Send Test Message
+            </button>
+            <span id="teams-test-msg" class="action-msg hidden"></span>
+          </div>
 
-  function selectSource(value) {
-    document.querySelectorAll('.radio-card').forEach(card => {
-      const radio = card.querySelector('input[type="radio"]');
-      if (!radio) return;
-      const selected = radio.value === value;
-      radio.checked = selected;
-      card.classList.toggle('selected', selected);
-    });
-    $('opsfields').classList.toggle('hidden', value !== 'standalone');
-  }
+        </div>
+      </div>
 
-  document.querySelectorAll('input[name="source"]').forEach(radio => {
-    radio.addEventListener('change', () => selectSource(radio.value));
-  });
+      <div class="card">
+        <div class="actions">
+          <button class="btn btn-primary" id="btn-save-escalation">Save</button>
+        </div>
+        <div id="escalation-msg" class="action-msg hidden"></div>
+      </div>
+    </div><!-- /#panel-escalation -->
 
-  ['card-file', 'card-opsgenie', 'card-synthetic'].forEach(id => {
-    const card = $(id);
-    if (!card) return;
-    card.addEventListener('click', () => {
-      const radio = card.querySelector('input[type="radio"]');
-      if (radio) selectSource(radio.value);
-    });
-  });
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- TAB 4: RAG & Reasoning (Phase 3, locked)                  -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <div class="tab-panel" id="panel-rag">
+      <div class="locked-info">
+        <strong>Phase 3</strong> — Runbook-grounded AI reasoning using Confluence, Jira and
+        Qdrant vector store. The agent will retrieve relevant runbooks and past incidents to
+        ground its analysis and mitigation suggestions. Available in Phase 3.
+      </div>
+      <div class="locked-content">
+        <div class="card">
+          <div class="toggle-wrap">
+            <input type="checkbox" id="rag-enable" class="toggle-input" disabled />
+            <label for="rag-enable" class="toggle-track"></label>
+            <span class="toggle-label">Enable RAG &amp; Reasoning</span>
+          </div>
+          <div class="field">
+            <label for="rag-confluence-url">Confluence Space URL</label>
+            <input type="text" id="rag-confluence-url" disabled placeholder="https://…" />
+          </div>
+          <div class="field">
+            <label for="rag-confluence-token">Confluence API Token</label>
+            <input type="password" id="rag-confluence-token" disabled />
+          </div>
+          <div class="field">
+            <label for="rag-jira-key">Jira Project Key</label>
+            <input type="text" id="rag-jira-key" disabled placeholder="OPS" />
+          </div>
+          <div class="field">
+            <label for="rag-jira-token">Jira API Token</label>
+            <input type="password" id="rag-jira-token" disabled />
+          </div>
+          <div class="field">
+            <label for="rag-runbook-url">Runbook Store URL</label>
+            <input type="text" id="rag-runbook-url" disabled placeholder="https://…" />
+          </div>
 
-  // ── OpsGenie API type (JSM vs Standalone) ────────────────────────────────────
+          <div class="card-section">
+            <div class="card-section-title">Qdrant Connection</div>
+            <div class="field">
+              <label for="rag-qdrant-host">Qdrant Host</label>
+              <input type="text" id="rag-qdrant-host" disabled value="localhost" />
+            </div>
+            <div class="field">
+              <label for="rag-qdrant-port">Qdrant Port</label>
+              <input type="number" id="rag-qdrant-port" disabled value="6333" style="max-width:120px" />
+            </div>
+            <div class="field">
+              <label for="rag-qdrant-collection">Qdrant Collection Name</label>
+              <input type="text" id="rag-qdrant-collection" disabled placeholder="alerts" />
+            </div>
+            <div class="field">
+              <label for="rag-chunks">RAG Context Chunks</label>
+              <input type="number" id="rag-chunks" disabled value="5" style="max-width:120px" />
+              <div class="hint">Number of relevant chunks to retrieve per query</div>
+            </div>
+          </div>
 
-  function selectOpsgenieType(type) {
-    document.querySelectorAll('input[name="opsgenie-type"]').forEach(r => {
-      r.checked = r.value === type;
-      r.closest('.ops-type-radio').classList.toggle('selected', r.value === type);
-    });
-    $('jsm-fields').style.display        = type === 'standalone' ? 'none' : '';
-    $('standalone-fields').style.display = type === 'standalone' ? '' : 'none';
-  }
+          <div class="card-section">
+            <div class="field">
+              <label for="rag-model">Reasoning Model</label>
+              <select id="rag-model" disabled>
+                <option value="claude-sonnet-4-6" selected>claude-sonnet-4-6 (recommended)</option>
+                <option value="claude-opus-4-6">claude-opus-4-6 (higher quality, slower)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /#panel-rag -->
 
-  document.querySelectorAll('input[name="opsgenie-type"]').forEach(radio => {
-    radio.addEventListener('change', () => selectOpsgenieType(radio.value));
-  });
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- TAB 5: Autonomous (Phase 4, locked)                       -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <div class="tab-panel" id="panel-autonomous">
+      <div class="banner-amber">
+        ⚠️ Autonomous mode executes remediation actions without human approval. Enable only after
+        Phase 3 HITL workflows are validated and the scorecard consistently meets the configured
+        threshold. Irreversible actions may occur.
+      </div>
+      <div class="locked-content">
+        <div class="card">
+          <div class="toggle-wrap">
+            <input type="checkbox" id="auto-enable" class="toggle-input" disabled />
+            <label for="auto-enable" class="toggle-track"></label>
+            <span class="toggle-label">Enable Autonomous Remediation</span>
+          </div>
+          <div class="field">
+            <label for="auto-hitl-threshold">
+              Minimum HITL success rate to activate autonomous mode (%)
+            </label>
+            <input type="number" id="auto-hitl-threshold" disabled value="85" style="max-width:120px" />
+            <div class="hint">
+              Autonomous mode only activates when HITL approval success rate meets this threshold
+            </div>
+          </div>
+          <div class="field">
+            <label for="auto-jenkins-url">Jenkins URL</label>
+            <input type="text" id="auto-jenkins-url" disabled placeholder="https://jenkins.example.com" />
+          </div>
+          <div class="field">
+            <label for="auto-jenkins-token">Jenkins API Token</label>
+            <input type="password" id="auto-jenkins-token" disabled />
+          </div>
+          <div class="field">
+            <label>Permitted autonomous actions</label>
+            <div class="checkbox-group">
+              <div class="checkbox-row">
+                <input type="checkbox" id="act-restart" disabled />
+                <label for="act-restart">Service restart</label>
+              </div>
+              <div class="checkbox-row">
+                <input type="checkbox" id="act-rollback" disabled />
+                <label for="act-rollback">Rollback deployment</label>
+              </div>
+              <div class="checkbox-row">
+                <input type="checkbox" id="act-scale" disabled />
+                <label for="act-scale">Scale resources</label>
+              </div>
+              <div class="checkbox-row">
+                <input type="checkbox" id="act-patch" disabled />
+                <label for="act-patch">Apply patch</label>
+              </div>
+            </div>
+          </div>
+          <div class="field">
+            <label for="auto-blast-radius">Maximum services affected per autonomous action</label>
+            <input type="number" id="auto-blast-radius" disabled value="3" style="max-width:120px" />
+            <div class="hint">
+              Safety limit — autonomous actions affecting more than this number of services
+              require human approval
+            </div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /#panel-autonomous -->
 
-  // ── Build payloads ───────────────────────────────────────────────────────────
+  </div><!-- /.container -->
+  </div><!-- /.content -->
 
-  function buildSourcePayload() {
-    const radio = document.querySelector('input[name="source"]:checked');
-    const sourceType = document.querySelector('input[name="source"]:checked')?.value || 'opsgenie';
-    const payload = {
-      source_type:           sourceType,
-      sync_interval_minutes: parseInt($('sync-interval').value, 10),
-      sync_window_days:      parseInt($('sync-window').value, 10),
-    };
-    if (payload.source_type === 'standalone') {
-      const opsType = (document.querySelector('input[name="opsgenie-type"]:checked') || {}).value || 'jsm';
-      payload.opsgenie_type = opsType;
-      if (opsType === 'standalone') {
-        const gk = $('genie-key').value.trim();
-        if (gk) payload.api_token = gk;
-      } else {
-        payload.cloud_id = $('cloud-id').value.trim();
-        payload.email    = $('ds-email').value.trim();
-        const tok = $('api-token').value.trim();
-        if (tok) payload.api_token = tok;
+  <script src="/js/config.js?v=3"></script>
+  <script src="/js/portal.js?v=3"></script>
+  <script>
+    // ── Dual-mode detection: works inside Operative portal AND standalone ──
+    const _isPortal = (typeof BACKEND_URL !== 'undefined' && typeof window._authHeaders === 'function');
+    if (!_isPortal) {
+      window.BACKEND_URL = '';
+      window._authHeaders = () => ({});
+    }
+  </script>
+  <script>
+    const SLUG  = 'alert-analyser';
+    const _isPortalMode = (typeof BACKEND_URL !== 'undefined' && BACKEND_URL !== '');
+    const PROXY = _isPortalMode ? `${BACKEND_URL}/api/agents/${SLUG}/proxy` : '';
+
+    const authHeaders = () => (typeof _authHeaders === 'function' ? _authHeaders() : {});
+
+    const $ = id => document.getElementById(id);
+
+    // ── Portal detection — hide API key section when running inside portal ────────
+
+    const isStandaloneMode = !_isPortalMode;
+    if (!isStandaloneMode) {
+      const banner = document.getElementById('no-key-banner');
+      if (banner) banner.style.display = 'none';
+      const apiKeyCard = document.getElementById('save-api-key');
+      if (apiKeyCard) {
+        const card = apiKeyCard.closest('.card, .settings-card, section, div[class*="card"]');
+        if (card) card.style.display = 'none';
       }
-      const apiUrl = $('api-url').value.trim();
-      if (apiUrl) payload.api_url = apiUrl;
     }
-    return payload;
-  }
 
-  function buildTuningPayload() {
-    return {
-      noise_threshold_repeat:      parseInt($('threshold-repeat').value, 10),
-      noise_threshold_window_mins: parseInt($('threshold-window').value, 10),
-      noise_threshold_close_secs:  parseInt($('threshold-close').value, 10),
-      priority_weights: {
-        P1: parseInt($('w-p1').value, 10),
-        P2: parseInt($('w-p2').value, 10),
-        P3: parseInt($('w-p3').value, 10),
-        P4: parseInt($('w-p4').value, 10),
-        P5: parseInt($('w-p5').value, 10),
-      },
-      noise_classification_threshold: parseInt($('noise-class-threshold').value, 10),
-      noise_suspect_threshold:        parseInt($('noise-suspect-threshold').value, 10),
-    };
-  }
+    // ── Tab switching ────────────────────────────────────────────────────────────
 
-  // ── API calls ────────────────────────────────────────────────────────────────
-
-  async function postSettings(payload) {
-    const res = await fetch('/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        $('panel-' + btn.dataset.tab).classList.add('active');
+      });
     });
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      throw new Error('HTTP ' + res.status + (body ? ': ' + body : ''));
-    }
-    return res.json();
-  }
 
-  // ── Save API key ─────────────────────────────────────────────────────────────
+    // ── Helpers ──────────────────────────────────────────────────────────────────
 
-  $('save-api-key').addEventListener('click', async () => {
-    const key = $('api-key-input').value.trim();
-    const msgEl = $('api-key-msg');
-    if (!key) { showMsg(msgEl, 'Please enter an API key.', 'err'); return; }
-    try {
-      await postSettings({ api_key: key });
-      showMsg(msgEl, 'API key saved.', 'ok');
-      $('api-key-input').value = '';
-      // Immediately hide banner and show confirmation — don't wait for loadSettings round-trip.
-      $('no-key-banner').classList.add('hidden');
-      const ks = $('key-status');
-      ks.textContent = 'API key configured';
-      ks.classList.remove('hidden');
-      await loadSettings();
-    } catch (err) {
-      showMsg(msgEl, 'Save failed: ' + err.message, 'err');
-    }
-  });
-
-  // ── Save & Sync ──────────────────────────────────────────────────────────────
-
-  $('btn-save-sync').addEventListener('click', async () => {
-    const msgEl = $('action-msg');
-    try {
-      await postSettings(buildSourcePayload());
-      showMsg(msgEl, 'Syncing… please wait', 'info', 120000);
-      const syncRes = await fetch('/settings/sync', { method: 'POST' });
-      if (!syncRes.ok) throw new Error('Sync HTTP ' + syncRes.status);
-      const syncData = await syncRes.json();
-      const count = syncData.alert_count ?? '?';
-      showMsg(msgEl, 'Sync complete — ' + count + ' alerts fetched', 'ok');
-      await loadSettings();
-    } catch (err) {
-      showMsg(msgEl, 'Failed: ' + err.message, 'err');
-    }
-  });
-
-  // ── Save Only ────────────────────────────────────────────────────────────────
-
-  $('btn-save-only').addEventListener('click', async () => {
-    const msgEl = $('action-msg');
-    try {
-      await postSettings(buildSourcePayload());
-      showMsg(msgEl, 'Settings saved.', 'ok');
-      await loadSettings();
-    } catch (err) {
-      showMsg(msgEl, 'Failed: ' + err.message, 'err');
-    }
-  });
-
-  // ── Save Tuning ──────────────────────────────────────────────────────────────
-
-  $('btn-save-tuning').addEventListener('click', async () => {
-    const msgEl = $('tuning-msg');
-    try {
-      await postSettings(buildTuningPayload());
-      showMsg(msgEl, 'Settings saved.', 'ok');
-    } catch (err) {
-      showMsg(msgEl, 'Failed: ' + err.message, 'err');
-    }
-  });
-
-  // ── Render sync status section ───────────────────────────────────────────────
-
-  function renderSyncStatus(cfg) {
-    const el = $('sync-status');
-    el.innerHTML = '';
-
-    function addRow(label, valueHtml) {
-      const div = document.createElement('div');
-      div.className = 'status-row';
-      div.innerHTML =
-        '<span class="status-row-label">' + label + '</span>' +
-        '<span class="status-value">' + valueHtml + '</span>';
-      el.appendChild(div);
+    function showMsg(el, text, type, durationMs = 5000) {
+      el.textContent = text;
+      el.className = 'action-msg ' + type;
+      clearTimeout(el._t);
+      el._t = setTimeout(() => { el.className = 'action-msg hidden'; el.textContent = ''; }, durationMs);
     }
 
-    addRow('Source type', '<span class="badge">' + (cfg.source_type || 'synthetic') + '</span>');
-    addRow('Last synced', fmtDatetime(cfg.last_synced || null));
-    addRow('Alerts fetched', cfg.alert_count != null ? String(cfg.alert_count) : '—');
+    function fmtDatetime(iso) {
+      if (!iso) return 'Never';
+      try {
+        const d = new Date(iso);
+        return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
+          + ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      } catch { return iso; }
+    }
 
-    $('large-dataset-banner').classList.toggle('hidden', (cfg.alert_count ?? 0) <= 10000);
-  }
+    // ── Radio card selection ─────────────────────────────────────────────────────
 
-  // ── Load settings on page load ───────────────────────────────────────────────
+    function selectSource(value) {
+      document.querySelectorAll('.radio-card').forEach(card => {
+        const radio = card.querySelector('input[type="radio"]');
+        if (!radio) return;
+        const selected = radio.value === value;
+        radio.checked = selected;
+        card.classList.toggle('selected', selected);
+      });
+      $('opsfields').classList.toggle('hidden', value !== 'standalone');
+    }
 
-  async function loadSettings() {
-    try {
-      const res = await fetch('/settings');
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const cfg = await res.json();
+    document.querySelectorAll('input[name="source"]').forEach(radio => {
+      radio.addEventListener('change', () => selectSource(radio.value));
+    });
 
-      // API key banner + status line
-      const configured = cfg.api_key_configured === true;
-      $('no-key-banner').classList.toggle('hidden', configured);
-      const keyStatus = $('key-status');
-      if (configured && cfg.api_key_last4) {
-        keyStatus.textContent = 'API key configured (last 4: ...' + cfg.api_key_last4 + ')';
-        keyStatus.classList.remove('hidden');
-      } else {
-        keyStatus.classList.add('hidden');
-      }
+    ['card-file', 'card-opsgenie', 'card-synthetic'].forEach(id => {
+      const card = $(id);
+      if (!card) return;
+      card.addEventListener('click', () => {
+        const radio = card.querySelector('input[type="radio"]');
+        if (radio) selectSource(radio.value);
+      });
+    });
 
-      // Source radio
-      selectSource(cfg.source_type || 'synthetic');
-      if (cfg.source_type === 'standalone') {
-        const radio = document.querySelector('input[name="source"][value="standalone"]');
-        if (radio) {
-          radio.checked = true;
-          radio.closest('.radio-card').classList.add('selected');
+    // ── OpsGenie API type (JSM vs Standalone) ────────────────────────────────────
+
+    function selectOpsgenieType(type) {
+      document.querySelectorAll('input[name="opsgenie-type"]').forEach(r => {
+        r.checked = r.value === type;
+        r.closest('.ops-type-radio').classList.toggle('selected', r.value === type);
+      });
+      $('jsm-fields').style.display        = type === 'standalone' ? 'none' : '';
+      $('standalone-fields').style.display = type === 'standalone' ? '' : 'none';
+    }
+
+    document.querySelectorAll('input[name="opsgenie-type"]').forEach(radio => {
+      radio.addEventListener('change', () => selectOpsgenieType(radio.value));
+    });
+
+    // ── Build payloads ───────────────────────────────────────────────────────────
+
+    function buildSourcePayload() {
+      const radio = document.querySelector('input[name="source"]:checked');
+      const payload = {
+        source_type:           radio ? radio.value : 'synthetic',
+        sync_interval_minutes: parseInt($('sync-interval').value, 10),
+        sync_window_days:      parseInt($('sync-window').value, 10),
+      };
+      if (payload.source_type === 'standalone') {
+        const opsType = (document.querySelector('input[name="opsgenie-type"]:checked') || {}).value || 'jsm';
+        payload.opsgenie_type = opsType;
+        if (opsType === 'standalone') {
+          const gk = $('genie-key-input').value.trim();
+          if (gk && gk !== '••••••••') payload.api_token = gk;
+        } else {
+          payload.cloud_id = $('cloud-id').value.trim();
+          payload.email    = $('ds-email').value.trim();
+          const tok = $('api-token').value.trim();
+          if (tok && tok !== '••••••••') payload.api_token = tok;
         }
+        const apiUrl = $('api-url-input').value.trim();
+        if (apiUrl) payload.opsgenie_base_url = apiUrl;
       }
-
-      // Pre-fill non-secret fields
-      selectOpsgenieType(cfg.opsgenie_type || 'jsm');
-      if (cfg.cloud_id) $('cloud-id').value = cfg.cloud_id;
-      if (cfg.email)    $('ds-email').value  = cfg.email;
-      if (cfg.api_url)  $('api-url').value   = cfg.api_url;
-      if (cfg.genie_key_configured) $('genie-key-status').style.display = '';
-
-      // Sync interval
-      const intEl = $('sync-interval');
-      const intVal = String(cfg.sync_interval_minutes ?? 0);
-      if (intEl.querySelector('option[value="' + intVal + '"]')) intEl.value = intVal;
-
-      // Last synced label
-      $('last-synced-label').textContent =
-        cfg.last_synced ? 'Last synced: ' + fmtDatetime(cfg.last_synced) : 'Never synced';
-
-      // Sync window
-      const winEl = $('sync-window');
-      const winVal = String(cfg.sync_window_days ?? 7);
-      if (winEl.querySelector('option[value="' + winVal + '"]')) winEl.value = winVal;
-
-      // Noise thresholds
-      if (cfg.noise_threshold_repeat       != null) $('threshold-repeat').value = cfg.noise_threshold_repeat;
-      if (cfg.noise_threshold_window_mins  != null) {
-        const winEl = $('threshold-window');
-        const winVal = String(cfg.noise_threshold_window_mins);
-        if (winEl.querySelector('option[value="' + winVal + '"]')) winEl.value = winVal;
-      }
-      if (cfg.noise_threshold_close_secs != null) $('threshold-close').value  = cfg.noise_threshold_close_secs;
-
-      // Priority weights
-      if (cfg.priority_weights) {
-        const pw = cfg.priority_weights;
-        if (pw.P1 != null) $('w-p1').value = pw.P1;
-        if (pw.P2 != null) $('w-p2').value = pw.P2;
-        if (pw.P3 != null) $('w-p3').value = pw.P3;
-        if (pw.P4 != null) $('w-p4').value = pw.P4;
-        if (pw.P5 != null) $('w-p5').value = pw.P5;
-      }
-
-      // Classification threshold
-      if (cfg.noise_classification_threshold != null) {
-        $('noise-class-threshold').value = cfg.noise_classification_threshold;
-      }
-      if (cfg.noise_suspect_threshold != null) {
-        $('noise-suspect-threshold').value = cfg.noise_suspect_threshold;
-      }
-
-      // Sync status section
-      renderSyncStatus(cfg);
-
-    } catch (err) {
-      $('sync-status').innerHTML =
-        '<span style="color:#b91c1c;font-size:.875rem">Failed to load settings: ' + err.message + '</span>';
-      $('last-synced-label').textContent = '';
+      return payload;
     }
-  }
 
-  loadSettings();
-</script>
+    function buildTuningPayload() {
+      return {
+        noise_threshold_repeat:     parseInt($('threshold-repeat').value, 10),
+        noise_threshold_close_secs: parseInt($('threshold-close').value, 10),
+        noise_threshold_window_mins: parseInt($('threshold-window').value, 10),
+        priority_weights: {
+          P1: parseInt($('w-p1').value, 10),
+          P2: parseInt($('w-p2').value, 10),
+          P3: parseInt($('w-p3').value, 10),
+          P4: parseInt($('w-p4').value, 10),
+          P5: parseInt($('w-p5').value, 10),
+        },
+        noise_classification_threshold: parseInt($('noise-class-threshold').value, 10),
+      };
+    }
+
+    // ── API calls ────────────────────────────────────────────────────────────────
+
+    async function postSettings(payload) {
+      const res = await fetch(`${PROXY}/settings`, {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        throw new Error('HTTP ' + res.status + (body ? ': ' + body : ''));
+      }
+      return res.json();
+    }
+
+    // ── Save API key ─────────────────────────────────────────────────────────────
+
+    $('save-api-key').addEventListener('click', async () => {
+      const key = $('api-key-input').value.trim();
+      const msgEl = $('api-key-msg');
+      if (!key) { showMsg(msgEl, 'Please enter an API key.', 'err'); return; }
+      try {
+        await postSettings({ api_key: key });
+        showMsg(msgEl, 'API key saved.', 'ok');
+        $('api-key-input').value = '';
+        await loadSettings();
+      } catch (err) {
+        showMsg(msgEl, 'Save failed: ' + err.message, 'err');
+      }
+    });
+
+    // ── Save & Sync ──────────────────────────────────────────────────────────────
+
+    $('btn-save-sync').addEventListener('click', async () => {
+      const msgEl = $('action-msg');
+      try {
+        await postSettings(buildSourcePayload());
+        showMsg(msgEl, 'Syncing… please wait', 'info', 120000);
+        const syncRes = await fetch(`${PROXY}/settings/sync`, {
+          method: 'POST',
+          headers: authHeaders(),
+        });
+        if (!syncRes.ok) throw new Error('Sync HTTP ' + syncRes.status);
+        const syncData = await syncRes.json();
+        const count = syncData.alert_count ?? '?';
+        showMsg(msgEl, 'Sync complete — ' + count + ' alerts fetched', 'ok');
+        await loadSettings();
+      } catch (err) {
+        showMsg(msgEl, 'Failed: ' + err.message, 'err');
+      }
+    });
+
+    // ── Save Only ────────────────────────────────────────────────────────────────
+
+    $('btn-save-only').addEventListener('click', async () => {
+      const msgEl = $('action-msg');
+      try {
+        await postSettings(buildSourcePayload());
+        showMsg(msgEl, 'Settings saved.', 'ok');
+        await loadSettings();
+      } catch (err) {
+        showMsg(msgEl, 'Failed: ' + err.message, 'err');
+      }
+    });
+
+    // ── Save Tuning ──────────────────────────────────────────────────────────────
+
+    $('btn-save-tuning').addEventListener('click', async () => {
+      const msgEl = $('tuning-msg');
+      try {
+        await postSettings(buildTuningPayload());
+        showMsg(msgEl, 'Settings saved.', 'ok');
+      } catch (err) {
+        showMsg(msgEl, 'Failed: ' + err.message, 'err');
+      }
+    });
+
+    // ── Teams Escalation ─────────────────────────────────────────────────────────
+
+    document.getElementById('btn-save-escalation')?.addEventListener('click', async () => {
+      const payload = {
+        teams_enabled: $('teams-enabled').checked,
+        teams_webhook_url: $('teams-webhook-url').value.trim(),
+        teams_severity_filter: [
+          ...($('teams-sev-critical').checked ? ['critical'] : []),
+          ...($('teams-sev-warning').checked ? ['warning'] : []),
+          ...($('teams-sev-info').checked ? ['info'] : []),
+        ],
+        teams_cooldown_mins: parseInt($('teams-cooldown').value, 10) || 10,
+        esc_priorities: [
+          ...($('esc-p1').checked ? ['P1'] : []),
+          ...($('esc-p2').checked ? ['P2'] : []),
+          ...($('esc-p3').checked ? ['P3'] : []),
+        ],
+      };
+      const res = await postSettings(payload);
+      showMsg($('escalation-msg'), res?.ok ? 'Saved' : 'Error', res?.ok ? 'ok' : 'err');
+    });
+
+    document.getElementById('btn-test-teams')?.addEventListener('click', async () => {
+      const url = $('teams-webhook-url').value.trim();
+      if (!url) { showMsg($('teams-test-msg'), 'Enter webhook URL first', 'err'); return; }
+      showMsg($('teams-test-msg'), 'Sending...', 'info');
+      const res = await fetch(`${PROXY}/settings/test-teams`, {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ webhook_url: url }),
+      });
+      const data = await res.json().catch(() => ({}));
+      showMsg($('teams-test-msg'), data.ok ? '✅ Test message sent' : '❌ Failed — check URL', data.ok ? 'ok' : 'err');
+    });
+
+    // ── Render sync status section ───────────────────────────────────────────────
+
+    function renderSyncStatus(cfg) {
+      const el = $('sync-status');
+      el.innerHTML = '';
+
+      function addRow(label, valueHtml) {
+        const div = document.createElement('div');
+        div.className = 'status-row';
+        div.innerHTML =
+          '<span class="status-row-label">' + label + '</span>' +
+          '<span class="status-value">' + valueHtml + '</span>';
+        el.appendChild(div);
+      }
+
+      addRow('Source type', '<span class="badge">' + (cfg.source_type || 'synthetic') + '</span>');
+      addRow('Last synced', fmtDatetime(cfg.last_synced || null));
+      addRow('Alerts fetched', cfg.alert_count != null ? String(cfg.alert_count) : '—');
+
+      $('large-dataset-banner').classList.toggle('hidden', (cfg.alert_count ?? 0) <= 10000);
+    }
+
+    // ── Load settings on page load ───────────────────────────────────────────────
+
+    async function loadSettings() {
+      await portalReady;
+      try {
+        const res = await fetch(`${PROXY}/settings`, { headers: authHeaders() });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const cfg = await res.json();
+
+        // API key banner + status line
+        const configured = cfg.api_key_configured === true;
+        $('no-key-banner').classList.toggle('hidden', configured);
+        const keyStatus = $('key-status');
+        if (configured && cfg.api_key_last4) {
+          keyStatus.textContent = 'API key configured (last 4: ...' + cfg.api_key_last4 + ')';
+          keyStatus.classList.remove('hidden');
+        } else {
+          keyStatus.classList.add('hidden');
+        }
+
+        // Source radio
+        selectSource(cfg.source_type || 'synthetic');
+
+        // Pre-fill non-secret fields
+        selectOpsgenieType(cfg.opsgenie_type || 'jsm');
+        if (cfg.cloud_id) $('cloud-id').value = cfg.cloud_id;
+        if (cfg.email)    $('ds-email').value  = cfg.email;
+        if (cfg.opsgenie_base_url) $('api-url-input').value = cfg.opsgenie_base_url;
+        else if (cfg.api_url) $('api-url-input').value = cfg.api_url;
+        if (cfg.api_token_configured) {
+          $('api-token').value = '••••••••';
+          $('api-token').placeholder = 'Leave blank to keep existing';
+        }
+        if (cfg.genie_key_configured) {
+          $('genie-key-status').style.display = '';
+          $('genie-key-input').value = '••••••••';
+          $('genie-key-input').placeholder = 'Leave blank to keep existing';
+        }
+
+        // Sync interval
+        const intEl = $('sync-interval');
+        const intVal = String(cfg.sync_interval_minutes ?? 0);
+        if (intEl.querySelector('option[value="' + intVal + '"]')) intEl.value = intVal;
+
+        // Last synced label
+        $('last-synced-label').textContent =
+          cfg.last_synced ? 'Last synced: ' + fmtDatetime(cfg.last_synced) : 'Never synced';
+
+        // Sync window
+        const winEl = $('sync-window');
+        const winVal = String(cfg.sync_window_days ?? 7);
+        if (winEl.querySelector('option[value="' + winVal + '"]')) winEl.value = winVal;
+
+        // Noise thresholds
+        if (cfg.noise_threshold_repeat     != null) $('threshold-repeat').value = cfg.noise_threshold_repeat;
+        if (cfg.noise_threshold_close_secs != null) $('threshold-close').value  = cfg.noise_threshold_close_secs;
+        if (cfg.noise_threshold_window_mins != null) {
+          const winEl = $('threshold-window');
+          const winVal = String(cfg.noise_threshold_window_mins);
+          if ([...winEl.options].some(o => o.value === winVal)) winEl.value = winVal;
+        }
+
+        // Priority weights
+        if (cfg.priority_weights) {
+          const pw = cfg.priority_weights;
+          if (pw.P1 != null) $('w-p1').value = pw.P1;
+          if (pw.P2 != null) $('w-p2').value = pw.P2;
+          if (pw.P3 != null) $('w-p3').value = pw.P3;
+          if (pw.P4 != null) $('w-p4').value = pw.P4;
+          if (pw.P5 != null) $('w-p5').value = pw.P5;
+        }
+
+        // Classification threshold
+        if (cfg.noise_classification_threshold != null) {
+          $('noise-class-threshold').value = cfg.noise_classification_threshold;
+        }
+
+        // Teams escalation
+        if ($('teams-enabled')) $('teams-enabled').checked = cfg.teams_enabled || false;
+        if ($('teams-webhook-url')) $('teams-webhook-url').value = cfg.teams_webhook_url || '';
+        if ($('teams-sev-critical')) $('teams-sev-critical').checked = (cfg.teams_severity_filter || ['critical','warning']).includes('critical');
+        if ($('teams-sev-warning')) $('teams-sev-warning').checked = (cfg.teams_severity_filter || ['critical','warning']).includes('warning');
+        if ($('teams-sev-info')) $('teams-sev-info').checked = (cfg.teams_severity_filter || []).includes('info');
+        if ($('teams-cooldown')) $('teams-cooldown').value = cfg.teams_cooldown_mins || 10;
+        const escPriorities = cfg.esc_priorities || ['P1', 'P2'];
+        if ($('esc-p1')) $('esc-p1').checked = escPriorities.includes('P1');
+        if ($('esc-p2')) $('esc-p2').checked = escPriorities.includes('P2');
+        if ($('esc-p3')) $('esc-p3').checked = escPriorities.includes('P3');
+
+        // Sync status section
+        renderSyncStatus(cfg);
+
+      } catch (err) {
+        $('sync-status').innerHTML =
+          '<span style="color:#b91c1c;font-size:.875rem">Failed to load settings: ' + err.message + '</span>';
+        $('last-synced-label').textContent = '';
+      }
+    }
+
+    loadSettings();
+  </script>
+  <script>
+    // ── Fix nav links in standalone mode ──────────────────────────────────
+    if (typeof _isPortalMode !== 'undefined' && !_isPortalMode) {
+      document.querySelectorAll('[data-standalone-href]').forEach(el => {
+        el.href = el.dataset.standaloneHref;
+      });
+    }
+  </script>
 </body>
 </html>

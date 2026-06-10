@@ -245,10 +245,10 @@
   </header>
 
   <nav class="subnav">
-    <a href="/chat?agent=alert-analyser" class="subnav__link">💬 Chat</a>
-    <a href="/agents/alert-analyser/dashboard" class="subnav__link">📊 Dashboard</a>
-    <a href="/agents/alert-analyser/reports" class="subnav__link">📁 Reports</a>
-    <a href="/agents/alert-analyser/settings" class="subnav__link subnav__link--active">⚙ Settings</a>
+    <a href="/chat?agent=alert-analyser" data-standalone-href="#" class="subnav__link">💬 Chat</a>
+    <a href="/agents/alert-analyser/dashboard" data-standalone-href="dashboard.html" class="subnav__link">📊 Dashboard</a>
+    <a href="/agents/alert-analyser/reports" data-standalone-href="reports.html" class="subnav__link">📁 Reports</a>
+    <a href="/agents/alert-analyser/settings" data-standalone-href="settings.html" class="subnav__link subnav__link--active">⚙ Settings</a>
   </nav>
 
   <div class="content">
@@ -740,16 +740,25 @@
   <script src="/js/config.js?v=3"></script>
   <script src="/js/portal.js?v=3"></script>
   <script>
+    // ── Dual-mode detection: works inside Operative portal AND standalone ──
+    const _isPortal = (typeof BACKEND_URL !== 'undefined' && typeof window._authHeaders === 'function');
+    if (!_isPortal) {
+      window.BACKEND_URL = '';
+      window._authHeaders = () => ({});
+    }
+  </script>
+  <script>
     const SLUG  = 'alert-analyser';
-    const PROXY = `${BACKEND_URL}/api/agents/${SLUG}/proxy`;
+    const _isPortalMode = (typeof BACKEND_URL !== 'undefined' && BACKEND_URL !== '');
+    const PROXY = _isPortalMode ? `${BACKEND_URL}/api/agents/${SLUG}/proxy` : '';
 
-    const authHeaders = () => _authHeaders();
+    const authHeaders = () => (typeof _authHeaders === 'function' ? _authHeaders() : {});
 
     const $ = id => document.getElementById(id);
 
     // ── Portal detection — hide API key section when running inside portal ────────
 
-    const isStandaloneMode = window.location.pathname.startsWith('/ui/');
+    const isStandaloneMode = !_isPortalMode;
     if (!isStandaloneMode) {
       const banner = document.getElementById('no-key-banner');
       if (banner) banner.style.display = 'none';
@@ -1107,6 +1116,14 @@
     }
 
     loadSettings();
+  </script>
+  <script>
+    // ── Fix nav links in standalone mode ──────────────────────────────────
+    if (typeof _isPortalMode !== 'undefined' && !_isPortalMode) {
+      document.querySelectorAll('[data-standalone-href]').forEach(el => {
+        el.href = el.dataset.standaloneHref;
+      });
+    }
   </script>
 </body>
 </html>
