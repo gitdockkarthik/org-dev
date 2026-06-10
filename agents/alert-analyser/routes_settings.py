@@ -191,8 +191,14 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
             logger.info("Escalation: teams_cfg built, enabled=%s", teams_cfg.get("teams_enabled"))
 
             # Build anomalies from genuine P1/P2 unacknowledged alerts
+            # Only escalate newly fetched alerts, not historical data
+            if existing and last_synced:
+                _new_ids = {a.get("id") for a in new_alerts}
+                new_alerts_to_escalate = [a for a in classified if a.get("id") in _new_ids]
+            else:
+                new_alerts_to_escalate = classified
             escalation_anomalies = []
-            for alert in classified:
+            for alert in new_alerts_to_escalate:
                 if (alert.get("classification") == "genuine"
                         and alert.get("priority") in _config.get("esc_priorities", ["P1", "P2"])
                         and not alert.get("acknowledged", False)):
