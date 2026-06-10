@@ -39,8 +39,9 @@ def detect_anomalies(
                 "severity": severity,
                 "category": "broker_heap",
                 "description": (
-                    f"Broker {bid} heap at {heap:.0f}% "
-                    f"(warning: {heap_warning:.0f}%, critical: {heap_critical:.0f}%)."
+                    f"Broker {bid} heap at {heap:.0f}% — "
+                    f"{'critical' if heap >= heap_critical else 'warning'} threshold is {heap_critical if heap >= heap_critical else heap_warning:.0f}%. "
+                    f"Monitor for OOM risk."
                     + (f" GC pause: {gc_ms}ms." if gc_ms else "")
                 ),
                 "recommendations": [

@@ -422,7 +422,7 @@ async def sync_metrics() -> dict:
                             cluster_name=c["name"],
                             anomalies=anomalies,
                             config=teams_cfg,
-                            dashboard_url="",
+                            dashboard_url="http://kpi-internal.cloud.operative.com:3000/agents/kafka-analyser/dashboard",
                         )
                         if sent:
                             sync_metrics._summary_cooldown[cooldown_key] = now
