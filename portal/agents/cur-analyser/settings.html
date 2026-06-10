@@ -224,10 +224,10 @@
   </header>
 
   <nav class="subnav">
-    <a href="/chat?agent=cur-analyser" class="subnav__link">💬 Chat</a>
-    <a href="/agents/cur-analyser/dashboard" class="subnav__link">📊 Dashboard</a>
-    <a href="/agents/cur-analyser/reports" class="subnav__link">📁 Reports</a>
-    <a href="/agents/cur-analyser/settings" class="subnav__link subnav__link--active">⚙ Settings</a>
+    <a href="/chat?agent=cur-analyser" data-standalone-href="chat.html" class="subnav__link">💬 Chat</a>
+    <a href="/agents/cur-analyser/dashboard" data-standalone-href="dashboard.html" class="subnav__link">📊 Dashboard</a>
+    <a href="/agents/cur-analyser/reports" data-standalone-href="reports.html" class="subnav__link">📁 Reports</a>
+    <a href="/agents/cur-analyser/settings" data-standalone-href="settings.html" class="subnav__link subnav__link--active">⚙ Settings</a>
   </nav>
 
   <div class="content">
@@ -295,7 +295,7 @@
                    padding:0.5rem;background:#f0f9ff;
                    border-radius:6px;border:1px solid #bae6fd">
                 📂 Upload your CUR CSV on the
-                <a href="/agents/cur-analyser/reports"
+                <a href="/agents/cur-analyser/reports" data-standalone-href="reports.html"
                    style="color:#0EA5E9;font-weight:600">
                    Reports page</a>,
                 then return here and click Save &amp; Sync.
@@ -377,7 +377,7 @@
         <div id="sync-status" class="status-rows" style="margin-top:0.75rem">
           <span style="color:#94a3b8;font-style:italic;font-size:.875rem">Loading…</span>
         </div>
-        <a href="/agents/cur-analyser/reports"
+        <a href="/agents/cur-analyser/reports" data-standalone-href="reports.html"
            style="font-size:0.8rem;color:#6366f1;margin-top:0.5rem;display:inline-block">
            View all reports →
         </a>
@@ -646,15 +646,24 @@
   <script src="/js/config.js?v=3"></script>
   <script src="/js/portal.js?v=3"></script>
   <script>
+    // ── Dual-mode detection: works inside Operative portal AND standalone ──
+    const _isPortalMode = (typeof window._isPortalEnv !== 'undefined' && window._isPortalEnv === true);
+    if (!_isPortalMode) {
+      window.BACKEND_URL = '';
+      window._authHeaders = () => ({});
+      window.portalReady = Promise.resolve();
+      window.showToast = (msg, type) => console.log('[toast]', type || 'info', msg);
+    }
+  </script>
+  <script>
     const SLUG  = 'cur-analyser';
-    const PROXY = `${BACKEND_URL}/api/agents/${SLUG}/proxy`;
+    const PROXY = _isPortalMode ? `${BACKEND_URL}/api/agents/${SLUG}/proxy` : '';
 
-    const authHeaders = () => _authHeaders();
+    const authHeaders = () => (typeof _authHeaders === 'function' ? _authHeaders() : {});
 
     const $ = id => document.getElementById(id);
 
-    const isStandaloneMode =
-        window.location.pathname.startsWith('/ui/');
+    const isStandaloneMode = !_isPortalMode;
     if (!isStandaloneMode) {
         const banner = document.getElementById(
             'no-key-banner');
@@ -920,6 +929,16 @@
     }
 
     loadSettings();
+  </script>
+  <script>
+    // ── Fix nav links in standalone mode ──────────────────────────────────
+    if (!_isPortalMode) {
+      document.querySelectorAll('[data-standalone-href]').forEach(el => {
+        el.href = el.dataset.standaloneHref;
+      });
+      var topbar = document.querySelector('.topbar');
+      if (topbar) topbar.style.display = 'none';
+    }
   </script>
 </body>
 </html>

@@ -1,19 +1,22 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CUR Analyser — Settings</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CUR Analyser — Settings — UAP</title>
+  <link rel="stylesheet" href="/static/css/style.css">
   <style>
+    .subnav { display: flex; background: var(--navy-1); border-bottom: 1px solid var(--border); padding: 0 40px; }
+    .subnav__link { display: inline-flex; align-items: center; gap: 6px; padding: 13px 16px; font-size: .85rem; color: var(--text-muted); border-bottom: 2px solid transparent; margin-bottom: -1px; text-decoration: none; transition: color var(--t), border-color var(--t); }
+    .subnav__link:hover { color: var(--text); }
+    .subnav__link--active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+    .content { padding: 1.5rem 2rem 3rem; max-width: none; }
+
+    /* ── Settings UI — identical to agents/cur-analyser/static/settings.html ── */
+
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #f1f5f9;
-      color: #334155;
-      min-height: 100vh;
-      padding: 2rem 1rem 4rem;
-    }
+    body { background: #f1f5f9; color: #334155; }
 
     .container { max-width: 720px; margin: 0 auto; }
 
@@ -201,674 +204,742 @@
       .tab-btn { padding: 0.625rem 0.625rem; font-size: 0.8125rem; }
       .sync-row .field { flex: 1 1 100%; }
     }
+    @media (max-width: 768px) { .subnav { padding: 0 20px; } .content { padding: 1rem; } }
   </style>
 </head>
 <body>
-<div class="container">
 
-  <!-- Page header -->
-  <div class="page-header">
-    <h1>CUR Analyser — Settings</h1>
-    <p>Configure cost data source and agent behaviour</p>
-  </div>
+  <header class="topbar">
+    <a href="/" class="topbar__brand">
+      <span style="font-size:1.1rem;
+      font-weight:700;color:#ffffff;
+      letter-spacing:1px;
+      font-family:inherit;">OPERATIVE</span>
+    </a>
+    <nav class="topbar__nav">
+      <a href="/" class="topbar__link">Agents</a>
+      <a href="/admin/" class="topbar__link">Admin</a>
+    </nav>
+    <div class="topbar__right" style="font-size:.85rem;color:var(--text-muted)">CUR Analyser</div>
+  </header>
 
-  <!-- No-key banner -->
-  <div id="no-key-banner" class="banner-yellow hidden">
-    No Anthropic API key configured. Add your key to get started.
-  </div>
-
-  <!-- Tab navigation -->
-  <nav class="tab-nav" role="tablist">
-    <button class="tab-btn active" data-tab="data-source" role="tab">Data Source</button>
-    <button class="tab-btn" data-tab="cost-tuning" role="tab">Cost Tuning</button>
-    <button class="tab-btn" data-tab="aws-live" role="tab">
-      AWS Live <span class="phase-badge">Phase 2</span>
-    </button>
-    <button class="tab-btn" data-tab="finops" role="tab">
-      FinOps Intelligence <span class="phase-badge">Phase 3</span>
-    </button>
-    <button class="tab-btn" data-tab="autonomous" role="tab">
-      Autonomous FinOps <span class="phase-badge red">Phase 4</span>
-    </button>
+  <nav class="subnav">
+    <a href="/chat?agent=cur-analyser" data-standalone-href="chat.html" class="subnav__link">💬 Chat</a>
+    <a href="/agents/cur-analyser/dashboard" data-standalone-href="dashboard.html" class="subnav__link">📊 Dashboard</a>
+    <a href="/agents/cur-analyser/reports" data-standalone-href="reports.html" class="subnav__link">📁 Reports</a>
+    <a href="/agents/cur-analyser/settings" data-standalone-href="settings.html" class="subnav__link subnav__link--active">⚙ Settings</a>
   </nav>
 
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <!-- TAB 1: Data Source                                        -->
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <div class="tab-panel active" id="panel-data-source">
+  <div class="content">
+  <div class="container">
 
-    <!-- A: Anthropic API Key -->
-    <div class="card">
-      <div class="card-title">Anthropic API Key</div>
-      <div id="key-status" class="key-status hidden" style="margin-top:0.5rem"></div>
-      <div class="field" style="margin-top:0.75rem">
-        <label for="api-key-input">API Key</label>
-        <input type="password" id="api-key-input" placeholder="sk-ant-…" autocomplete="off" />
-      </div>
-      <div class="actions" style="margin-top:0.75rem">
-        <button class="btn btn-primary" id="save-api-key">Save</button>
-      </div>
-      <div id="api-key-msg" class="action-msg hidden"></div>
+    <!-- Page header -->
+    <div class="page-header">
+      <h1>CUR Analyser — Settings</h1>
+      <p>Configure cost data source and agent behaviour</p>
     </div>
 
-    <!-- B: Cost Data Source -->
-    <div class="card">
-      <div class="card-title">Cost Data Source</div>
-      <div class="card-subtitle">Select the source from which AWS cost data will be loaded</div>
+    <!-- No-key banner -->
+    <div id="no-key-banner" class="banner-yellow hidden">
+      No Anthropic API key configured. Add your key to get started.
+    </div>
 
-      <div class="radio-cards">
+    <!-- Tab navigation -->
+    <nav class="tab-nav" role="tablist">
+      <button class="tab-btn active" data-tab="data-source" role="tab">Data Source</button>
+      <button class="tab-btn" data-tab="cost-tuning" role="tab">Cost Tuning</button>
+      <button class="tab-btn" data-tab="aws-live" role="tab">
+        AWS Live <span class="phase-badge">Phase 2</span>
+      </button>
+      <button class="tab-btn" data-tab="finops" role="tab">
+        FinOps Intelligence <span class="phase-badge">Phase 3</span>
+      </button>
+      <button class="tab-btn" data-tab="autonomous" role="tab">
+        Autonomous FinOps <span class="phase-badge red">Phase 4</span>
+      </button>
+    </nav>
 
-        <label class="radio-card" id="card-file">
-          <input type="radio" name="source" value="file" />
-          <div class="radio-card-body">
-            <div class="radio-card-label">File Upload</div>
-            <div class="radio-card-desc">Upload an AWS Cost &amp; Usage Report (CUR) CSV export from the Reports page</div>
-            <div class="radio-card-sub" id="file-upload-hint"
-                 style="display:none;margin-top:0.5rem;
-                 padding:0.5rem;background:#f0f9ff;
-                 border-radius:6px;border:1px solid #bae6fd">
-              📂 Upload your CUR CSV on the
-              <a href="javascript:void(0)"
-                 onclick="document.querySelector('[data-tab=reports]') && window.location.href='?tab=reports'"
-                 style="color:#0EA5E9;font-weight:600">
-                 Reports page</a>,
-              then return here and click Save &amp; Sync.
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- TAB 1: Data Source                                        -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <div class="tab-panel active" id="panel-data-source">
+
+      <!-- A: Anthropic API Key -->
+      <div class="card">
+        <div class="card-title">Anthropic API Key</div>
+        <div id="key-status" class="key-status hidden" style="margin-top:0.5rem"></div>
+        <div class="field" style="margin-top:0.75rem">
+          <label for="api-key-input">API Key</label>
+          <input type="password" id="api-key-input" placeholder="sk-ant-…" autocomplete="off" />
+        </div>
+        <div class="actions" style="margin-top:0.75rem">
+          <button class="btn btn-primary" id="save-api-key">Save</button>
+        </div>
+        <div id="api-key-msg" class="action-msg hidden"></div>
+      </div>
+
+      <!-- B: Cost Data Source -->
+      <div class="card">
+        <div class="card-title">Cost Data Source</div>
+        <div class="card-subtitle">Select the source from which AWS cost data will be loaded</div>
+
+        <div class="radio-cards">
+
+          <label class="radio-card" id="card-file">
+            <input type="radio" name="source" value="file" />
+            <div class="radio-card-body">
+              <div class="radio-card-label">File Upload</div>
+              <div class="radio-card-desc">Upload an AWS Cost &amp; Usage Report (CUR) CSV export from the Reports page</div>
+              <div class="radio-card-sub" id="file-upload-hint"
+                   style="display:none;margin-top:0.5rem;
+                   padding:0.5rem;background:#f0f9ff;
+                   border-radius:6px;border:1px solid #bae6fd">
+                📂 Upload your CUR CSV on the
+                <a href="/agents/cur-analyser/reports" data-standalone-href="reports.html"
+                   style="color:#0EA5E9;font-weight:600">
+                   Reports page</a>,
+                then return here and click Save &amp; Sync.
+              </div>
             </div>
-          </div>
-        </label>
-
-        <label class="radio-card" id="card-synthetic">
-          <input type="radio" name="source" value="synthetic" />
-          <div class="radio-card-body">
-            <div class="radio-card-label">Synthetic Data</div>
-            <div class="radio-card-desc">Auto-generate realistic AWS cost data — no AWS account needed</div>
-          </div>
-        </label>
-
-        <label class="radio-card coming" id="card-aws">
-          <input type="radio" name="source" value="aws" />
-          <div class="radio-card-body">
-            <div class="radio-card-label">AWS Cost Explorer</div>
-            <div class="radio-card-desc">Fetch cost data directly from AWS Cost Explorer API</div>
-            <div class="radio-card-sub">Configure credentials in AWS Live Connectivity tab (Phase 2)</div>
-            <div class="coming-note">
-              AWS Cost Explorer connectivity available in Phase 2. Use File Upload or Synthetic Data for now.
-            </div>
-          </div>
-        </label>
-
-      </div>
-    </div>
-
-    <!-- C: Sync Schedule -->
-    <div class="card" id="sync-schedule-card">
-      <div class="card-title">Sync Schedule</div>
-      <div class="sync-row" style="margin-top:0.75rem">
-        <div class="field">
-          <select id="sync-interval">
-            <option value="0">Disabled</option>
-            <option value="360">Every 6 hours</option>
-            <option value="1440">Daily at midnight</option>
-            <option value="10080">Weekly</option>
-          </select>
-        </div>
-        <span class="last-synced" id="last-synced-label">Loading…</span>
-      </div>
-      <p class="hint" style="margin-top:0.5rem">Cost data changes daily — hourly sync is rarely needed</p>
-    </div>
-
-    <!-- D: Cost Window -->
-    <div class="card" id="cost-window-card">
-      <div class="card-title">Cost Window</div>
-      <div class="field" style="margin-top:0.75rem">
-        <select id="cost-window">
-          <option value="current_month">Current month</option>
-          <option value="7">Last 7 days</option>
-          <option value="30" selected>Last 30 days</option>
-          <option value="90">Last 3 months</option>
-          <option value="180">Last 6 months</option>
-          <option value="last_month">Last month</option>
-        </select>
-      </div>
-      <p class="hint" style="margin-top:0.25rem">
-        Cost analysis is more meaningful over longer periods. Recommended: Last 30 days or longer
-        for accurate trend detection.
-      </p>
-    </div>
-
-    <!-- E: Action Buttons -->
-    <div class="card">
-      <div class="actions">
-        <button class="btn btn-primary" id="btn-save-sync">Save &amp; Sync</button>
-        <button class="btn btn-secondary" id="btn-save-only">Save Only</button>
-      </div>
-      <div id="action-msg" class="action-msg hidden"></div>
-    </div>
-
-    <!-- F: Sync Status -->
-    <div class="card">
-      <div class="card-title">Sync Status</div>
-      <div id="sync-status" class="status-rows" style="margin-top:0.75rem">
-        <span style="color:#94a3b8;font-style:italic;font-size:.875rem">Loading…</span>
-      </div>
-      <a href="/ui/reports.html"
-         style="font-size:0.8rem;color:#6366f1;margin-top:0.5rem;display:inline-block">
-         View all reports →
-      </a>
-    </div>
-
-  </div><!-- /#panel-data-source -->
-
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <!-- TAB 2: Cost Tuning                                        -->
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <div class="tab-panel" id="panel-cost-tuning">
-
-    <!-- Display Settings -->
-    <div class="card">
-      <div class="card-title">Display Settings</div>
-      <div class="field" style="margin-top:0.75rem">
-        <label for="display-currency">Display currency</label>
-        <select id="display-currency" style="max-width:180px">
-          <option value="USD">USD</option>
-          <option value="EUR">EUR</option>
-          <option value="GBP">GBP</option>
-          <option value="INR">INR</option>
-          <option value="AUD">AUD</option>
-        </select>
-        <div class="hint">AWS bills in USD. Other currencies are approximate conversions for display only.</div>
-      </div>
-    </div>
-
-    <!-- Anomaly Detection -->
-    <div class="card">
-      <div class="card-title">Anomaly Detection</div>
-      <div class="field" style="margin-top:0.75rem">
-        <label for="anomaly-threshold">
-          Flag as anomaly if daily cost increases by more than X% vs previous period
-        </label>
-        <input type="number" id="anomaly-threshold" min="1" value="20" style="max-width:120px" />
-        <div class="hint">20% means a day costing $120 when average is $100 triggers an anomaly</div>
-      </div>
-    </div>
-
-    <!-- Analysis Settings -->
-    <div class="card">
-      <div class="card-title">Analysis Settings</div>
-      <div style="margin-top:0.875rem; display:flex; flex-direction:column; gap:1rem">
-        <div class="field">
-          <label for="top-drivers-count">Show top N cost drivers in dashboard</label>
-          <input type="number" id="top-drivers-count" min="1" max="20" value="5" style="max-width:120px" />
-        </div>
-        <div class="field">
-          <label for="min-cost-threshold">Ignore line items below $X per month in analysis</label>
-          <input type="number" id="min-cost-threshold" min="0" step="0.01" value="1.00" style="max-width:120px" />
-          <div class="hint">Filters out noise from very small services. Set to 0 to include all.</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Save -->
-    <div class="card">
-      <div class="actions">
-        <button class="btn btn-primary" id="btn-save-tuning">Save</button>
-      </div>
-      <div id="tuning-msg" class="action-msg hidden"></div>
-    </div>
-
-  </div><!-- /#panel-cost-tuning -->
-
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <!-- TAB 3: AWS Live (Phase 2, locked)                         -->
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <div class="tab-panel" id="panel-aws-live">
-    <div class="locked-info">
-      <strong>Phase 2</strong> — Direct AWS Cost Explorer and S3 CUR connectivity. Configure
-      once and costs sync automatically on your schedule. Available in Phase 2.
-    </div>
-    <div class="locked-content">
-      <div class="card">
-        <div class="field">
-          <label>IAM method</label>
-          <div class="iam-radios">
-            <label class="iam-radio-label">
-              <input type="radio" name="iam-method" value="keys" disabled /> Access Keys
-            </label>
-            <label class="iam-radio-label">
-              <input type="radio" name="iam-method" value="role" disabled /> IAM Role ARN
-            </label>
-          </div>
-          <div class="hint">IAM Role recommended for production deployments</div>
-        </div>
-        <div class="field">
-          <label for="aws-access-key">AWS Access Key ID</label>
-          <input type="text" id="aws-access-key" disabled placeholder="AKIAIOSFODNN7EXAMPLE" />
-        </div>
-        <div class="field">
-          <label for="aws-secret-key">AWS Secret Access Key</label>
-          <input type="password" id="aws-secret-key" disabled />
-        </div>
-        <div class="field">
-          <label for="aws-region">AWS Region</label>
-          <input type="text" id="aws-region" disabled value="us-east-1" style="max-width:180px" />
-        </div>
-        <div class="field">
-          <label for="iam-role-arn">IAM Role ARN</label>
-          <input type="text" id="iam-role-arn" disabled placeholder="arn:aws:iam::123456789012:role/CURRole" />
-          <div class="hint">Used instead of access keys when running on EC2/EKS</div>
-        </div>
-        <div class="field">
-          <label for="ce-granularity">Cost Explorer granularity</label>
-          <select id="ce-granularity" disabled style="max-width:180px">
-            <option value="DAILY">DAILY</option>
-            <option value="MONTHLY">MONTHLY</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="s3-bucket">S3 CUR Bucket</label>
-          <input type="text" id="s3-bucket" disabled placeholder="my-cur-bucket" />
-        </div>
-        <div class="field">
-          <label for="s3-prefix">S3 CUR Prefix</label>
-          <input type="text" id="s3-prefix" disabled placeholder="cur/reports/" />
-          <div class="hint">Path prefix where CUR files are stored in S3</div>
-        </div>
-      </div>
-    </div>
-  </div><!-- /#panel-aws-live -->
-
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <!-- TAB 4: FinOps Intelligence (Phase 3, locked)              -->
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <div class="tab-panel" id="panel-finops">
-    <div class="locked-info">
-      <strong>Phase 3</strong> — RAG-powered cost optimisation using AWS pricing documentation,
-      Reserved Instance guides, Savings Plans data and your historical cost patterns. The agent
-      will provide grounded RI and Savings Plans recommendations. Available in Phase 3.
-    </div>
-    <div class="locked-content">
-      <div class="card">
-        <div class="toggle-wrap">
-          <input type="checkbox" id="rag-enable" class="toggle-input" disabled />
-          <label for="rag-enable" class="toggle-track"></label>
-          <span class="toggle-label">Enable FinOps RAG</span>
-        </div>
-
-        <div class="field">
-          <label for="rag-qdrant-host">Qdrant Host</label>
-          <input type="text" id="rag-qdrant-host" disabled value="localhost" />
-        </div>
-        <div class="field">
-          <label for="rag-qdrant-port">Qdrant Port</label>
-          <input type="number" id="rag-qdrant-port" disabled value="6333" style="max-width:120px" />
-        </div>
-        <div class="field">
-          <label for="rag-qdrant-collection">Qdrant Collection</label>
-          <input type="text" id="rag-qdrant-collection" disabled placeholder="aws-pricing" />
-        </div>
-        <div class="field">
-          <label for="rag-chunks">RAG Context Chunks</label>
-          <input type="number" id="rag-chunks" disabled value="5" style="max-width:120px" />
-        </div>
-
-        <div class="card-section">
-          <div class="card-section-title">Recommendations</div>
-          <div class="field">
-            <label for="ri-threshold">Suggest RI purchase if break-even is within X months</label>
-            <input type="number" id="ri-threshold" disabled value="12" style="max-width:120px" />
-            <div class="hint">12 months = recommend RI only if it pays for itself within a year</div>
-          </div>
-          <div class="field">
-            <label for="savings-plans-pref">Savings Plans preference</label>
-            <select id="savings-plans-pref" disabled style="max-width:220px">
-              <option value="Compute">Compute</option>
-              <option value="EC2">EC2</option>
-              <option value="SageMaker">SageMaker</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="card-section">
-          <div class="field">
-            <label for="rag-model">Reasoning Model</label>
-            <select id="rag-model" disabled>
-              <option value="claude-sonnet-4-6" selected>claude-sonnet-4-6 (recommended)</option>
-              <option value="claude-opus-4-6">claude-opus-4-6 (higher quality, slower)</option>
-            </select>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div><!-- /#panel-finops -->
-
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <!-- TAB 5: Autonomous FinOps (Phase 4, locked)                -->
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <div class="tab-panel" id="panel-autonomous">
-    <div class="banner-amber">
-      ⚠️ Autonomous FinOps executes cost optimisation actions without human approval, including
-      purchasing Reserved Instances and modifying infrastructure. Enable only after Phase 3
-      recommendations have been validated over at least 90 days with a HITL success rate
-      meeting the configured threshold. Financial commitments made autonomously cannot be reversed.
-    </div>
-    <div class="locked-content">
-      <div class="card">
-        <div class="toggle-wrap">
-          <input type="checkbox" id="auto-enable" class="toggle-input" disabled />
-          <label for="auto-enable" class="toggle-track"></label>
-          <span class="toggle-label">Enable Autonomous FinOps</span>
-        </div>
-
-        <div class="field">
-          <label for="auto-hitl-threshold">
-            Minimum HITL success rate to activate autonomous mode (%)
           </label>
-          <input type="number" id="auto-hitl-threshold" disabled value="90" style="max-width:120px" />
-          <div class="hint">Higher than alert agent (90% vs 85%) because financial actions carry real monetary risk</div>
-        </div>
 
-        <div class="field">
-          <label for="auto-max-spend">Maximum $ value of autonomous actions per month</label>
-          <input type="number" id="auto-max-spend" disabled value="1000" style="max-width:120px" />
-          <div class="hint">Safety cap — autonomous actions exceeding this require human approval</div>
-        </div>
+          <label class="radio-card" id="card-synthetic">
+            <input type="radio" name="source" value="synthetic" />
+            <div class="radio-card-body">
+              <div class="radio-card-label">Synthetic Data</div>
+              <div class="radio-card-desc">Auto-generate realistic AWS cost data — no AWS account needed</div>
+            </div>
+          </label>
 
-        <div class="field">
-          <label>Permitted autonomous actions</label>
-          <div class="checkbox-group">
-            <div class="checkbox-row">
-              <input type="checkbox" id="act-ri" disabled />
-              <label for="act-ri">Purchase Reserved Instances</label>
+          <label class="radio-card coming" id="card-aws">
+            <input type="radio" name="source" value="aws" />
+            <div class="radio-card-body">
+              <div class="radio-card-label">AWS Cost Explorer</div>
+              <div class="radio-card-desc">Fetch cost data directly from AWS Cost Explorer API</div>
+              <div class="radio-card-sub">Configure credentials in AWS Live Connectivity tab (Phase 2)</div>
+              <div class="coming-note">
+                AWS Cost Explorer connectivity available in Phase 2. Use File Upload or Synthetic Data for now.
+              </div>
             </div>
-            <div class="checkbox-row">
-              <input type="checkbox" id="act-sp" disabled />
-              <label for="act-sp">Purchase Savings Plans</label>
-            </div>
-            <div class="checkbox-row">
-              <input type="checkbox" id="act-rightsize" disabled />
-              <label for="act-rightsize">Rightsize EC2 instances</label>
-            </div>
-            <div class="checkbox-row">
-              <input type="checkbox" id="act-delete" disabled />
-              <label for="act-delete">Delete unused resources</label>
-            </div>
-            <div class="checkbox-row">
-              <input type="checkbox" id="act-rds" disabled />
-              <label for="act-rds">Modify RDS instance types</label>
-            </div>
+          </label>
+
+        </div>
+      </div>
+
+      <!-- C: Sync Schedule -->
+      <div class="card" id="sync-schedule-card">
+        <div class="card-title">Sync Schedule</div>
+        <div class="sync-row" style="margin-top:0.75rem">
+          <div class="field">
+            <select id="sync-interval">
+              <option value="0">Disabled</option>
+              <option value="360">Every 6 hours</option>
+              <option value="1440">Daily at midnight</option>
+              <option value="10080">Weekly</option>
+            </select>
           </div>
+          <span class="last-synced" id="last-synced-label">Loading…</span>
         </div>
+        <p class="hint" style="margin-top:0.5rem">Cost data changes daily — hourly sync is rarely needed</p>
+      </div>
 
-        <div class="field">
-          <label for="auto-terraform-url">Terraform Workspace URL</label>
-          <input type="text" id="auto-terraform-url" disabled placeholder="https://app.terraform.io/…" />
-          <div class="hint">For infrastructure changes via IaC</div>
+      <!-- D: Cost Window -->
+      <div class="card" id="cost-window-card">
+        <div class="card-title">Cost Window</div>
+        <div class="field" style="margin-top:0.75rem">
+          <select id="cost-window">
+            <option value="current_month">Current month</option>
+            <option value="7">Last 7 days</option>
+            <option value="30" selected>Last 30 days</option>
+            <option value="90">Last 3 months</option>
+            <option value="180">Last 6 months</option>
+            <option value="last_month">Last month</option>
+          </select>
         </div>
+        <p class="hint" style="margin-top:0.25rem">
+          Cost analysis is more meaningful over longer periods. Recommended: Last 30 days or longer
+          for accurate trend detection.
+        </p>
+      </div>
 
-        <div class="field">
-          <label for="auto-blast-radius">Maximum AWS accounts affected per autonomous action</label>
-          <input type="number" id="auto-blast-radius" disabled value="1" style="max-width:120px" />
-          <div class="hint">
-            Default 1 means changes limited to one account at a time.
+      <!-- E: Action Buttons -->
+      <div class="card">
+        <div class="actions">
+          <button class="btn btn-primary" id="btn-save-sync">Save &amp; Sync</button>
+          <button class="btn btn-secondary" id="btn-save-only">Save Only</button>
+        </div>
+        <div id="action-msg" class="action-msg hidden"></div>
+      </div>
+
+      <!-- F: Sync Status -->
+      <div class="card">
+        <div class="card-title">Sync Status</div>
+        <div id="sync-status" class="status-rows" style="margin-top:0.75rem">
+          <span style="color:#94a3b8;font-style:italic;font-size:.875rem">Loading…</span>
+        </div>
+        <a href="/agents/cur-analyser/reports" data-standalone-href="reports.html"
+           style="font-size:0.8rem;color:#6366f1;margin-top:0.5rem;display:inline-block">
+           View all reports →
+        </a>
+      </div>
+
+    </div><!-- /#panel-data-source -->
+
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- TAB 2: Cost Tuning                                        -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <div class="tab-panel" id="panel-cost-tuning">
+
+      <!-- Display Settings -->
+      <div class="card">
+        <div class="card-title">Display Settings</div>
+        <div class="field" style="margin-top:0.75rem">
+          <label for="display-currency">Display currency</label>
+          <select id="display-currency" style="max-width:180px">
+            <option value="USD">USD</option>
+            <option value="EUR">EUR</option>
+            <option value="GBP">GBP</option>
+            <option value="INR">INR</option>
+            <option value="AUD">AUD</option>
+          </select>
+          <div class="hint">AWS bills in USD. Other currencies are approximate conversions for display only.</div>
+        </div>
+      </div>
+
+      <!-- Anomaly Detection -->
+      <div class="card">
+        <div class="card-title">Anomaly Detection</div>
+        <div class="field" style="margin-top:0.75rem">
+          <label for="anomaly-threshold">
+            Flag as anomaly if daily cost increases by more than X% vs previous period
+          </label>
+          <input type="number" id="anomaly-threshold" min="1" value="20" style="max-width:120px" />
+          <div class="hint">20% means a day costing $120 when average is $100 triggers an anomaly</div>
+        </div>
+      </div>
+
+      <!-- Analysis Settings -->
+      <div class="card">
+        <div class="card-title">Analysis Settings</div>
+        <div style="margin-top:0.875rem; display:flex; flex-direction:column; gap:1rem">
+          <div class="field">
+            <label for="top-drivers-count">Show top N cost drivers in dashboard</label>
+            <input type="number" id="top-drivers-count" min="1" max="20" value="5" style="max-width:120px" />
+          </div>
+          <div class="field">
+            <label for="min-cost-threshold">Ignore line items below $X per month in analysis</label>
+            <input type="number" id="min-cost-threshold" min="0" step="0.01" value="1.00" style="max-width:120px" />
+            <div class="hint">Filters out noise from very small services. Set to 0 to include all.</div>
           </div>
         </div>
       </div>
-    </div>
-  </div><!-- /#panel-autonomous -->
 
-</div><!-- /.container -->
+      <!-- Save -->
+      <div class="card">
+        <div class="actions">
+          <button class="btn btn-primary" id="btn-save-tuning">Save</button>
+        </div>
+        <div id="tuning-msg" class="action-msg hidden"></div>
+      </div>
 
-<script>
-  const $ = id => document.getElementById(id);
+    </div><!-- /#panel-cost-tuning -->
 
-  // ── Tab switching ────────────────────────────────────────────────────────────
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- TAB 3: AWS Live (Phase 2, locked)                         -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <div class="tab-panel" id="panel-aws-live">
+      <div class="locked-info">
+        <strong>Phase 2</strong> — Direct AWS Cost Explorer and S3 CUR connectivity. Configure
+        once and costs sync automatically on your schedule. Available in Phase 2.
+      </div>
+      <div class="locked-content">
+        <div class="card">
+          <div class="field">
+            <label>IAM method</label>
+            <div class="iam-radios">
+              <label class="iam-radio-label">
+                <input type="radio" name="iam-method" value="keys" disabled /> Access Keys
+              </label>
+              <label class="iam-radio-label">
+                <input type="radio" name="iam-method" value="role" disabled /> IAM Role ARN
+              </label>
+            </div>
+            <div class="hint">IAM Role recommended for production deployments</div>
+          </div>
+          <div class="field">
+            <label for="aws-access-key">AWS Access Key ID</label>
+            <input type="text" id="aws-access-key" disabled placeholder="AKIAIOSFODNN7EXAMPLE" />
+          </div>
+          <div class="field">
+            <label for="aws-secret-key">AWS Secret Access Key</label>
+            <input type="password" id="aws-secret-key" disabled />
+          </div>
+          <div class="field">
+            <label for="aws-region">AWS Region</label>
+            <input type="text" id="aws-region" disabled value="us-east-1" style="max-width:180px" />
+          </div>
+          <div class="field">
+            <label for="iam-role-arn">IAM Role ARN</label>
+            <input type="text" id="iam-role-arn" disabled placeholder="arn:aws:iam::123456789012:role/CURRole" />
+            <div class="hint">Used instead of access keys when running on EC2/EKS</div>
+          </div>
+          <div class="field">
+            <label for="ce-granularity">Cost Explorer granularity</label>
+            <select id="ce-granularity" disabled style="max-width:180px">
+              <option value="DAILY">DAILY</option>
+              <option value="MONTHLY">MONTHLY</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="s3-bucket">S3 CUR Bucket</label>
+            <input type="text" id="s3-bucket" disabled placeholder="my-cur-bucket" />
+          </div>
+          <div class="field">
+            <label for="s3-prefix">S3 CUR Prefix</label>
+            <input type="text" id="s3-prefix" disabled placeholder="cur/reports/" />
+            <div class="hint">Path prefix where CUR files are stored in S3</div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /#panel-aws-live -->
 
-  document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-      btn.classList.add('active');
-      $('panel-' + btn.dataset.tab).classList.add('active');
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- TAB 4: FinOps Intelligence (Phase 3, locked)              -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <div class="tab-panel" id="panel-finops">
+      <div class="locked-info">
+        <strong>Phase 3</strong> — RAG-powered cost optimisation using AWS pricing documentation,
+        Reserved Instance guides, Savings Plans data and your historical cost patterns. The agent
+        will provide grounded RI and Savings Plans recommendations. Available in Phase 3.
+      </div>
+      <div class="locked-content">
+        <div class="card">
+          <div class="toggle-wrap">
+            <input type="checkbox" id="rag-enable" class="toggle-input" disabled />
+            <label for="rag-enable" class="toggle-track"></label>
+            <span class="toggle-label">Enable FinOps RAG</span>
+          </div>
+
+          <div class="field">
+            <label for="rag-qdrant-host">Qdrant Host</label>
+            <input type="text" id="rag-qdrant-host" disabled value="localhost" />
+          </div>
+          <div class="field">
+            <label for="rag-qdrant-port">Qdrant Port</label>
+            <input type="number" id="rag-qdrant-port" disabled value="6333" style="max-width:120px" />
+          </div>
+          <div class="field">
+            <label for="rag-qdrant-collection">Qdrant Collection</label>
+            <input type="text" id="rag-qdrant-collection" disabled placeholder="aws-pricing" />
+          </div>
+          <div class="field">
+            <label for="rag-chunks">RAG Context Chunks</label>
+            <input type="number" id="rag-chunks" disabled value="5" style="max-width:120px" />
+          </div>
+
+          <div class="card-section">
+            <div class="card-section-title">Recommendations</div>
+            <div class="field">
+              <label for="ri-threshold">Suggest RI purchase if break-even is within X months</label>
+              <input type="number" id="ri-threshold" disabled value="12" style="max-width:120px" />
+              <div class="hint">12 months = recommend RI only if it pays for itself within a year</div>
+            </div>
+            <div class="field">
+              <label for="savings-plans-pref">Savings Plans preference</label>
+              <select id="savings-plans-pref" disabled style="max-width:220px">
+                <option value="Compute">Compute</option>
+                <option value="EC2">EC2</option>
+                <option value="SageMaker">SageMaker</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="card-section">
+            <div class="field">
+              <label for="rag-model">Reasoning Model</label>
+              <select id="rag-model" disabled>
+                <option value="claude-sonnet-4-6" selected>claude-sonnet-4-6 (recommended)</option>
+                <option value="claude-opus-4-6">claude-opus-4-6 (higher quality, slower)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /#panel-finops -->
+
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- TAB 5: Autonomous FinOps (Phase 4, locked)                -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <div class="tab-panel" id="panel-autonomous">
+      <div class="banner-amber">
+        ⚠️ Autonomous FinOps executes cost optimisation actions without human approval, including
+        purchasing Reserved Instances and modifying infrastructure. Enable only after Phase 3
+        recommendations have been validated over at least 90 days with a HITL success rate
+        meeting the configured threshold. Financial commitments made autonomously cannot be reversed.
+      </div>
+      <div class="locked-content">
+        <div class="card">
+          <div class="toggle-wrap">
+            <input type="checkbox" id="auto-enable" class="toggle-input" disabled />
+            <label for="auto-enable" class="toggle-track"></label>
+            <span class="toggle-label">Enable Autonomous FinOps</span>
+          </div>
+
+          <div class="field">
+            <label for="auto-hitl-threshold">
+              Minimum HITL success rate to activate autonomous mode (%)
+            </label>
+            <input type="number" id="auto-hitl-threshold" disabled value="90" style="max-width:120px" />
+            <div class="hint">Higher than alert agent (90% vs 85%) because financial actions carry real monetary risk</div>
+          </div>
+
+          <div class="field">
+            <label for="auto-max-spend">Maximum $ value of autonomous actions per month</label>
+            <input type="number" id="auto-max-spend" disabled value="1000" style="max-width:120px" />
+            <div class="hint">Safety cap — autonomous actions exceeding this require human approval</div>
+          </div>
+
+          <div class="field">
+            <label>Permitted autonomous actions</label>
+            <div class="checkbox-group">
+              <div class="checkbox-row">
+                <input type="checkbox" id="act-ri" disabled />
+                <label for="act-ri">Purchase Reserved Instances</label>
+              </div>
+              <div class="checkbox-row">
+                <input type="checkbox" id="act-sp" disabled />
+                <label for="act-sp">Purchase Savings Plans</label>
+              </div>
+              <div class="checkbox-row">
+                <input type="checkbox" id="act-rightsize" disabled />
+                <label for="act-rightsize">Rightsize EC2 instances</label>
+              </div>
+              <div class="checkbox-row">
+                <input type="checkbox" id="act-delete" disabled />
+                <label for="act-delete">Delete unused resources</label>
+              </div>
+              <div class="checkbox-row">
+                <input type="checkbox" id="act-rds" disabled />
+                <label for="act-rds">Modify RDS instance types</label>
+              </div>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="auto-terraform-url">Terraform Workspace URL</label>
+            <input type="text" id="auto-terraform-url" disabled placeholder="https://app.terraform.io/…" />
+            <div class="hint">For infrastructure changes via IaC</div>
+          </div>
+
+          <div class="field">
+            <label for="auto-blast-radius">Maximum AWS accounts affected per autonomous action</label>
+            <input type="number" id="auto-blast-radius" disabled value="1" style="max-width:120px" />
+            <div class="hint">Default 1 means changes limited to one account at a time.</div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /#panel-autonomous -->
+
+  </div><!-- /.container -->
+  </div><!-- /.content -->
+
+  <script>
+    // ── Standalone mode: stub portal dependencies ─────────────────────────
+    if (typeof window._authHeaders !== 'function') {
+      window.BACKEND_URL = '';
+      window._authHeaders = () => ({});
+      window.portalReady = Promise.resolve();
+      window.showToast = (msg, type) => console.log('[toast]', type || 'info', msg);
+    }
+  </script>
+  <script>
+    // ── Dual-mode detection: works inside Operative portal AND standalone ──
+    const _isPortalMode = (typeof window._isPortalEnv !== 'undefined' && window._isPortalEnv === true);
+  </script>
+  <script>
+    const SLUG  = 'cur-analyser';
+    const PROXY = _isPortalMode ? `${BACKEND_URL}/api/agents/${SLUG}/proxy` : '';
+
+    const authHeaders = () => (typeof _authHeaders === 'function' ? _authHeaders() : {});
+
+    const $ = id => document.getElementById(id);
+
+    const isStandaloneMode = !_isPortalMode;
+    if (!isStandaloneMode) {
+        const banner = document.getElementById(
+            'no-key-banner');
+        if (banner) banner.style.display = 'none';
+        const apiKeyCard = document.getElementById(
+            'save-api-key');
+        if (apiKeyCard) {
+            const card = apiKeyCard.closest(
+                '.card, .settings-card, section');
+            if (card) card.style.display = 'none';
+        }
+    }
+
+    // ── Tab switching ────────────────────────────────────────────────────────────
+
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        $('panel-' + btn.dataset.tab).classList.add('active');
+      });
     });
-  });
 
-  // ── Helpers ──────────────────────────────────────────────────────────────────
+    // ── Helpers ──────────────────────────────────────────────────────────────────
 
-  function showMsg(el, text, type, durationMs = 5000) {
-    el.textContent = text;
-    el.className = 'action-msg ' + type;
-    clearTimeout(el._t);
-    el._t = setTimeout(() => { el.className = 'action-msg hidden'; el.textContent = ''; }, durationMs);
-  }
-
-  function fmtDatetime(iso) {
-    if (!iso) return 'Never';
-    try {
-      const d = new Date(iso);
-      return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
-        + ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    } catch { return iso; }
-  }
-
-  function fmtCurrency(val) {
-    if (val == null) return '—';
-    return '$' + Number(val).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  }
-
-  // ── Radio card selection ─────────────────────────────────────────────────────
-
-  function selectSource(value) {
-    document.querySelectorAll('.radio-card').forEach(card => {
-      const radio = card.querySelector('input[type="radio"]');
-      if (!radio) return;
-      const selected = radio.value === value;
-      radio.checked = selected;
-      card.classList.toggle('selected', selected);
-    });
-
-    const hint = $('file-upload-hint');
-    const schedCard = $('sync-schedule-card');
-    const winCard   = $('cost-window-card');
-
-    if (value === 'file') {
-      if (hint)      hint.style.display      = 'block';
-      if (schedCard) schedCard.style.display  = 'none';
-      if (winCard)   winCard.style.display    = 'none';
-    } else if (value === 'synthetic') {
-      if (hint)      hint.style.display      = 'none';
-      if (schedCard) schedCard.style.display  = 'none';
-      if (winCard)   winCard.style.display    = 'none';
-    } else {
-      if (hint)      hint.style.display      = 'none';
-      if (schedCard) schedCard.style.display  = 'block';
-      if (winCard)   winCard.style.display    = 'block';
-    }
-  }
-
-  document.querySelectorAll('input[name="source"]').forEach(radio => {
-    radio.addEventListener('change', () => selectSource(radio.value));
-  });
-
-  ['card-file', 'card-synthetic', 'card-aws'].forEach(id => {
-    const card = $(id);
-    if (!card) return;
-    card.addEventListener('click', () => {
-      const radio = card.querySelector('input[type="radio"]');
-      if (radio) selectSource(radio.value);
-    });
-  });
-
-  // ── Build payloads ───────────────────────────────────────────────────────────
-
-  function buildSourcePayload() {
-    const radio = document.querySelector('input[name="source"]:checked');
-    return {
-      source_type:           radio ? radio.value : 'file',
-      sync_interval_minutes: parseInt($('sync-interval').value, 10),
-      cost_window:           $('cost-window').value,
-    };
-  }
-
-  function buildTuningPayload() {
-    return {
-      display_currency:      $('display-currency').value,
-      anomaly_threshold_pct: parseInt($('anomaly-threshold').value, 10),
-      top_drivers_count:     parseInt($('top-drivers-count').value, 10),
-      min_cost_threshold:    parseFloat($('min-cost-threshold').value),
-    };
-  }
-
-  // ── API calls ────────────────────────────────────────────────────────────────
-
-  async function postSettings(payload) {
-    const res = await fetch('/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      throw new Error('HTTP ' + res.status + (body ? ': ' + body : ''));
-    }
-    return res.json();
-  }
-
-  // ── Save API key ─────────────────────────────────────────────────────────────
-
-  $('save-api-key').addEventListener('click', async () => {
-    const key = $('api-key-input').value.trim();
-    const msgEl = $('api-key-msg');
-    if (!key) { showMsg(msgEl, 'Please enter an API key.', 'err'); return; }
-    try {
-      await postSettings({ api_key: key });
-      showMsg(msgEl, 'API key saved.', 'ok');
-      $('api-key-input').value = '';
-      await loadSettings();
-    } catch (err) {
-      showMsg(msgEl, 'Save failed: ' + err.message, 'err');
-    }
-  });
-
-  // ── Save & Sync ──────────────────────────────────────────────────────────────
-
-  $('btn-save-sync').addEventListener('click', async () => {
-    const msgEl = $('action-msg');
-    try {
-      await postSettings(buildSourcePayload());
-      showMsg(msgEl, 'Loading cost data… please wait', 'info', 120000);
-      const syncRes = await fetch('/settings/sync', { method: 'POST' });
-      if (!syncRes.ok) throw new Error('Sync HTTP ' + syncRes.status);
-      const syncData = await syncRes.json();
-      const count = syncData.record_count ?? syncData.alert_count ?? '?';
-      const spend = syncData.total_cost != null
-        ? ' Total spend: ' + fmtCurrency(syncData.total_cost)
-        : '';
-      showMsg(msgEl, 'Sync complete — ' + count + ' records loaded.' + spend, 'ok');
-      await loadSettings();
-    } catch (err) {
-      showMsg(msgEl, 'Failed: ' + err.message, 'err');
-    }
-  });
-
-  // ── Save Only ────────────────────────────────────────────────────────────────
-
-  $('btn-save-only').addEventListener('click', async () => {
-    const msgEl = $('action-msg');
-    try {
-      await postSettings(buildSourcePayload());
-      showMsg(msgEl, 'Settings saved.', 'ok');
-      await loadSettings();
-    } catch (err) {
-      showMsg(msgEl, 'Failed: ' + err.message, 'err');
-    }
-  });
-
-  // ── Save Tuning ──────────────────────────────────────────────────────────────
-
-  $('btn-save-tuning').addEventListener('click', async () => {
-    const msgEl = $('tuning-msg');
-    try {
-      await postSettings(buildTuningPayload());
-      showMsg(msgEl, 'Settings saved.', 'ok');
-    } catch (err) {
-      showMsg(msgEl, 'Failed: ' + err.message, 'err');
-    }
-  });
-
-  // ── Render sync status ───────────────────────────────────────────────────────
-
-  function renderSyncStatus(cfg) {
-    const el = $('sync-status');
-    el.innerHTML = '';
-
-    function addRow(label, valueHtml) {
-      const div = document.createElement('div');
-      div.className = 'status-row';
-      div.innerHTML =
-        '<span class="status-row-label">' + label + '</span>' +
-        '<span class="status-value">' + valueHtml + '</span>';
-      el.appendChild(div);
+    function showMsg(el, text, type, durationMs = 5000) {
+      el.textContent = text;
+      el.className = 'action-msg ' + type;
+      clearTimeout(el._t);
+      el._t = setTimeout(() => { el.className = 'action-msg hidden'; el.textContent = ''; }, durationMs);
     }
 
-    addRow('Source type', '<span class="badge">' + (cfg.source_type || 'file') + '</span>');
-    addRow('Last synced', fmtDatetime(cfg.last_synced || null));
-    addRow('Records loaded', cfg.record_count != null ? String(cfg.record_count) : '—');
-    addRow('Total cost in window', fmtCurrency(cfg.total_cost ?? null));
-  }
+    function fmtDatetime(iso) {
+      if (!iso) return 'Never';
+      try {
+        const d = new Date(iso);
+        return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
+          + ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      } catch { return iso; }
+    }
 
-  // ── Load settings on page load ───────────────────────────────────────────────
+    function fmtCurrency(val) {
+      if (val == null) return '—';
+      return '$' + Number(val).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
 
-  async function loadSettings() {
-    try {
-      const res = await fetch('/settings');
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const cfg = await res.json();
+    // ── Radio card selection ─────────────────────────────────────────────────────
 
-      // API key banner + status line
-      const configured = cfg.api_key_configured === true;
-      $('no-key-banner').classList.toggle('hidden', configured);
-      const keyStatus = $('key-status');
-      if (configured && cfg.api_key_last4) {
-        keyStatus.textContent = 'API key configured (last 4: ...' + cfg.api_key_last4 + ')';
-        keyStatus.classList.remove('hidden');
+    function selectSource(value) {
+      document.querySelectorAll('.radio-card').forEach(card => {
+        const radio = card.querySelector('input[type="radio"]');
+        if (!radio) return;
+        const selected = radio.value === value;
+        radio.checked = selected;
+        card.classList.toggle('selected', selected);
+      });
+
+      const hint = $('file-upload-hint');
+      const schedCard = $('sync-schedule-card');
+      const winCard   = $('cost-window-card');
+
+      if (value === 'file') {
+        if (hint)      hint.style.display      = 'block';
+        if (schedCard) schedCard.style.display  = 'none';
+        if (winCard)   winCard.style.display    = 'none';
+      } else if (value === 'synthetic') {
+        if (hint)      hint.style.display      = 'none';
+        if (schedCard) schedCard.style.display  = 'none';
+        if (winCard)   winCard.style.display    = 'none';
       } else {
-        keyStatus.classList.add('hidden');
+        if (hint)      hint.style.display      = 'none';
+        if (schedCard) schedCard.style.display  = 'block';
+        if (winCard)   winCard.style.display    = 'block';
+      }
+    }
+
+    document.querySelectorAll('input[name="source"]').forEach(radio => {
+      radio.addEventListener('change', () => selectSource(radio.value));
+    });
+
+    ['card-file', 'card-synthetic', 'card-aws'].forEach(id => {
+      const card = $(id);
+      if (!card) return;
+      card.addEventListener('click', () => {
+        const radio = card.querySelector('input[type="radio"]');
+        if (radio) selectSource(radio.value);
+      });
+    });
+
+    // ── Build payloads ───────────────────────────────────────────────────────────
+
+    function buildSourcePayload() {
+      const radio = document.querySelector('input[name="source"]:checked');
+      return {
+        source_type:           radio ? radio.value : 'file',
+        sync_interval_minutes: parseInt($('sync-interval').value, 10),
+        cost_window:           $('cost-window').value,
+      };
+    }
+
+    function buildTuningPayload() {
+      return {
+        display_currency:      $('display-currency').value,
+        anomaly_threshold_pct: parseInt($('anomaly-threshold').value, 10),
+        top_drivers_count:     parseInt($('top-drivers-count').value, 10),
+        min_cost_threshold:    parseFloat($('min-cost-threshold').value),
+      };
+    }
+
+    // ── API calls ────────────────────────────────────────────────────────────────
+
+    async function postSettings(payload) {
+      const res = await fetch(`${PROXY}/settings`, {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        throw new Error('HTTP ' + res.status + (body ? ': ' + body : ''));
+      }
+      return res.json();
+    }
+
+    // ── Save API key ─────────────────────────────────────────────────────────────
+
+    $('save-api-key').addEventListener('click', async () => {
+      const key = $('api-key-input').value.trim();
+      const msgEl = $('api-key-msg');
+      if (!key) { showMsg(msgEl, 'Please enter an API key.', 'err'); return; }
+      try {
+        await postSettings({ api_key: key });
+        showMsg(msgEl, 'API key saved.', 'ok');
+        $('api-key-input').value = '';
+        await loadSettings();
+      } catch (err) {
+        showMsg(msgEl, 'Save failed: ' + err.message, 'err');
+      }
+    });
+
+    // ── Save & Sync ──────────────────────────────────────────────────────────────
+
+    $('btn-save-sync').addEventListener('click', async () => {
+      const msgEl = $('action-msg');
+      try {
+        await postSettings(buildSourcePayload());
+        showMsg(msgEl, 'Loading cost data… please wait', 'info', 120000);
+        const syncRes = await fetch(`${PROXY}/settings/sync`, {
+          method: 'POST',
+          headers: authHeaders(),
+        });
+        if (!syncRes.ok) throw new Error('Sync HTTP ' + syncRes.status);
+        const syncData = await syncRes.json();
+        const count = syncData.record_count ?? syncData.alert_count ?? '?';
+        const spend = syncData.total_cost != null
+          ? ' Total spend: ' + fmtCurrency(syncData.total_cost)
+          : '';
+        showMsg(msgEl, 'Sync complete — ' + count + ' records loaded.' + spend, 'ok');
+        await loadSettings();
+      } catch (err) {
+        showMsg(msgEl, 'Failed: ' + err.message, 'err');
+      }
+    });
+
+    // ── Save Only ────────────────────────────────────────────────────────────────
+
+    $('btn-save-only').addEventListener('click', async () => {
+      const msgEl = $('action-msg');
+      try {
+        await postSettings(buildSourcePayload());
+        showMsg(msgEl, 'Settings saved.', 'ok');
+        await loadSettings();
+      } catch (err) {
+        showMsg(msgEl, 'Failed: ' + err.message, 'err');
+      }
+    });
+
+    // ── Save Tuning ──────────────────────────────────────────────────────────────
+
+    $('btn-save-tuning').addEventListener('click', async () => {
+      const msgEl = $('tuning-msg');
+      try {
+        await postSettings(buildTuningPayload());
+        showMsg(msgEl, 'Settings saved.', 'ok');
+      } catch (err) {
+        showMsg(msgEl, 'Failed: ' + err.message, 'err');
+      }
+    });
+
+    // ── Render sync status ───────────────────────────────────────────────────────
+
+    function renderSyncStatus(cfg) {
+      const el = $('sync-status');
+      el.innerHTML = '';
+
+      function addRow(label, valueHtml) {
+        const div = document.createElement('div');
+        div.className = 'status-row';
+        div.innerHTML =
+          '<span class="status-row-label">' + label + '</span>' +
+          '<span class="status-value">' + valueHtml + '</span>';
+        el.appendChild(div);
       }
 
-      // Source radio
-      selectSource(cfg.source_type || 'file');
-
-      // Sync interval
-      const intEl = $('sync-interval');
-      const intVal = String(cfg.sync_interval_minutes ?? 0);
-      if (intEl.querySelector('option[value="' + intVal + '"]')) intEl.value = intVal;
-
-      // Last synced label
-      $('last-synced-label').textContent =
-        cfg.last_synced ? 'Last synced: ' + fmtDatetime(cfg.last_synced) : 'Never synced';
-
-      // Cost window
-      const winEl = $('cost-window');
-      const winVal = String(cfg.cost_window ?? '30');
-      if (winEl.querySelector('option[value="' + winVal + '"]')) winEl.value = winVal;
-
-      // Tuning fields
-      if (cfg.display_currency)      $('display-currency').value    = cfg.display_currency;
-      if (cfg.anomaly_threshold_pct  != null) $('anomaly-threshold').value  = cfg.anomaly_threshold_pct;
-      if (cfg.top_drivers_count      != null) $('top-drivers-count').value  = cfg.top_drivers_count;
-      if (cfg.min_cost_threshold     != null) $('min-cost-threshold').value = cfg.min_cost_threshold;
-
-      // Sync status section
-      renderSyncStatus(cfg);
-
-    } catch (err) {
-      $('sync-status').innerHTML =
-        '<span style="color:#b91c1c;font-size:.875rem">Failed to load settings: ' + err.message + '</span>';
-      $('last-synced-label').textContent = '';
+      addRow('Source type', '<span class="badge">' + (cfg.source_type || 'file') + '</span>');
+      addRow('Last synced', fmtDatetime(cfg.last_synced || null));
+      addRow('Records loaded', cfg.record_count != null ? String(cfg.record_count) : '—');
+      addRow('Total cost in window', fmtCurrency(cfg.total_cost ?? null));
     }
-  }
 
-  loadSettings();
-</script>
+    // ── Load settings on page load ───────────────────────────────────────────────
+
+    async function loadSettings() {
+      await portalReady;
+      try {
+        const res = await fetch(`${PROXY}/settings`, { headers: authHeaders() });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const cfg = await res.json();
+
+        // API key banner + status line
+        const configured = cfg.api_key_configured === true;
+        $('no-key-banner').classList.toggle('hidden', configured);
+        const keyStatus = $('key-status');
+        if (configured && cfg.api_key_last4) {
+          keyStatus.textContent = 'API key configured (last 4: ...' + cfg.api_key_last4 + ')';
+          keyStatus.classList.remove('hidden');
+        } else {
+          keyStatus.classList.add('hidden');
+        }
+
+        // Source radio
+        selectSource(cfg.source_type || 'file');
+
+        // Sync interval
+        const intEl = $('sync-interval');
+        const intVal = String(cfg.sync_interval_minutes ?? 0);
+        if (intEl.querySelector('option[value="' + intVal + '"]')) intEl.value = intVal;
+
+        // Last synced label
+        $('last-synced-label').textContent =
+          cfg.last_synced ? 'Last synced: ' + fmtDatetime(cfg.last_synced) : 'Never synced';
+
+        // Cost window
+        const winEl = $('cost-window');
+        const winVal = String(cfg.cost_window ?? '30');
+        if (winEl.querySelector('option[value="' + winVal + '"]')) winEl.value = winVal;
+
+        // Tuning fields
+        if (cfg.display_currency)                $('display-currency').value    = cfg.display_currency;
+        if (cfg.anomaly_threshold_pct  != null)  $('anomaly-threshold').value   = cfg.anomaly_threshold_pct;
+        if (cfg.top_drivers_count      != null)  $('top-drivers-count').value   = cfg.top_drivers_count;
+        if (cfg.min_cost_threshold     != null)  $('min-cost-threshold').value  = cfg.min_cost_threshold;
+
+        // Sync status section
+        renderSyncStatus(cfg);
+
+      } catch (err) {
+        $('sync-status').innerHTML =
+          '<span style="color:#b91c1c;font-size:.875rem">Failed to load settings: ' + err.message + '</span>';
+        $('last-synced-label').textContent = '';
+      }
+    }
+
+    loadSettings();
+  </script>
+  <script>
+    // ── Fix nav links in standalone mode ──────────────────────────────────
+    if (!_isPortalMode) {
+      document.querySelectorAll('[data-standalone-href]').forEach(el => {
+        el.href = el.dataset.standaloneHref;
+      });
+      var topbar = document.querySelector('.topbar');
+      if (topbar) topbar.style.display = 'none';
+    }
+  </script>
 </body>
 </html>

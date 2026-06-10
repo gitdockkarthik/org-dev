@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CUR Dashboard — UAP</title>
-  <link rel="stylesheet" href="/css/style.css?v=3">
+  <link rel="stylesheet" href="/static/css/style.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
   <style>
@@ -338,17 +338,18 @@
     </div>
   </div>
 
-  <script src="/js/config.js?v=3"></script>
-  <script src="/js/portal.js?v=3"></script>
   <script>
-    // ── Dual-mode detection: works inside Operative portal AND standalone ──
-    const _isPortalMode = (typeof window._isPortalEnv !== 'undefined' && window._isPortalEnv === true);
-    if (!_isPortalMode) {
+    // ── Standalone mode: stub portal dependencies ─────────────────────────
+    if (typeof window._authHeaders !== 'function') {
       window.BACKEND_URL = '';
       window._authHeaders = () => ({});
       window.portalReady = Promise.resolve();
       window.showToast = (msg, type) => console.log('[toast]', type || 'info', msg);
     }
+  </script>
+  <script>
+    // ── Dual-mode detection: works inside Operative portal AND standalone ──
+    const _isPortalMode = (typeof window._isPortalEnv !== 'undefined' && window._isPortalEnv === true);
   </script>
   <script>
     const SLUG  = 'cur-analyser';
