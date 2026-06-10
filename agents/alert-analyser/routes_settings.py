@@ -209,6 +209,7 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
 
             # Deduplicate — keep top 8 by severity
             escalation_anomalies = escalation_anomalies[:8]
+            logger.info("Escalation: found %d matching anomalies", len(escalation_anomalies))
 
             if escalation_anomalies:
                 cooldown_key = "alert_analyser_summary"
