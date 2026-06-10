@@ -281,8 +281,8 @@ async def get_settings() -> dict:
 
 
 @router.post("")
-async def save_settings(payload: SettingsPayload) -> dict:
-    data = payload.model_dump()
+async def save_settings(request: Request) -> dict:
+    data = await request.json()
     # Keep existing api_token if payload sends blank or mask
     if not data.get("api_token") or data.get("api_token") == "••••••••":
         data["api_token"] = _config.get("api_token", "")
