@@ -323,6 +323,12 @@ async def invoke_stream(
             writer.writeheader()
             writer.writerows(rows)
             _cur_cache[body.session_id] = buf.getvalue()
+    # Load from DB by report_id if session cache is still empty
+    if not _cur_cache.get(body.session_id) and ctx.get("report_id"):
+        from report_store import get_report_csv
+        csv_text = get_report_csv(int(ctx["report_id"]))
+        if csv_text:
+            _cur_cache[body.session_id] = csv_text
     has_data = bool(_cur_cache.get(body.session_id))
     resolved_key = x_anthropic_key or _settings.anthropic_api_key
     system = _runner._build_system({"session_id": body.session_id, "has_data": has_data})

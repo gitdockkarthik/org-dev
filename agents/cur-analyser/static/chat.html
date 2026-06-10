@@ -161,20 +161,12 @@
         const reports = await api('/reports');
         if (!reports || !reports.length) { document.getElementById('chat-status').textContent = 'Ready — no report loaded'; return; }
         const r = reports[0];
-        // Load actual row data so invoke/stream can use it
-        let cur_data = [];
-        try {
-          const base = _isPortalMode ? `${BACKEND_URL}/api/agents/cur-analyser/proxy` : '';
-          const dataRes = await fetch(`${base}/reports/${r.id}/data`, { headers: _authHeaders() });
-          if (dataRes.ok) cur_data = await dataRes.json();
-        } catch (_) {}
         agentContext = {
           has_data: true,
           report_id: r.id,
           row_count: r.row_count,
           total_cost: r.total_cost,
           filename: r.filename,
-          cur_data,
         };
         document.getElementById('ctx-info').innerHTML =
           `<div style="color:#4ade80;font-weight:600">✓ Report loaded</div>` +
