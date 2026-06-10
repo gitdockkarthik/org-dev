@@ -163,8 +163,8 @@ async def get_settings() -> dict:
 
 
 @router.post("")
-async def save_settings(payload: SettingsPayload) -> dict:
-    data = payload.model_dump()
+async def save_settings(request: Request) -> dict:
+    data = await request.json()
     _config.update(data)
     for k, v in data.items():
         await _upsert(k, v)
