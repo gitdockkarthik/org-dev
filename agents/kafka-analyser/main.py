@@ -409,15 +409,29 @@ async def invoke_stream(
 ):
     import anthropic as _anthropic
     import kafka_store as ks
-    data = ks.get_cluster_data()
-    has_data = data is not None
+    ctx = body.context
+    # Use multi-cluster summary from context if provided (standalone/chat mode)
+    cluster_summary = ctx.get("summary", "")
+    clusters_from_ctx = ctx.get("clusters", [])
+    if clusters_from_ctx:
+        has_data = True
+        broker_count = sum(c.get("broker_count", 0) for c in clusters_from_ctx)
+        topic_count = sum(c.get("topic_count", 0) for c in clusters_from_ctx)
+        consumer_group_count = sum(c.get("consumer_group_count", 0) for c in clusters_from_ctx)
+    else:
+        data = ks.get_cluster_data()
+        has_data = data is not None
+        broker_count = len(data["brokers"]) if data else 0
+        topic_count = len(data["topics"]) if data else 0
+        consumer_group_count = len(data["consumer_groups"]) if data else 0
     resolved_key = x_anthropic_key or settings.anthropic_api_key
     system = _runner._build_system({
         "session_id": body.session_id,
         "has_data": has_data,
-        "broker_count": len(data["brokers"]) if data else 0,
-        "consumer_group_count": len(data["consumer_groups"]) if data else 0,
-        "topic_count": len(data["topics"]) if data else 0,
+        "broker_count": broker_count,
+        "consumer_group_count": consumer_group_count,
+        "topic_count": topic_count,
+        "cluster_summary": cluster_summary,
     })
     messages = _runner._build_messages(body.history, body.user_message)
 
