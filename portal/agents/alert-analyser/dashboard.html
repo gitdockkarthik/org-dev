@@ -124,7 +124,7 @@
   <script src="/js/portal.js?v=3"></script>
   <script>
     // ── Dual-mode detection: works inside Operative portal AND standalone ──
-    const _isPortal = (typeof BACKEND_URL !== 'undefined' && typeof window._authHeaders === 'function');
+    const _isPortal = (typeof window._authHeaders === 'function');
     if (!_isPortal) {
       window.BACKEND_URL = '';
       window._authHeaders = () => ({});
@@ -132,7 +132,7 @@
   </script>
   <script>
     const SLUG  = 'alert-analyser';
-    const _isPortalMode = (typeof BACKEND_URL !== 'undefined' && BACKEND_URL !== '');
+    const _isPortalMode = (typeof window._authHeaders === 'function' && typeof window._authHeaders() === 'object');
     const PROXY = _isPortalMode ? `${BACKEND_URL}/api/agents/${SLUG}/proxy` : '';
     const charts = {};
     let stats = null;
