@@ -156,6 +156,16 @@
       return res.json();
     }
 
+    // ── Load API key from agent settings ──────────────────────────────────
+    let _apiKey = '';
+    async function loadApiKey() {
+      if (_isPortalMode) return; // portal injects key via backend
+      try {
+        const cfg = await api('/settings');
+        _apiKey = cfg.anthropic_api_key || '';
+      } catch (_) {}
+    }
+
     // ── Load alert context ─────────────────────────────────────────────────────
     async function loadContext() {
       try {
@@ -247,9 +257,11 @@
 
       try {
         const base = _isPortalMode ? `${BACKEND_URL}/api/agents/alert-analyser/proxy` : '';
+        const invokeHeaders = { 'Content-Type': 'application/json', ..._authHeaders() };
+        if (!_isPortalMode && _apiKey) invokeHeaders['x-anthropic-key'] = _apiKey;
         const res = await fetch(`${base}/invoke/stream`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+          headers: invokeHeaders,
           body: JSON.stringify({ user_message: text, session_id: sessionId, context: agentContext, history })
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -312,6 +324,7 @@
         document.getElementById('back-link').href = '/agents/alert-analyser/dashboard';
       }
 
+      await loadApiKey();
       await loadContext();
       document.getElementById('send-btn').disabled = false;
       document.getElementById('chat-input').focus();
