@@ -174,14 +174,9 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
             combined_alerts = alerts
         report = add_report(filename, combined_alerts, classified)
         # Teams escalation for genuine P1/P2 unacknowledged alerts
-        new_count = len(new_alerts) if (existing and last_synced) else len(alerts)
-        logger.info("Escalation: new_alerts=%d since last sync", new_count)
-        logger.info("Escalation block reached — teams_enabled=%s, classified=%d alerts",
-                    _config.get("teams_enabled", False), len(classified))
         try:
             from tools.escalation_notifier import send_anomaly_summary
             import time
-            logger.info("Escalation: imports OK")
 
             teams_cfg = {
                 "teams_enabled": _config.get("teams_enabled", False),
@@ -190,7 +185,6 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                                                        ["critical", "warning"]),
                 "teams_cooldown_mins": _config.get("teams_cooldown_mins", 10),
             }
-            logger.info("Escalation: teams_cfg built, enabled=%s", teams_cfg.get("teams_enabled"))
 
             # Build anomalies from genuine P1/P2 unacknowledged alerts
             # Only escalate newly fetched alerts, not historical data
@@ -219,7 +213,6 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
 
             # Deduplicate — keep top 8 by severity
             escalation_anomalies = escalation_anomalies[:8]
-            logger.info("Escalation: found %d matching anomalies", len(escalation_anomalies))
 
             if escalation_anomalies:
                 cooldown_key = "alert_analyser_summary"
