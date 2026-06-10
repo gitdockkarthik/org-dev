@@ -229,6 +229,7 @@
   </header>
 
   <nav class="subnav">
+    <span id="agent-label" style="display:none;position:absolute;right:1.5rem;font-size:.8rem;font-weight:600;color:var(--accent,#0891b2)">Kafka Analyser</span>
     <a href="/chat?agent=kafka-analyser" data-standalone-href="chat.html" class="subnav__link">💬 Chat</a>
     <a href="/agents/kafka-analyser/dashboard" data-standalone-href="dashboard.html" class="subnav__link">📊 Dashboard</a>
     <a href="/agents/kafka-analyser/reports" data-standalone-href="reports.html" class="subnav__link">📁 Reports</a>
@@ -1269,13 +1270,23 @@
     loadSettings();
   </script>
   <script>
-    // ── Fix nav links in standalone mode ──────────────────────────────────
+    // ── Fix nav links and UI in standalone mode ───────────────────────────
     if (!_isPortalMode) {
       document.querySelectorAll('[data-standalone-href]').forEach(el => {
         el.href = el.dataset.standaloneHref;
       });
       var topbar = document.querySelector('.topbar');
       if (topbar) topbar.style.display = 'none';
+      var lbl = document.getElementById('agent-label');
+      if (lbl) lbl.style.display = 'inline';
+      // Hide API key banner and section — key is injected via env var on EKS
+      var banners = document.querySelectorAll('#no-key-banner, .banner-yellow');
+      banners.forEach(function(b) { b.style.display = 'none'; });
+      var apiKeyCard = document.getElementById('save-api-key');
+      if (apiKeyCard) {
+        var card = apiKeyCard.closest('.card, .settings-card, section, [class*="card"]');
+        if (card) card.style.display = 'none';
+      }
     }
   </script>
 </body>

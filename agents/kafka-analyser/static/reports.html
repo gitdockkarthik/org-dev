@@ -52,6 +52,7 @@
   </header>
 
   <nav class="subnav">
+    <span id="agent-label" style="display:none;position:absolute;right:1.5rem;font-size:.8rem;font-weight:600;color:var(--accent,#0891b2)">Kafka Analyser</span>
     <a href="/chat?agent=kafka-analyser" data-standalone-href="chat.html" class="subnav__link">💬 Chat</a>
     <a href="/agents/kafka-analyser/dashboard" data-standalone-href="dashboard.html" class="subnav__link">📊 Dashboard</a>
     <a href="/agents/kafka-analyser/reports" data-standalone-href="reports.html" class="subnav__link subnav__link--active">📁 Reports</a>
@@ -210,6 +211,8 @@
       });
       var topbar = document.querySelector('.topbar');
       if (topbar) topbar.style.display = 'none';
+      var lbl = document.getElementById('agent-label');
+      if (lbl) lbl.style.display = 'inline';
     }
   </script>
 </body>
