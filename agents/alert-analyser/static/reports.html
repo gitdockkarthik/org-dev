@@ -101,15 +101,16 @@
     // ── Standalone mode: stub portal dependencies ─────────────────────────
     // In portal mode these are provided by config.js and portal.js.
     // In standalone mode we define safe fallbacks so the page works without them.
-    if (typeof window._authHeaders !== 'function') {
+    const _isPortalMode = (typeof window._isPortalEnv !== 'undefined' && window._isPortalEnv === true);
+    if (!_isPortalMode) {
       window.BACKEND_URL = '';
       window._authHeaders = () => ({});
       window.portalReady = Promise.resolve();
+      window.showToast = (msg, type) => console.log('[toast]', type || 'info', msg);
     }
   </script>
   <script>
-    // ── Dual-mode detection: works inside Operative portal AND standalone ──
-    const _isPortalMode = (typeof window._authHeaders === 'function' && typeof window._authHeaders() === 'object');
+    // ── _isPortalMode already declared above ──
   </script>
   <script>
     const SLUG  = 'alert-analyser';

@@ -2,6 +2,7 @@
 // BACKEND_URL injected by docker-entrypoint.sh; falls back to localhost for dev.
 // API key is bootstrapped from the backend at load time — not from env vars.
 const BACKEND_URL = '';
+window._isPortalEnv = true;
 let _apiKey = '';
 
 // ── Agent accent colours ────────────────────────────────────────────────────────
