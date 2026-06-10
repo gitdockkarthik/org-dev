@@ -118,10 +118,8 @@ def detect_anomalies(
                 "severity": severity,
                 "category": "consumer_lag",
                 "description": (
-                    f"{gid} lag: {lag:,} messages "
-                    f"({trend}"
-                    + (f" at +{rate:,.0f}/min" if trend == "growing" else "")
-                    + f").{eta_str}"
+                    f"{gid} lag: {lag:,} messages unprocessed — "
+                    f"{'growing, immediate action required' if trend == 'growing' else 'backlog not clearing'}."
                 ),
                 "recommendations": [
                     f"Scale up consumer group '{gid}' — add more consumer instances",
