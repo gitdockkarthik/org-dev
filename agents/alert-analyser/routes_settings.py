@@ -174,6 +174,8 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
             combined_alerts = alerts
         report = add_report(filename, combined_alerts, classified)
         # Teams escalation for genuine P1/P2 unacknowledged alerts
+        logger.info("Escalation block reached — teams_enabled=%s, classified=%d alerts",
+                    _config.get("teams_enabled", False), len(classified))
         try:
             from tools.escalation_notifier import send_anomaly_summary
             import time
