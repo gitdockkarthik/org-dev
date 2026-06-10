@@ -19,7 +19,9 @@ def detect_anomalies(
     urp_threshold: int = 0,
     retention_threshold_pct: float = 80.0,
     connector_alert_enabled: bool = True,
+    thresholds: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
+    thresholds = thresholds or {}
     anomalies: list[dict[str, Any]] = []
 
     # ── Broker anomalies ──────────────────────────────────────────
@@ -29,13 +31,16 @@ def detect_anomalies(
         gc_ms = broker.get("gc_pause_ms") or broker.get("gc_pause_count", 0)
         urp = broker.get("urp_count", 0)
 
-        if heap >= heap_threshold_pct:
+        heap_warning = thresholds.get("heap_warning_pct", 70)
+        heap_critical = thresholds.get("heap_threshold_pct", 85)
+        if heap >= heap_warning:
+            severity = "critical" if heap >= heap_critical else "warning"
             anomalies.append({
-                "severity": "critical" if heap >= 90 else "warning",
+                "severity": severity,
                 "category": "broker_heap",
                 "description": (
                     f"Broker {bid} heap at {heap:.0f}% "
-                    f"(threshold: {heap_threshold_pct:.0f}%)."
+                    f"(warning: {heap_warning:.0f}%, critical: {heap_critical:.0f}%)."
                     + (f" GC pause: {gc_ms}ms." if gc_ms else "")
                 ),
                 "recommendations": [
@@ -58,6 +63,28 @@ def detect_anomalies(
                 ],
             })
 
+        gc_ms = broker.get("gc_pause_ms", 0)
+        gc_warning = thresholds.get("gc_warning_ms", 500)
+        gc_critical = thresholds.get("gc_critical_ms", 1000)
+        if gc_ms >= gc_warning:
+            anomalies.append({
+                "severity": "critical" if gc_ms >= gc_critical else "warning",
+                "category": "broker_gc",
+                "description": f"Broker {bid} GC pause {gc_ms}ms — "
+                              f"{'critical' if gc_ms >= gc_critical else 'elevated'}.",
+            })
+
+        fetch_ms = broker.get("fetch_latency_ms", 0)
+        fetch_warning = thresholds.get("fetch_latency_warning_ms", 200)
+        fetch_critical = thresholds.get("fetch_latency_critical_ms", 500)
+        if fetch_ms >= fetch_warning:
+            anomalies.append({
+                "severity": "critical" if fetch_ms >= fetch_critical else "warning",
+                "category": "broker_fetch_latency",
+                "description": f"Broker {bid} fetch latency {fetch_ms}ms — "
+                              f"{'critical' if fetch_ms >= fetch_critical else 'elevated'}.",
+            })
+
     # ── Consumer group anomalies ──────────────────────────────────
     for group in cluster_data.get("consumer_groups", []):
         gid = _group_id(group)
@@ -66,7 +93,17 @@ def detect_anomalies(
         rate = group.get("lag_rate_per_min", 0.0)
         state = group.get("state", "")
 
-        if lag >= lag_threshold:
+        lag_warning_pct = thresholds.get("lag_warning_pct", 60) / 100
+        lag_critical_pct = thresholds.get("lag_critical_pct", 80) / 100
+        warning_lag = lag_threshold * lag_warning_pct
+        critical_lag = lag_threshold * lag_critical_pct
+
+        if lag >= warning_lag:
+            if lag >= critical_lag or trend == "growing":
+                severity = "critical"
+            else:
+                severity = "warning"
+
             # ETA calculation
             eta_str = ""
             if trend == "growing" and rate > 0:
@@ -76,10 +113,6 @@ def detect_anomalies(
                 else:
                     eta_str = f" ETA to double: ~{mins_to_double/60:.1f} hrs"
 
-            if trend == "growing" or lag > lag_threshold * 5:
-                severity = "critical"
-            else:
-                severity = "warning"
             anomalies.append({
                 "severity": severity,
                 "category": "consumer_lag",
@@ -115,18 +148,22 @@ def detect_anomalies(
         if tname.startswith("__") or tname == "_schemas":
             continue  # skip internal topics
         ret_pct = topic.get("retention_pct", 0.0)
-        if ret_pct >= retention_threshold_pct:
-            anomalies.append({
-                "severity": "critical" if ret_pct >= 95 else "warning",
-                "category": "topic_retention",
-                "description": f"{tname} at {ret_pct:.1f}% retention capacity.",
-                "recommendations": [
-                    f"Increase retention.bytes for topic '{tname}'",
-                    "Check consumer lag — slow consumers cause retention buildup",
-                    "Consider adding partitions to distribute load",
-                    f"Run: kafka-configs --alter --topic {tname} --add-config retention.bytes=<new-value>",
-                ],
-            })
+        retention_warning = thresholds.get("retention_warning_pct", 70)
+        retention_critical = thresholds.get("retention_threshold_pct", 85)
+        if ret_pct < retention_warning:
+            continue
+        severity = "critical" if ret_pct >= retention_critical else "warning"
+        anomalies.append({
+            "severity": severity,
+            "category": "topic_retention",
+            "description": f"{tname} at {ret_pct:.1f}% retention capacity.",
+            "recommendations": [
+                f"Increase retention.bytes for topic '{tname}'",
+                "Check consumer lag — slow consumers cause retention buildup",
+                "Consider adding partitions to distribute load",
+                f"Run: kafka-configs --alter --topic {tname} --add-config retention.bytes=<new-value>",
+            ],
+        })
 
     # ── Connector anomalies ───────────────────────────────────────
     if connector_alert_enabled:

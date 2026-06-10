@@ -34,6 +34,14 @@ _DEFAULTS: dict = {
     "urp_threshold": 0,
     "connector_alert_enabled": True,
     "retention_threshold_pct": 80,
+    "lag_warning_pct": 60,
+    "lag_critical_pct": 80,
+    "heap_warning_pct": 70,
+    "gc_warning_ms": 500,
+    "gc_critical_ms": 1000,
+    "fetch_latency_warning_ms": 200,
+    "fetch_latency_critical_ms": 500,
+    "retention_warning_pct": 70,
     # Cluster A — Internal (no auth)
     "cluster_a_enabled": False,
     "cluster_a_label": "Internal",
@@ -389,7 +397,7 @@ async def sync_metrics() -> dict:
                 from tools.anomaly_detector import detect_anomalies as _detect_anomalies
                 from tools.escalation_notifier import escalate
 
-                anomalies = _detect_anomalies(data)
+                anomalies = _detect_anomalies(data, thresholds=_config)
 
                 teams_cfg = {
                     "teams_enabled": _config.get("teams_enabled", False),

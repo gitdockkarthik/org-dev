@@ -474,9 +474,22 @@
 
       <div class="card">
         <div class="card-title">Consumer Lag</div>
-        <div class="field" style="margin-top:0.75rem">
-          <label for="lag-threshold">Alert if consumer group lag exceeds X messages</label>
-          <input type="number" id="lag-threshold" min="1" value="10000" style="max-width:140px" />
+        <div style="display:flex;flex-direction:column;gap:1rem;margin-top:0.75rem">
+          <div class="field">
+            <label for="lag-threshold">Maximum lag threshold (messages)</label>
+            <input type="number" id="lag-threshold" min="1" value="10000" style="max-width:140px" />
+            <div class="hint">Absolute ceiling — lag above this is always escalated</div>
+          </div>
+          <div class="field">
+            <label for="lag-warning-pct">Warning at % of threshold</label>
+            <input type="number" id="lag-warning-pct" min="1" max="100" value="60" style="max-width:120px" />
+            <div class="hint">e.g. 60 → warn when lag exceeds 60% of threshold</div>
+          </div>
+          <div class="field">
+            <label for="lag-critical-pct">Critical at % of threshold</label>
+            <input type="number" id="lag-critical-pct" min="1" max="100" value="80" style="max-width:120px" />
+            <div class="hint">e.g. 80 → critical when lag exceeds 80% of threshold</div>
+          </div>
         </div>
       </div>
 
@@ -484,13 +497,33 @@
         <div class="card-title">Broker Health</div>
         <div style="display:flex;flex-direction:column;gap:1rem;margin-top:0.75rem">
           <div class="field">
-            <label for="heap-threshold">Alert if broker heap usage exceeds X%</label>
-            <input type="number" id="heap-threshold" min="1" max="100" value="80" style="max-width:120px" />
+            <label for="heap-warning-pct">Heap warning at %</label>
+            <input type="number" id="heap-warning-pct" min="1" max="100" value="70" style="max-width:120px" />
           </div>
           <div class="field">
-            <label for="urp-threshold">Alert if under-replicated partition count exceeds X</label>
+            <label for="heap-threshold">Heap critical at % (id=heap-threshold for backend compat)</label>
+            <input type="number" id="heap-threshold" min="1" max="100" value="85" style="max-width:120px" />
+          </div>
+          <div class="field">
+            <label for="urp-threshold">Alert if under-replicated partitions exceed</label>
             <input type="number" id="urp-threshold" min="0" value="0" style="max-width:120px" />
             <div class="hint">0 means any URP triggers an alert</div>
+          </div>
+          <div class="field">
+            <label for="gc-warning-ms">GC pause warning at (ms)</label>
+            <input type="number" id="gc-warning-ms" min="1" value="500" style="max-width:120px" />
+          </div>
+          <div class="field">
+            <label for="gc-critical-ms">GC pause critical at (ms)</label>
+            <input type="number" id="gc-critical-ms" min="1" value="1000" style="max-width:120px" />
+          </div>
+          <div class="field">
+            <label for="fetch-latency-warning-ms">Fetch latency warning at (ms)</label>
+            <input type="number" id="fetch-latency-warning-ms" min="1" value="200" style="max-width:120px" />
+          </div>
+          <div class="field">
+            <label for="fetch-latency-critical-ms">Fetch latency critical at (ms)</label>
+            <input type="number" id="fetch-latency-critical-ms" min="1" value="500" style="max-width:120px" />
           </div>
         </div>
       </div>
@@ -506,8 +539,12 @@
             </div>
           </div>
           <div class="field">
-            <label for="retention-threshold">Alert if topic retention usage exceeds X%</label>
-            <input type="number" id="retention-threshold" min="1" max="100" value="80" style="max-width:120px" />
+            <label for="retention-warning-pct">Topic retention warning at %</label>
+            <input type="number" id="retention-warning-pct" min="1" max="100" value="70" style="max-width:120px" />
+          </div>
+          <div class="field">
+            <label for="retention-threshold">Topic retention critical at % (id=retention-threshold for backend compat)</label>
+            <input type="number" id="retention-threshold" min="1" max="100" value="85" style="max-width:120px" />
           </div>
         </div>
       </div>
@@ -741,6 +778,14 @@
         urp_threshold:           parseInt($('urp-threshold').value, 10),
         connector_alert_enabled: $('connector-alert').checked,
         retention_threshold_pct: parseInt($('retention-threshold').value, 10),
+        lag_warning_pct: parseInt($('lag-warning-pct').value, 10) || 60,
+        lag_critical_pct: parseInt($('lag-critical-pct').value, 10) || 80,
+        heap_warning_pct: parseInt($('heap-warning-pct').value, 10) || 70,
+        gc_warning_ms: parseInt($('gc-warning-ms').value, 10) || 500,
+        gc_critical_ms: parseInt($('gc-critical-ms').value, 10) || 1000,
+        fetch_latency_warning_ms: parseInt($('fetch-latency-warning-ms').value, 10) || 200,
+        fetch_latency_critical_ms: parseInt($('fetch-latency-critical-ms').value, 10) || 500,
+        retention_warning_pct: parseInt($('retention-warning-pct').value, 10) || 70,
         teams_enabled: $('teams-enabled').checked,
         teams_webhook_url: $('teams-webhook-url').value.trim(),
         teams_severity_filter: [
@@ -923,6 +968,15 @@
         if (cfg.urp_threshold            != null) $('urp-threshold').value        = cfg.urp_threshold;
         if (cfg.connector_alert_enabled  != null) $('connector-alert').checked    = cfg.connector_alert_enabled;
         if (cfg.retention_threshold_pct  != null) $('retention-threshold').value  = cfg.retention_threshold_pct;
+
+        if (cfg.lag_warning_pct          != null && $('lag-warning-pct'))          $('lag-warning-pct').value          = cfg.lag_warning_pct;
+        if (cfg.lag_critical_pct         != null && $('lag-critical-pct'))         $('lag-critical-pct').value         = cfg.lag_critical_pct;
+        if (cfg.heap_warning_pct         != null && $('heap-warning-pct'))         $('heap-warning-pct').value         = cfg.heap_warning_pct;
+        if (cfg.gc_warning_ms            != null && $('gc-warning-ms'))            $('gc-warning-ms').value            = cfg.gc_warning_ms;
+        if (cfg.gc_critical_ms           != null && $('gc-critical-ms'))           $('gc-critical-ms').value           = cfg.gc_critical_ms;
+        if (cfg.fetch_latency_warning_ms != null && $('fetch-latency-warning-ms')) $('fetch-latency-warning-ms').value = cfg.fetch_latency_warning_ms;
+        if (cfg.fetch_latency_critical_ms!= null && $('fetch-latency-critical-ms'))$('fetch-latency-critical-ms').value= cfg.fetch_latency_critical_ms;
+        if (cfg.retention_warning_pct    != null && $('retention-warning-pct'))    $('retention-warning-pct').value    = cfg.retention_warning_pct;
 
         if ($('teams-enabled')) $('teams-enabled').checked = cfg.teams_enabled || false;
         if ($('teams-webhook-url')) $('teams-webhook-url').value = cfg.teams_webhook_url || '';
