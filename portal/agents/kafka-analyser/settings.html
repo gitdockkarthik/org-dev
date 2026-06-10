@@ -541,7 +541,7 @@
 
           <div class="field">
             <label for="teams-cooldown">Cooldown (minutes)</label>
-            <input type="number" id="teams-cooldown" min="1" value="60"
+            <input type="number" id="teams-cooldown" min="1" value="10"
                    style="max-width:120px" />
             <div class="hint">Minimum minutes between repeat escalations for the same anomaly type</div>
           </div>
@@ -748,7 +748,7 @@
           ...($('teams-sev-warning').checked ? ['warning'] : []),
           ...($('teams-sev-info').checked ? ['info'] : []),
         ],
-        teams_cooldown_mins: parseInt($('teams-cooldown').value, 10) || 60,
+        teams_cooldown_mins: parseInt($('teams-cooldown').value, 10) || 10,
       };
     }
 
@@ -932,7 +932,7 @@
           (cfg.teams_severity_filter || ['critical','warning']).includes('warning');
         if ($('teams-sev-info')) $('teams-sev-info').checked =
           (cfg.teams_severity_filter || []).includes('info');
-        if ($('teams-cooldown')) $('teams-cooldown').value = cfg.teams_cooldown_mins || 60;
+        if ($('teams-cooldown')) $('teams-cooldown').value = cfg.teams_cooldown_mins || 10;
 
         $('sync-status').innerHTML = '';
         renderPerClusterSyncStatus();

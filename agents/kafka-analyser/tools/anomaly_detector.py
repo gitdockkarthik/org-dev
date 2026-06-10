@@ -76,7 +76,10 @@ def detect_anomalies(
                 else:
                     eta_str = f" ETA to double: ~{mins_to_double/60:.1f} hrs"
 
-            severity = "critical" if trend == "growing" else "warning"
+            if trend == "growing" or lag > lag_threshold * 5:
+                severity = "critical"
+            else:
+                severity = "warning"
             anomalies.append({
                 "severity": severity,
                 "category": "consumer_lag",
