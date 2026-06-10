@@ -184,7 +184,7 @@ async def test_teams_webhook(request: Request) -> dict:
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="webhook_url required")
 
-    from shared.escalation import notifier as _escalation_notifier
+    from tools.escalation_notifier import escalate as _escalate_teams
 
     test_anomaly = {
         "severity": "info",
@@ -201,7 +201,7 @@ async def test_teams_webhook(request: Request) -> dict:
         "teams_cooldown_mins": 0,
     }
 
-    success = await _escalation_notifier.escalate(
+    success = await _escalate_teams(
         agent_name="Kafka Analyser",
         cluster_name="Test",
         anomaly=test_anomaly,
@@ -387,7 +387,7 @@ async def sync_metrics() -> dict:
 
                 # Detect anomalies and escalate
                 from tools.anomaly_detector import detect_anomalies as _detect_anomalies
-                from shared.escalation import notifier as _escalation_notifier
+                from tools.escalation_notifier import escalate
 
                 anomalies = _detect_anomalies(data)
 
@@ -400,7 +400,7 @@ async def sync_metrics() -> dict:
                 }
 
                 for anomaly in anomalies:
-                    await _escalation_notifier.escalate(
+                    await escalate(
                         agent_name="Kafka Analyser",
                         cluster_name=c["name"],
                         anomaly=anomaly,

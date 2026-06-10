@@ -1,0 +1,155 @@
+"""Escalation notifier — Kafka Analyser copy."""
+import httpx
+import asyncio
+import logging
+from datetime import datetime, timezone
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+SEVERITY_COLOUR = {
+    "critical": "attention",   # red in Adaptive Cards
+    "warning": "warning",      # orange
+    "info": "good",            # green
+}
+
+SEVERITY_EMOJI = {
+    "critical": "🔴",
+    "warning": "🟡",
+    "info": "🟢",
+}
+
+CATEGORY_LABEL = {
+    "broker_heap": "Broker Heap",
+    "under_replicated_partitions": "Under-Replicated Partitions",
+    "consumer_lag": "Consumer Lag",
+    "consumer_group_dead": "Consumer Group Dead",
+    "topic_retention": "Topic Retention",
+    "connector_failure": "Connector Failure",
+    "cost_spike": "Cost Spike",
+    "noise_alert": "Noise Alert",
+}
+
+def build_adaptive_card(
+    agent_name: str,
+    cluster_name: str,
+    anomaly: dict,
+    dashboard_url: str = "",
+) -> dict:
+    severity = anomaly.get("severity", "info")
+    category = anomaly.get("category", "unknown")
+    description = anomaly.get("description", "No description")
+    recommended_action = anomaly.get("recommended_action", "")
+    colour = SEVERITY_COLOUR.get(severity, "default")
+    emoji = SEVERITY_EMOJI.get(severity, "⚪")
+    cat_label = CATEGORY_LABEL.get(category, category.replace("_", " ").title())
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    body = [
+        {
+            "type": "TextBlock",
+            "text": f"{emoji} Operative Intelligence — {agent_name}",
+            "weight": "Bolder",
+            "size": "Medium",
+            "color": colour,
+        },
+        {
+            "type": "FactSet",
+            "facts": [
+                {"title": "Severity", "value": severity.upper()},
+                {"title": "Category", "value": cat_label},
+                {"title": "Cluster", "value": cluster_name},
+                {"title": "Time", "value": timestamp},
+            ],
+        },
+        {
+            "type": "TextBlock",
+            "text": description,
+            "wrap": True,
+            "spacing": "Medium",
+        },
+    ]
+
+    if recommended_action:
+        body.append({
+            "type": "TextBlock",
+            "text": f"💡 {recommended_action}",
+            "wrap": True,
+            "color": "accent",
+            "spacing": "Small",
+        })
+
+    actions = []
+    if dashboard_url:
+        actions.append({
+            "type": "Action.OpenUrl",
+            "title": "View Dashboard",
+            "url": dashboard_url,
+        })
+
+    card = {
+        "type": "message",
+        "attachments": [
+            {
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": {
+                    "type": "AdaptiveCard",
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "version": "1.4",
+                    "body": body,
+                    "actions": actions if actions else [],
+                },
+            }
+        ],
+    }
+    return card
+
+
+async def send_to_teams(webhook_url: str, card: dict) -> bool:
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(webhook_url, json=card)
+            if resp.status_code in (200, 202):
+                logger.info("Teams notification sent successfully")
+                return True
+            else:
+                logger.error("Teams webhook returned %s: %s", resp.status_code, resp.text)
+                return False
+    except Exception as exc:
+        logger.exception("Teams notification failed: %s", exc)
+        return False
+
+
+async def escalate(
+    agent_name: str,
+    cluster_name: str,
+    anomaly: dict,
+    config: dict,
+    dashboard_url: str = "",
+) -> bool:
+    """
+    Main entry point. Call this from any agent after anomaly detection.
+    config dict must contain:
+      - teams_webhook_url: str
+      - teams_enabled: bool
+      - teams_severity_filter: list[str] e.g. ["critical", "warning"]
+      - teams_cooldown_mins: int
+    Cooldown is enforced via _cooldown_cache (in-memory, resets on restart).
+    For persistent cooldown, caller should check escalations table.
+    """
+    if not config.get("teams_enabled", False):
+        return False
+
+    webhook_url = config.get("teams_webhook_url", "")
+    if not webhook_url:
+        logger.warning("Teams escalation enabled but no webhook URL configured")
+        return False
+
+    severity = anomaly.get("severity", "info")
+    severity_filter = config.get("teams_severity_filter", ["critical", "warning"])
+    if severity not in severity_filter:
+        logger.info("Skipping escalation — severity %s not in filter %s", severity, severity_filter)
+        return False
+
+    card = build_adaptive_card(agent_name, cluster_name, anomaly, dashboard_url)
+    return await send_to_teams(webhook_url, card)
