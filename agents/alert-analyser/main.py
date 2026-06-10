@@ -200,12 +200,9 @@ async def _sync_loop() -> None:
             pass
 
         # Interval elapsed — run sync if OpsGenie is fully configured.
-        if (
-            _config.get("source_type") == "opsgenie"
-            and _config.get("cloud_id")
-            and _config.get("email")
-            and _config.get("api_token")
-        ):
+        source_type = _config.get("source_type", "")
+        api_token = _config.get("api_token", "")
+        if source_type in ("standalone", "opsgenie") and api_token:
             try:
                 result = await _run_opsgenie_sync()
                 logger.info("Auto-sync: %d alerts loaded", result["alert_count"])
