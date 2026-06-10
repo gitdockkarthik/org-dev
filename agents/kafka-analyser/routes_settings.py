@@ -395,7 +395,7 @@ async def sync_metrics() -> dict:
 
                 # Detect anomalies and escalate
                 from tools.anomaly_detector import detect_anomalies as _detect_anomalies
-                from tools.escalation_notifier import escalate
+                from tools.escalation_notifier import send_anomaly_summary
 
                 anomalies = _detect_anomalies(data, thresholds=_config)
 
@@ -407,14 +407,25 @@ async def sync_metrics() -> dict:
                     "teams_cooldown_mins": _config.get("teams_cooldown_mins", 10),
                 }
 
-                for anomaly in anomalies:
-                    await escalate(
-                        agent_name="Kafka Analyser",
-                        cluster_name=c["name"],
-                        anomaly=anomaly,
-                        config=teams_cfg,
-                        dashboard_url="",
-                    )
+                if anomalies:
+                    cooldown_key = f"summary_{c['name']}"
+                    cooldown_mins = teams_cfg.get("teams_cooldown_mins", 10)
+                    import time
+                    now = time.time()
+                    # Use a module-level cache for summary cooldown
+                    if not hasattr(sync_metrics, '_summary_cooldown'):
+                        sync_metrics._summary_cooldown = {}
+                    last = sync_metrics._summary_cooldown.get(cooldown_key, 0)
+                    if now - last >= cooldown_mins * 60:
+                        sent = await send_anomaly_summary(
+                            agent_name="Kafka Analyser",
+                            cluster_name=c["name"],
+                            anomalies=anomalies,
+                            config=teams_cfg,
+                            dashboard_url="",
+                        )
+                        if sent:
+                            sync_metrics._summary_cooldown[cooldown_key] = now
             except Exception as exc:
                 import logging
                 logging.getLogger(__name__).warning(

@@ -31,6 +31,8 @@ CATEGORY_LABEL = {
     "connector_failure": "Connector Failure",
     "cost_spike": "Cost Spike",
     "noise_alert": "Noise Alert",
+    "broker_gc": "Broker GC Pause",
+    "broker_fetch_latency": "Broker Fetch Latency",
 }
 
 def build_adaptive_card(
@@ -169,4 +171,94 @@ async def escalate(
         _cooldown_cache[cooldown_key] = now
 
     card = build_adaptive_card(agent_name, cluster_name, anomaly, dashboard_url)
+    return await send_to_teams(webhook_url, card)
+
+
+async def send_anomaly_summary(
+    agent_name: str,
+    cluster_name: str,
+    anomalies: list[dict],
+    config: dict,
+    dashboard_url: str = "",
+) -> bool:
+    """Send a single summary card for all anomalies instead of one per anomaly."""
+    if not config.get("teams_enabled", False):
+        return False
+    webhook_url = config.get("teams_webhook_url", "")
+    if not webhook_url:
+        return False
+    if not anomalies:
+        return False
+
+    severity_filter = config.get("teams_severity_filter", ["critical", "warning"])
+    filtered = [a for a in anomalies if a.get("severity") in severity_filter]
+    if not filtered:
+        return False
+
+    critical_count = sum(1 for a in filtered if a.get("severity") == "critical")
+    warning_count = sum(1 for a in filtered if a.get("severity") == "warning")
+
+    # Overall severity = worst in the list
+    overall_severity = "critical" if critical_count > 0 else "warning"
+    emoji = SEVERITY_EMOJI[overall_severity]
+    colour = SEVERITY_COLOUR[overall_severity]
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    body = [
+        {
+            "type": "TextBlock",
+            "text": f"{emoji} Operative Intelligence — {agent_name}",
+            "weight": "Bolder",
+            "size": "Medium",
+            "color": colour,
+        },
+        {
+            "type": "FactSet",
+            "facts": [
+                {"title": "Cluster", "value": cluster_name},
+                {"title": "Critical", "value": str(critical_count)},
+                {"title": "Warnings", "value": str(warning_count)},
+                {"title": "Time", "value": timestamp},
+            ],
+        },
+    ]
+
+    # Add each anomaly as a TextBlock
+    for a in filtered[:8]:  # max 8 anomalies in one card
+        sev = a.get("severity", "info")
+        cat = CATEGORY_LABEL.get(a.get("category", ""),
+              a.get("category", "").replace("_", " ").title())
+        desc = a.get("description", "")
+        sev_emoji = SEVERITY_EMOJI.get(sev, "⚪")
+        body.append({
+            "type": "TextBlock",
+            "text": f"{sev_emoji} **{cat}** — {desc}",
+            "wrap": True,
+            "spacing": "Small",
+        })
+
+    actions = []
+    if dashboard_url:
+        actions.append({
+            "type": "Action.OpenUrl",
+            "title": "View Dashboard",
+            "url": dashboard_url,
+        })
+
+    card = {
+        "type": "message",
+        "attachments": [
+            {
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": {
+                    "type": "AdaptiveCard",
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "version": "1.4",
+                    "body": body,
+                    "actions": actions,
+                },
+            }
+        ],
+    }
     return await send_to_teams(webhook_url, card)
