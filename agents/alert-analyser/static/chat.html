@@ -200,20 +200,36 @@
 
     // ── Markdown renderer ──────────────────────────────────────────────────────
     function renderMarkdown(text) {
-      return text
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-        .replace(/```[\w]*\n?([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
-        .replace(/`([^`]+)`/g, '<code>$1</code>')
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .replace(/\*(.+?)\*/g, '<em>$1</em>')
-        .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-        .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-        .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-        .replace(/^\* (.+)$/gm, '<li>$1</li>')
-        .replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
-        .replace(/\n{2,}/g, '</p><p>')
-        .replace(/^(?!<[hup]|<li|<pre)(.+)$/gm, '$1')
-        .trim();
+      let html = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      html = html.replace(/```[\w]*\n?([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+      html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+      html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+      html = html.replace(/^### (.+)$/gm, '<h3 style="margin:.5rem 0 .25rem">$1</h3>');
+      html = html.replace(/^## (.+)$/gm, '<h2 style="margin:.6rem 0 .3rem">$1</h2>');
+      html = html.replace(/^# (.+)$/gm, '<h1 style="margin:.7rem 0 .35rem">$1</h1>');
+      html = html.replace(/(\|.+\|\n)((\|[-: ]+\|\n))((\|.+\|\n?)+)/g, (match) => {
+        const lines = match.trim().split('\n').filter(l => l.trim());
+        const headers = lines[0].split('|').filter(c => c.trim()).map(c => `<th>${c.trim()}</th>`).join('');
+        const rows = lines.slice(2).map(l =>
+          '<tr>' + l.split('|').filter(c => c.trim()).map(c => `<td>${c.trim()}</td>`).join('') + '</tr>'
+        ).join('');
+        return `<table><thead><tr>${headers}</tr></thead><tbody>${rows}</tbody></table>`;
+      });
+      html = html.replace(/^---$/gm, '<hr>');
+      html = html.replace(/^&gt; (.+)$/gm, '<blockquote style="border-left:3px solid var(--accent,#0891b2);padding-left:.75rem;color:var(--text-muted,#64748b);margin:.5rem 0">$1</blockquote>');
+      html = html.replace(/^[\*\-] (.+)$/gm, '<li>$1</li>');
+      html = html.replace(/(<li>[\s\S]*?<\/li>)(?!\s*<li>)/g, '<ul>$1</ul>');
+      html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+      html = html.replace(/\n{2,}/g, '</p><p>');
+      html = '<p>' + html + '</p>';
+      html = html.replace(/<p>\s*<\/p>/g, '');
+      html = html.replace(/<p>(<h[1-3]|<ul|<ol|<table|<blockquote|<hr|<pre)/g, '$1');
+      html = html.replace(/(<\/h[1-3]>|<\/ul>|<\/ol>|<\/table>|<\/blockquote>|<hr>|<\/pre>)<\/p>/g, '$1');
+      return html;
     }
 
     // ── Message rendering ──────────────────────────────────────────────────────
