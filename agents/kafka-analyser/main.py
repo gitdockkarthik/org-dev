@@ -17,6 +17,7 @@ from routes_dashboard import router as dashboard_router
 from routes_reports import router as reports_router
 from routes_settings import load_config_from_db, router as settings_router
 from storage import init_storage
+from kafka_store import save_snapshot_to_db, restore_snapshot_from_db
 from tools.kafka_tools import (
     AnomalyTool,
     BrokerMetricsTool,
@@ -151,6 +152,17 @@ async def _init_config() -> None:
                 ))
             except Exception as _mig_exc:
                 logger.warning("prometheus_port migration skipped: %s", _mig_exc)
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS kafka_cluster_snapshots (
+                        cluster_id VARCHAR(64) PRIMARY KEY,
+                        snapshot_json TEXT NOT NULL,
+                        saved_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                    )
+                """))
+        except Exception as _snap_exc:
+            logger.warning("Failed to create kafka_cluster_snapshots table: %s", _snap_exc)
         logger.info("_init_config: DB tables ensured")
 
     init_storage(settings.agent_slug)
@@ -191,6 +203,7 @@ async def _collection_loop() -> None:
 
             from tools.real_kafka import RealKafkaCollector
             import kafka_store as _ks
+            from database import engine
             for c in enabled:
                 try:
                     collector = RealKafkaCollector({
@@ -250,6 +263,8 @@ async def _collection_loop() -> None:
                         source_type=c.get("source_type", "kafka_internal"),
                         cluster_id=str(c.get("id", "default")),
                     )
+                    if engine is not None:
+                        await save_snapshot_to_db(str(c.get("id", "default")), engine)
                     from datetime import datetime, timezone
                     from storage import get_backend
                     topics = data.get("topics", [])
@@ -330,7 +345,16 @@ async def lifespan(app: FastAPI):
             async def _startup_sync():
                 from tools.real_kafka import RealKafkaCollector
                 import kafka_store as _ks
+                from database import engine
                 for c in enabled:
+                    # Restore last known snapshot — instant dashboard while scans run
+                    cid = str(c.get("id", "default"))
+                    if engine is not None:
+                        restored = await restore_snapshot_from_db(cid, engine)
+                    else:
+                        restored = False
+                    if restored:
+                        logger.info("Startup: restored snapshot for '%s' from DB", c["name"])
                     try:
                         collector = RealKafkaCollector({
                             "bootstrap_servers": c["bootstrap_servers"],
@@ -451,6 +475,8 @@ async def lifespan(app: FastAPI):
                                     source_type=c.get("source_type", "kafka_internal"),
                                     cluster_id=str(c.get("id", "default")),
                                 )
+                                if engine is not None:
+                                    await save_snapshot_to_db(str(c.get("id", "default")), engine)
                                 _prom_elapsed = round(_t3.time() - _prom_start, 1)
                                 logger.info("Prometheus scan: completed for '%s' in %ss", c["name"], _prom_elapsed)
                             except Exception as _prom_exc:
@@ -520,6 +546,8 @@ async def lifespan(app: FastAPI):
                                     source_type=c.get("source_type", "kafka_internal"),
                                     cluster_id=str(c.get("id", "default")),
                                 )
+                                if engine is not None:
+                                    await save_snapshot_to_db(str(c.get("id", "default")), engine)
                                 _lag_elapsed = round(_t.time() - _lag_start, 1)
                                 logger.info("Lag scan: enriched %d/%d groups for '%s' in %ss", enriched, len(active_gids), c["name"], _lag_elapsed)
                         except Exception as _lag_exc:

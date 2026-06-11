@@ -6,6 +6,8 @@ import threading
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
+from sqlalchemy import text
+
 _lock = threading.Lock()
 _history: dict[str, list[dict[str, Any]]] = {}   # cluster_id → [snapshots]
 _last_active: str | None = None
@@ -89,3 +91,52 @@ def get_sync_meta(cluster_id: str | None = None) -> dict[str, Any]:
             "connector_count": len(d.get("connectors", [])),
             "snapshot_count": len(_history[cid]),
         }
+
+
+import json
+
+async def save_snapshot_to_db(cluster_id: str, engine) -> None:
+    """Persist latest cluster snapshot to PostgreSQL."""
+    data = get_cluster_data(cluster_id)
+    if not data:
+        return
+    try:
+        snapshot_json = json.dumps(data, default=str)
+        async with engine.begin() as conn:
+            await conn.execute(text("""
+                INSERT INTO kafka_cluster_snapshots (cluster_id, snapshot_json, saved_at)
+                VALUES (:cid, :snap, NOW())
+                ON CONFLICT (cluster_id) DO UPDATE
+                SET snapshot_json = EXCLUDED.snapshot_json,
+                    saved_at = EXCLUDED.saved_at
+            """), {"cid": cluster_id, "snap": snapshot_json})
+    except Exception as exc:
+        import logging
+        logging.getLogger("kafka-analyser").warning("Failed to save snapshot for %s: %s", cluster_id, exc)
+
+
+async def restore_snapshot_from_db(cluster_id: str, engine) -> bool:
+    """Restore latest cluster snapshot from PostgreSQL. Returns True if restored."""
+    try:
+        async with engine.begin() as conn:
+            result = await conn.execute(text("""
+                SELECT snapshot_json, saved_at FROM kafka_cluster_snapshots
+                WHERE cluster_id = :cid
+            """), {"cid": cluster_id})
+            row = result.fetchone()
+        if not row:
+            return False
+        data = json.loads(row[0])
+        set_cluster_data(
+            data,
+            source_type=data.get("source_type", "kafka_internal"),
+            cluster_id=cluster_id,
+        )
+        import logging
+        logging.getLogger("kafka-analyser").info(
+            "Restored snapshot for cluster %s from DB (saved at %s)", cluster_id, row[1])
+        return True
+    except Exception as exc:
+        import logging
+        logging.getLogger("kafka-analyser").warning("Failed to restore snapshot for %s: %s", cluster_id, exc)
+        return False
