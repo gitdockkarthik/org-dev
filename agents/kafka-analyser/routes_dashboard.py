@@ -996,13 +996,21 @@ async def search_schemas(cluster_id: str, q: str = ""):
 
 @router.get("/dashboard/prometheus-debug")
 async def prometheus_debug() -> dict:
-    """Debug endpoint — shows Prometheus broker state."""
+    """Debug endpoint — shows Prometheus broker state with sample values."""
     try:
         from tools.prometheus_collector import _broker_state
-        return {
-            "broker_state_keys": list(_broker_state.keys()),
-            "broker_count": len(_broker_state),
-            "has_state": len(_broker_state) > 0,
-        }
+        details = {}
+        for host, state in _broker_state.items():
+            metrics = state.get('metrics', {})
+            details[host] = {
+                "scrape_time": round(state.get('time', 0), 1),
+                "metric_names": sorted(metrics.keys())[:30],
+                "total_metric_count": len(metrics),
+                "msgs_total": [e['value'] for e in metrics.get('kafka_server_brokertopicmetrics_messagesin_total', [])],
+                "bytesin_total": [e['value'] for e in metrics.get('kafka_server_brokertopicmetrics_bytesin_total', [])],
+                "heap_used": [e for e in metrics.get('jvm_memory_bytes_used', [])],
+                "produce_latency": [e for e in metrics.get('kafka_network_requestmetrics_totaltimems', []) if e.get('labels', {}).get('request') == 'Produce'][:3],
+            }
+        return {"broker_count": len(_broker_state), "details": details}
     except Exception as exc:
         return {"error": str(exc)}
