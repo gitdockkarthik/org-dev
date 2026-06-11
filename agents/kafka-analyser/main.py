@@ -208,6 +208,38 @@ async def _collection_loop() -> None:
                             )
                             continue
                         raise
+                    # Prometheus broker metrics enrichment
+                    _prom_port = c.get("prometheus_port")
+                    if _prom_port:
+                        try:
+                            from tools.prometheus_collector import scrape_all_brokers, scrape_topic_metrics
+                            broker_metrics = await scrape_all_brokers(data.get("brokers", []), _prom_port)
+                            for broker in data.get("brokers", []):
+                                bid = str(broker.get("broker_id", broker.get("host", "")))
+                                if bid in broker_metrics and broker_metrics[bid]:
+                                    broker.update(broker_metrics[bid])
+                            # Scrape top topic metrics
+                            top_topics = [t["name"] for t in data.get("topics", [])[:100]]
+                            if top_topics and data.get("brokers"):
+                                first_broker = data["brokers"][0].get("host", "")
+                                if first_broker:
+                                    topic_metrics = await scrape_topic_metrics(
+                                        first_broker, _prom_port, top_topics)
+                                    for t in data.get("topics", []):
+                                        if t["name"] in topic_metrics:
+                                            tm = topic_metrics[t["name"]]
+                                            t["messages_in_per_sec"] = tm.get("messages_in_per_sec", 0.0)
+                                            t["bytes_in_per_sec"] = tm.get("bytes_in_per_sec", 0.0)
+                                            t["bytes_out_per_sec"] = tm.get("bytes_out_per_sec", 0.0)
+                                            t["size_bytes"] = tm.get("size_bytes", 0)
+                                    # Update hot topics count
+                                    if "counts" in data:
+                                        data["counts"]["total_hot"] = sum(
+                                            1 for t in data.get("topics", [])
+                                            if (t.get("messages_in_per_sec") or 0) > 1000)
+                            logger.info("Prometheus enrichment: completed for '%s'", c["name"])
+                        except Exception as _prom_exc:
+                            logger.warning("Prometheus enrichment failed for '%s': %s", c["name"], _prom_exc)
                     _ks.set_cluster_data(
                         data,
                         source_type=c.get("source_type", "kafka_internal"),
