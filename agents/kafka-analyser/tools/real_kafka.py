@@ -428,8 +428,9 @@ class RealKafkaCollector(KafkaCollector):
 
         # Only active groups need an offset/lag round-trip.
         active = [g for g in group_ids if states.get(g, "Unknown") not in _INACTIVE_GROUP_STATES]
-        # Cap active group lag fetch at 500 to avoid per-group round trips on large clusters
-        active = active[:500]
+        # Cap active group lag fetch at 100 to avoid per-group round trips on large clusters
+        # Groups beyond cap are reported with zero lag (state preserved)
+        active = active[:100]
 
         consumer: KafkaConsumer | None = None
         try:
