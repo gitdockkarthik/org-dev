@@ -128,7 +128,7 @@ class SettingsPayload(BaseModel):
 
 
 class TestConnectionPayload(BaseModel):
-    cluster: str  # "a" | "b"
+    cluster: str = ""  # "a" | "b"
     bootstrap_servers: str
     auth_type: str  # "none" | "sasl"
     sasl_username: str | None = None
@@ -237,18 +237,17 @@ async def test_connection(payload: TestConnectionPayload) -> dict:
         "jmx_port": getattr(payload, 'jmx_port', None),
     })
     try:
-        data = await collector.collect()
+        result = await collector.ping()
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:  # noqa: BLE001 — surface any failure to the UI as 400
         raise HTTPException(status_code=400, detail=str(exc))
 
-    cluster = data.get("cluster", {})
     return {
         "ok": True,
-        "broker_count": cluster.get("broker_count", len(data.get("brokers", []))),
-        "topic_count": len(data.get("topics", [])),
-        "cluster_id": str(cluster.get("id", "")),
+        "broker_count": result.get("broker_count", 0),
+        "topic_count": None,
+        "cluster_id": result.get("cluster_id", ""),
     }
 
 
