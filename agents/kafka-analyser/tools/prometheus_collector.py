@@ -206,26 +206,40 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
         return defaults
 
 
-async def scrape_all_brokers(brokers: list[dict], prometheus_port: int) -> dict[str, dict]:
-    """Scrape all brokers in parallel via asyncio.gather."""
+async def scrape_all_brokers(brokers: list[dict], prometheus_port: int,
+                              per_broker_timeout: float = 90.0) -> dict[str, dict]:
+    """Scrape all brokers in parallel — each broker has independent timeout."""
+    async def scrape_with_timeout(host: str, broker_id: str):
+        try:
+            result = await asyncio.wait_for(
+                scrape_broker(host, prometheus_port),
+                timeout=per_broker_timeout
+            )
+            return broker_id, result
+        except asyncio.TimeoutError:
+            logger.warning("Broker scrape timed out for %s (>%ss)", broker_id, per_broker_timeout)
+            return broker_id, {"metrics_unavailable": True}
+        except Exception as exc:
+            logger.warning("Broker scrape failed for %s: %s", broker_id, exc)
+            return broker_id, {"metrics_unavailable": True}
+
     tasks = []
-    broker_ids = []
     for broker in brokers:
         host = broker.get("host", "")
         if not host:
             continue
-        broker_ids.append(str(broker.get("broker_id", host)))
-        tasks.append(scrape_broker(host, prometheus_port))
+        broker_id = str(broker.get("broker_id", host))
+        tasks.append(scrape_with_timeout(host, broker_id))
+
     results = {}
     completed = await asyncio.gather(*tasks, return_exceptions=True)
-    for broker_id, result in zip(broker_ids, completed):
-        if isinstance(result, Exception):
-            logger.warning("Broker scrape failed for %s: %s", broker_id, result)
-            results[broker_id] = {}
+    for item in completed:
+        if isinstance(item, Exception):
+            logger.warning("Unexpected scrape error: %s", item)
         else:
-            results[broker_id] = result
+            broker_id, data = item
+            results[broker_id] = data
     return results
-
 
 async def scrape_topic_metrics(host: str, prometheus_port: int,
                                 topic_names: list[str]) -> dict[str, dict]:
