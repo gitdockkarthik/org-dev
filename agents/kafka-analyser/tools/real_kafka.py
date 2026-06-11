@@ -436,6 +436,29 @@ class RealKafkaCollector(KafkaCollector):
             except Exception:
                 pass
 
+    async def list_all_topics(self) -> list[str]:
+        """Return ALL non-internal topic names from the cluster."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._list_all_topics_sync)
+
+    def _list_all_topics_sync(self) -> list[str]:
+        security = self._security_kwargs()
+        try:
+            admin = KafkaAdminClient(
+                bootstrap_servers=self._bootstrap_list,
+                **security,
+                request_timeout_ms=30000,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Failed to connect: {exc}") from exc
+        try:
+            return [n for n in admin.list_topics() if not _is_internal_topic(n)]
+        finally:
+            try:
+                admin.close()
+            except Exception:
+                pass
+
     def _collect_sync(self) -> dict[str, Any]:
         security = self._security_kwargs()
 

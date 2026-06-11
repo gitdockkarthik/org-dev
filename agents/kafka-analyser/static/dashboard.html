@@ -990,7 +990,7 @@
 
       const totalTopics      = allTopics.length;
       const highTraffic      = allTopics.filter(t => msgRate(t) > 1000).length;
-      const lowReplication   = allTopics.filter(topicLowRep).length;
+      const lowReplication   = (window._clusterCounts || {}).total_rf1 != null ? (window._clusterCounts || {}).total_rf1 : allTopics.filter(topicLowRep).length;
       const staleTopics      = allTopics.filter(t => logSize(t) > 0 && msgRate(t) === 0).length;
 
       const totalPartitions = allTopics.reduce((s, t) => s + (t.partition_count || 0), 0);
@@ -2729,14 +2729,16 @@
       if (!kpiEl) return;
       const kpis = kpiEl.querySelectorAll('.kpi__value');
       if (kpis.length < 4) return;
-      const realTotal = (window._clusterCounts || {}).total_topics || topics.length;
-      const lowRep = topics.filter(t => t.replication_factor === 1 && t.partition_count > 0).length;
+      const counts = window._clusterCounts || {};
+      const realTotal = counts.total_topics || topics.length;
+      // Use accurate cluster-wide counts if available, otherwise compute from displayed topics
+      const lowRep = counts.total_rf1 != null ? counts.total_rf1 : topics.filter(t => t.replication_factor === 1 && t.partition_count > 0).length;
       const hotTopics = topics.filter(t => (t.messages_in_per_sec || 0) > 1000).length;
       const retentionRisk = topics.filter(t => (t.retention_pct || 0) > 70).length;
       if (isDone) {
         kpis[0].textContent = realTotal.toLocaleString();
         kpis[0].classList.remove('kpi-loading');
-        kpis[1].textContent = lowRep;
+        kpis[1].textContent = lowRep.toLocaleString();
         kpis[1].style.color = lowRep > 0 ? 'var(--red)' : '';
         kpis[1].classList.remove('kpi-loading');
         kpis[2].textContent = hotTopics;
@@ -2745,7 +2747,7 @@
         kpis[3].classList.remove('kpi-loading');
       } else {
         kpis[0].textContent = realTotal.toLocaleString();
-        kpis[1].textContent = lowRep;
+        kpis[1].textContent = lowRep.toLocaleString();
         kpis[1].classList.add('kpi-loading');
         kpis[2].textContent = hotTopics;
         kpis[2].classList.add('kpi-loading');

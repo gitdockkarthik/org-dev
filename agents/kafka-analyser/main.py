@@ -321,26 +321,44 @@ async def lifespan(app: FastAPI):
                             len(data.get("brokers", [])),
                             len(data.get("topics", [])),
                         )
-                        # Background parallel topic describe — enriches cached topics with partitions/RF/URP
+                        # Background parallel topic describe — ALL topics for accurate KPIs
                         try:
-                            topic_names = [t["name"] for t in data.get("topics", [])]
-                            if topic_names:
-                                logger.info("Topic scan: starting parallel describe for %d cached topics on '%s'", len(topic_names), c["name"])
-                                import time as _t2
-                                _topic_start = _t2.time()
-                                described_topics, total_urp = await collector.describe_all_topics(topic_names, workers=5)
+                            import time as _t2
+                            _topic_start = _t2.time()
+                            # Get ALL topic names from broker
+                            all_topic_names = await collector.list_all_topics()
+                            if all_topic_names:
+                                logger.info("Topic scan: starting parallel describe for ALL %d topics on '%s'", len(all_topic_names), c["name"])
+                                described_topics, total_urp = await collector.describe_all_topics(all_topic_names, workers=10)
                                 if described_topics:
-                                    data["topics"] = described_topics
+                                    total_rf1 = sum(1 for t in described_topics if t.get("replication_factor") == 1)
+                                    total_partitions = sum(t.get("partition_count", 0) for t in described_topics)
+
+                                    # Store accurate counts for KPI display
+                                    if "counts" not in data:
+                                        data["counts"] = {}
+                                    data["counts"]["total_topics"] = len(all_topic_names)
+                                    data["counts"]["total_rf1"] = total_rf1
+                                    data["counts"]["total_urp"] = total_urp
+                                    data["counts"]["total_partitions"] = total_partitions
+
                                     if "cluster" in data:
                                         data["cluster"]["under_replicated_partitions"] = total_urp
-                                        data["cluster"]["partition_count"] = sum(t.get("partition_count", 0) for t in described_topics)
+                                        data["cluster"]["partition_count"] = total_partitions
+
+                                    # Keep top 500 for display: anomalous first (already sorted by describe_all_topics)
+                                    data["topics"] = described_topics[:500]
+
                                     _ks.set_cluster_data(
                                         data,
                                         source_type=c.get("source_type", "kafka_internal"),
                                         cluster_id=str(c.get("id", "default")),
                                     )
                                 _topic_elapsed = round(_t2.time() - _topic_start, 1)
-                                logger.info("Topic scan: described %d topics (%d URP) for '%s' in %ss", len(described_topics), total_urp, c["name"], _topic_elapsed)
+                                logger.info(
+                                    "Topic scan: described %d topics (%d RF=1, %d URP, %d partitions) for '%s' in %ss",
+                                    len(described_topics), total_rf1, total_urp, total_partitions, c["name"], _topic_elapsed
+                                )
                         except Exception as _topic_exc:
                             logger.warning("Topic scan failed for '%s': %s", c["name"], _topic_exc)
                         # Background parallel lag scan — enriches consumer groups
