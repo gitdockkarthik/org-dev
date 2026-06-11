@@ -86,7 +86,7 @@ def _rate(curr: float, prev: float, elapsed: float) -> float:
 
 
 async def scrape_broker(host: str, port: int) -> dict[str, Any]:
-    """Scrape ONE broker — only broker-level metrics, no topic data."""
+    """Scrape ONE broker — streams /metrics and extracts only needed lines."""
     defaults = {
         "heap_pct": 0.0, "cpu_pct": 0.0, "gc_pause_ms": 0.0,
         "messages_in_per_sec": 0.0, "bytes_in_per_sec": 0.0,
@@ -96,14 +96,47 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
         "under_replicated_partitions": 0, "at_min_isr_partitions": 0,
         "partition_count": 0,
     }
+    # Metrics we care about — used to filter lines during streaming
+    _WANTED = {
+        "jvm_memory_bytes_used", "jvm_memory_bytes_max",
+        "process_cpu_seconds_total",
+        "jvm_gc_collection_seconds_sum",
+        "kafka_server_brokertopicmetrics_messagesin_total",
+        "kafka_server_brokertopicmetrics_bytesin_total",
+        "kafka_server_brokertopicmetrics_bytesout_total",
+        "kafka_server_replicamanager_underreplicatedpartitions",
+        "kafka_server_replicamanager_atminisrpartitioncount",
+        "kafka_server_replicamanager_partitioncount",
+        "kafka_server_replicamanager_isrshrinks_total",
+        "kafka_server_replicamanager_isrexpands_total",
+        "kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent",
+        "kafka_network_requestmetrics_totaltimems",
+    }
     state_key = f"{host}:{port}"
     try:
         now = time.time()
+        # Stream the response — only keep lines matching our wanted metrics
+        kept_lines = []
         async with httpx.AsyncClient(timeout=_SCRAPE_TIMEOUT) as client:
-            resp = await client.get(f"http://{host}:{port}/metrics")
-            resp.raise_for_status()
-        # Parse full dump — _get extracts only what we need, rest discarded
-        metrics = _parse_prometheus_text(resp.text)
+            async with client.stream("GET", f"http://{host}:{port}/metrics") as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line or line.startswith('#'):
+                        continue
+                    # Extract metric name (everything before { or space)
+                    name_end = len(line)
+                    for i, ch in enumerate(line):
+                        if ch in ('{', ' '):
+                            name_end = i
+                            break
+                    metric_name = line[:name_end]
+                    if metric_name in _WANTED:
+                        # For throughput counters, skip topic-labeled entries
+                        if "brokertopicmetrics" in metric_name and "topic=" in line:
+                            continue
+                        kept_lines.append(line)
+
+        metrics = _parse_prometheus_text("\n".join(kept_lines))
 
         prev = _broker_state.get(state_key, {})
         prev_metrics = prev.get('metrics', {})
@@ -126,9 +159,8 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
                       {'gc': 'G1 Young Generation'}) if prev_metrics else gc_curr
         gc_ms = round(_rate(gc_curr, gc_prev, elapsed) * 1000, 1)
 
-        # Throughput rates
+        # Throughput rates — now using no_labels_only since we filtered topic entries
         def rate_metric(name: str) -> float:
-            # Use no_labels_only to get broker-level aggregate, not sum of all topic entries
             curr = _get(metrics, name, no_labels_only=True)
             prev_val = _get(prev_metrics, name, no_labels_only=True) if prev_metrics else curr
             return _rate(curr, prev_val, elapsed)
@@ -191,14 +223,29 @@ async def scrape_all_brokers(brokers: list[dict], prometheus_port: int) -> dict[
 
 async def scrape_topic_metrics(host: str, prometheus_port: int,
                                 topic_names: list[str]) -> dict[str, dict]:
-    """Scrape per-topic metrics — targeted to requested topics only.
-    Uses filtered URL to avoid pulling all 18k+ topic metrics."""
+    """Scrape per-topic metrics — streams and extracts only requested topics."""
     result: dict[str, dict] = {}
+    topic_set = set(topic_names)
     try:
+        kept_lines = []
         async with httpx.AsyncClient(timeout=_SCRAPE_TIMEOUT) as client:
-            resp = await client.get(f"http://{host}:{prometheus_port}/metrics")
-            resp.raise_for_status()
-        metrics = _parse_prometheus_text(resp.text)
+            async with client.stream("GET", f"http://{host}:{prometheus_port}/metrics") as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line or line.startswith('#'):
+                        continue
+                    # Only keep topic-specific metrics
+                    if 'kafka_server_brokertopicmetrics' in line and 'topic=' in line:
+                        # Extract topic name from labels
+                        topic_match = re.search(r'topic="([^"]*)"', line)
+                        if topic_match and topic_match.group(1) in topic_set:
+                            kept_lines.append(line)
+                    elif 'kafka_log_log_size' in line and 'topic=' in line:
+                        topic_match = re.search(r'topic="([^"]*)"', line)
+                        if topic_match and topic_match.group(1) in topic_set:
+                            kept_lines.append(line)
+
+        metrics = _parse_prometheus_text("\n".join(kept_lines))
 
         # Build topic size map
         topic_sizes: dict[str, float] = {}
