@@ -144,7 +144,8 @@ class RealKafkaCollector(KafkaCollector):
                 all_names = [n for n in admin.list_topics() if not _is_internal_topic(n)]
                 topic_count = len(all_names)
 
-                # Keep only 500 names in memory for client-side search hints
+                # Keep 500 names in memory for streaming describe + anomaly detection
+                # Table only renders 20 per page — 500 names is negligible memory
                 capped_names = sorted(all_names)[:500] if len(all_names) > 500 else all_names
 
                 # Build lightweight topic stubs — no partition/URP detail

@@ -2697,6 +2697,13 @@
                 if (badge) badge.style.display = 'none';
                 _topicStreamActive = false;
                 if (window._topicAllTopics) {
+                  // Sort by anomaly severity: degraded first, then low-rep (RF=1), then healthy
+                  window._topicAllTopics.sort((a, b) => {
+                    const scoreA = (a.status === 'degraded' ? 0 : a.replication_factor === 1 ? 1 : 2);
+                    const scoreB = (b.status === 'degraded' ? 0 : b.replication_factor === 1 ? 1 : 2);
+                    if (scoreA !== scoreB) return scoreA - scoreB;
+                    return (b.partition_count || 0) - (a.partition_count || 0);
+                  });
                   _updateTopicKPIs(window._topicAllTopics, count, total, true);
                   // Update total count from real cluster data
                   const totalTopics = obj.total_topics || (window._clusterCounts || {}).total_topics || window._topicAllTopics.length;

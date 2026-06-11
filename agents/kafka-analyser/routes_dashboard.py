@@ -836,7 +836,7 @@ Unknown tab "{tab}" — no specific data available.
 # ─── On-demand streaming endpoints ──────────────────────────────────
 
 @router.get("/dashboard/topics/stream")
-async def stream_topic_details(cluster_id: str, limit: int = 50):
+async def stream_topic_details(cluster_id: str, limit: int = 500):
     """Stream topic details on-demand — top N topics, rest available via search."""
     collector = await _collector_for_cluster(cluster_id)
     data = kafka_store.get_cluster_data(cluster_id)
@@ -845,6 +845,7 @@ async def stream_topic_details(cluster_id: str, limit: int = 50):
     if not all_names:
         return {"topics": [], "total": 0, "total_topics": total_count}
     names_to_describe = all_names[:limit]
+    # Alphabetical from summary — frontend re-sorts by anomaly after describe
 
     async def generate():
         _BATCH = 50
