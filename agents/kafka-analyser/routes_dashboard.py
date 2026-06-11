@@ -1,4 +1,9 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import StreamingResponse
+from tools.real_kafka import RealKafkaCollector
+from storage import get_backend
+import json
+import asyncio
 
 import httpx
 import os
@@ -6,6 +11,23 @@ import os
 import kafka_store
 
 router = APIRouter(tags=["dashboard"])
+
+
+async def _collector_for_cluster(cluster_id: str) -> RealKafkaCollector:
+    """Build a RealKafkaCollector from a cluster_id in DB."""
+    cluster = await get_backend().get_cluster(int(cluster_id))
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+    return RealKafkaCollector({
+        "bootstrap_servers": cluster["bootstrap_servers"],
+        "auth_type": "none" if cluster["auth_type"] == "none" else "sasl",
+        "sasl_username": cluster.get("sasl_username"),
+        "sasl_password": cluster.get("sasl_password"),
+        "sasl_mechanism": cluster.get("sasl_mechanism", "PLAIN"),
+        "tls_enabled": cluster.get("tls_enabled", False),
+        "cluster_label": cluster["name"],
+        "jmx_port": cluster.get("jmx_port"),
+    })
 
 
 @router.get("/dashboard/overview")
@@ -794,3 +816,123 @@ Unknown tab "{tab}" — no specific data available.
         headers={"Cache-Control":"no-cache",
                  "X-Accel-Buffering":"no"},
     )
+
+
+# ─── On-demand streaming endpoints ──────────────────────────────────
+
+@router.get("/dashboard/topics/stream")
+async def stream_topic_details(cluster_id: str):
+    """Stream topic details on-demand — fetches partition/URP for batches of topics."""
+    collector = await _collector_for_cluster(cluster_id)
+    data = kafka_store.get_cluster_data(cluster_id)
+    all_names = [t["name"] for t in (data or {}).get("topics", [])]
+    if not all_names:
+        return {"topics": [], "total": 0}
+
+    async def generate():
+        _BATCH = 100
+        sent = 0
+        total = len(all_names)
+        for i in range(0, total, _BATCH):
+            batch_names = all_names[i:i + _BATCH]
+            try:
+                details = await collector.fetch_topic_details(batch_names)
+                for t in details:
+                    yield f"data: {json.dumps(t)}\n\n"
+                    sent += 1
+            except Exception as exc:
+                yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+        yield f"data: {json.dumps({'done': True, 'total': sent})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.get("/dashboard/groups/stream")
+async def stream_group_lags(cluster_id: str):
+    """Stream consumer group lag on-demand — fetches lag in batches."""
+    collector = await _collector_for_cluster(cluster_id)
+    data = kafka_store.get_cluster_data(cluster_id)
+    all_groups = [g for g in (data or {}).get("consumer_groups", [])
+                  if g.get("state", "Unknown") not in ("Empty", "Dead")]
+    if not all_groups:
+        return {"groups": [], "total": 0}
+
+    # Sort by state — active groups first, limit to 200
+    group_ids = [g["group_id"] for g in all_groups][:200]
+
+    async def generate():
+        _BATCH = 20
+        sent = 0
+        total = len(group_ids)
+        for i in range(0, total, _BATCH):
+            batch = group_ids[i:i + _BATCH]
+            try:
+                lags = await collector.fetch_group_lags(batch)
+                for g in lags:
+                    yield f"data: {json.dumps(g)}\n\n"
+                    sent += 1
+            except Exception as exc:
+                yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+        yield f"data: {json.dumps({'done': True, 'total': sent})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.get("/dashboard/topics/search")
+async def search_topics(cluster_id: str, q: str = ""):
+    """Live search across all topics on the cluster."""
+    if not q or len(q) < 2:
+        return {"topics": [], "query": q}
+    collector = await _collector_for_cluster(cluster_id)
+    try:
+        matched_names = await collector.search_topics(q)
+        if not matched_names:
+            return {"topics": [], "query": q}
+        details = await collector.fetch_topic_details(matched_names[:50])
+        return {"topics": details, "query": q, "total_matches": len(matched_names)}
+    except Exception as exc:
+        return {"topics": [], "query": q, "error": str(exc)}
+
+
+@router.get("/dashboard/groups/search")
+async def search_groups(cluster_id: str, q: str = ""):
+    """Search consumer groups by name."""
+    if not q or len(q) < 2:
+        return {"groups": [], "query": q}
+    data = kafka_store.get_cluster_data(cluster_id)
+    all_groups = (data or {}).get("consumer_groups", [])
+    ql = q.lower()
+    matched = [g for g in all_groups if ql in g["group_id"].lower()][:100]
+    if not matched:
+        return {"groups": matched, "query": q}
+    # Fetch real lag for matched groups
+    collector = await _collector_for_cluster(cluster_id)
+    try:
+        lags = await collector.fetch_group_lags([g["group_id"] for g in matched[:50]])
+        lag_map = {g["group_id"]: g for g in lags}
+        for g in matched:
+            lag_data = lag_map.get(g["group_id"])
+            if lag_data:
+                g["total_lag"] = lag_data["total_lag"]
+                g["topic_count"] = lag_data["topic_count"]
+                g["partitions"] = lag_data.get("partitions", [])
+        return {"groups": matched, "query": q}
+    except Exception as exc:
+        return {"groups": matched, "query": q, "error": str(exc)}
+
+
+@router.get("/dashboard/schemas/stream")
+async def stream_schema_details(cluster_id: str):
+    """Stream schema registry subject details on-demand."""
+    from tools.schema_registry import SchemaRegistryCollector
+    cluster = await get_backend().get_cluster(int(cluster_id))
+    if not cluster or not cluster.get("schema_registry_url"):
+        return {"subjects": [], "status": "not_configured"}
+    sr = SchemaRegistryCollector(cluster["schema_registry_url"])
+    try:
+        result = await sr.collect()
+        return result
+    except Exception as exc:
+        return {"subjects": [], "error": str(exc)}

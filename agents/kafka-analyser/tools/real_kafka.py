@@ -208,6 +208,156 @@ class RealKafkaCollector(KafkaCollector):
             except Exception:
                 pass
 
+    async def fetch_topic_details(self, topic_names: list[str]) -> list[dict[str, Any]]:
+        """On-demand: describe specific topics with full partition/URP detail."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._fetch_topic_details_sync, topic_names)
+
+    def _fetch_topic_details_sync(self, topic_names: list[str]) -> list[dict[str, Any]]:
+        if not topic_names:
+            return []
+        security = self._security_kwargs()
+        try:
+            admin = KafkaAdminClient(
+                bootstrap_servers=self._bootstrap_list,
+                **security,
+                request_timeout_ms=15000,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Failed to connect: {exc}") from exc
+        try:
+            # Batch describe in chunks of 500
+            described = []
+            _BATCH = 500
+            for i in range(0, len(topic_names), _BATCH):
+                described.extend(admin.describe_topics(topic_names[i:i + _BATCH]))
+
+            topics = []
+            for meta in described:
+                name = meta.get("topic", "")
+                if not name:
+                    continue
+                partitions = meta.get("partitions", []) or []
+                partition_count = len(partitions)
+                replication_factor = len(partitions[0].get("replicas", [])) if partitions else 0
+                urp = 0
+                for part in partitions:
+                    replicas = part.get("replicas", []) or []
+                    isr = part.get("isr", []) or []
+                    if len(isr) < len(replicas):
+                        urp += 1
+                topics.append({
+                    "name": name,
+                    "partition_count": partition_count,
+                    "replication_factor": replication_factor,
+                    "messages_in_per_sec": 0.0,
+                    "bytes_in_per_sec": 0.0,
+                    "bytes_out_per_sec": 0.0,
+                    "total_messages": 0,
+                    "size_bytes": 0,
+                    "retention_bytes": -1,
+                    "retention_pct": 0.0,
+                    "under_replicated": urp,
+                    "status": "degraded" if urp else "healthy",
+                })
+            return topics
+        finally:
+            try:
+                admin.close()
+            except Exception:
+                pass
+
+    async def fetch_group_lags(self, group_ids: list[str]) -> list[dict[str, Any]]:
+        """On-demand: fetch lag for specific consumer groups."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._fetch_group_lags_sync, group_ids)
+
+    def _fetch_group_lags_sync(self, group_ids: list[str]) -> list[dict[str, Any]]:
+        if not group_ids:
+            return []
+        security = self._security_kwargs()
+        try:
+            admin = KafkaAdminClient(
+                bootstrap_servers=self._bootstrap_list,
+                **security,
+                request_timeout_ms=15000,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Failed to connect: {exc}") from exc
+        consumer = None
+        try:
+            groups = []
+            for gid in group_ids:
+                try:
+                    offsets = admin.list_consumer_group_offsets(gid)
+                    if not offsets:
+                        groups.append({
+                            "group_id": gid,
+                            "total_lag": 0,
+                            "topic_count": 0,
+                            "partitions": [],
+                        })
+                        continue
+                    if consumer is None:
+                        consumer = KafkaConsumer(
+                            bootstrap_servers=self._bootstrap_list,
+                            enable_auto_commit=False,
+                            group_id=None,
+                            **security,
+                        )
+                    partitions, total_lag, topics = self._group_lag(consumer, offsets)
+                    groups.append({
+                        "group_id": gid,
+                        "total_lag": total_lag,
+                        "topic_count": len(topics),
+                        "partitions": partitions,
+                    })
+                except Exception as exc:
+                    groups.append({
+                        "group_id": gid,
+                        "total_lag": -1,
+                        "topic_count": 0,
+                        "partitions": [],
+                        "error": str(exc),
+                    })
+            return groups
+        finally:
+            if consumer:
+                try:
+                    consumer.close()
+                except Exception:
+                    pass
+            try:
+                admin.close()
+            except Exception:
+                pass
+
+    async def search_topics(self, query: str) -> list[str]:
+        """On-demand: search topic names matching query (case-insensitive)."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._search_topics_sync, query)
+
+    def _search_topics_sync(self, query: str) -> list[str]:
+        security = self._security_kwargs()
+        try:
+            admin = KafkaAdminClient(
+                bootstrap_servers=self._bootstrap_list,
+                **security,
+                request_timeout_ms=10000,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Failed to connect: {exc}") from exc
+        try:
+            names = admin.list_topics()
+            q = query.lower()
+            matched = [n for n in names if q in n.lower() and not _is_internal_topic(n)]
+            return sorted(matched)[:200]
+        finally:
+            try:
+                admin.close()
+            except Exception:
+                pass
+
     def _collect_sync(self) -> dict[str, Any]:
         security = self._security_kwargs()
 
