@@ -328,13 +328,11 @@
       const el = document.getElementById('tab-' + name);
       el.innerHTML = skeletonHTML();
 
-      // Fetch real cluster counts for KPI cards
-      if (!window._clusterCounts) {
-        try {
-          const counts = await api('/dashboard/counts');
-          if (!counts.empty) window._clusterCounts = counts;
-        } catch(e) { console.warn('counts fetch failed', e); }
-      }
+      // Fetch real cluster counts for KPI cards — always refresh
+      try {
+        const counts = await api('/dashboard/counts');
+        if (!counts.empty) window._clusterCounts = counts;
+      } catch(e) { console.warn('counts fetch failed', e); }
 
       try {
         switch (name) {
@@ -499,9 +497,9 @@
       // ── KPI metrics ─────────────────────────────────────────────────────────
       const brokerCount      = cluster.broker_count || brokers.length;
       const allBrokersHealthy = brokers.length > 0 && brokers.every(b => b.status === 'healthy');
-      const topicCount       = topics.length || cluster.topic_count || 0;
-      const totalPartitions  = topics.reduce((s, t) => s + partsOf(t), 0);
-      const consumerGroupCount = groups.length;
+      const topicCount       = (window._clusterCounts || {}).total_topics || topics.length || cluster.topic_count || 0;
+      const partitionCount   = (window._clusterCounts || {}).total_partitions || topics.reduce((s, t) => s + (t.partition_count || 0), 0);
+      const consumerGroupCount = (window._clusterCounts || {}).total_groups || groups.length;
       const totalURPs        = brokers.reduce((s, b) => s + (b.urp_count || 0), 0);
       const healthScore      = cluster.health_score || 0;
       const criticalCount    = cluster.critical_count || 0;
@@ -517,17 +515,17 @@
           </div>
           <div class="kpi kpi--orange">
             <div class="kpi__label">Topics</div>
-            <div class="kpi__value">${topicCount}</div>
+            <div class="kpi__value">${topicCount.toLocaleString()}</div>
             <div class="kpi__sub">topics</div>
           </div>
           <div class="kpi kpi--orange">
             <div class="kpi__label">Partitions</div>
-            <div class="kpi__value">${fmtNum(totalPartitions)}</div>
+            <div class="kpi__value">${partitionCount.toLocaleString()}</div>
             <div class="kpi__sub">across all topics</div>
           </div>
           <div class="kpi kpi--orange">
             <div class="kpi__label">Consumer Groups</div>
-            <div class="kpi__value">${consumerGroupCount}</div>
+            <div class="kpi__value">${consumerGroupCount.toLocaleString()}</div>
             <div class="kpi__sub">active</div>
           </div>
           <div class="kpi ${totalURPs > 0 ? 'kpi--danger' : 'kpi--success'}">
