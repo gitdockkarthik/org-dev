@@ -347,8 +347,46 @@
             const d = await api('/dashboard/consumer-groups');
             _loaded.add(name);
             renderConsumerGroups(d);
-            // Phase 2: stream real consumer group lag from cluster
-            _streamGroupLags();
+            // Only stream if lag data not yet available (background scan may have enriched cache)
+            const hasLagData = (d.consumer_groups || []).some(g => g.total_lag >= 0);
+            if (!hasLagData) {
+              _streamGroupLags();
+            } else {
+              // Cache already has lag — update KPIs immediately
+              if (window._cgGroups) {
+                _updateGroupKPIs(window._cgGroups, true);
+                // Render chart from cached data
+                const hasLag = window._cgGroups.some(g => g.total_lag > 0);
+                const chartCanvas = document.getElementById('cg-lag-chart');
+                const chartContainer = document.getElementById('cg-chart-container');
+                if (hasLag && chartCanvas) {
+                  const top10 = window._cgGroups.filter(g => g.total_lag > 0).sort((a,b) => b.total_lag - a.total_lag).slice(0, 10);
+                  if (charts['cgLag']) { charts['cgLag'].destroy(); charts['cgLag'] = null; }
+                  if (chartContainer) chartContainer.style.maxHeight = '350px';
+                  charts['cgLag'] = new Chart(chartCanvas, {
+                    type: 'bar',
+                    data: {
+                      labels: top10.map(g => g.group_id.length > 35 ? g.group_id.slice(0,32)+'...' : g.group_id),
+                      datasets: [{
+                        label: 'Total Lag',
+                        data: top10.map(g => g.total_lag),
+                        backgroundColor: top10.map(g => g.total_lag > 10000 ? '#e74c3c' : g.total_lag > 1000 ? '#f39c12' : '#27ae60'),
+                      }]
+                    },
+                    options: {
+                      indexAxis: 'y',
+                      responsive: true,
+                      maintainAspectRatio: true,
+                      plugins: { legend: { display: false } },
+                      scales: { x: { title: { display: true, text: 'Total Lag' } } }
+                    }
+                  });
+                }
+                // Hide no-lag banner if lag exists
+                const noLagBanner = document.getElementById('cg-no-lag-banner');
+                if (noLagBanner && hasLag) noLagBanner.style.display = 'none';
+              }
+            }
             break;
           }
           case 'topics': {

@@ -321,6 +321,34 @@ async def lifespan(app: FastAPI):
                             len(data.get("brokers", [])),
                             len(data.get("topics", [])),
                         )
+                        # Background parallel lag scan — enriches consumer groups
+                        try:
+                            active_gids = [g["group_id"] for g in data.get("consumer_groups", [])
+                                          if g.get("state", "Unknown") not in ("Empty", "Dead")]
+                            if active_gids:
+                                logger.info("Lag scan: starting parallel scan for %d active groups on '%s'", len(active_gids), c["name"])
+                                import time as _t
+                                _lag_start = _t.time()
+                                lags = await collector.fetch_all_group_lags(active_gids, workers=10)
+                                lag_map = {g["group_id"]: g for g in lags}
+                                enriched = 0
+                                for cg in data["consumer_groups"]:
+                                    if cg["group_id"] in lag_map:
+                                        cg["total_lag"] = lag_map[cg["group_id"]].get("total_lag", -1)
+                                        cg["topic_count"] = lag_map[cg["group_id"]].get("topic_count", 0)
+                                        enriched += 1
+                                # Re-sort by lag descending
+                                data["consumer_groups"].sort(key=lambda g: g.get("total_lag", -1), reverse=True)
+                                # Re-store enriched data
+                                _ks.set_cluster_data(
+                                    data,
+                                    source_type=c.get("source_type", "kafka_internal"),
+                                    cluster_id=str(c.get("id", "default")),
+                                )
+                                _lag_elapsed = round(_t.time() - _lag_start, 1)
+                                logger.info("Lag scan: enriched %d/%d groups for '%s' in %ss", enriched, len(active_gids), c["name"], _lag_elapsed)
+                        except Exception as _lag_exc:
+                            logger.warning("Lag scan failed for '%s': %s", c["name"], _lag_exc)
                     except Exception as exc:
                         logger.warning("Startup: failed to sync cluster '%s': %s", c["name"], exc)
             asyncio.create_task(_startup_sync())
