@@ -992,3 +992,17 @@ async def search_schemas(cluster_id: str, q: str = ""):
         return {"subjects": matched, "query": q}
     except Exception as exc:
         return {"subjects": [], "query": q, "error": str(exc)}
+
+
+@router.get("/dashboard/prometheus-debug")
+async def prometheus_debug() -> dict:
+    """Debug endpoint — shows Prometheus broker state."""
+    try:
+        from tools.prometheus_collector import _broker_state
+        return {
+            "broker_state_keys": list(_broker_state.keys()),
+            "broker_count": len(_broker_state),
+            "has_state": len(_broker_state) > 0,
+        }
+    except Exception as exc:
+        return {"error": str(exc)}
