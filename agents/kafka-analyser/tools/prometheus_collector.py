@@ -1,6 +1,6 @@
 """Prometheus JMX Exporter scraper for Kafka broker metrics.
-Scrapes the JMX Prometheus Java agent HTTP endpoint directly on each broker.
-No jpype, no RMI, no Prometheus server needed — pure HTTP.
+Pull-based, targeted scraping — requests ONLY the metrics we need.
+No full /metrics dump — differentiates from traditional observability tools.
 """
 from __future__ import annotations
 import asyncio
@@ -12,10 +12,41 @@ from typing import Any
 import httpx
 
 logger = logging.getLogger(__name__)
-_SCRAPE_TIMEOUT = 5.0
+_SCRAPE_TIMEOUT = 10.0
+
+# Only the metrics we need — not the full /metrics dump
+_BROKER_METRICS = [
+    "jvm_memory_bytes_used",
+    "jvm_memory_bytes_max",
+    "process_cpu_seconds_total",
+    "jvm_gc_collection_seconds_sum",
+    "kafka_server_brokertopicmetrics_messagesin_total",
+    "kafka_server_brokertopicmetrics_bytesin_total",
+    "kafka_server_brokertopicmetrics_bytesout_total",
+    "kafka_server_replicamanager_underreplicatedpartitions",
+    "kafka_server_replicamanager_atminisrpartitioncount",
+    "kafka_server_replicamanager_partitioncount",
+    "kafka_server_replicamanager_isrshrinks_total",
+    "kafka_server_replicamanager_isrexpands_total",
+    "kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent",
+    "kafka_network_requestmetrics_totaltimems",
+]
+
+_TOPIC_METRICS = [
+    "kafka_server_brokertopicmetrics_messagesin_by_topic_total",
+    "kafka_server_brokertopicmetrics_bytesin_by_topic_total",
+    "kafka_server_brokertopicmetrics_bytesout_by_topic_total",
+    "kafka_log_log_size",
+]
 
 # Per-broker persistent state for rate calculations (keyed by host:port)
 _broker_state: dict[str, dict] = {}
+
+
+def _build_filter_url(host: str, port: int, metric_names: list[str]) -> str:
+    """Build filtered Prometheus URL — only request specific metrics."""
+    params = "&".join(f"name[]={m}" for m in metric_names)
+    return f"http://{host}:{port}/metrics?{params}"
 
 
 def _parse_prometheus_text(text: str) -> dict[str, list[dict]]:
@@ -45,12 +76,11 @@ def _parse_prometheus_text(text: str) -> dict[str, list[dict]]:
 
 
 def _get(metrics: dict, name: str, labels: dict | None = None) -> float:
-    """Get metric value by name and optional label filters. Returns 0.0 if not found."""
+    """Get metric value by name and optional label filters."""
     entries = metrics.get(name, [])
     if not entries:
         return 0.0
     if not labels:
-        # Sum all entries if no label filter (e.g. broker-level totals)
         return sum(e['value'] for e in entries)
     for entry in entries:
         if all(entry['labels'].get(k) == v for k, v in labels.items()):
@@ -59,19 +89,17 @@ def _get(metrics: dict, name: str, labels: dict | None = None) -> float:
 
 
 def _get_topic(metrics: dict, name: str, topic: str) -> float:
-    """Get per-topic metric value."""
     return _get(metrics, name, {'topic': topic})
 
 
 def _rate(curr: float, prev: float, elapsed: float) -> float:
-    """Compute per-second rate from two counter values."""
     if elapsed <= 0 or curr < prev:
         return 0.0
     return round((curr - prev) / elapsed, 2)
 
 
 async def scrape_broker(host: str, port: int) -> dict[str, Any]:
-    """Scrape one broker's Prometheus endpoint and return broker metrics dict."""
+    """Scrape ONE broker — only broker-level metrics, no topic data."""
     defaults = {
         "heap_pct": 0.0, "cpu_pct": 0.0, "gc_pause_ms": 0.0,
         "messages_in_per_sec": 0.0, "bytes_in_per_sec": 0.0,
@@ -84,8 +112,9 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
     state_key = f"{host}:{port}"
     try:
         now = time.time()
+        url = _build_filter_url(host, port, _BROKER_METRICS)
         async with httpx.AsyncClient(timeout=_SCRAPE_TIMEOUT) as client:
-            resp = await client.get(f"http://{host}:{port}/metrics")
+            resp = await client.get(url)
             resp.raise_for_status()
         metrics = _parse_prometheus_text(resp.text)
 
@@ -99,7 +128,7 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
         heap_max = _get(metrics, 'jvm_memory_bytes_max', {'area': 'heap'})
         heap_pct = round((heap_used / heap_max) * 100, 1) if heap_max > 0 else 0.0
 
-        # CPU % — rate of process_cpu_seconds_total
+        # CPU % rate
         cpu_curr = _get(metrics, 'process_cpu_seconds_total')
         cpu_prev = _get(prev_metrics, 'process_cpu_seconds_total') if prev_metrics else cpu_curr
         cpu_pct = min(100.0, max(0.0, round(_rate(cpu_curr, cpu_prev, elapsed) * 100, 1)))
@@ -111,26 +140,16 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
         gc_ms = round(_rate(gc_curr, gc_prev, elapsed) * 1000, 1)
 
         # Throughput rates
-        msgs_curr = _get(metrics, 'kafka_server_brokertopicmetrics_messagesin_total')
-        msgs_prev = _get(prev_metrics, 'kafka_server_brokertopicmetrics_messagesin_total') if prev_metrics else msgs_curr
-        msgs_in = _rate(msgs_curr, msgs_prev, elapsed)
+        def rate_metric(name: str) -> float:
+            curr = _get(metrics, name)
+            prev_val = _get(prev_metrics, name) if prev_metrics else curr
+            return _rate(curr, prev_val, elapsed)
 
-        bin_curr = _get(metrics, 'kafka_server_brokertopicmetrics_bytesin_total')
-        bin_prev = _get(prev_metrics, 'kafka_server_brokertopicmetrics_bytesin_total') if prev_metrics else bin_curr
-        bytes_in = _rate(bin_curr, bin_prev, elapsed)
-
-        bout_curr = _get(metrics, 'kafka_server_brokertopicmetrics_bytesout_total')
-        bout_prev = _get(prev_metrics, 'kafka_server_brokertopicmetrics_bytesout_total') if prev_metrics else bout_curr
-        bytes_out = _rate(bout_curr, bout_prev, elapsed)
-
-        # ISR rates
-        isrs_curr = _get(metrics, 'kafka_server_replicamanager_isrshrinks_total')
-        isrs_prev = _get(prev_metrics, 'kafka_server_replicamanager_isrshrinks_total') if prev_metrics else isrs_curr
-        isr_shrinks = _rate(isrs_curr, isrs_prev, elapsed)
-
-        isre_curr = _get(metrics, 'kafka_server_replicamanager_isrexpands_total')
-        isre_prev = _get(prev_metrics, 'kafka_server_replicamanager_isrexpands_total') if prev_metrics else isre_curr
-        isr_expands = _rate(isre_curr, isre_prev, elapsed)
+        msgs_in = rate_metric('kafka_server_brokertopicmetrics_messagesin_total')
+        bytes_in = rate_metric('kafka_server_brokertopicmetrics_bytesin_total')
+        bytes_out = rate_metric('kafka_server_brokertopicmetrics_bytesout_total')
+        isr_shrinks = rate_metric('kafka_server_replicamanager_isrshrinks_total')
+        isr_expands = rate_metric('kafka_server_replicamanager_isrexpands_total')
 
         # Latency — 99th percentile
         produce_latency = _get(metrics, 'kafka_network_requestmetrics_totaltimems',
@@ -138,7 +157,7 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
         fetch_latency = _get(metrics, 'kafka_network_requestmetrics_totaltimems',
                             {'quantile': '0.999', 'request': 'Fetch'})
 
-        # Gauges — direct values
+        # Gauges
         urp = int(_get(metrics, 'kafka_server_replicamanager_underreplicatedpartitions'))
         at_min_isr = int(_get(metrics, 'kafka_server_replicamanager_atminisrpartitioncount'))
         partition_count = int(_get(metrics, 'kafka_server_replicamanager_partitioncount'))
@@ -147,19 +166,12 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
         _broker_state[state_key] = {'metrics': metrics, 'time': now}
 
         return {
-            "heap_pct": heap_pct,
-            "cpu_pct": cpu_pct,
-            "gc_pause_ms": gc_ms,
-            "messages_in_per_sec": msgs_in,
-            "bytes_in_per_sec": bytes_in,
-            "bytes_out_per_sec": bytes_out,
-            "request_handler_idle_pct": 100.0,
-            "isr_shrinks_per_sec": isr_shrinks,
-            "isr_expands_per_sec": isr_expands,
-            "produce_latency_ms": produce_latency,
-            "fetch_latency_ms": fetch_latency,
-            "under_replicated_partitions": urp,
-            "at_min_isr_partitions": at_min_isr,
+            "heap_pct": heap_pct, "cpu_pct": cpu_pct, "gc_pause_ms": gc_ms,
+            "messages_in_per_sec": msgs_in, "bytes_in_per_sec": bytes_in,
+            "bytes_out_per_sec": bytes_out, "request_handler_idle_pct": 100.0,
+            "isr_shrinks_per_sec": isr_shrinks, "isr_expands_per_sec": isr_expands,
+            "produce_latency_ms": produce_latency, "fetch_latency_ms": fetch_latency,
+            "under_replicated_partitions": urp, "at_min_isr_partitions": at_min_isr,
             "partition_count": partition_count,
         }
     except Exception as exc:
@@ -168,15 +180,14 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
 
 
 async def scrape_all_brokers(brokers: list[dict], prometheus_port: int) -> dict[str, dict]:
-    """Scrape all brokers in parallel. Returns {broker_id: metrics_dict}."""
+    """Scrape all brokers in parallel — targeted metrics only."""
     tasks = []
     broker_ids = []
     for broker in brokers:
         host = broker.get("host", "")
         if not host:
             continue
-        broker_id = str(broker.get("broker_id", host))
-        broker_ids.append(broker_id)
+        broker_ids.append(str(broker.get("broker_id", host)))
         tasks.append(scrape_broker(host, prometheus_port))
 
     results = {}
@@ -192,15 +203,17 @@ async def scrape_all_brokers(brokers: list[dict], prometheus_port: int) -> dict[
 
 async def scrape_topic_metrics(host: str, prometheus_port: int,
                                 topic_names: list[str]) -> dict[str, dict]:
-    """Scrape per-topic metrics for specified topics from one broker."""
+    """Scrape per-topic metrics — targeted to requested topics only.
+    Uses filtered URL to avoid pulling all 18k+ topic metrics."""
     result: dict[str, dict] = {}
     try:
+        url = _build_filter_url(host, prometheus_port, _TOPIC_METRICS)
         async with httpx.AsyncClient(timeout=_SCRAPE_TIMEOUT) as client:
-            resp = await client.get(f"http://{host}:{prometheus_port}/metrics")
+            resp = await client.get(url)
             resp.raise_for_status()
         metrics = _parse_prometheus_text(resp.text)
 
-        # Build topic size map from log size metric
+        # Build topic size map
         topic_sizes: dict[str, float] = {}
         for entry in metrics.get('kafka_log_log_size', []):
             topic = entry['labels'].get('topic', '')
