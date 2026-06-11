@@ -1503,7 +1503,13 @@
       }
 
       const s = data.summary || {};
-      const connectors = data.connectors || [];
+      const connectors = (data.connectors || []).sort((a, b) => {
+        // Failed first, then paused, then running
+        const scoreA = a.state === 'FAILED' ? 0 : (a.failed_tasks > 0 ? 1 : a.state === 'PAUSED' ? 2 : 3);
+        const scoreB = b.state === 'FAILED' ? 0 : (b.failed_tasks > 0 ? 1 : b.state === 'PAUSED' ? 2 : 3);
+        if (scoreA !== scoreB) return scoreA - scoreB;
+        return (b.total_tasks || 0) - (a.total_tasks || 0);
+      });
 
       if (!connectors.length) {
         el.innerHTML = `
