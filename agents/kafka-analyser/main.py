@@ -190,7 +190,7 @@ async def _collection_loop() -> None:
                         "jmx_port": c.get("jmx_port"),
                     })
                     try:
-                        data = await collector.collect()
+                        data = await collector.collect_summary()
                     except RuntimeError as exc:
                         # Check if this is a background aiokafka error after data collection
                         if "Buffer underrun" in str(exc) or "KafkaConnectionError" in str(exc):
@@ -297,7 +297,7 @@ async def lifespan(app: FastAPI):
                             "cluster_label": c["name"],
                             "jmx_port": c.get("jmx_port"),
                         })
-                        data = await collector.collect()
+                        data = await collector.collect_summary()
                         _ks.set_cluster_data(
                             data,
                             source_type=c.get("source_type", "kafka_internal"),

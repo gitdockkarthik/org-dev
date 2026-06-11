@@ -115,6 +115,99 @@ class RealKafkaCollector(KafkaCollector):
             except Exception:
                 pass
 
+    async def collect_summary(self) -> dict[str, Any]:
+        """Lightweight summary collection — fast startup/sync cycle.
+        Fetches broker list, topic names only, group states only.
+        No describe_topics, no lag fetch, no JMX, no connectors.
+        Full data fetched on-demand per tab."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._collect_summary_sync)
+
+    def _collect_summary_sync(self) -> dict[str, Any]:
+        security = self._security_kwargs()
+        try:
+            admin = KafkaAdminClient(
+                bootstrap_servers=self._bootstrap_list,
+                **security,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to connect to Kafka at bootstrap_servers="
+                f"{self.bootstrap_servers!r} (auth_type={self.auth_type!r}): {exc}"
+            ) from exc
+        try:
+            try:
+                cluster_info = admin.describe_cluster()
+                brokers = self._build_brokers(cluster_info)
+
+                # Topic names only — no describe, no URP
+                all_names = [n for n in admin.list_topics() if not _is_internal_topic(n)]
+                topic_count = len(all_names)
+
+                # Cap for in-memory storage — sort alphabetically
+                if len(all_names) > 5000:
+                    all_names = sorted(all_names)[:5000]
+
+                # Build lightweight topic stubs — no partition/URP detail
+                topics = [
+                    {
+                        "name": n,
+                        "partition_count": 0,
+                        "replication_factor": 0,
+                        "messages_in_per_sec": 0.0,
+                        "bytes_in_per_sec": 0.0,
+                        "bytes_out_per_sec": 0.0,
+                        "total_messages": 0,
+                        "size_bytes": 0,
+                        "retention_bytes": -1,
+                        "retention_pct": 0.0,
+                        "status": "unknown",
+                    }
+                    for n in all_names
+                ]
+
+                # Consumer group states only — no lag fetch
+                listed = admin.list_consumer_groups()
+                group_ids = [entry[0] for entry in listed]
+                states = self._describe_group_states(admin, group_ids) if group_ids else {}
+                groups = [
+                    {
+                        "group_id": gid,
+                        "state": states.get(gid, "Unknown"),
+                        "total_lag": -1,
+                        "topic_count": 0,
+                        "lag_trend": "unknown",
+                        "lag_rate_per_min": 0.0,
+                        "partitions": [],
+                    }
+                    for gid in group_ids
+                ]
+
+                cluster = self._build_cluster(cluster_info, len(brokers), 0)
+                cluster["topic_count"] = topic_count
+
+                return {
+                    "cluster": cluster,
+                    "brokers": brokers,
+                    "consumer_groups": groups,
+                    "topics": topics,
+                    "connectors": [],
+                    "anomalies": [],
+                    "is_summary": True,
+                }
+            except RuntimeError:
+                raise
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to collect summary from Kafka at bootstrap_servers="
+                    f"{self.bootstrap_servers!r} (auth_type={self.auth_type!r}): {exc}"
+                ) from exc
+        finally:
+            try:
+                admin.close()
+            except Exception:
+                pass
+
     def _collect_sync(self) -> dict[str, Any]:
         security = self._security_kwargs()
 
