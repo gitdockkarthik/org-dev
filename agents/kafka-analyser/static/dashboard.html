@@ -111,6 +111,9 @@
     }
     .cg-table { table-layout: fixed; width: 100%; }
     .cg-table td, .cg-table th { overflow: hidden; text-overflow: ellipsis; }
+    .cg-cell { display: flex; align-items: center; gap: 4px; overflow: hidden; }
+    .cg-cell-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+    .cg-cell .copy-icon { flex-shrink: 0; }
   </style>
 </head>
 <body>
@@ -730,10 +733,10 @@
         }
         const groupId = g.group_id || g.group_name || 'Unknown';
         const topicName = g.topic || (g.partitions && g.partitions[0] && g.partitions[0].topic) || '-';
-        const copyBtn = (text) => `<span class="copy-icon" onclick="event.stopPropagation();var t=this.parentElement.getAttribute('data-copy');var el=document.createElement('textarea');el.value=t;document.body.appendChild(el);el.select();document.execCommand('copy');document.body.removeChild(el);this.textContent='✓';setTimeout(()=>this.textContent='📋',1000)" style="cursor:pointer;margin-left:4px;font-size:12px;opacity:0.4;transition:opacity 0.2s" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='0.4'">📋</span>`;
+        const copyBtn = `<span class="copy-icon" onclick="event.stopPropagation();var t=this.closest('td').getAttribute('data-copy');var el=document.createElement('textarea');el.value=t;document.body.appendChild(el);el.select();document.execCommand('copy');document.body.removeChild(el);this.textContent='✓';setTimeout(()=>this.textContent='📋',1000)" style="cursor:pointer;font-size:12px;opacity:0.3;transition:opacity 0.2s" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='0.3'">📋</span>`;
         return `<tr>
-          <td style="font-weight:600;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" data-copy="${groupId}" title="${groupId}">${groupId}${copyBtn(groupId)}</td>
-          <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" data-copy="${topicName}" title="${topicName}"><code style="font-size:.8rem">${topicName}</code>${topicName !== '-' ? copyBtn(topicName) : ''}</td>
+          <td data-copy="${groupId}" title="${groupId}"><div class="cg-cell"><span class="cg-cell-text" style="font-weight:600">${groupId}</span>${copyBtn}</div></td>
+          <td data-copy="${topicName}" title="${topicName}"><div class="cg-cell"><span class="cg-cell-text"><code style="font-size:.8rem">${topicName}</code></span>${topicName !== '-' ? copyBtn : ''}</div></td>
           <td ${lagColor}>${fmtNum(g.total_lag)}</td>
           <td>${trendHtml}</td>
           <td style="font-size:.82rem;color:var(--text-muted)">${g.lag_rate_per_min > 0 ? '+' : ''}${fmtNum(g.lag_rate_per_min)}/min</td>
