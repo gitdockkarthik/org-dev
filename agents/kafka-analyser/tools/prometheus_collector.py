@@ -86,7 +86,10 @@ def _rate(curr: float, prev: float, elapsed: float) -> float:
 
 
 async def scrape_broker(host: str, port: int) -> dict[str, Any]:
-    """Scrape ONE broker — streams /metrics and extracts only needed lines."""
+    """Scrape ONE broker using hybrid approach:
+    1. Filtered HTTP for metrics that support name[] filter (instant)
+    2. curl for throughput counters (filtered in Python; name[] doesn't work for these)
+    """
     defaults = {
         "heap_pct": 0.0, "cpu_pct": 0.0, "gc_pause_ms": 0.0,
         "messages_in_per_sec": 0.0, "bytes_in_per_sec": 0.0,
@@ -96,47 +99,55 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
         "under_replicated_partitions": 0, "at_min_isr_partitions": 0,
         "partition_count": 0,
     }
-    # Metrics we care about — used to filter lines during streaming
-    _WANTED = {
-        "jvm_memory_bytes_used", "jvm_memory_bytes_max",
-        "process_cpu_seconds_total",
-        "jvm_gc_collection_seconds_sum",
-        "kafka_server_brokertopicmetrics_messagesin_total",
-        "kafka_server_brokertopicmetrics_bytesin_total",
-        "kafka_server_brokertopicmetrics_bytesout_total",
-        "kafka_server_replicamanager_underreplicatedpartitions",
-        "kafka_server_replicamanager_atminisrpartitioncount",
-        "kafka_server_replicamanager_partitioncount",
-        "kafka_server_replicamanager_isrshrinks_total",
-        "kafka_server_replicamanager_isrexpands_total",
-        "kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent",
-        "kafka_network_requestmetrics_totaltimems",
-    }
     state_key = f"{host}:{port}"
     try:
         now = time.time()
-        # Stream the response — only keep lines matching our wanted metrics
-        kept_lines = []
-        async with httpx.AsyncClient(timeout=_SCRAPE_TIMEOUT) as client:
-            async with client.stream("GET", f"http://{host}:{port}/metrics") as resp:
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    if not line or line.startswith('#'):
-                        continue
-                    # Extract metric name (everything before { or space)
-                    name_end = len(line)
-                    for i, ch in enumerate(line):
-                        if ch in ('{', ' '):
-                            name_end = i
-                            break
-                    metric_name = line[:name_end]
-                    if metric_name in _WANTED:
-                        # For throughput counters, skip topic-labeled entries
-                        if "brokertopicmetrics" in metric_name and "topic=" in line:
-                            continue
-                        kept_lines.append(line)
 
-        metrics = _parse_prometheus_text("\n".join(kept_lines))
+        # Phase 1: Filtered fetch for JVM/system metrics (exporter supports name[] for these)
+        _FILTERED_METRICS = [
+            "jvm_memory_bytes_used", "jvm_memory_bytes_max",
+            "process_cpu_seconds_total", "jvm_gc_collection_seconds_sum",
+            "kafka_server_replicamanager_underreplicatedpartitions",
+            "kafka_server_replicamanager_atminisrpartitioncount",
+            "kafka_server_replicamanager_partitioncount",
+            "kafka_network_requestmetrics_totaltimems",
+        ]
+        params = "&".join(f"name[]={m}" for m in _FILTERED_METRICS)
+        filter_url = f"http://{host}:{port}/metrics?{params}"
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(filter_url)
+            resp.raise_for_status()
+        metrics = _parse_prometheus_text(resp.text)
+
+        # Phase 2: curl for throughput counters, filtered in Python (name[] doesn't work for these)
+        _THROUGHPUT_PATTERNS = [
+            "kafka_server_brokertopicmetrics_messagesin_total ",
+            "kafka_server_brokertopicmetrics_bytesin_total ",
+            "kafka_server_brokertopicmetrics_bytesout_total ",
+            "kafka_server_replicamanager_isrshrinks_total ",
+            "kafka_server_replicamanager_isrexpands_total ",
+            "kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent ",
+        ]
+        try:
+            url = f"http://{host}:{port}/metrics"
+            proc = await asyncio.create_subprocess_exec(
+                "curl", "-s", "--max-time", "15", url,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=20)
+            if stdout:
+                # Filter only broker-level throughput lines (no topic= label)
+                kept = []
+                for line in stdout.decode(errors='replace').splitlines():
+                    for pat in _THROUGHPUT_PATTERNS:
+                        if line.startswith(pat):
+                            kept.append(line)
+                            break
+                if kept:
+                    throughput_metrics = _parse_prometheus_text("\n".join(kept))
+                    metrics.update(throughput_metrics)
+        except Exception as _tp_exc:
+            logger.debug("Throughput counter fetch failed for %s:%s: %s", host, port, _tp_exc)
 
         prev = _broker_state.get(state_key, {})
         prev_metrics = prev.get('metrics', {})
@@ -188,7 +199,7 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
         return {
             "heap_pct": heap_pct, "cpu_pct": cpu_pct, "gc_pause_ms": gc_ms,
             "messages_in_per_sec": msgs_in, "bytes_in_per_sec": bytes_in,
-            "bytes_out_per_sec": bytes_out, "request_handler_idle_pct": 100.0,
+            "bytes_out_per_sec": bytes_out, "request_handler_idle_pct": (lambda v: v if v is not None and v != 0.0 or 'kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent' in metrics else 100.0)(_get(metrics, 'kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent', no_labels_only=True)),
             "isr_shrinks_per_sec": isr_shrinks, "isr_expands_per_sec": isr_expands,
             "produce_latency_ms": produce_latency, "fetch_latency_ms": fetch_latency,
             "under_replicated_partitions": urp, "at_min_isr_partitions": at_min_isr,
@@ -223,29 +234,32 @@ async def scrape_all_brokers(brokers: list[dict], prometheus_port: int) -> dict[
 
 async def scrape_topic_metrics(host: str, prometheus_port: int,
                                 topic_names: list[str]) -> dict[str, dict]:
-    """Scrape per-topic metrics — streams and extracts only requested topics."""
+    """Scrape per-topic metrics using curl, filtered to requested topics in Python."""
     result: dict[str, dict] = {}
+    if not topic_names:
+        return result
     topic_set = set(topic_names)
     try:
-        kept_lines = []
-        async with httpx.AsyncClient(timeout=_SCRAPE_TIMEOUT) as client:
-            async with client.stream("GET", f"http://{host}:{prometheus_port}/metrics") as resp:
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    if not line or line.startswith('#'):
-                        continue
-                    # Only keep topic-specific metrics
-                    if 'kafka_server_brokertopicmetrics' in line and 'topic=' in line:
-                        # Extract topic name from labels
-                        topic_match = re.search(r'topic="([^"]*)"', line)
-                        if topic_match and topic_match.group(1) in topic_set:
-                            kept_lines.append(line)
-                    elif 'kafka_log_log_size' in line and 'topic=' in line:
-                        topic_match = re.search(r'topic="([^"]*)"', line)
-                        if topic_match and topic_match.group(1) in topic_set:
-                            kept_lines.append(line)
+        # Fetch all metrics via curl, then filter to requested topics in Python
+        proc = await asyncio.create_subprocess_exec(
+            "curl", "-s", "--max-time", "20", f"http://{host}:{prometheus_port}/metrics",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=25)
+        if stdout:
+            # Filter only lines matching requested topics
+            kept_lines_raw = []
+            for line in stdout.decode(errors='replace').splitlines():
+                if 'topic="' not in line:
+                    continue
+                topic_match = re.search(r'topic="([^"]*)"', line)
+                if topic_match and topic_match.group(1) in topic_set:
+                    kept_lines_raw.append(line)
+            stdout = "\n".join(kept_lines_raw).encode()
+        if not stdout:
+            return result
 
-        metrics = _parse_prometheus_text("\n".join(kept_lines))
+        metrics = _parse_prometheus_text(stdout.decode())
 
         # Build topic size map
         topic_sizes: dict[str, float] = {}
