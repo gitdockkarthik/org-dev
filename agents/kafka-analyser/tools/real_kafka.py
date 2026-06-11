@@ -22,6 +22,27 @@ from tools.base import KafkaCollector
 
 logger = logging.getLogger(__name__)
 
+import threading
+
+_jvm_lock = threading.Lock()
+_jvm_started = False
+
+def _ensure_jvm():
+    """Thread-safe JVM startup for jpype — must be called before any JMX query."""
+    global _jvm_started
+    if _jvm_started:
+        return
+    with _jvm_lock:
+        if _jvm_started:
+            return
+        try:
+            import jpype
+            if not jpype.isJVMStarted():
+                jpype.startJVM(jpype.getDefaultJVMPath(), convertStrings=True)
+            _jvm_started = True
+        except Exception as exc:
+            logger.warning("JVM startup failed: %s", exc)
+
 # Consumer-group states that have no live members / offsets worth querying.
 _INACTIVE_GROUP_STATES = {"Dead", "Empty"}
 
@@ -527,21 +548,33 @@ class RealKafkaCollector(KafkaCollector):
             "status": "healthy" if total_urp == 0 else "degraded",
         }
 
-    def _query_jmx(self, host: str, port: int) -> dict[str, Any]:
-        """Query JMX MBeans from a single broker. Returns metric dict or defaults on failure."""
+    def _query_jmx(self, host: str, port: int, timeout_secs: int = 5) -> dict[str, Any]:
+        """Query JMX MBeans from a single broker with hard timeout."""
         defaults = {"heap_pct": 0.0, "cpu_pct": 0.0, "disk_pct": 0.0, "gc_pause_ms": 0,
                      "messages_in_per_sec": 0.0, "request_handler_idle_pct": 100.0,
                      "bytes_in_per_sec": 0.0, "bytes_out_per_sec": 0.0,
                      "isr_shrinks_per_sec": 0.0, "isr_expands_per_sec": 0.0,
                      "produce_latency_ms": 0.0, "fetch_latency_ms": 0.0}
         try:
+            _ensure_jvm()
             import jpype
-            from jpype import javax
             if not jpype.isJVMStarted():
-                jpype.startJVM(jpype.getDefaultJVMPath(), convertStrings=True)
+                return defaults
+            from jpype import javax
+            import java
+            # Set RMI timeout via environment map
+            env = java.util.HashMap()
+            env.put("jmx.remote.x.request.waiting.timeout", str(timeout_secs * 1000))
+            env.put("jmx.remote.x.notification.fetch.timeout", str(timeout_secs * 1000))
+            env.put("sun.rmi.transport.tcp.responseTimeout", str(timeout_secs * 1000))
+            # Also set system properties for RMI socket timeout
+            java.lang.System.setProperty("sun.rmi.transport.connectionTimeout", str(timeout_secs * 1000))
+            java.lang.System.setProperty("sun.rmi.transport.tcp.handshakeTimeout", str(timeout_secs * 1000))
+            java.lang.System.setProperty("sun.rmi.transport.tcp.responseTimeout", str(timeout_secs * 1000))
+
             url = javax.management.remote.JMXServiceURL(
                 f"service:jmx:rmi:///jndi/rmi://{host}:{port}/jmxrmi")
-            connector = javax.management.remote.JMXConnectorFactory.connect(url)
+            connector = javax.management.remote.JMXConnectorFactory.connect(url, env)
             mbean = connector.getMBeanServerConnection()
             # Heap
             heap = mbean.getAttribute(
@@ -583,7 +616,7 @@ class RealKafkaCollector(KafkaCollector):
                 req_idle = round(float(idle_obj) * 100, 1)
             except Exception:
                 req_idle = 100.0
-            # Bytes in/out per sec (broker aggregate)
+            # Bytes in/out per sec
             bytes_in = 0.0
             bytes_out = 0.0
             try:
@@ -613,7 +646,7 @@ class RealKafkaCollector(KafkaCollector):
                         "kafka.server:type=ReplicaManager,name=IsrExpandsPerSec"), "OneMinuteRate")), 4)
             except Exception:
                 pass
-            # Produce/Fetch request latency (mean ms)
+            # Produce/Fetch latency
             produce_latency_ms = 0.0
             fetch_latency_ms = 0.0
             try:
@@ -636,22 +669,31 @@ class RealKafkaCollector(KafkaCollector):
                     "isr_shrinks_per_sec": isr_shrinks, "isr_expands_per_sec": isr_expands,
                     "produce_latency_ms": produce_latency_ms, "fetch_latency_ms": fetch_latency_ms}
         except Exception as exc:
-            import logging
-            logging.getLogger("kafka-analyser").warning(f"JMX query failed for {host}:{port}: {exc}")
+            logger.warning("JMX query failed for %s:%s: %s", host, port, exc)
             return defaults
 
-    def _query_topic_jmx(self, host: str, port: int, topic_names: list[str]) -> dict[str, dict]:
-        """Query per-topic JMX: log size, msgs/sec, bytes/sec."""
+    def _query_topic_jmx(self, host: str, port: int, topic_names: list[str], timeout_secs: int = 5) -> dict[str, dict]:
+        """Query per-topic JMX: log size, msgs/sec, bytes/sec — with hard timeout."""
         result: dict[str, dict] = {}
         try:
+            _ensure_jvm()
             import jpype
-            from jpype import javax
             if not jpype.isJVMStarted():
-                jpype.startJVM(jpype.getDefaultJVMPath(), convertStrings=True)
+                return result
+            from jpype import javax
+            import java
+            env = java.util.HashMap()
+            env.put("jmx.remote.x.request.waiting.timeout", str(timeout_secs * 1000))
+            env.put("sun.rmi.transport.tcp.responseTimeout", str(timeout_secs * 1000))
+            java.lang.System.setProperty("sun.rmi.transport.connectionTimeout", str(timeout_secs * 1000))
+            java.lang.System.setProperty("sun.rmi.transport.tcp.handshakeTimeout", str(timeout_secs * 1000))
+            java.lang.System.setProperty("sun.rmi.transport.tcp.responseTimeout", str(timeout_secs * 1000))
+
             url = javax.management.remote.JMXServiceURL(
                 f"service:jmx:rmi:///jndi/rmi://{host}:{port}/jmxrmi")
-            connector = javax.management.remote.JMXConnectorFactory.connect(url)
+            connector = javax.management.remote.JMXConnectorFactory.connect(url, env)
             mbean = connector.getMBeanServerConnection()
+            # Log sizes — query all at once
             try:
                 log_names = mbean.queryNames(
                     javax.management.ObjectName("kafka.log:type=Log,name=Size,topic=*,partition=*"), None)
@@ -666,6 +708,7 @@ class RealKafkaCollector(KafkaCollector):
                     result[t]["size_bytes"] = topic_sizes.get(t, 0)
             except Exception:
                 pass
+            # Per-topic metrics — only for requested topics
             for t in topic_names:
                 if t not in result:
                     result[t] = {}
@@ -682,8 +725,7 @@ class RealKafkaCollector(KafkaCollector):
                         pass
             connector.close()
         except Exception as exc:
-            import logging
-            logging.getLogger("kafka-analyser").warning(f"Topic JMX query failed for {host}:{port}: {exc}")
+            logger.warning("Topic JMX query failed for %s:%s: %s", host, port, exc)
         return result
 
     def _build_brokers(self, cluster_info: dict[str, Any]) -> list[dict[str, Any]]:

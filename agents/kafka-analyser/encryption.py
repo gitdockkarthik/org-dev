@@ -33,6 +33,6 @@ def decrypt(value: str) -> str:
 
 
 def is_secret_key(key: str) -> bool:
-    secrets = {"api_key", "token", "password", "secret", "url", "cloud_id"}
+    secrets = {"api_key", "token", "password", "secret", "url", "cloud_id", "teams_webhook_url"}
     key_lower = key.lower()
     return any(s in key_lower for s in secrets)
