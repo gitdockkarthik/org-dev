@@ -109,6 +109,8 @@
       animation: spin-icon 0.8s linear infinite;
       vertical-align: middle;
     }
+    .cg-table { table-layout: fixed; width: 100%; }
+    .cg-table td, .cg-table th { overflow: hidden; text-overflow: ellipsis; }
   </style>
 </head>
 <body>
@@ -726,9 +728,12 @@
         } else {
           trendHtml = `<span style="color:var(--text-muted)">→ stable</span>`;
         }
+        const groupId = g.group_id || g.group_name || 'Unknown';
+        const topicName = g.topic || (g.partitions && g.partitions[0] && g.partitions[0].topic) || '-';
+        const copyBtn = (text) => `<span class="copy-icon" onclick="event.stopPropagation();var t=this.parentElement.getAttribute('data-copy');var el=document.createElement('textarea');el.value=t;document.body.appendChild(el);el.select();document.execCommand('copy');document.body.removeChild(el);this.textContent='✓';setTimeout(()=>this.textContent='📋',1000)" style="cursor:pointer;margin-left:4px;font-size:12px;opacity:0.4;transition:opacity 0.2s" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='0.4'">📋</span>`;
         return `<tr>
-          <td style="font-weight:600">${(g.group_id || g.group_name || 'Unknown')}</td>
-          <td><code style="font-size:.8rem">${(g.topic || (g.partitions && g.partitions[0] && g.partitions[0].topic) || '-')}</code></td>
+          <td style="font-weight:600;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" data-copy="${groupId}" title="${groupId}">${groupId}${copyBtn(groupId)}</td>
+          <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" data-copy="${topicName}" title="${topicName}"><code style="font-size:.8rem">${topicName}</code>${topicName !== '-' ? copyBtn(topicName) : ''}</td>
           <td ${lagColor}>${fmtNum(g.total_lag)}</td>
           <td>${trendHtml}</td>
           <td style="font-size:.82rem;color:var(--text-muted)">${g.lag_rate_per_min > 0 ? '+' : ''}${fmtNum(g.lag_rate_per_min)}/min</td>
@@ -796,8 +801,8 @@
       document.getElementById('tab-consumer-groups').innerHTML = '<div style="text-align:center;padding:8px 0;"><span id="cg-loading-badge" style="display:none;align-items:center;gap:8px;padding:8px 20px;background:linear-gradient(135deg,#ff6b35,#f7931e);color:#fff;border-radius:20px;font-size:14px;font-weight:600;box-shadow:0 2px 8px rgba(255,107,53,0.3);animation:pulse-badge 1.5s ease-in-out infinite;">⟳ Loading topics...</span></div>' + cgKpis + cgChart + cgFilters + `
         <div class="chart-card__title">Consumer Group Inventory</div>
         <div class="data-table-wrap">
-          <table class="data-table">
-            <thead><tr><th>Group</th><th>Topic</th><th>Total Lag</th><th>Trend</th><th>Rate/min</th><th>State</th><th>Status</th></tr></thead>
+          <table class="data-table cg-table">
+            <thead><tr><th style="width:22%;max-width:220px">Group</th><th style="width:25%;max-width:250px">Topic</th><th style="width:10%">Total Lag</th><th style="width:10%">Trend</th><th style="width:10%">Rate/min</th><th style="width:10%">State</th><th style="width:8%">Status</th></tr></thead>
             <tbody id="cg-tbody"></tbody>
           </table>
         </div>
