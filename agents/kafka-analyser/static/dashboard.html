@@ -96,9 +96,19 @@
   </style>
   <style>
     @keyframes pulse-badge { 0%,100% { opacity:1; } 50% { opacity:0.7; } }
-    @keyframes shimmer { 0% { opacity:0.6; } 50% { opacity:1; } 100% { opacity:0.6; } }
-    .kpi-loading { animation: shimmer 1.2s ease-in-out infinite; }
-    .kpi-loading::after { content: ' ⟳'; font-size: 0.7em; }
+    @keyframes spin-icon { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    .kpi-loading { position: relative; }
+    .kpi-loading::after {
+      content: '';
+      display: inline-block;
+      width: 14px; height: 14px;
+      margin-left: 6px;
+      border: 2px solid #ccc;
+      border-top-color: var(--accent, #ff6b35);
+      border-radius: 50%;
+      animation: spin-icon 0.8s linear infinite;
+      vertical-align: middle;
+    }
   </style>
 </head>
 <body>
@@ -741,14 +751,10 @@
         .slice(0, 10);
       const hasLag = groups.some(g => (g.total_lag || 0) > 0);
 
-      const cgChart = hasLag
-        ? `<div class="chart-card" style="margin-bottom:22px">
-             <div class="chart-card__title">Top 10 Consumer Groups by Lag</div>
-             <div class="chart-wrap" style="height:280px"><canvas id="cg-lag-chart"></canvas></div>
-           </div>`
-        : `<div class="filter-bar" style="color:var(--text-muted)">
-             ℹ️ No active consumer lag detected — consumers are keeping up or no active subscribers
-           </div>`;
+      // Always render chart canvas + banner (banner hidden when lag exists)
+      // Chart will be populated after streaming enriches lag data
+      const cgChart = '<div id="cg-chart-container"><canvas id="cg-lag-chart" height="300"></canvas></div>' +
+        '<div id="cg-no-lag-banner" class="filter-bar" style="color:var(--text-muted);padding:16px;text-align:center;' + (hasLag ? 'display:none' : '') + '">ℹ️ No active consumer lag detected — consumers are keeping up or no active subscribers</div>';
 
       document.getElementById('tab-consumer-groups').innerHTML = cgKpis + cgChart + cgFilters + `
         <div class="chart-card__title">Consumer Group Inventory</div>
@@ -762,6 +768,18 @@
           <span id="cg-count-label" class="dash-label"></span>
           <button id="cg-show-more" class="btn btn--secondary btn--sm" onclick="window._cgShowMore()">Show More</button>
         </div>`;
+
+      // Override total with real cluster count, show spinner on computed KPIs
+      const _realGroupTotal = (window._clusterCounts || {}).total_groups;
+      if (_realGroupTotal) {
+        const _kpis = document.querySelectorAll('#tab-consumer-groups .kpi__value');
+        if (_kpis.length >= 4) {
+          _kpis[0].textContent = _realGroupTotal.toLocaleString();
+          _kpis[1].classList.add('kpi-loading');
+          _kpis[2].classList.add('kpi-loading');
+          _kpis[3].classList.add('kpi-loading');
+        }
+      }
 
       // ── Self-contained consumer-group table view: pagination + filters + search (AND) ──
       const CG_PAGE = 20;
@@ -792,7 +810,12 @@
             `<tr><td colspan="7" class="data-table__empty">No consumer groups match</td></tr>`;
         }
         const label = document.getElementById('cg-count-label');
-        if (label) label.textContent = `Showing ${shown.length} of ${filtered.length} groups`;
+        if (label) {
+          const _tot = (st.state === 'all' && st.filter === 'all' && !st.search)
+            ? ((window._clusterCounts || {}).total_groups || filtered.length)
+            : filtered.length;
+          label.textContent = `Showing ${shown.length} of ${_tot.toLocaleString()} groups`;
+        }
         const moreBtn = document.getElementById('cg-show-more');
         if (moreBtn) moreBtn.style.display = shown.length < filtered.length ? '' : 'none';
       };
@@ -828,10 +851,10 @@
 
       if (hasLag) {
         setTimeout(() => {
-          if (window._cgLagChart) { window._cgLagChart.destroy(); window._cgLagChart = null; }
+          if (charts['cgLag']) { charts['cgLag'].destroy(); charts['cgLag'] = null; }
           const ctx = document.getElementById('cg-lag-chart')?.getContext('2d');
           if (!ctx) return;
-          window._cgLagChart = new Chart(ctx, {
+          charts['cgLag'] = new Chart(ctx, {
             type: 'bar',
             data: {
               labels: topLag.map(g => (g.group_id || g.group_name || 'Unknown')),
@@ -974,6 +997,18 @@
           <button id="topic-show-more" class="btn btn--secondary btn--sm" onclick="window._topicShowMore()">Show More</button>
         </div>`;
 
+      // Override total with real cluster count, show spinner on computed KPIs
+      const _realTotal = (window._clusterCounts || {}).total_topics;
+      if (_realTotal) {
+        const _kpis = document.querySelectorAll('#tab-topics .kpi__value');
+        if (_kpis.length >= 4) {
+          _kpis[0].textContent = _realTotal.toLocaleString();
+          _kpis[1].classList.add('kpi-loading');
+          _kpis[2].classList.add('kpi-loading');
+          _kpis[3].classList.add('kpi-loading');
+        }
+      }
+
       // ── Self-contained topic table view: pagination + filter group + search (AND) ──
       const TOPIC_PAGE = 20;
       window._topicView = { filter: 'all', userOnly: false, search: '', visible: TOPIC_PAGE };
@@ -1002,7 +1037,12 @@
             `<tr><td colspan="7" class="data-table__empty">No topics match</td></tr>`;
         }
         const label = document.getElementById('topic-count-label');
-        if (label) label.textContent = `Showing ${shown.length} of ${filtered.length} topics`;
+        if (label) {
+          const _tot = (st.filter === 'all' && !st.userOnly && !st.search)
+            ? ((window._clusterCounts || {}).total_topics || filtered.length)
+            : filtered.length;
+          label.textContent = `Showing ${shown.length} of ${_tot.toLocaleString()} topics`;
+        }
         const moreBtn = document.getElementById('topic-show-more');
         if (moreBtn) moreBtn.style.display = shown.length < filtered.length ? '' : 'none';
       };
@@ -2330,7 +2370,7 @@
             `<tr><td colspan="4" class="data-table__empty">No subjects registered — publish schemas to see them here</td></tr>`;
         }
         const label = document.getElementById('sr-count-label');
-        if (label) label.textContent = `Showing ${shown.length} of ${subjects.length} subjects`;
+        if (label) label.textContent = `Showing ${shown.length} of ${(data.subject_count ?? subjects.length).toLocaleString()} subjects`;
         const moreBtn = document.getElementById('sr-show-more');
         if (moreBtn) moreBtn.style.display = shown.length < subjects.length ? '' : 'none';
       };
@@ -2823,6 +2863,28 @@
                     if (kpis.length >= 1) kpis[0].textContent = totalGroups.toLocaleString();
                   }
                   window._cgApplyView && window._cgApplyView();
+                  // Re-render chart with real lag data
+                  const hasLag = window._cgGroups.some(g => g.total_lag > 0);
+                  const chartCanvas = document.getElementById('cg-lag-chart');
+                  if (hasLag && chartCanvas) {
+                    const top10 = window._cgGroups.filter(g => g.total_lag > 0).slice(0, 10);
+                    if (charts['cgLag']) charts['cgLag'].destroy();
+                    charts['cgLag'] = new Chart(chartCanvas, {
+                      type: 'bar',
+                      data: {
+                        labels: top10.map(g => g.group_id.length > 40 ? g.group_id.slice(0,37)+'...' : g.group_id),
+                        datasets: [{
+                          label: 'Total Lag',
+                          data: top10.map(g => g.total_lag),
+                          backgroundColor: top10.map(g => g.total_lag > 10000 ? '#e74c3c' : g.total_lag > 1000 ? '#f39c12' : '#27ae60'),
+                        }]
+                      },
+                      options: { indexAxis: 'y', responsive: true, plugins: { legend: { display: false } } }
+                    });
+                  }
+                  // Remove false "no lag" banner
+                  const noLagBanner = document.getElementById('cg-no-lag-banner');
+                  if (noLagBanner && hasLag) noLagBanner.style.display = 'none';
                 }
                 return;
               }

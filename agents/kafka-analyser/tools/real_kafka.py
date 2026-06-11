@@ -12,12 +12,15 @@ Only depends on kafka (kafka-python-ng), asyncio, ssl, and tools/base.py.
 from __future__ import annotations
 
 import asyncio
+import logging
 import ssl
 from typing import Any
 
 from kafka import KafkaAdminClient, KafkaConsumer
 
 from tools.base import KafkaCollector
+
+logger = logging.getLogger(__name__)
 
 # Consumer-group states that have no live members / offsets worth querying.
 _INACTIVE_GROUP_STATES = {"Dead", "Empty"}
@@ -722,24 +725,26 @@ class RealKafkaCollector(KafkaCollector):
                 except Exception:  # noqa: BLE001 — best-effort cleanup
                     pass
 
-    def _describe_group_states(
-        self, admin: KafkaAdminClient, group_ids: list[str]
-    ) -> dict[str, str]:
+    def _describe_group_states(self, admin, group_ids) -> dict[str, str]:
         """Map group_id -> state, tolerating describe failures."""
-        try:
-            described = admin.describe_consumer_groups(group_ids)
-        except Exception:  # noqa: BLE001 — fall back to treating all as active
-            return {g: "Unknown" for g in group_ids}
-
         states: dict[str, str] = {}
-        for info in described:
-            group_id = getattr(info, "group", None)
-            state = getattr(info, "state", None)
-            if group_id is None and isinstance(info, (list, tuple)) and len(info) >= 3:
-                # Fallback positional parse: (error_code, group, state, ...)
-                group_id, state = info[1], info[2]
-            if group_id is not None:
-                states[group_id] = state or "Unknown"
+        # Batch describe in chunks of 50 to isolate failures
+        _BATCH = 50
+        for i in range(0, len(group_ids), _BATCH):
+            batch = group_ids[i:i + _BATCH]
+            try:
+                described = admin.describe_consumer_groups(batch)
+                for info in described:
+                    group_id = getattr(info, "group", None)
+                    state = getattr(info, "state", None)
+                    if group_id is None and isinstance(info, (list, tuple)) and len(info) >= 3:
+                        group_id, state = info[1], info[2]
+                    if group_id is not None:
+                        states[group_id] = state or "Unknown"
+            except Exception as exc:
+                logger.warning("describe_consumer_groups failed for batch %d-%d: %s", i, i+len(batch), exc)
+                for g in batch:
+                    states[g] = "Unknown"
         return states
 
     def _group_lag(
