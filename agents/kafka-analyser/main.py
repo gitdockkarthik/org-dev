@@ -391,167 +391,156 @@ async def lifespan(app: FastAPI):
                             len(data.get("topics", [])),
                         )
                         # Background parallel topic describe — ALL topics for accurate KPIs
-                        try:
-                            import time as _t2
-                            _topic_start = _t2.time()
-                            # Get ALL topic names from broker
-                            all_topic_names = await collector.list_all_topics()
-                            if all_topic_names:
-                                logger.info("Topic scan: starting parallel describe for ALL %d topics on '%s'", len(all_topic_names), c["name"])
-                                described_topics, total_urp = await collector.describe_all_topics(all_topic_names, workers=10)
-                                if described_topics:
-                                    total_rf1 = sum(1 for t in described_topics if t.get("replication_factor") == 1)
-                                    total_partitions = sum(t.get("partition_count", 0) for t in described_topics)
+                        # Skip topic describe if restored snapshot already has enriched data
+                        _existing_topics = data.get("topics", [])
+                        _has_enriched_topics = any(t.get("partition_count", 0) > 0 for t in _existing_topics)
+                        if not _has_enriched_topics:
+                            try:
+                                import time as _t2
+                                _topic_start = _t2.time()
+                                # Get ALL topic names from broker
+                                all_topic_names = await collector.list_all_topics()
+                                if all_topic_names:
+                                    logger.info("Topic scan: starting parallel describe for ALL %d topics on '%s'", len(all_topic_names), c["name"])
+                                    described_topics, total_urp = await collector.describe_all_topics(all_topic_names, workers=10)
+                                    if described_topics:
+                                        total_rf1 = sum(1 for t in described_topics if t.get("replication_factor") == 1)
+                                        total_partitions = sum(t.get("partition_count", 0) for t in described_topics)
 
-                                    # Store accurate counts for KPI display
-                                    if "counts" not in data:
-                                        data["counts"] = {}
-                                    data["counts"]["total_topics"] = len(all_topic_names)
-                                    data["counts"]["total_rf1"] = total_rf1
-                                    data["counts"]["total_urp"] = total_urp
-                                    data["counts"]["total_partitions"] = total_partitions
+                                        # Store accurate counts for KPI display
+                                        if "counts" not in data:
+                                            data["counts"] = {}
+                                        data["counts"]["total_topics"] = len(all_topic_names)
+                                        data["counts"]["total_rf1"] = total_rf1
+                                        data["counts"]["total_urp"] = total_urp
+                                        data["counts"]["total_partitions"] = total_partitions
 
-                                    if "cluster" in data:
-                                        data["cluster"]["under_replicated_partitions"] = total_urp
-                                        data["cluster"]["partition_count"] = total_partitions
+                                        if "cluster" in data:
+                                            data["cluster"]["under_replicated_partitions"] = total_urp
+                                            data["cluster"]["partition_count"] = total_partitions
 
-                                    # Keep top 500 for display: anomalous first (already sorted by describe_all_topics)
-                                    data["topics"] = described_topics[:500]
+                                        # Keep top 500 for display: anomalous first (already sorted by describe_all_topics)
+                                        data["topics"] = described_topics[:500]
 
-                                    _ks.set_cluster_data(
-                                        data,
-                                        source_type=c.get("source_type", "kafka_internal"),
-                                        cluster_id=str(c.get("id", "default")),
+                                        _ks.set_cluster_data(
+                                            data,
+                                            source_type=c.get("source_type", "kafka_internal"),
+                                            cluster_id=str(c.get("id", "default")),
+                                        )
+                                    _topic_elapsed = round(_t2.time() - _topic_start, 1)
+                                    logger.info(
+                                        "Topic scan: described %d topics (%d RF=1, %d URP, %d partitions) for '%s' in %ss",
+                                        len(described_topics), total_rf1, total_urp, total_partitions, c["name"], _topic_elapsed
                                     )
-                                _topic_elapsed = round(_t2.time() - _topic_start, 1)
-                                logger.info(
-                                    "Topic scan: described %d topics (%d RF=1, %d URP, %d partitions) for '%s' in %ss",
-                                    len(described_topics), total_rf1, total_urp, total_partitions, c["name"], _topic_elapsed
-                                )
-                        except Exception as _topic_exc:
-                            logger.warning("Topic scan failed for '%s': %s", c["name"], _topic_exc)
+                            except Exception as _topic_exc:
+                                logger.warning("Topic scan failed for '%s': %s", c["name"], _topic_exc)
 
-                        # Background Prometheus/JMX enrichment — broker metrics
-                        _prom_port = c.get("prometheus_port")
-                        _jmx_port = c.get("jmx_port")
-                        if _prom_port and _PROMETHEUS_AVAILABLE:
-                            try:
-                                import time as _t3
-                                _prom_start = _t3.time()
-                                logger.info("Prometheus scan: scraping %d brokers on port %d for '%s'",
-                                           len(data.get("brokers", [])), _prom_port, c["name"])
-                                # First scrape — warms up state for rate calculation
-                                await scrape_all_brokers(data.get("brokers", []), _prom_port)
-                                # Short delay then second scrape — gets real rates
-                                await asyncio.sleep(5)
-                                broker_metrics = await scrape_all_brokers(data.get("brokers", []), _prom_port)
-                                # Enrich broker data
-                                for broker in data.get("brokers", []):
-                                    bid = str(broker.get("broker_id", broker.get("host", "")))
-                                    if bid in broker_metrics and broker_metrics[bid]:
-                                        broker.update(broker_metrics[bid])
-                                # Scrape top topic metrics
-                                top_topics = [t["name"] for t in data.get("topics", [])[:100]]
-                                if top_topics and data.get("brokers"):
-                                    first_broker = data["brokers"][0].get("host", "")
-                                    if first_broker:
-                                        topic_metrics = await scrape_topic_metrics(
-                                            first_broker, _prom_port, top_topics)
-                                        for t in data.get("topics", []):
-                                            if t["name"] in topic_metrics:
-                                                tm = topic_metrics[t["name"]]
-                                                t["messages_in_per_sec"] = tm.get("messages_in_per_sec", 0.0)
-                                                t["bytes_in_per_sec"] = tm.get("bytes_in_per_sec", 0.0)
-                                                t["bytes_out_per_sec"] = tm.get("bytes_out_per_sec", 0.0)
-                                                t["size_bytes"] = tm.get("size_bytes", 0)
-                                        # Update hot topics count
-                                        if "counts" in data:
-                                            data["counts"]["total_hot"] = sum(
-                                                1 for t in data.get("topics", [])
-                                                if (t.get("messages_in_per_sec") or 0) > 1000)
-                                # Re-store enriched data
-                                _ks.set_cluster_data(
-                                    data,
-                                    source_type=c.get("source_type", "kafka_internal"),
-                                    cluster_id=str(c.get("id", "default")),
-                                )
-                                if engine is not None:
-                                    await save_snapshot_to_db(str(c.get("id", "default")), engine)
-                                _prom_elapsed = round(_t3.time() - _prom_start, 1)
-                                logger.info("Prometheus scan: completed for '%s' in %ss", c["name"], _prom_elapsed)
-                            except Exception as _prom_exc:
-                                logger.warning("Prometheus scan failed for '%s': %s", c["name"], _prom_exc)
-                        elif _jmx_port:
-                            try:
-                                import time as _t3
-                                _jmx_start = _t3.time()
-                                broker_hosts = [b.get("host", "") for b in data.get("brokers", []) if b.get("host")]
-                                if broker_hosts:
-                                    logger.info("JMX scan: querying %d brokers on port %d for '%s'",
-                                               len(broker_hosts), _jmx_port, c["name"])
+                        # Run Prometheus enrichment and lag scan in parallel
+                        # (safe: prometheus touches brokers/topics, lag touches consumer_groups only)
+                        async def _run_prometheus():
+                            _prom_port = c.get("prometheus_port")
+                            _jmx_port = c.get("jmx_port")
+                            if _prom_port and _PROMETHEUS_AVAILABLE:
+                                try:
+                                    import time as _t3
+                                    from tools.prometheus_collector import scrape_all_brokers, scrape_topic_metrics
+                                    _prom_start = _t3.time()
+                                    logger.info("Prometheus scan: scraping %d brokers on port %d for '%s'",
+                                               len(data.get("brokers", [])), _prom_port, c["name"])
+                                    # First scrape — warms up state for rate calculation
+                                    await scrape_all_brokers(data.get("brokers", []), _prom_port)
+                                    # Short delay then second scrape — gets real rates
+                                    await asyncio.sleep(5)
+                                    broker_metrics = await scrape_all_brokers(data.get("brokers", []), _prom_port)
                                     for broker in data.get("brokers", []):
-                                        host = broker.get("host", "")
-                                        if host:
-                                            jmx_data = collector._query_jmx(host, _jmx_port)
-                                            broker.update(jmx_data)
-                                    top_topic_names = [t["name"] for t in data.get("topics", [])[:50]]
-                                    if top_topic_names:
-                                        topic_jmx = collector._query_topic_jmx(
-                                            broker_hosts[0], _jmx_port, top_topic_names)
-                                        for t in data.get("topics", []):
-                                            if t["name"] in topic_jmx:
-                                                t.update(topic_jmx[t["name"]])
-                                    _ks.set_cluster_data(
-                                        data,
-                                        source_type=c.get("source_type", "kafka_internal"),
-                                        cluster_id=str(c.get("id", "default")),
-                                    )
-                                _jmx_elapsed = round(_t3.time() - _jmx_start, 1)
-                                logger.info("JMX scan: completed for '%s' in %ss", c["name"], _jmx_elapsed)
-                            except Exception as _jmx_exc:
-                                logger.warning("JMX scan failed for '%s': %s", c["name"], _jmx_exc)
+                                        bid = str(broker.get("broker_id", broker.get("host", "")))
+                                        if bid in broker_metrics and broker_metrics[bid]:
+                                            broker.update(broker_metrics[bid])
+                                    top_topics = [t["name"] for t in data.get("topics", [])[:100]]
+                                    if top_topics and data.get("brokers"):
+                                        first_broker = data["brokers"][0].get("host", "")
+                                        if first_broker:
+                                            topic_metrics = await scrape_topic_metrics(
+                                                first_broker, _prom_port, top_topics)
+                                            for t in data.get("topics", []):
+                                                if t["name"] in topic_metrics:
+                                                    tm = topic_metrics[t["name"]]
+                                                    t["messages_in_per_sec"] = tm.get("messages_in_per_sec", 0.0)
+                                                    t["bytes_in_per_sec"] = tm.get("bytes_in_per_sec", 0.0)
+                                                    t["bytes_out_per_sec"] = tm.get("bytes_out_per_sec", 0.0)
+                                                    t["size_bytes"] = tm.get("size_bytes", 0)
+                                            if "counts" in data:
+                                                data["counts"]["total_hot"] = sum(
+                                                    1 for t in data.get("topics", [])
+                                                    if (t.get("messages_in_per_sec") or 0) > 1000)
+                                    _prom_elapsed = round(_t3.time() - _prom_start, 1)
+                                    logger.info("Prometheus scan: completed for '%s' in %ss", c["name"], _prom_elapsed)
+                                except Exception as _prom_exc:
+                                    logger.warning("Prometheus scan failed for '%s': %s", c["name"], _prom_exc)
+                            elif c.get("jmx_port"):
+                                try:
+                                    import time as _t3
+                                    _jmx_start = _t3.time()
+                                    jmx_port = int(c["jmx_port"])
+                                    broker_hosts = [b.get("host", "") for b in data.get("brokers", []) if b.get("host")]
+                                    if broker_hosts:
+                                        logger.info("JMX scan: querying %d brokers on port %d for '%s'",
+                                                   len(broker_hosts), jmx_port, c["name"])
+                                        for broker in data.get("brokers", []):
+                                            host = broker.get("host", "")
+                                            if host:
+                                                jmx_data = collector._query_jmx(host, jmx_port)
+                                                broker.update(jmx_data)
+                                    _jmx_elapsed = round(_t3.time() - _jmx_start, 1)
+                                    logger.info("JMX scan: completed for '%s' in %ss", c["name"], _jmx_elapsed)
+                                except Exception as _jmx_exc:
+                                    logger.warning("JMX scan failed for '%s': %s", c["name"], _jmx_exc)
 
-                        # Background parallel lag scan — enriches consumer groups
-                        try:
-                            active_gids = [g["group_id"] for g in data.get("consumer_groups", [])
-                                          if g.get("state", "Unknown") not in ("Empty", "Dead")]
-                            if active_gids:
-                                logger.info("Lag scan: starting parallel scan for %d active groups on '%s'", len(active_gids), c["name"])
+                        async def _run_lag_scan():
+                            try:
                                 import time as _t
                                 _lag_start = _t.time()
-                                lags = await collector.fetch_all_group_lags(active_gids, workers=10)
-                                lag_map = {g["group_id"]: g for g in lags}
-                                enriched = 0
-                                for cg in data["consumer_groups"]:
-                                    if cg["group_id"] in lag_map:
-                                        lag_data = lag_map[cg["group_id"]]
-                                        cg["total_lag"] = lag_data.get("total_lag", -1)
-                                        cg["topic_count"] = lag_data.get("topic_count", 0)
-                                        # Extract primary topic (highest lag contributor)
-                                        parts = lag_data.get("partitions", [])
-                                        if parts:
-                                            topic_lags = {}
-                                            for p in parts:
-                                                t = p.get("topic", "")
-                                                if t:
-                                                    topic_lags[t] = topic_lags.get(t, 0) + p.get("lag", 0)
-                                            if topic_lags:
-                                                cg["topic"] = max(topic_lags, key=topic_lags.get)
-                                        enriched += 1
-                                # Re-sort by lag descending
-                                data["consumer_groups"].sort(key=lambda g: g.get("total_lag", -1), reverse=True)
-                                # Re-store enriched data
-                                _ks.set_cluster_data(
-                                    data,
-                                    source_type=c.get("source_type", "kafka_internal"),
-                                    cluster_id=str(c.get("id", "default")),
-                                )
-                                if engine is not None:
-                                    await save_snapshot_to_db(str(c.get("id", "default")), engine)
-                                _lag_elapsed = round(_t.time() - _lag_start, 1)
-                                logger.info("Lag scan: enriched %d/%d groups for '%s' in %ss", enriched, len(active_gids), c["name"], _lag_elapsed)
-                        except Exception as _lag_exc:
-                            logger.warning("Lag scan failed for '%s': %s", c["name"], _lag_exc)
+                                active_gids = [g.get("group_id") or g.get("group_name")
+                                              for g in data.get("consumer_groups", [])
+                                              if g.get("group_id") or g.get("group_name")]
+                                if active_gids:
+                                    logger.info("Lag scan: starting parallel scan for %d active groups on '%s'",
+                                               len(active_gids), c["name"])
+                                    enriched = 0
+                                    lag_results = await collector.fetch_all_group_lags(active_gids)
+                                    # fetch_all_group_lags returns a list — index it by group_id
+                                    lag_map = {(lr.get("group_id") or lr.get("group_name")): lr for lr in lag_results}
+                                    for g in data.get("consumer_groups", []):
+                                        gid = g.get("group_id") or g.get("group_name")
+                                        if gid and gid in lag_map:
+                                            g.update(lag_map[gid])
+                                            enriched += 1
+                                    data["consumer_groups"].sort(
+                                        key=lambda g: g.get("total_lag", 0), reverse=True)
+                                    _ks.set_cluster_data(
+                                        data,
+                                        source_type=c.get("source_type", "kafka_internal"),
+                                        cluster_id=str(c.get("id", "default")),
+                                    )
+                                    if engine is not None:
+                                        await save_snapshot_to_db(str(c.get("id", "default")), engine)
+                                    _lag_elapsed = round(_t.time() - _lag_start, 1)
+                                    logger.info("Lag scan: enriched %d/%d groups for '%s' in %ss",
+                                               enriched, len(active_gids), c["name"], _lag_elapsed)
+                            except Exception as _lag_exc:
+                                logger.warning("Lag scan failed for '%s': %s", c["name"], _lag_exc)
+
+                        # Run both in parallel — independent data keys
+                        await asyncio.gather(_run_prometheus(), _run_lag_scan())
+
+                        # Final save with all enrichments
+                        _ks.set_cluster_data(
+                            data,
+                            source_type=c.get("source_type", "kafka_internal"),
+                            cluster_id=str(c.get("id", "default")),
+                        )
+                        if engine is not None:
+                            await save_snapshot_to_db(str(c.get("id", "default")), engine)
                     except Exception as exc:
                         logger.warning("Startup: failed to sync cluster '%s': %s", c["name"], exc)
             asyncio.create_task(_startup_sync())
