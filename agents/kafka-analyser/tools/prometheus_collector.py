@@ -1,7 +1,6 @@
 """Prometheus JMX Exporter scraper for Kafka broker metrics.
-Pull-based intelligence — scrapes broker JMX Exporter HTTP endpoint,
-extracts only the metrics we need from the response.
-No RMI, no jpype, no Prometheus server — pure HTTP.
+Scrapes broker JMX Exporter HTTP endpoint directly — no RMI, no jpype, no Prometheus server.
+Uses streaming line-by-line filter to extract only needed metrics from large response.
 """
 from __future__ import annotations
 import asyncio
@@ -13,21 +12,38 @@ from typing import Any
 import httpx
 
 logger = logging.getLogger(__name__)
-_SCRAPE_TIMEOUT = 30.0
 
-# Broker metrics we extract from the full /metrics dump:
-# jvm_memory_bytes_used, jvm_memory_bytes_max, process_cpu_seconds_total,
-# jvm_gc_collection_seconds_sum, kafka_server_brokertopicmetrics_messagesin_total,
-# kafka_server_brokertopicmetrics_bytesin_total, kafka_server_brokertopicmetrics_bytesout_total,
-# kafka_server_replicamanager_underreplicatedpartitions, atminisrpartitioncount, partitioncount,
-# isrshrinks_total, isrexpands_total, kafkarequesthandlerpool, requestmetrics_totaltimems
-
-# Topic metrics we extract:
-# kafka_server_brokertopicmetrics_messagesin_by_topic_total, bytesin_by_topic_total,
-# bytesout_by_topic_total, kafka_log_log_size
+# Timeout for full /metrics dump — large clusters need up to 120s
+_SCRAPE_TIMEOUT = 120.0
 
 # Per-broker persistent state for rate calculations (keyed by host:port)
 _broker_state: dict[str, dict] = {}
+
+# Metrics we extract from broker scrape
+_BROKER_WANTED = {
+    "jvm_memory_bytes_used",
+    "jvm_memory_bytes_max",
+    "process_cpu_seconds_total",
+    "jvm_gc_collection_seconds_sum",
+    "kafka_server_brokertopicmetrics_messagesin_total",
+    "kafka_server_brokertopicmetrics_bytesin_total",
+    "kafka_server_brokertopicmetrics_bytesout_total",
+    "kafka_server_replicamanager_underreplicatedpartitions",
+    "kafka_server_replicamanager_atminisrpartitioncount",
+    "kafka_server_replicamanager_partitioncount",
+    "kafka_server_replicamanager_isrshrinks_total",
+    "kafka_server_replicamanager_isrexpands_total",
+    "kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent",
+    "kafka_network_requestmetrics_totaltimems",
+}
+
+# Topic metrics we extract
+_TOPIC_WANTED = {
+    "kafka_server_brokertopicmetrics_messagesin_by_topic_total",
+    "kafka_server_brokertopicmetrics_bytesin_by_topic_total",
+    "kafka_server_brokertopicmetrics_bytesout_by_topic_total",
+    "kafka_log_log_size",
+}
 
 
 def _parse_prometheus_text(text: str) -> dict[str, list[dict]]:
@@ -58,13 +74,11 @@ def _parse_prometheus_text(text: str) -> dict[str, list[dict]]:
 
 def _get(metrics: dict, name: str, labels: dict | None = None,
          no_labels_only: bool = False) -> float:
-    """Get metric value by name and optional label filters.
-    no_labels_only=True: only match entries with no labels (broker-level aggregates)."""
+    """Get metric value by name and optional label filters."""
     entries = metrics.get(name, [])
     if not entries:
         return 0.0
     if labels is None and no_labels_only:
-        # Only return entries with no labels — broker-level aggregates
         unlabeled = [e for e in entries if not e['labels']]
         return unlabeled[0]['value'] if unlabeled else 0.0
     if not labels:
@@ -85,11 +99,35 @@ def _rate(curr: float, prev: float, elapsed: float) -> float:
     return round((curr - prev) / elapsed, 2)
 
 
+async def _stream_filtered_lines(host: str, port: int,
+                                  wanted: set[str],
+                                  skip_topic_labels: bool = False) -> str:
+    """Stream /metrics and return only lines matching wanted metric names."""
+    kept: list[str] = []
+    async with httpx.AsyncClient(timeout=_SCRAPE_TIMEOUT) as client:
+        async with client.stream("GET", f"http://{host}:{port}/metrics") as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line or line.startswith('#'):
+                    continue
+                # Extract metric name
+                name_end = len(line)
+                for i, ch in enumerate(line):
+                    if ch in ('{', ' '):
+                        name_end = i
+                        break
+                metric_name = line[:name_end]
+                if metric_name not in wanted:
+                    continue
+                # For broker scrape: skip per-topic labeled entries for throughput counters
+                if skip_topic_labels and 'topic=' in line and 'brokertopicmetrics' in metric_name:
+                    continue
+                kept.append(line)
+    return "\n".join(kept)
+
+
 async def scrape_broker(host: str, port: int) -> dict[str, Any]:
-    """Scrape ONE broker using hybrid approach:
-    1. Filtered HTTP for metrics that support name[] filter (instant)
-    2. curl for throughput counters (filtered in Python; name[] doesn't work for these)
-    """
+    """Scrape broker metrics — streams /metrics, extracts only needed lines."""
     defaults = {
         "heap_pct": 0.0, "cpu_pct": 0.0, "gc_pause_ms": 0.0,
         "messages_in_per_sec": 0.0, "bytes_in_per_sec": 0.0,
@@ -102,52 +140,8 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
     state_key = f"{host}:{port}"
     try:
         now = time.time()
-
-        # Phase 1: Filtered fetch for JVM/system metrics (exporter supports name[] for these)
-        _FILTERED_METRICS = [
-            "jvm_memory_bytes_used", "jvm_memory_bytes_max",
-            "process_cpu_seconds_total", "jvm_gc_collection_seconds_sum",
-            "kafka_server_replicamanager_underreplicatedpartitions",
-            "kafka_server_replicamanager_atminisrpartitioncount",
-            "kafka_server_replicamanager_partitioncount",
-            "kafka_network_requestmetrics_totaltimems",
-        ]
-        params = "&".join(f"name[]={m}" for m in _FILTERED_METRICS)
-        filter_url = f"http://{host}:{port}/metrics?{params}"
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(filter_url)
-            resp.raise_for_status()
-        metrics = _parse_prometheus_text(resp.text)
-
-        # Phase 2: curl for throughput counters, filtered in Python (name[] doesn't work for these)
-        _THROUGHPUT_PATTERNS = [
-            "kafka_server_brokertopicmetrics_messagesin_total ",
-            "kafka_server_brokertopicmetrics_bytesin_total ",
-            "kafka_server_brokertopicmetrics_bytesout_total ",
-            "kafka_server_replicamanager_isrshrinks_total ",
-            "kafka_server_replicamanager_isrexpands_total ",
-            "kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent ",
-        ]
-        try:
-            url = f"http://{host}:{port}/metrics"
-            proc = await asyncio.create_subprocess_exec(
-                "curl", "-s", "--max-time", "15", url,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=20)
-            if stdout:
-                # Filter only broker-level throughput lines (no topic= label)
-                kept = []
-                for line in stdout.decode(errors='replace').splitlines():
-                    for pat in _THROUGHPUT_PATTERNS:
-                        if line.startswith(pat):
-                            kept.append(line)
-                            break
-                if kept:
-                    throughput_metrics = _parse_prometheus_text("\n".join(kept))
-                    metrics.update(throughput_metrics)
-        except Exception as _tp_exc:
-            logger.debug("Throughput counter fetch failed for %s:%s: %s", host, port, _tp_exc)
+        text = await _stream_filtered_lines(host, port, _BROKER_WANTED, skip_topic_labels=True)
+        metrics = _parse_prometheus_text(text)
 
         prev = _broker_state.get(state_key, {})
         prev_metrics = prev.get('metrics', {})
@@ -164,13 +158,13 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
         cpu_prev = _get(prev_metrics, 'process_cpu_seconds_total') if prev_metrics else cpu_curr
         cpu_pct = min(100.0, max(0.0, round(_rate(cpu_curr, cpu_prev, elapsed) * 100, 1)))
 
-        # GC pause rate (ms/s)
+        # GC pause rate
         gc_curr = _get(metrics, 'jvm_gc_collection_seconds_sum', {'gc': 'G1 Young Generation'})
         gc_prev = _get(prev_metrics, 'jvm_gc_collection_seconds_sum',
                       {'gc': 'G1 Young Generation'}) if prev_metrics else gc_curr
         gc_ms = round(_rate(gc_curr, gc_prev, elapsed) * 1000, 1)
 
-        # Throughput rates — now using no_labels_only since we filtered topic entries
+        # Throughput rates — broker aggregate (no topic label)
         def rate_metric(name: str) -> float:
             curr = _get(metrics, name, no_labels_only=True)
             prev_val = _get(prev_metrics, name, no_labels_only=True) if prev_metrics else curr
@@ -182,7 +176,7 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
         isr_shrinks = rate_metric('kafka_server_replicamanager_isrshrinks_total')
         isr_expands = rate_metric('kafka_server_replicamanager_isrexpands_total')
 
-        # Latency — 99th percentile
+        # Latency
         produce_latency = _get(metrics, 'kafka_network_requestmetrics_totaltimems',
                               {'quantile': '0.999', 'request': 'Produce'})
         fetch_latency = _get(metrics, 'kafka_network_requestmetrics_totaltimems',
@@ -192,6 +186,8 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
         urp = int(_get(metrics, 'kafka_server_replicamanager_underreplicatedpartitions'))
         at_min_isr = int(_get(metrics, 'kafka_server_replicamanager_atminisrpartitioncount'))
         partition_count = int(_get(metrics, 'kafka_server_replicamanager_partitioncount'))
+        req_idle = _get(metrics, 'kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent')
+        req_idle_pct = req_idle if 'kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent' in metrics else 100.0
 
         # Store state for next rate calculation
         _broker_state[state_key] = {'metrics': metrics, 'time': now}
@@ -199,7 +195,7 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
         return {
             "heap_pct": heap_pct, "cpu_pct": cpu_pct, "gc_pause_ms": gc_ms,
             "messages_in_per_sec": msgs_in, "bytes_in_per_sec": bytes_in,
-            "bytes_out_per_sec": bytes_out, "request_handler_idle_pct": (lambda v: v if v is not None and v != 0.0 or 'kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent' in metrics else 100.0)(_get(metrics, 'kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent', no_labels_only=True)),
+            "bytes_out_per_sec": bytes_out, "request_handler_idle_pct": req_idle_pct,
             "isr_shrinks_per_sec": isr_shrinks, "isr_expands_per_sec": isr_expands,
             "produce_latency_ms": produce_latency, "fetch_latency_ms": fetch_latency,
             "under_replicated_partitions": urp, "at_min_isr_partitions": at_min_isr,
@@ -211,7 +207,7 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
 
 
 async def scrape_all_brokers(brokers: list[dict], prometheus_port: int) -> dict[str, dict]:
-    """Scrape all brokers in parallel — targeted metrics only."""
+    """Scrape all brokers in parallel via asyncio.gather."""
     tasks = []
     broker_ids = []
     for broker in brokers:
@@ -220,7 +216,6 @@ async def scrape_all_brokers(brokers: list[dict], prometheus_port: int) -> dict[
             continue
         broker_ids.append(str(broker.get("broker_id", host)))
         tasks.append(scrape_broker(host, prometheus_port))
-
     results = {}
     completed = await asyncio.gather(*tasks, return_exceptions=True)
     for broker_id, result in zip(broker_ids, completed):
@@ -234,34 +229,29 @@ async def scrape_all_brokers(brokers: list[dict], prometheus_port: int) -> dict[
 
 async def scrape_topic_metrics(host: str, prometheus_port: int,
                                 topic_names: list[str]) -> dict[str, dict]:
-    """Scrape per-topic metrics using curl, filtered to requested topics in Python."""
+    """Scrape per-topic metrics — streams and extracts only requested topics."""
     result: dict[str, dict] = {}
     if not topic_names:
         return result
     topic_set = set(topic_names)
     try:
-        # Fetch all metrics via curl, then filter to requested topics in Python
-        proc = await asyncio.create_subprocess_exec(
-            "curl", "-s", "--max-time", "20", f"http://{host}:{prometheus_port}/metrics",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=25)
-        if stdout:
-            # Filter only lines matching requested topics
-            kept_lines_raw = []
-            for line in stdout.decode(errors='replace').splitlines():
-                if 'topic="' not in line:
-                    continue
-                topic_match = re.search(r'topic="([^"]*)"', line)
-                if topic_match and topic_match.group(1) in topic_set:
-                    kept_lines_raw.append(line)
-            stdout = "\n".join(kept_lines_raw).encode()
-        if not stdout:
-            return result
+        kept: list[str] = []
+        async with httpx.AsyncClient(timeout=_SCRAPE_TIMEOUT) as client:
+            async with client.stream("GET", f"http://{host}:{prometheus_port}/metrics") as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line or line.startswith('#'):
+                        continue
+                    # Check if line is a topic metric we want
+                    is_topic_metric = any(m in line for m in _TOPIC_WANTED)
+                    if not is_topic_metric:
+                        continue
+                    topic_match = re.search(r'topic="([^"]*)"', line)
+                    if topic_match and topic_match.group(1) in topic_set:
+                        kept.append(line)
 
-        metrics = _parse_prometheus_text(stdout.decode())
+        metrics = _parse_prometheus_text("\n".join(kept))
 
-        # Build topic size map
         topic_sizes: dict[str, float] = {}
         for entry in metrics.get('kafka_log_log_size', []):
             topic = entry['labels'].get('topic', '')
@@ -276,7 +266,7 @@ async def scrape_topic_metrics(host: str, prometheus_port: int,
                     'kafka_server_brokertopicmetrics_bytesin_by_topic_total', topic),
                 "bytes_out_per_sec": _get_topic(metrics,
                     'kafka_server_brokertopicmetrics_bytesout_by_topic_total', topic),
-                "size_bytes": topic_sizes.get(topic, 0),
+                "size_bytes": int(topic_sizes.get(topic, 0)),
             }
     except Exception as exc:
         logger.warning("Topic metrics scrape failed for %s:%s: %s", host, prometheus_port, exc)
