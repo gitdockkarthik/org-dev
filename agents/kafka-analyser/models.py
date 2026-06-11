@@ -44,6 +44,7 @@ class KafkaCluster(Base):
     zookeeper_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     kafka_connect_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     jmx_port: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    prometheus_port: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     mirror_source_cluster_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     mirror_mode: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

@@ -153,6 +153,7 @@ class ClusterPayload(BaseModel):
     zookeeper_url: str = ""
     kafka_connect_url: str = ""
     jmx_port: int | None = None
+    prometheus_port: int | None = None
     mirror_source_cluster_id: int | None = None
     mirror_mode: str = "none"
     enabled: bool = False

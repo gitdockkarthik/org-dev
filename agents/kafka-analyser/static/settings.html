@@ -400,6 +400,10 @@
             <label for="cf-jmx-port">JMX Port <span style="font-size:.75rem;color:var(--text-muted)">(optional — enables Tier 2 broker metrics)</span></label>
             <input type="number" id="cf-jmx-port" placeholder="9999" />
           </div>
+          <div class="field">
+            <label for="cf-prometheus-port">Prometheus Port <span style="font-size:.75rem;color:var(--text-muted)">(optional — JMX Prometheus Exporter port, e.g. 7071)</span></label>
+            <input type="number" id="cf-prometheus-port" placeholder="7071" />
+          </div>
           <div class="form-row">
             <label for="cf-mirror-mode">MirrorMaker Mode <span style="font-size:.75rem;color:var(--text-muted)">(optional)</span></label>
             <select id="cf-mirror-mode" class="dash-select" style="width:100%">
@@ -1105,6 +1109,7 @@
       document.getElementById('cf-zk-url').value = c.zookeeper_url || '';
       document.getElementById('cf-connect-url').value = c.kafka_connect_url || '';
       document.getElementById('cf-jmx-port').value = c.jmx_port || '';
+      document.getElementById('cf-prometheus-port').value = c.prometheus_port || '';
       document.getElementById('cf-mirror-mode').value = c.mirror_mode || 'none';
       document.getElementById('cf-mirror-source').value = c.mirror_source_cluster_id || '';
       document.getElementById('cf-mirror-source-row').style.display =
@@ -1222,6 +1227,7 @@
         zookeeper_url: document.getElementById('cf-zk-url').value.trim(),
         kafka_connect_url: document.getElementById('cf-connect-url').value.trim(),
         jmx_port: document.getElementById('cf-jmx-port').value.trim() ? parseInt(document.getElementById('cf-jmx-port').value.trim()) : null,
+        prometheus_port: document.getElementById('cf-prometheus-port').value.trim() ? parseInt(document.getElementById('cf-prometheus-port').value.trim()) : null,
         mirror_source_cluster_id: document.getElementById('cf-mirror-source').value ?
           parseInt(document.getElementById('cf-mirror-source').value) : null,
         mirror_mode: document.getElementById('cf-mirror-mode').value,

@@ -133,10 +133,18 @@ async def _register_self() -> None:
 async def _init_config() -> None:
     from database import engine
     from models import Base
+    from sqlalchemy import text
 
     if engine is not None:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            # Lightweight migrations: add columns that post-date the original schema
+            try:
+                await conn.execute(text(
+                    "ALTER TABLE kafka_clusters ADD COLUMN IF NOT EXISTS prometheus_port INTEGER"
+                ))
+            except Exception as _mig_exc:
+                logger.warning("prometheus_port migration skipped: %s", _mig_exc)
         logger.info("_init_config: DB tables ensured")
 
     init_storage(settings.agent_slug)
@@ -361,6 +369,86 @@ async def lifespan(app: FastAPI):
                                 )
                         except Exception as _topic_exc:
                             logger.warning("Topic scan failed for '%s': %s", c["name"], _topic_exc)
+
+                        # Background Prometheus/JMX enrichment — broker metrics
+                        _prom_port = c.get("prometheus_port")
+                        _jmx_port = c.get("jmx_port")
+                        if _prom_port:
+                            try:
+                                import time as _t3
+                                from tools.prometheus_collector import scrape_all_brokers, scrape_topic_metrics
+                                _prom_start = _t3.time()
+                                logger.info("Prometheus scan: scraping %d brokers on port %d for '%s'",
+                                           len(data.get("brokers", [])), _prom_port, c["name"])
+                                # First scrape — warms up state for rate calculation
+                                await scrape_all_brokers(data.get("brokers", []), _prom_port)
+                                # Short delay then second scrape — gets real rates
+                                await asyncio.sleep(5)
+                                broker_metrics = await scrape_all_brokers(data.get("brokers", []), _prom_port)
+                                # Enrich broker data
+                                for broker in data.get("brokers", []):
+                                    bid = str(broker.get("broker_id", broker.get("host", "")))
+                                    if bid in broker_metrics and broker_metrics[bid]:
+                                        broker.update(broker_metrics[bid])
+                                # Scrape top topic metrics
+                                top_topics = [t["name"] for t in data.get("topics", [])[:100]]
+                                if top_topics and data.get("brokers"):
+                                    first_broker = data["brokers"][0].get("host", "")
+                                    if first_broker:
+                                        topic_metrics = await scrape_topic_metrics(
+                                            first_broker, _prom_port, top_topics)
+                                        for t in data.get("topics", []):
+                                            if t["name"] in topic_metrics:
+                                                tm = topic_metrics[t["name"]]
+                                                t["messages_in_per_sec"] = tm.get("messages_in_per_sec", 0.0)
+                                                t["bytes_in_per_sec"] = tm.get("bytes_in_per_sec", 0.0)
+                                                t["bytes_out_per_sec"] = tm.get("bytes_out_per_sec", 0.0)
+                                                t["size_bytes"] = tm.get("size_bytes", 0)
+                                        # Update hot topics count
+                                        if "counts" in data:
+                                            data["counts"]["total_hot"] = sum(
+                                                1 for t in data.get("topics", [])
+                                                if (t.get("messages_in_per_sec") or 0) > 1000)
+                                # Re-store enriched data
+                                _ks.set_cluster_data(
+                                    data,
+                                    source_type=c.get("source_type", "kafka_internal"),
+                                    cluster_id=str(c.get("id", "default")),
+                                )
+                                _prom_elapsed = round(_t3.time() - _prom_start, 1)
+                                logger.info("Prometheus scan: completed for '%s' in %ss", c["name"], _prom_elapsed)
+                            except Exception as _prom_exc:
+                                logger.warning("Prometheus scan failed for '%s': %s", c["name"], _prom_exc)
+                        elif _jmx_port:
+                            try:
+                                import time as _t3
+                                _jmx_start = _t3.time()
+                                broker_hosts = [b.get("host", "") for b in data.get("brokers", []) if b.get("host")]
+                                if broker_hosts:
+                                    logger.info("JMX scan: querying %d brokers on port %d for '%s'",
+                                               len(broker_hosts), _jmx_port, c["name"])
+                                    for broker in data.get("brokers", []):
+                                        host = broker.get("host", "")
+                                        if host:
+                                            jmx_data = collector._query_jmx(host, _jmx_port)
+                                            broker.update(jmx_data)
+                                    top_topic_names = [t["name"] for t in data.get("topics", [])[:50]]
+                                    if top_topic_names:
+                                        topic_jmx = collector._query_topic_jmx(
+                                            broker_hosts[0], _jmx_port, top_topic_names)
+                                        for t in data.get("topics", []):
+                                            if t["name"] in topic_jmx:
+                                                t.update(topic_jmx[t["name"]])
+                                    _ks.set_cluster_data(
+                                        data,
+                                        source_type=c.get("source_type", "kafka_internal"),
+                                        cluster_id=str(c.get("id", "default")),
+                                    )
+                                _jmx_elapsed = round(_t3.time() - _jmx_start, 1)
+                                logger.info("JMX scan: completed for '%s' in %ss", c["name"], _jmx_elapsed)
+                            except Exception as _jmx_exc:
+                                logger.warning("JMX scan failed for '%s': %s", c["name"], _jmx_exc)
+
                         # Background parallel lag scan — enriches consumer groups
                         try:
                             active_gids = [g["group_id"] for g in data.get("consumer_groups", [])

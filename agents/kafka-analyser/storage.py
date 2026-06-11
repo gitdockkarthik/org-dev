@@ -264,6 +264,7 @@ class PostgresBackend(StorageBackend):
         "zookeeper_url",
         "kafka_connect_url",
         "jmx_port",
+        "prometheus_port",
         "mirror_source_cluster_id",
         "mirror_mode",
     )
@@ -302,6 +303,7 @@ class PostgresBackend(StorageBackend):
             "zookeeper_url": row.zookeeper_url or "",
             "kafka_connect_url": row.kafka_connect_url or "",
             "jmx_port": row.jmx_port,
+            "prometheus_port": row.prometheus_port,
             "mirror_source_cluster_id": row.mirror_source_cluster_id,
             "mirror_mode": row.mirror_mode or "none",
         }
