@@ -25,6 +25,12 @@ from tools.kafka_tools import (
     TopicMetricsTool,
 )
 
+try:
+    from tools.prometheus_collector import scrape_all_brokers, scrape_topic_metrics
+    _PROMETHEUS_AVAILABLE = True
+except ImportError:
+    _PROMETHEUS_AVAILABLE = False
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s — %(message)s",
@@ -210,9 +216,8 @@ async def _collection_loop() -> None:
                         raise
                     # Prometheus broker metrics enrichment
                     _prom_port = c.get("prometheus_port")
-                    if _prom_port:
+                    if _prom_port and _PROMETHEUS_AVAILABLE:
                         try:
-                            from tools.prometheus_collector import scrape_all_brokers, scrape_topic_metrics
                             broker_metrics = await scrape_all_brokers(data.get("brokers", []), _prom_port)
                             for broker in data.get("brokers", []):
                                 bid = str(broker.get("broker_id", broker.get("host", "")))
@@ -405,10 +410,9 @@ async def lifespan(app: FastAPI):
                         # Background Prometheus/JMX enrichment — broker metrics
                         _prom_port = c.get("prometheus_port")
                         _jmx_port = c.get("jmx_port")
-                        if _prom_port:
+                        if _prom_port and _PROMETHEUS_AVAILABLE:
                             try:
                                 import time as _t3
-                                from tools.prometheus_collector import scrape_all_brokers, scrape_topic_metrics
                                 _prom_start = _t3.time()
                                 logger.info("Prometheus scan: scraping %d brokers on port %d for '%s'",
                                            len(data.get("brokers", [])), _prom_port, c["name"])
