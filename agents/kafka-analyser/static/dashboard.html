@@ -285,6 +285,14 @@
 
     // ── Tab switching ─────────────────────────────────────────────────────────
 
+    function _clusterId() {
+      const sel = document.querySelector('#ctrl-cluster');
+      return sel ? sel.value : '';
+    }
+    function _base() {
+      // Reuse the same PROXY base that api() uses
+      return typeof PROXY !== 'undefined' ? PROXY : '';
+    }
     function switchTab(name, btn) {
       document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('tab-panel--active'));
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('tab-btn--active'));
@@ -314,12 +322,16 @@
             const d = await api('/dashboard/consumer-groups');
             _loaded.add(name);
             renderConsumerGroups(d);
+            // Phase 2: stream real consumer group lag from cluster
+            _streamGroupLags();
             break;
           }
           case 'topics': {
             const d = await api('/dashboard/topics');
             _loaded.add(name);
             renderTopics(d);
+            // Phase 2: stream real topic details from cluster
+            _streamTopicDetails();
             break;
           }
           case 'brokers': {
@@ -638,6 +650,7 @@
         return;
       }
       const groups = data.consumer_groups || [];
+      window._cgGroups = groups;
       const cgRowHtml = g => {
         const lagColor = g.lag_trend === 'growing' && g.total_lag > 10000 ? 'style="color:var(--danger);font-weight:700"' : '';
         let trendHtml;
@@ -666,7 +679,8 @@
           <span class="filter-chip active" onclick="window._cgSetState('all',this)">All</span>
           <span class="filter-chip" onclick="window._cgSetState('active',this)">Active</span>
           <span class="filter-chip" onclick="window._cgSetState('empty',this)">Empty</span>
-          <input class="filter-input" id="cg-search" placeholder="Search group…" oninput="window._cgSearch(this.value)" />
+          <input class="filter-input" id="cg-search" placeholder="Search group…" oninput="_serverGroupSearch(this.value)" />
+          <span id="cg-loading-badge" style="display:none;align-items:center;gap:6px;padding:4px 12px;background:#fff3cd;color:#856404;border-radius:12px;font-size:13px;">Loading group lag...</span>
         </div>
         <div class="filter-bar">
           <span class="dash-label">Health:</span>
@@ -862,7 +876,8 @@
           <span class="dash-label">Show:</span>
           <span class="filter-chip active" onclick="window._setTopicShow(false,this)">All</span>
           <span class="filter-chip" onclick="window._setTopicShow(true,this)">User Topics</span>
-          <input class="filter-input" id="topic-search" placeholder="Search topic…" oninput="window._topicSearch(this.value)" />
+          <input class="filter-input" id="topic-search" placeholder="Search topic…" oninput="_serverTopicSearch(this.value)" />
+          <span id="topic-loading-badge" style="display:none;align-items:center;gap:6px;padding:4px 12px;background:#fff3cd;color:#856404;border-radius:12px;font-size:13px;">Loading topics...</span>
         </div>
         <div class="filter-bar">
           <span class="dash-label">Filter:</span>
@@ -875,6 +890,7 @@
       `;
 
       const allTopics = data.topics || [];
+      window._topicAllTopics = allTopics;
       const msgRate = t => (t.msgs_per_sec ?? t.messages_in_per_sec ?? 0);
       const logSize = t => (t.log_size_bytes ?? t.size_bytes ?? 0);
       const topicRf = t => (t.replication_factor ?? t.rf ?? 0);
@@ -2592,6 +2608,191 @@
       loadTab(activeTab);
     });
     init();
+
+    /* ── On-demand streaming: Topics ────────────────────── */
+    let _topicStreamActive = false;
+    async function _streamTopicDetails() {
+      if (_topicStreamActive) return;
+      _topicStreamActive = true;
+      const cid = _clusterId();
+      if (!cid) return;
+
+      // Show loading badge
+      const badge = document.getElementById('topic-loading-badge');
+      if (badge) badge.style.display = 'inline-flex';
+
+      try {
+        const resp = await fetch(_base() + '/dashboard/topics/stream?cluster_id=' + cid, {
+          headers: typeof _authHeaders === 'function' ? _authHeaders() : {}
+        });
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let count = 0;
+
+        // Get reference to the existing topic array from renderTopics
+        const tabEl = document.getElementById('tab-topics');
+        const topicMap = {};
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const payload = line.slice(6);
+            try {
+              const obj = JSON.parse(payload);
+              if (obj.done) {
+                if (badge) badge.style.display = 'none';
+                _topicStreamActive = false;
+                // Final re-render with full data
+                if (window._topicAllTopics) {
+                  window._applyTopicView && window._applyTopicView();
+                }
+                return;
+              }
+              if (obj.error) continue;
+              // Merge streamed detail into existing topic array
+              if (window._topicAllTopics) {
+                const idx = window._topicAllTopics.findIndex(t => t.name === obj.name);
+                if (idx >= 0) {
+                  Object.assign(window._topicAllTopics[idx], obj);
+                } else {
+                  window._topicAllTopics.push(obj);
+                }
+              }
+              count++;
+              if (badge) badge.textContent = 'Loading topics... ' + count;
+              // Progressive re-render every 100 topics
+              if (count % 100 === 0 && window._applyTopicView) {
+                window._applyTopicView();
+              }
+            } catch (e) { /* skip malformed */ }
+          }
+        }
+      } catch (err) {
+        console.warn('Topic stream error:', err);
+      }
+      if (badge) badge.style.display = 'none';
+      _topicStreamActive = false;
+    }
+
+    /* ── On-demand streaming: Consumer Groups ────────────── */
+    let _groupStreamActive = false;
+    async function _streamGroupLags() {
+      if (_groupStreamActive) return;
+      _groupStreamActive = true;
+      const cid = _clusterId();
+      if (!cid) return;
+
+      const badge = document.getElementById('cg-loading-badge');
+      if (badge) badge.style.display = 'inline-flex';
+
+      try {
+        const resp = await fetch(_base() + '/dashboard/groups/stream?cluster_id=' + cid, {
+          headers: typeof _authHeaders === 'function' ? _authHeaders() : {}
+        });
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let count = 0;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const payload = line.slice(6);
+            try {
+              const obj = JSON.parse(payload);
+              if (obj.done) {
+                if (badge) badge.style.display = 'none';
+                _groupStreamActive = false;
+                if (window._cgGroups) {
+                  window._cgApplyView && window._cgApplyView();
+                }
+                return;
+              }
+              if (obj.error) continue;
+              // Merge lag data into existing group array
+              if (window._cgGroups) {
+                const idx = window._cgGroups.findIndex(g => g.group_id === obj.group_id);
+                if (idx >= 0) {
+                  window._cgGroups[idx].total_lag = obj.total_lag;
+                  window._cgGroups[idx].topic_count = obj.topic_count;
+                  window._cgGroups[idx].partitions = obj.partitions || [];
+                }
+              }
+              count++;
+              if (badge) badge.textContent = 'Loading group lag... ' + count;
+              if (count % 20 === 0 && window._cgApplyView) {
+                window._cgApplyView();
+              }
+            } catch (e) { /* skip malformed */ }
+          }
+        }
+      } catch (err) {
+        console.warn('Group lag stream error:', err);
+      }
+      if (badge) badge.style.display = 'none';
+      _groupStreamActive = false;
+    }
+
+    /* ── Server-side topic search ────────────────────────── */
+    let _topicSearchTimer = null;
+    function _serverTopicSearch(query) {
+      clearTimeout(_topicSearchTimer);
+      if (!query || query.length < 2) {
+        // Fall back to client-side filter on summary data
+        if (window._topicSearch) window._topicSearch(query);
+        return;
+      }
+      _topicSearchTimer = setTimeout(async () => {
+        const cid = _clusterId();
+        try {
+          const d = await api('/dashboard/topics/search?cluster_id=' + cid + '&q=' + encodeURIComponent(query));
+          if (d.topics && d.topics.length > 0) {
+            // Replace visible topics with search results
+            window._topicAllTopics = d.topics;
+            window._applyTopicView && window._applyTopicView();
+          } else if (window._topicSearch) {
+            window._topicSearch(query);
+          }
+        } catch (e) {
+          if (window._topicSearch) window._topicSearch(query);
+        }
+      }, 400);
+    }
+
+    /* ── Server-side group search ────────────────────────── */
+    let _groupSearchTimer = null;
+    function _serverGroupSearch(query) {
+      clearTimeout(_groupSearchTimer);
+      if (!query || query.length < 2) {
+        if (window._cgSearch) window._cgSearch(query);
+        return;
+      }
+      _groupSearchTimer = setTimeout(async () => {
+        const cid = _clusterId();
+        try {
+          const d = await api('/dashboard/groups/search?cluster_id=' + cid + '&q=' + encodeURIComponent(query));
+          if (d.groups && d.groups.length > 0) {
+            window._cgGroups = d.groups;
+            window._cgApplyView && window._cgApplyView();
+          } else if (window._cgSearch) {
+            window._cgSearch(query);
+          }
+        } catch (e) {
+          if (window._cgSearch) window._cgSearch(query);
+        }
+      }, 400);
+    }
   </script>
   <script>
     // ── Fix nav links in standalone mode ──────────────────────────────────
