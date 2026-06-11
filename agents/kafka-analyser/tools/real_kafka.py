@@ -144,9 +144,8 @@ class RealKafkaCollector(KafkaCollector):
                 all_names = [n for n in admin.list_topics() if not _is_internal_topic(n)]
                 topic_count = len(all_names)
 
-                # Cap for in-memory storage — sort alphabetically
-                if len(all_names) > 5000:
-                    all_names = sorted(all_names)[:5000]
+                # Keep only 500 names in memory for client-side search hints
+                capped_names = sorted(all_names)[:500] if len(all_names) > 500 else all_names
 
                 # Build lightweight topic stubs — no partition/URP detail
                 topics = [
@@ -163,7 +162,7 @@ class RealKafkaCollector(KafkaCollector):
                         "retention_pct": 0.0,
                         "status": "unknown",
                     }
-                    for n in all_names
+                    for n in capped_names
                 ]
 
                 # Consumer group states only — no lag fetch
@@ -194,6 +193,11 @@ class RealKafkaCollector(KafkaCollector):
                     "connectors": [],
                     "anomalies": [],
                     "is_summary": True,
+                    "counts": {
+                        "total_topics": topic_count,
+                        "total_groups": len(group_ids),
+                        "total_brokers": len(brokers),
+                    },
                 }
             except RuntimeError:
                 raise

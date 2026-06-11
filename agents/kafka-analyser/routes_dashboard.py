@@ -51,6 +51,21 @@ async def get_overview(cluster_id: str | None = None, hours: int | None = None) 
     }
 
 
+@router.get("/dashboard/counts")
+async def get_counts(cluster_id: str | None = None) -> dict:
+    """Real cluster counts from summary data — no heavy fetch."""
+    data = kafka_store.get_cluster_data(cluster_id)
+    if data is None:
+        return {"empty": True}
+    counts = data.get("counts", {})
+    return {
+        "total_topics": counts.get("total_topics", len(data.get("topics", []))),
+        "total_groups": counts.get("total_groups", len(data.get("consumer_groups", []))),
+        "total_brokers": counts.get("total_brokers", len(data.get("brokers", []))),
+        "total_connectors": len(data.get("connectors", [])),
+    }
+
+
 @router.get("/dashboard/consumer-groups")
 async def get_consumer_groups(cluster_id: str | None = None, hours: int | None = None) -> dict:
     """Consumer group lag leaderboard sorted worst-first."""
@@ -821,20 +836,22 @@ Unknown tab "{tab}" — no specific data available.
 # ─── On-demand streaming endpoints ──────────────────────────────────
 
 @router.get("/dashboard/topics/stream")
-async def stream_topic_details(cluster_id: str):
-    """Stream topic details on-demand — fetches partition/URP for batches of topics."""
+async def stream_topic_details(cluster_id: str, limit: int = 50):
+    """Stream topic details on-demand — top N topics, rest available via search."""
     collector = await _collector_for_cluster(cluster_id)
     data = kafka_store.get_cluster_data(cluster_id)
     all_names = [t["name"] for t in (data or {}).get("topics", [])]
+    total_count = (data or {}).get("counts", {}).get("total_topics", len(all_names))
     if not all_names:
-        return {"topics": [], "total": 0}
+        return {"topics": [], "total": 0, "total_topics": total_count}
+    names_to_describe = all_names[:limit]
 
     async def generate():
-        _BATCH = 100
+        _BATCH = 50
         sent = 0
-        total = len(all_names)
+        total = len(names_to_describe)
         for i in range(0, total, _BATCH):
-            batch_names = all_names[i:i + _BATCH]
+            batch_names = names_to_describe[i:i + _BATCH]
             try:
                 details = await collector.fetch_topic_details(batch_names)
                 for t in details:
@@ -842,7 +859,7 @@ async def stream_topic_details(cluster_id: str):
                     sent += 1
             except Exception as exc:
                 yield f"data: {json.dumps({'error': str(exc)})}\n\n"
-        yield f"data: {json.dumps({'done': True, 'total': sent})}\n\n"
+        yield f"data: {json.dumps({'done': True, 'total': sent, 'total_topics': total_count})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -859,10 +876,10 @@ async def stream_group_lags(cluster_id: str):
         return {"groups": [], "total": 0}
 
     # Sort by state — active groups first, limit to 200
-    group_ids = [g["group_id"] for g in all_groups][:200]
+    group_ids = [g["group_id"] for g in all_groups][:50]
 
     async def generate():
-        _BATCH = 20
+        _BATCH = 50
         sent = 0
         total = len(group_ids)
         for i in range(0, total, _BATCH):
@@ -874,7 +891,8 @@ async def stream_group_lags(cluster_id: str):
                     sent += 1
             except Exception as exc:
                 yield f"data: {json.dumps({'error': str(exc)})}\n\n"
-        yield f"data: {json.dumps({'done': True, 'total': sent})}\n\n"
+        total_groups = len((data or {}).get("consumer_groups", []))
+        yield f"data: {json.dumps({'done': True, 'total': sent, 'total_groups': total_groups})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -924,8 +942,8 @@ async def search_groups(cluster_id: str, q: str = ""):
 
 
 @router.get("/dashboard/schemas/stream")
-async def stream_schema_details(cluster_id: str):
-    """Stream schema registry subject details on-demand."""
+async def stream_schema_details(cluster_id: str, limit: int = 50):
+    """Stream schema registry subject details — top N subjects, rest via search."""
     from tools.schema_registry import SchemaRegistryCollector
     cluster = await get_backend().get_cluster(int(cluster_id))
     if not cluster or not cluster.get("schema_registry_url"):
@@ -933,6 +951,40 @@ async def stream_schema_details(cluster_id: str):
     sr = SchemaRegistryCollector(cluster["schema_registry_url"])
     try:
         result = await sr.collect()
+        total_subjects = result.get("subject_count", len(result.get("subjects", [])))
+        if result.get("subjects") and len(result["subjects"]) > limit:
+            result["subjects"] = result["subjects"][:limit]
+        result["total_subjects"] = total_subjects
         return result
     except Exception as exc:
         return {"subjects": [], "error": str(exc)}
+
+
+@router.get("/dashboard/connectors/search")
+async def search_connectors(cluster_id: str, q: str = ""):
+    """Search connectors by name."""
+    if not q or len(q) < 2:
+        return {"connectors": [], "query": q}
+    data = kafka_store.get_cluster_data(cluster_id)
+    all_connectors = (data or {}).get("connectors", [])
+    ql = q.lower()
+    matched = [c for c in all_connectors if ql in c.get("name", "").lower()][:50]
+    return {"connectors": matched, "query": q}
+
+@router.get("/dashboard/schemas/search")
+async def search_schemas(cluster_id: str, q: str = ""):
+    """Search schema subjects by name."""
+    if not q or len(q) < 2:
+        return {"subjects": [], "query": q}
+    from tools.schema_registry import SchemaRegistryCollector
+    cluster = await get_backend().get_cluster(int(cluster_id))
+    if not cluster or not cluster.get("schema_registry_url"):
+        return {"subjects": [], "query": q}
+    sr = SchemaRegistryCollector(cluster["schema_registry_url"])
+    try:
+        result = await sr.collect()
+        ql = q.lower()
+        matched = [s for s in result.get("subjects", []) if ql in s.get("subject", "").lower()][:50]
+        return {"subjects": matched, "query": q}
+    except Exception as exc:
+        return {"subjects": [], "query": q, "error": str(exc)}
