@@ -334,8 +334,19 @@ async def lifespan(app: FastAPI):
                                 enriched = 0
                                 for cg in data["consumer_groups"]:
                                     if cg["group_id"] in lag_map:
-                                        cg["total_lag"] = lag_map[cg["group_id"]].get("total_lag", -1)
-                                        cg["topic_count"] = lag_map[cg["group_id"]].get("topic_count", 0)
+                                        lag_data = lag_map[cg["group_id"]]
+                                        cg["total_lag"] = lag_data.get("total_lag", -1)
+                                        cg["topic_count"] = lag_data.get("topic_count", 0)
+                                        # Extract primary topic (highest lag contributor)
+                                        parts = lag_data.get("partitions", [])
+                                        if parts:
+                                            topic_lags = {}
+                                            for p in parts:
+                                                t = p.get("topic", "")
+                                                if t:
+                                                    topic_lags[t] = topic_lags.get(t, 0) + p.get("lag", 0)
+                                            if topic_lags:
+                                                cg["topic"] = max(topic_lags, key=topic_lags.get)
                                         enriched += 1
                                 # Re-sort by lag descending
                                 data["consumer_groups"].sort(key=lambda g: g.get("total_lag", -1), reverse=True)
