@@ -81,6 +81,40 @@ class RealKafkaCollector(KafkaCollector):
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self._collect_sync)
 
+    async def ping(self) -> dict:
+        """Lightweight connection test — broker list only, no topic/group/JMX fetch."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._ping_sync)
+
+    def _ping_sync(self) -> dict:
+        security = self._security_kwargs()
+        try:
+            admin = KafkaAdminClient(
+                bootstrap_servers=self._bootstrap_list,
+                **security,
+                request_timeout_ms=10000,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to connect to Kafka at bootstrap_servers="
+                f"{self.bootstrap_servers!r} (auth_type={self.auth_type!r}): {exc}"
+            ) from exc
+        try:
+            cluster_info = admin.describe_cluster()
+            brokers = self._build_brokers(cluster_info)
+            cluster_id = cluster_info.get('cluster_id', '') if isinstance(cluster_info, dict) else (getattr(cluster_info, 'cluster_id', '') or '')
+            return {
+                "ok": True,
+                "broker_count": len(brokers),
+                "cluster_id": str(cluster_id),
+                "topic_count": None,
+            }
+        finally:
+            try:
+                admin.close()
+            except Exception:
+                pass
+
     def _collect_sync(self) -> dict[str, Any]:
         security = self._security_kwargs()
 
