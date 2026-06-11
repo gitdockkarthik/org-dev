@@ -877,7 +877,7 @@ async def stream_group_lags(cluster_id: str):
         return {"groups": [], "total": 0}
 
     # Sort by state — active groups first, limit to 200
-    group_ids = [g["group_id"] for g in all_groups][:50]
+    group_ids = [g["group_id"] for g in all_groups][:200]
 
     async def generate():
         _BATCH = 50
