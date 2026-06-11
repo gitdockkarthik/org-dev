@@ -1,6 +1,7 @@
 """Prometheus JMX Exporter scraper for Kafka broker metrics.
-Pull-based, targeted scraping — requests ONLY the metrics we need.
-No full /metrics dump — differentiates from traditional observability tools.
+Pull-based intelligence — scrapes broker JMX Exporter HTTP endpoint,
+extracts only the metrics we need from the response.
+No RMI, no jpype, no Prometheus server — pure HTTP.
 """
 from __future__ import annotations
 import asyncio
@@ -12,41 +13,21 @@ from typing import Any
 import httpx
 
 logger = logging.getLogger(__name__)
-_SCRAPE_TIMEOUT = 10.0
+_SCRAPE_TIMEOUT = 30.0
 
-# Only the metrics we need — not the full /metrics dump
-_BROKER_METRICS = [
-    "jvm_memory_bytes_used",
-    "jvm_memory_bytes_max",
-    "process_cpu_seconds_total",
-    "jvm_gc_collection_seconds_sum",
-    "kafka_server_brokertopicmetrics_messagesin_total",
-    "kafka_server_brokertopicmetrics_bytesin_total",
-    "kafka_server_brokertopicmetrics_bytesout_total",
-    "kafka_server_replicamanager_underreplicatedpartitions",
-    "kafka_server_replicamanager_atminisrpartitioncount",
-    "kafka_server_replicamanager_partitioncount",
-    "kafka_server_replicamanager_isrshrinks_total",
-    "kafka_server_replicamanager_isrexpands_total",
-    "kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent",
-    "kafka_network_requestmetrics_totaltimems",
-]
+# Broker metrics we extract from the full /metrics dump:
+# jvm_memory_bytes_used, jvm_memory_bytes_max, process_cpu_seconds_total,
+# jvm_gc_collection_seconds_sum, kafka_server_brokertopicmetrics_messagesin_total,
+# kafka_server_brokertopicmetrics_bytesin_total, kafka_server_brokertopicmetrics_bytesout_total,
+# kafka_server_replicamanager_underreplicatedpartitions, atminisrpartitioncount, partitioncount,
+# isrshrinks_total, isrexpands_total, kafkarequesthandlerpool, requestmetrics_totaltimems
 
-_TOPIC_METRICS = [
-    "kafka_server_brokertopicmetrics_messagesin_by_topic_total",
-    "kafka_server_brokertopicmetrics_bytesin_by_topic_total",
-    "kafka_server_brokertopicmetrics_bytesout_by_topic_total",
-    "kafka_log_log_size",
-]
+# Topic metrics we extract:
+# kafka_server_brokertopicmetrics_messagesin_by_topic_total, bytesin_by_topic_total,
+# bytesout_by_topic_total, kafka_log_log_size
 
 # Per-broker persistent state for rate calculations (keyed by host:port)
 _broker_state: dict[str, dict] = {}
-
-
-def _build_filter_url(host: str, port: int, metric_names: list[str]) -> str:
-    """Build filtered Prometheus URL — only request specific metrics."""
-    params = "&".join(f"name[]={m}" for m in metric_names)
-    return f"http://{host}:{port}/metrics?{params}"
 
 
 def _parse_prometheus_text(text: str) -> dict[str, list[dict]]:
@@ -75,11 +56,17 @@ def _parse_prometheus_text(text: str) -> dict[str, list[dict]]:
     return result
 
 
-def _get(metrics: dict, name: str, labels: dict | None = None) -> float:
-    """Get metric value by name and optional label filters."""
+def _get(metrics: dict, name: str, labels: dict | None = None,
+         no_labels_only: bool = False) -> float:
+    """Get metric value by name and optional label filters.
+    no_labels_only=True: only match entries with no labels (broker-level aggregates)."""
     entries = metrics.get(name, [])
     if not entries:
         return 0.0
+    if labels is None and no_labels_only:
+        # Only return entries with no labels — broker-level aggregates
+        unlabeled = [e for e in entries if not e['labels']]
+        return unlabeled[0]['value'] if unlabeled else 0.0
     if not labels:
         return sum(e['value'] for e in entries)
     for entry in entries:
@@ -112,10 +99,10 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
     state_key = f"{host}:{port}"
     try:
         now = time.time()
-        url = _build_filter_url(host, port, _BROKER_METRICS)
         async with httpx.AsyncClient(timeout=_SCRAPE_TIMEOUT) as client:
-            resp = await client.get(url)
+            resp = await client.get(f"http://{host}:{port}/metrics")
             resp.raise_for_status()
+        # Parse full dump — _get extracts only what we need, rest discarded
         metrics = _parse_prometheus_text(resp.text)
 
         prev = _broker_state.get(state_key, {})
@@ -141,8 +128,9 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
 
         # Throughput rates
         def rate_metric(name: str) -> float:
-            curr = _get(metrics, name)
-            prev_val = _get(prev_metrics, name) if prev_metrics else curr
+            # Use no_labels_only to get broker-level aggregate, not sum of all topic entries
+            curr = _get(metrics, name, no_labels_only=True)
+            prev_val = _get(prev_metrics, name, no_labels_only=True) if prev_metrics else curr
             return _rate(curr, prev_val, elapsed)
 
         msgs_in = rate_metric('kafka_server_brokertopicmetrics_messagesin_total')
@@ -207,9 +195,8 @@ async def scrape_topic_metrics(host: str, prometheus_port: int,
     Uses filtered URL to avoid pulling all 18k+ topic metrics."""
     result: dict[str, dict] = {}
     try:
-        url = _build_filter_url(host, prometheus_port, _TOPIC_METRICS)
         async with httpx.AsyncClient(timeout=_SCRAPE_TIMEOUT) as client:
-            resp = await client.get(url)
+            resp = await client.get(f"http://{host}:{prometheus_port}/metrics")
             resp.raise_for_status()
         metrics = _parse_prometheus_text(resp.text)
 
