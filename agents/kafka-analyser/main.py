@@ -321,6 +321,28 @@ async def lifespan(app: FastAPI):
                             len(data.get("brokers", [])),
                             len(data.get("topics", [])),
                         )
+                        # Background parallel topic describe — enriches cached topics with partitions/RF/URP
+                        try:
+                            topic_names = [t["name"] for t in data.get("topics", [])]
+                            if topic_names:
+                                logger.info("Topic scan: starting parallel describe for %d cached topics on '%s'", len(topic_names), c["name"])
+                                import time as _t2
+                                _topic_start = _t2.time()
+                                described_topics, total_urp = await collector.describe_all_topics(topic_names, workers=5)
+                                if described_topics:
+                                    data["topics"] = described_topics
+                                    if "cluster" in data:
+                                        data["cluster"]["under_replicated_partitions"] = total_urp
+                                        data["cluster"]["partition_count"] = sum(t.get("partition_count", 0) for t in described_topics)
+                                    _ks.set_cluster_data(
+                                        data,
+                                        source_type=c.get("source_type", "kafka_internal"),
+                                        cluster_id=str(c.get("id", "default")),
+                                    )
+                                _topic_elapsed = round(_t2.time() - _topic_start, 1)
+                                logger.info("Topic scan: described %d topics (%d URP) for '%s' in %ss", len(described_topics), total_urp, c["name"], _topic_elapsed)
+                        except Exception as _topic_exc:
+                            logger.warning("Topic scan failed for '%s': %s", c["name"], _topic_exc)
                         # Background parallel lag scan — enriches consumer groups
                         try:
                             active_gids = [g["group_id"] for g in data.get("consumer_groups", [])

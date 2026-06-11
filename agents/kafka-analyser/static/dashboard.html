@@ -398,8 +398,16 @@
             const d = await api('/dashboard/topics');
             _loaded.add(name);
             renderTopics(d);
-            // Phase 2: stream real topic details from cluster
-            _streamTopicDetails();
+            // Only stream if topics not yet described (background scan may have enriched cache)
+            const hasTopicData = (d.topics || []).some(t => t.partition_count > 0);
+            if (!hasTopicData) {
+              _streamTopicDetails();
+            } else {
+              // Cache already has described topics — update KPIs immediately
+              if (window._topicAllTopics) {
+                _updateTopicKPIs(window._topicAllTopics, 0, 0, true);
+              }
+            }
             break;
           }
           case 'brokers': {
@@ -981,31 +989,33 @@
       const topicLowRep = t => topicRf(t) === 1;
 
       const totalTopics      = allTopics.length;
-      const highTraffic      = allTopics.filter(t => msgRate(t) > 0.001).length;
+      const highTraffic      = allTopics.filter(t => msgRate(t) > 1000).length;
       const lowReplication   = allTopics.filter(topicLowRep).length;
       const staleTopics      = allTopics.filter(t => logSize(t) > 0 && msgRate(t) === 0).length;
 
+      const totalPartitions = allTopics.reduce((s, t) => s + (t.partition_count || 0), 0);
+      const realTotal = (window._clusterCounts || {}).total_topics || totalTopics;
       const topicKpis = `
         <div class="kpi-grid">
           <div class="kpi kpi--orange">
             <div class="kpi__label">Total Topics</div>
-            <div class="kpi__value">${totalTopics}</div>
+            <div class="kpi__value">${realTotal.toLocaleString()}</div>
             <div class="kpi__sub">topics</div>
           </div>
-          <div class="kpi kpi--success">
-            <div class="kpi__label">High Traffic</div>
-            <div class="kpi__value">${highTraffic}</div>
-            <div class="kpi__sub">&gt; 0.001 msgs/sec</div>
-          </div>
-          <div class="kpi kpi--orange">
-            <div class="kpi__label">Low Replication</div>
+          <div class="kpi kpi--danger">
+            <div class="kpi__label">RF=1 At Risk</div>
             <div class="kpi__value">${lowReplication}</div>
-            <div class="kpi__sub">RF = 1</div>
+            <div class="kpi__sub">data loss risk</div>
           </div>
           <div class="kpi kpi--warn">
-            <div class="kpi__label">Stale</div>
-            <div class="kpi__value">${staleTopics}</div>
-            <div class="kpi__sub">has data, no traffic</div>
+            <div class="kpi__label">Hot Topics</div>
+            <div class="kpi__value">${highTraffic}</div>
+            <div class="kpi__sub">&gt; 1k msgs/sec</div>
+          </div>
+          <div class="kpi kpi--orange">
+            <div class="kpi__label">Retention Risk</div>
+            <div class="kpi__value">0</div>
+            <div class="kpi__sub">&gt; 70% capacity</div>
           </div>
         </div>`;
 
@@ -1041,12 +1051,13 @@
           <button id="topic-show-more" class="btn btn--secondary btn--sm" onclick="window._topicShowMore()">Show More</button>
         </div>`;
 
-      // Override total with real cluster count, show spinner on computed KPIs
+      // Show spinner on JMX-dependent KPIs until streaming enriches
       const _realTotal = (window._clusterCounts || {}).total_topics;
       if (_realTotal) {
         const _kpis = document.querySelectorAll('#tab-topics .kpi__value');
         if (_kpis.length >= 4) {
           _kpis[0].textContent = _realTotal.toLocaleString();
+          // Cards 2-4 show spinner until enrichment completes
           _kpis[1].classList.add('kpi-loading');
           _kpis[2].classList.add('kpi-loading');
           _kpis[3].classList.add('kpi-loading');
@@ -2718,28 +2729,27 @@
       if (!kpiEl) return;
       const kpis = kpiEl.querySelectorAll('.kpi__value');
       if (kpis.length < 4) return;
+      const realTotal = (window._clusterCounts || {}).total_topics || topics.length;
       const lowRep = topics.filter(t => t.replication_factor === 1 && t.partition_count > 0).length;
-      const highTraffic = topics.filter(t => (t.messages_in_per_sec || 0) > 0.001).length;
-      const stale = topics.filter(t => (t.size_bytes || 0) > 1000 && (t.messages_in_per_sec || 0) === 0).length;
+      const hotTopics = topics.filter(t => (t.messages_in_per_sec || 0) > 1000).length;
+      const retentionRisk = topics.filter(t => (t.retention_pct || 0) > 70).length;
       if (isDone) {
-        const realTotal = (window._clusterCounts || {}).total_topics || topics.length;
         kpis[0].textContent = realTotal.toLocaleString();
         kpis[0].classList.remove('kpi-loading');
-        kpis[1].textContent = highTraffic;
-        kpis[1].style.color = highTraffic > 0 ? 'var(--accent)' : '';
+        kpis[1].textContent = lowRep;
+        kpis[1].style.color = lowRep > 0 ? 'var(--red)' : '';
         kpis[1].classList.remove('kpi-loading');
-        kpis[2].textContent = lowRep;
-        kpis[2].style.color = lowRep > 0 ? 'var(--red)' : '';
+        kpis[2].textContent = hotTopics;
         kpis[2].classList.remove('kpi-loading');
-        kpis[3].textContent = stale;
+        kpis[3].textContent = retentionRisk;
         kpis[3].classList.remove('kpi-loading');
       } else {
-        kpis[0].textContent = topics.length;
-        kpis[1].textContent = highTraffic;
+        kpis[0].textContent = realTotal.toLocaleString();
+        kpis[1].textContent = lowRep;
         kpis[1].classList.add('kpi-loading');
-        kpis[2].textContent = lowRep;
+        kpis[2].textContent = hotTopics;
         kpis[2].classList.add('kpi-loading');
-        kpis[3].textContent = stale;
+        kpis[3].textContent = retentionRisk;
         kpis[3].classList.add('kpi-loading');
       }
     }

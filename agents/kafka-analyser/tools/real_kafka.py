@@ -315,6 +315,41 @@ class RealKafkaCollector(KafkaCollector):
                     results.extend(result)
         return results
 
+    async def describe_all_topics(self, topic_names: list[str], workers: int = 5) -> tuple[list[dict[str, Any]], int]:
+        """Parallel topic describe — returns (topics, total_urp).
+        Uses multiple threads to describe topics in parallel batches."""
+        if not topic_names:
+            return [], 0
+        import concurrent.futures
+
+        # Split into chunks for parallel workers
+        chunk_size = max(1, len(topic_names) // workers + 1)
+        chunks = [topic_names[i:i + chunk_size] for i in range(0, len(topic_names), chunk_size)]
+
+        loop = asyncio.get_event_loop()
+        all_topics = []
+        total_urp = 0
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(workers, len(chunks))) as executor:
+            futures = [
+                loop.run_in_executor(executor, self._fetch_topic_details_sync, chunk)
+                for chunk in chunks
+            ]
+            completed = await asyncio.gather(*futures, return_exceptions=True)
+            for i, result in enumerate(completed):
+                if isinstance(result, Exception):
+                    logger.warning("Parallel topic describe worker %d failed: %s", i, result)
+                else:
+                    all_topics.extend(result)
+                    total_urp += sum(1 for t in result if t.get("under_replicated", 0) > 0)
+
+        # Sort by anomaly severity: degraded first, then RF=1, then healthy
+        all_topics.sort(key=lambda t: (
+            0 if t.get("status") == "degraded" else 1 if t.get("replication_factor") == 1 else 2,
+            -(t.get("partition_count", 0))
+        ))
+        return all_topics, total_urp
+
     def _fetch_group_lags_sync(self, group_ids: list[str]) -> list[dict[str, Any]]:
         if not group_ids:
             return []
