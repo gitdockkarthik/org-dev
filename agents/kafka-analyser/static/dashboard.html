@@ -331,7 +331,7 @@
       // Fetch real cluster counts for KPI cards
       if (!window._clusterCounts) {
         try {
-          const counts = await api('/dashboard/counts?cluster_id=' + (_clusterId() || ''));
+          const counts = await api('/dashboard/counts');
           if (!counts.empty) window._clusterCounts = counts;
         } catch(e) { console.warn('counts fetch failed', e); }
       }
