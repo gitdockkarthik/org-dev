@@ -2829,8 +2829,9 @@
       const scanned = groups.filter(g => g.total_lag >= 0);
       const critical = scanned.filter(g => g.total_lag > 10000).length;
       const warning = scanned.filter(g => g.total_lag > 1000 && g.total_lag <= 10000).length;
-      const healthy = scanned.filter(g => g.total_lag >= 0 && g.total_lag <= 1000).length;
       const realTotal = (window._clusterCounts || {}).total_groups || groups.length;
+      // Healthy includes: scanned with lag <= 1000 + empty/dead groups (no consumers = no lag concern)
+      const healthy = realTotal - critical - warning;
       if (isDone) {
         kpis[0].textContent = realTotal.toLocaleString();
         kpis[0].classList.remove('kpi-loading');
