@@ -351,7 +351,7 @@
             _loaded.add(name);
             renderConsumerGroups(d);
             // Only stream if lag data not yet available (background scan may have enriched cache)
-            const hasLagData = (d.consumer_groups || []).some(g => g.total_lag >= 0);
+            const hasLagData = (d.consumer_groups || []).some(g => g.total_lag > 0 || g.topic);
             if (!hasLagData) {
               _streamGroupLags();
             } else {
@@ -588,7 +588,7 @@
           <div class="broker-card">
             <div class="broker-card__header">
               <span class="broker-card__name">Broker ID: ${(b.broker_id ?? b.id ?? 'Broker')}</span>
-              <span class="sev sev--${b.status === 'healthy' ? 'healthy' : b.status === 'warning' ? 'warning' : 'critical'}">${b.status.toUpperCase()}</span>
+              <span class="sev sev--${b.heap_pct === 0 && b.messages_in_per_sec === 0 && b.produce_latency_ms === 0 ? 'warning' : b.status === 'healthy' ? 'healthy' : b.status === 'warning' ? 'warning' : 'critical'}">${b.heap_pct === 0 && b.messages_in_per_sec === 0 && b.produce_latency_ms === 0 ? '⚠ METRICS UNAVAILABLE' : b.status.toUpperCase()}</span>
             </div>
             <div class="broker-metrics">
               <div class="bm"><div class="bm__label">Heap</div><div class="bm__value" style="color:${metricColor(b.heap_pct)}">${b.heap_pct}%</div></div>
@@ -804,7 +804,7 @@
 
       // Always render chart canvas + banner (banner hidden when lag exists)
       // Chart will be populated after streaming enriches lag data
-      const cgChart = '<div id="cg-chart-container"><canvas id="cg-lag-chart" height="300"></canvas></div>' +
+      const cgChart = '<div style="font-weight:600;font-size:.85rem;color:var(--text-muted);margin-bottom:8px">TOP 10 CONSUMER GROUPS BY LAG</div><div id="cg-chart-container"><canvas id="cg-lag-chart" height="300"></canvas></div>' +
         '<div id="cg-no-lag-banner" class="filter-bar" style="color:var(--text-muted);padding:16px;text-align:center;' + (hasLag ? 'display:none' : '') + '">ℹ️ No active consumer lag detected — consumers are keeping up or no active subscribers</div>';
 
       document.getElementById('tab-consumer-groups').innerHTML = '<div style="text-align:center;padding:8px 0;"><span id="cg-loading-badge" style="display:none;align-items:center;gap:8px;padding:8px 20px;background:linear-gradient(135deg,#ff6b35,#f7931e);color:#fff;border-radius:20px;font-size:14px;font-weight:600;box-shadow:0 2px 8px rgba(255,107,53,0.3);animation:pulse-badge 1.5s ease-in-out infinite;">⟳ Loading topics...</span></div>' + cgKpis + cgChart + cgFilters + `
@@ -1083,7 +1083,17 @@
       window._applyTopicView = function () {
         const st = window._topicView;
         const filtered = allTopics.filter(t => topicMatches(t, st));
-        const shown = filtered.slice(0, st.visible);
+        // Sort: anomalous first, then by log size desc if available, then partition count desc
+        const hasLogSize = filtered.some(t => (t.size_bytes || 0) > 0);
+        const sorted = hasLogSize
+            ? [...filtered].sort((a, b) => {
+                const aAnomaly = a.status === 'degraded' ? 0 : a.replication_factor === 1 ? 1 : 2;
+                const bAnomaly = b.status === 'degraded' ? 0 : b.replication_factor === 1 ? 1 : 2;
+                if (aAnomaly !== bAnomaly) return aAnomaly - bAnomaly;
+                return (b.size_bytes || 0) - (a.size_bytes || 0);
+              })
+            : filtered;
+        const shown = sorted.slice(0, st.visible);
         const tbody = document.getElementById('topic-tbody');
         if (tbody) {
           tbody.innerHTML = shown.map(topicRowHtml).join('') ||
@@ -1287,7 +1297,7 @@
           <div class="broker-card">
             <div class="broker-card__header">
               <span class="broker-card__name">Broker ID: ${(b.broker_id || b.id || 'Broker')}</span>
-              <span class="sev sev--${b.status === 'healthy' ? 'healthy' : b.status === 'warning' ? 'warning' : 'critical'}">${b.status.toUpperCase()}</span>
+              <span class="sev sev--${b.heap_pct === 0 && b.messages_in_per_sec === 0 && b.produce_latency_ms === 0 ? 'warning' : b.status === 'healthy' ? 'healthy' : b.status === 'warning' ? 'warning' : 'critical'}">${b.heap_pct === 0 && b.messages_in_per_sec === 0 && b.produce_latency_ms === 0 ? '⚠ METRICS UNAVAILABLE' : b.status.toUpperCase()}</span>
             </div>
             ${metricRow('Heap', b.heap_pct)}
             ${metricRow('CPU', b.cpu_pct)}
