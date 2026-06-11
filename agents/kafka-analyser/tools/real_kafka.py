@@ -370,7 +370,15 @@ class RealKafkaCollector(KafkaCollector):
         if not names:
             return [], 0
 
-        described = admin.describe_topics(names)
+        # Cap at 5000 topics for performance on large clusters
+        if len(names) > 5000:
+            names = sorted(names)[:5000]
+
+        # Batch describe_topics in chunks of 500 to avoid single large blocking call
+        described = []
+        _BATCH = 500
+        for i in range(0, len(names), _BATCH):
+            described.extend(admin.describe_topics(names[i:i + _BATCH]))
 
         topics: list[dict[str, Any]] = []
         total_urp = 0
@@ -420,6 +428,8 @@ class RealKafkaCollector(KafkaCollector):
 
         # Only active groups need an offset/lag round-trip.
         active = [g for g in group_ids if states.get(g, "Unknown") not in _INACTIVE_GROUP_STATES]
+        # Cap active group lag fetch at 500 to avoid per-group round trips on large clusters
+        active = active[:500]
 
         consumer: KafkaConsumer | None = None
         try:
