@@ -94,6 +94,12 @@
       border-top: 1px solid var(--border);
     }
   </style>
+  <style>
+    @keyframes pulse-badge { 0%,100% { opacity:1; } 50% { opacity:0.7; } }
+    @keyframes shimmer { 0% { opacity:0.6; } 50% { opacity:1; } 100% { opacity:0.6; } }
+    .kpi-loading { animation: shimmer 1.2s ease-in-out infinite; }
+    .kpi-loading::after { content: ' ⟳'; font-size: 0.7em; }
+  </style>
 </head>
 <body>
 
@@ -680,7 +686,7 @@
           <span class="filter-chip" onclick="window._cgSetState('active',this)">Active</span>
           <span class="filter-chip" onclick="window._cgSetState('empty',this)">Empty</span>
           <input class="filter-input" id="cg-search" placeholder="Search group…" oninput="_serverGroupSearch(this.value)" />
-          <span id="cg-loading-badge" style="display:none;align-items:center;gap:6px;padding:4px 12px;background:#fff3cd;color:#856404;border-radius:12px;font-size:13px;">Loading group lag...</span>
+          <span id="cg-loading-badge" style="display:none;align-items:center;gap:8px;padding:8px 20px;background:linear-gradient(135deg,#ff6b35,#f7931e);color:#fff;border-radius:20px;font-size:14px;font-weight:600;box-shadow:0 2px 8px rgba(255,107,53,0.3);animation:pulse-badge 1.5s ease-in-out infinite;">⟳ Loading topics...</span>
         </div>
         <div class="filter-bar">
           <span class="dash-label">Health:</span>
@@ -877,7 +883,7 @@
           <span class="filter-chip active" onclick="window._setTopicShow(false,this)">All</span>
           <span class="filter-chip" onclick="window._setTopicShow(true,this)">User Topics</span>
           <input class="filter-input" id="topic-search" placeholder="Search topic…" oninput="_serverTopicSearch(this.value)" />
-          <span id="topic-loading-badge" style="display:none;align-items:center;gap:6px;padding:4px 12px;background:#fff3cd;color:#856404;border-radius:12px;font-size:13px;">Loading topics...</span>
+          <span id="topic-loading-badge" style="display:none;align-items:center;gap:8px;padding:8px 20px;background:linear-gradient(135deg,#ff6b35,#f7931e);color:#fff;border-radius:20px;font-size:14px;font-weight:600;box-shadow:0 2px 8px rgba(255,107,53,0.3);animation:pulse-badge 1.5s ease-in-out infinite;">⟳ Loading topics...</span>
         </div>
         <div class="filter-bar">
           <span class="dash-label">Filter:</span>
@@ -2611,15 +2617,47 @@
 
     /* ── On-demand streaming: Topics ────────────────────── */
     let _topicStreamActive = false;
+    function _updateTopicKPIs(topics, loaded, total, isDone) {
+      const kpiEl = document.getElementById('tab-topics');
+      if (!kpiEl) return;
+      const kpis = kpiEl.querySelectorAll('.kpi__value');
+      if (kpis.length < 4) return;
+      const lowRep = topics.filter(t => t.replication_factor === 1 && t.partition_count > 0).length;
+      const highTraffic = topics.filter(t => (t.messages_in_per_sec || 0) > 0.001).length;
+      const stale = topics.filter(t => (t.size_bytes || 0) > 1000 && (t.messages_in_per_sec || 0) === 0).length;
+      if (isDone) {
+        kpis[0].textContent = topics.length;
+        kpis[0].classList.remove('kpi-loading');
+        kpis[1].textContent = highTraffic;
+        kpis[1].style.color = highTraffic > 0 ? 'var(--accent)' : '';
+        kpis[1].classList.remove('kpi-loading');
+        kpis[2].textContent = lowRep;
+        kpis[2].style.color = lowRep > 0 ? 'var(--red)' : '';
+        kpis[2].classList.remove('kpi-loading');
+        kpis[3].textContent = stale;
+        kpis[3].classList.remove('kpi-loading');
+      } else {
+        kpis[0].textContent = topics.length;
+        kpis[1].textContent = highTraffic;
+        kpis[1].classList.add('kpi-loading');
+        kpis[2].textContent = lowRep;
+        kpis[2].classList.add('kpi-loading');
+        kpis[3].textContent = stale;
+        kpis[3].classList.add('kpi-loading');
+      }
+    }
     async function _streamTopicDetails() {
       if (_topicStreamActive) return;
       _topicStreamActive = true;
       const cid = _clusterId();
       if (!cid) return;
 
-      // Show loading badge
       const badge = document.getElementById('topic-loading-badge');
       if (badge) badge.style.display = 'inline-flex';
+
+      // Mark KPIs as loading
+      const kpiEl = document.getElementById('tab-topics');
+      if (kpiEl) kpiEl.querySelectorAll('.kpi__value').forEach(k => k.classList.add('kpi-loading'));
 
       try {
         const resp = await fetch(_base() + '/dashboard/topics/stream?cluster_id=' + cid, {
@@ -2629,10 +2667,7 @@
         const decoder = new TextDecoder();
         let buffer = '';
         let count = 0;
-
-        // Get reference to the existing topic array from renderTopics
-        const tabEl = document.getElementById('tab-topics');
-        const topicMap = {};
+        const total = (window._topicAllTopics || []).length;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -2648,14 +2683,13 @@
               if (obj.done) {
                 if (badge) badge.style.display = 'none';
                 _topicStreamActive = false;
-                // Final re-render with full data
                 if (window._topicAllTopics) {
+                  _updateTopicKPIs(window._topicAllTopics, count, total, true);
                   window._applyTopicView && window._applyTopicView();
                 }
                 return;
               }
               if (obj.error) continue;
-              // Merge streamed detail into existing topic array
               if (window._topicAllTopics) {
                 const idx = window._topicAllTopics.findIndex(t => t.name === obj.name);
                 if (idx >= 0) {
@@ -2665,10 +2699,11 @@
                 }
               }
               count++;
-              if (badge) badge.textContent = 'Loading topics... ' + count;
-              // Progressive re-render every 100 topics
-              if (count % 100 === 0 && window._applyTopicView) {
-                window._applyTopicView();
+              if (badge) badge.textContent = '⟳ Describing topics... ' + count + '/' + total;
+              // Progressive KPI + table update every 100 topics
+              if (count % 100 === 0 && window._topicAllTopics) {
+                _updateTopicKPIs(window._topicAllTopics, count, total, false);
+                window._applyTopicView && window._applyTopicView();
               }
             } catch (e) { /* skip malformed */ }
           }
@@ -2682,6 +2717,36 @@
 
     /* ── On-demand streaming: Consumer Groups ────────────── */
     let _groupStreamActive = false;
+    function _updateGroupKPIs(groups, isDone) {
+      const kpiEl = document.getElementById('tab-consumer-groups');
+      if (!kpiEl) return;
+      const kpis = kpiEl.querySelectorAll('.kpi__value');
+      if (kpis.length < 4) return;
+      const withLag = groups.filter(g => g.total_lag >= 0);
+      const critical = withLag.filter(g => g.total_lag > 10000).length;
+      const warning = withLag.filter(g => g.total_lag > 1000 && g.total_lag <= 10000).length;
+      const healthy = withLag.filter(g => g.total_lag >= 0 && g.total_lag <= 1000).length;
+      if (isDone) {
+        kpis[0].textContent = groups.length;
+        kpis[0].classList.remove('kpi-loading');
+        kpis[1].textContent = critical;
+        kpis[1].style.color = critical > 0 ? 'var(--red)' : '';
+        kpis[1].classList.remove('kpi-loading');
+        kpis[2].textContent = warning;
+        kpis[2].style.color = warning > 0 ? 'var(--orange)' : '';
+        kpis[2].classList.remove('kpi-loading');
+        kpis[3].textContent = healthy;
+        kpis[3].style.color = 'var(--green)';
+        kpis[3].classList.remove('kpi-loading');
+      } else {
+        kpis[1].textContent = critical;
+        kpis[1].classList.add('kpi-loading');
+        kpis[2].textContent = warning;
+        kpis[2].classList.add('kpi-loading');
+        kpis[3].textContent = healthy;
+        kpis[3].classList.add('kpi-loading');
+      }
+    }
     async function _streamGroupLags() {
       if (_groupStreamActive) return;
       _groupStreamActive = true;
@@ -2691,6 +2756,9 @@
       const badge = document.getElementById('cg-loading-badge');
       if (badge) badge.style.display = 'inline-flex';
 
+      const kpiEl = document.getElementById('tab-consumer-groups');
+      if (kpiEl) kpiEl.querySelectorAll('.kpi__value').forEach(k => k.classList.add('kpi-loading'));
+
       try {
         const resp = await fetch(_base() + '/dashboard/groups/stream?cluster_id=' + cid, {
           headers: typeof _authHeaders === 'function' ? _authHeaders() : {}
@@ -2699,6 +2767,7 @@
         const decoder = new TextDecoder();
         let buffer = '';
         let count = 0;
+        const total = (window._cgGroups || []).length;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -2715,12 +2784,13 @@
                 if (badge) badge.style.display = 'none';
                 _groupStreamActive = false;
                 if (window._cgGroups) {
+                  window._cgGroups.sort((a, b) => (b.total_lag || 0) - (a.total_lag || 0));
+                  _updateGroupKPIs(window._cgGroups, true);
                   window._cgApplyView && window._cgApplyView();
                 }
                 return;
               }
               if (obj.error) continue;
-              // Merge lag data into existing group array
               if (window._cgGroups) {
                 const idx = window._cgGroups.findIndex(g => g.group_id === obj.group_id);
                 if (idx >= 0) {
@@ -2730,9 +2800,10 @@
                 }
               }
               count++;
-              if (badge) badge.textContent = 'Loading group lag... ' + count;
-              if (count % 20 === 0 && window._cgApplyView) {
-                window._cgApplyView();
+              if (badge) badge.textContent = '⟳ Fetching group lag... ' + count + '/' + total;
+              if (count % 20 === 0 && window._cgGroups) {
+                _updateGroupKPIs(window._cgGroups, false);
+                window._cgApplyView && window._cgApplyView();
               }
             } catch (e) { /* skip malformed */ }
           }
