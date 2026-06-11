@@ -6,6 +6,12 @@
   <title>Kafka Analyser — Chat</title>
   <link rel="stylesheet" href="/static/css/style.css">
   <style>
+    .subnav { display: flex; background: var(--navy-1, #0f1e3c); border-bottom: 1px solid var(--border, #e2e8f0); padding: 0 40px; position: relative; }
+    .subnav__link { display: inline-flex; align-items: center; gap: 6px; padding: 13px 16px; font-size: .85rem; color: var(--text-muted, #64748b); border-bottom: 2px solid transparent; margin-bottom: -1px; text-decoration: none; transition: color .15s, border-color .15s; }
+    .subnav__link:hover { color: var(--text, #1e293b); }
+    .subnav__link--active { color: var(--accent, #0891b2); border-bottom-color: var(--accent, #0891b2); font-weight: 600; }
+  </style>
+  <style>
     .chat-layout { display: flex; height: calc(100vh - 48px); overflow: hidden; }
     .chat-sidebar { width: 260px; min-width: 260px; background: var(--navy-1, #0f1e3c); color: #e2e8f0; display: flex; flex-direction: column; padding: 1.25rem 1rem; gap: 1rem; overflow-y: auto; }
     .chat-sidebar__desc { font-size: .8rem; color: #94a3b8; margin-top: .25rem; }
