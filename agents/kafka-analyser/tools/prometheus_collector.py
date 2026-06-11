@@ -14,7 +14,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 # Timeout for full /metrics dump — large clusters need up to 120s
-_SCRAPE_TIMEOUT = 120.0
+_SCRAPE_TIMEOUT = 60.0
 
 # Per-broker persistent state for rate calculations (keyed by host:port)
 _broker_state: dict[str, dict] = {}
