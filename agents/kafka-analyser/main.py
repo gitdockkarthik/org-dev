@@ -17,7 +17,7 @@ from routes_dashboard import router as dashboard_router
 from routes_reports import router as reports_router
 from routes_settings import load_config_from_db, router as settings_router
 from storage import init_storage
-from kafka_store import save_snapshot_to_db, restore_snapshot_from_db
+from kafka_store import save_to_db, restore_from_db
 from tools.kafka_tools import (
     AnomalyTool,
     BrokerMetricsTool,
@@ -152,17 +152,6 @@ async def _init_config() -> None:
                 ))
             except Exception as _mig_exc:
                 logger.warning("prometheus_port migration skipped: %s", _mig_exc)
-        try:
-            async with engine.begin() as conn:
-                await conn.execute(text("""
-                    CREATE TABLE IF NOT EXISTS kafka_cluster_snapshots (
-                        cluster_id VARCHAR(64) PRIMARY KEY,
-                        snapshot_json TEXT NOT NULL,
-                        saved_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-                    )
-                """))
-        except Exception as _snap_exc:
-            logger.warning("Failed to create kafka_cluster_snapshots table: %s", _snap_exc)
         logger.info("_init_config: DB tables ensured")
 
     init_storage(settings.agent_slug)
@@ -177,7 +166,7 @@ async def _init_config() -> None:
 
 
 async def _collection_loop() -> None:
-    """Background collection loop — syncs all enabled clusters at configured interval."""
+    """Background collection loop — runs same full enrichment as startup every interval."""
     logger.info("Collection loop started")
     while True:
         try:
@@ -203,7 +192,7 @@ async def _collection_loop() -> None:
 
             from tools.real_kafka import RealKafkaCollector
             import kafka_store as _ks
-            from database import engine
+
             for c in enabled:
                 try:
                     collector = RealKafkaCollector({
@@ -216,55 +205,144 @@ async def _collection_loop() -> None:
                         "cluster_label": c["name"],
                         "jmx_port": c.get("jmx_port"),
                     })
+
+                    # Initial summary — brokers, topic names, group states
                     try:
                         data = await collector.collect_summary()
                     except RuntimeError as exc:
-                        # Check if this is a background aiokafka error after data collection
                         if "Buffer underrun" in str(exc) or "KafkaConnectionError" in str(exc):
                             logger.warning(
-                                "Collection loop: background error on cluster '%s' — skipping this tick: %s",
-                                c["name"], exc,
-                            )
+                                "Collection loop: background error on cluster '%s' — skipping: %s",
+                                c["name"], exc)
                             continue
                         raise
-                    # Prometheus broker metrics enrichment
-                    _prom_port = c.get("prometheus_port")
-                    if _prom_port and _PROMETHEUS_AVAILABLE:
+
+                    cid = str(c.get("id", "default"))
+
+                    # Preserve enriched topics/groups from last snapshot
+                    # (topic describe and lag scan run in parallel below)
+                    last = _ks.get_cluster_data(cid)
+                    if last:
+                        # Keep enriched topic data — only update if we have new describe data
+                        if any(t.get("partition_count", 0) > 0 for t in last.get("topics", [])):
+                            data["topics"] = last["topics"]
+                        if last.get("counts"):
+                            data["counts"] = last["counts"]
+
+                    # Run topic describe, prometheus, lag scan in parallel
+                    async def _loop_topic_describe():
                         try:
-                            broker_metrics = await scrape_all_brokers(data.get("brokers", []), _prom_port)
-                            for broker in data.get("brokers", []):
-                                bid = str(broker.get("broker_id", broker.get("host", "")))
-                                if bid in broker_metrics and broker_metrics[bid]:
-                                    broker.update(broker_metrics[bid])
-                            # Scrape top topic metrics
-                            top_topics = [t["name"] for t in data.get("topics", [])[:100]]
-                            if top_topics and data.get("brokers"):
-                                first_broker = data["brokers"][0].get("host", "")
-                                if first_broker:
-                                    topic_metrics = await scrape_topic_metrics(
-                                        first_broker, _prom_port, top_topics)
-                                    for t in data.get("topics", []):
-                                        if t["name"] in topic_metrics:
-                                            tm = topic_metrics[t["name"]]
-                                            t["messages_in_per_sec"] = tm.get("messages_in_per_sec", 0.0)
-                                            t["bytes_in_per_sec"] = tm.get("bytes_in_per_sec", 0.0)
-                                            t["bytes_out_per_sec"] = tm.get("bytes_out_per_sec", 0.0)
-                                            t["size_bytes"] = tm.get("size_bytes", 0)
-                                    # Update hot topics count
-                                    if "counts" in data:
-                                        data["counts"]["total_hot"] = sum(
-                                            1 for t in data.get("topics", [])
-                                            if (t.get("messages_in_per_sec") or 0) > 1000)
-                            logger.info("Prometheus enrichment: completed for '%s'", c["name"])
-                        except Exception as _prom_exc:
-                            logger.warning("Prometheus enrichment failed for '%s': %s", c["name"], _prom_exc)
+                            all_topic_names = await collector.list_all_topics()
+                            if all_topic_names:
+                                described_topics, total_urp = await collector.describe_all_topics(
+                                    all_topic_names, workers=10)
+                                if described_topics:
+                                    total_rf1 = sum(1 for t in described_topics
+                                                   if t.get("replication_factor") == 1)
+                                    total_partitions = sum(t.get("partition_count", 0)
+                                                          for t in described_topics)
+                                    if "counts" not in data:
+                                        data["counts"] = {}
+                                    data["counts"]["total_topics"] = len(all_topic_names)
+                                    data["counts"]["total_rf1"] = total_rf1
+                                    data["counts"]["total_urp"] = total_urp
+                                    data["counts"]["total_partitions"] = total_partitions
+                                    if "cluster" in data:
+                                        data["cluster"]["under_replicated_partitions"] = total_urp
+                                        data["cluster"]["partition_count"] = total_partitions
+                                    data["topics"] = described_topics[:500]
+                                    logger.info(
+                                        "Collection loop topic scan: %d topics (%d RF=1) for '%s'",
+                                        len(described_topics), total_rf1, c["name"])
+                        except Exception as _te:
+                            logger.warning("Collection loop topic scan failed for '%s': %s",
+                                          c["name"], _te)
+
+                    async def _loop_prometheus():
+                        _prom_port = c.get("prometheus_port")
+                        _jmx_port = c.get("jmx_port")
+                        if _prom_port and _PROMETHEUS_AVAILABLE:
+                            try:
+                                broker_metrics = await scrape_all_brokers(
+                                    data.get("brokers", []), _prom_port)
+                                for broker in data.get("brokers", []):
+                                    bid = str(broker.get("broker_id", broker.get("host", "")))
+                                    if bid in broker_metrics and broker_metrics[bid]:
+                                        broker.update(broker_metrics[bid])
+                                top_topics = [t["name"] for t in data.get("topics", [])[:100]]
+                                if top_topics and data.get("brokers"):
+                                    first_broker = data["brokers"][0].get("host", "")
+                                    if first_broker:
+                                        topic_metrics = await scrape_topic_metrics(
+                                            first_broker, _prom_port, top_topics)
+                                        for t in data.get("topics", []):
+                                            if t["name"] in topic_metrics:
+                                                tm = topic_metrics[t["name"]]
+                                                t["messages_in_per_sec"] = tm.get("messages_in_per_sec", 0.0)
+                                                t["bytes_in_per_sec"] = tm.get("bytes_in_per_sec", 0.0)
+                                                t["bytes_out_per_sec"] = tm.get("bytes_out_per_sec", 0.0)
+                                                t["size_bytes"] = tm.get("size_bytes", 0)
+                                        if "counts" in data:
+                                            data["counts"]["total_hot"] = sum(
+                                                1 for t in data.get("topics", [])
+                                                if (t.get("messages_in_per_sec") or 0) > 1000)
+                                logger.info("Collection loop Prometheus: completed for '%s'", c["name"])
+                            except Exception as _pe:
+                                logger.warning("Collection loop Prometheus failed for '%s': %s",
+                                              c["name"], _pe)
+                        elif _jmx_port:
+                            try:
+                                jmx_port = int(_jmx_port)
+                                for broker in data.get("brokers", []):
+                                    host = broker.get("host", "")
+                                    if host:
+                                        broker.update(collector._query_jmx(host, jmx_port))
+                                logger.info("Collection loop JMX: completed for '%s'", c["name"])
+                            except Exception as _je:
+                                logger.warning("Collection loop JMX failed for '%s': %s",
+                                              c["name"], _je)
+
+                    async def _loop_lag_scan():
+                        try:
+                            active_gids = [g.get("group_id") or g.get("group_name")
+                                          for g in data.get("consumer_groups", [])
+                                          if g.get("group_id") or g.get("group_name")]
+                            if active_gids:
+                                lag_results = await collector.fetch_all_group_lags(active_gids)
+                                lag_map = {(lr.get("group_id") or lr.get("group_name")): lr
+                                          for lr in lag_results}
+                                enriched = 0
+                                for g in data.get("consumer_groups", []):
+                                    gid = g.get("group_id") or g.get("group_name")
+                                    if gid and gid in lag_map:
+                                        g.update(lag_map[gid])
+                                        enriched += 1
+                                data["consumer_groups"].sort(
+                                    key=lambda g: g.get("total_lag", 0), reverse=True)
+                                logger.info(
+                                    "Collection loop lag scan: enriched %d/%d groups for '%s'",
+                                    enriched, len(active_gids), c["name"])
+                        except Exception as _le:
+                            logger.warning("Collection loop lag scan failed for '%s': %s",
+                                          c["name"], _le)
+
+                    # Topic describe first (Prometheus reads topic list)
+                    # Then Prometheus + lag in parallel (independent data keys)
+                    await _loop_topic_describe()
+                    await asyncio.gather(
+                        _loop_prometheus(),
+                        _loop_lag_scan()
+                    )
+
+                    # Save complete enriched snapshot
                     _ks.set_cluster_data(
                         data,
                         source_type=c.get("source_type", "kafka_internal"),
-                        cluster_id=str(c.get("id", "default")),
+                        cluster_id=cid,
                     )
-                    if engine is not None:
-                        await save_snapshot_to_db(str(c.get("id", "default")), engine)
+                    await save_to_db(cid)
+
+                    # Save topic metrics history
                     from datetime import datetime, timezone
                     from storage import get_backend
                     topics = data.get("topics", [])
@@ -276,12 +354,11 @@ async def _collection_loop() -> None:
                                 collected_at=datetime.now(timezone.utc),
                             )
                         except Exception as _te:
-                            logger.warning("save_topic_metrics failed for cluster %s: %s", c["name"], _te)
-                    logger.info(
-                        "Collection loop: synced cluster '%s' (id=%s)",
-                        c["name"], c.get("id"),
-                    )
-                    # Detect anomalies and escalate to Teams
+                            logger.warning("save_topic_metrics failed for '%s': %s", c["name"], _te)
+
+                    logger.info("Collection loop: completed full enrichment for '%s'", c["name"])
+
+                    # Anomaly detection and Teams escalation
                     try:
                         from tools.anomaly_detector import detect_anomalies as _detect_anomalies
                         from tools.escalation_notifier import send_anomaly_summary
@@ -299,9 +376,9 @@ async def _collection_loop() -> None:
                             now = time.time()
                             if not hasattr(_collection_loop, '_summary_cooldown'):
                                 _collection_loop._summary_cooldown = {}
-                            last = _collection_loop._summary_cooldown.get(cooldown_key, 0)
+                            last_sent = _collection_loop._summary_cooldown.get(cooldown_key, 0)
                             cooldown_mins = teams_cfg.get("teams_cooldown_mins", 10)
-                            if now - last >= cooldown_mins * 60:
+                            if now - last_sent >= cooldown_mins * 60:
                                 sent = await send_anomaly_summary(
                                     agent_name="Kafka Analyser",
                                     cluster_name=c["name"],
@@ -312,12 +389,11 @@ async def _collection_loop() -> None:
                                 if sent:
                                     _collection_loop._summary_cooldown[cooldown_key] = now
                     except Exception as _esc_exc:
-                        logger.warning("Escalation failed for cluster '%s': %s", c["name"], _esc_exc)
+                        logger.warning("Escalation failed for '%s': %s", c["name"], _esc_exc)
+
                 except Exception as exc:
-                    logger.warning(
-                        "Collection loop: failed to sync cluster '%s': %s",
-                        c["name"], exc,
-                    )
+                    logger.warning("Collection loop: failed for cluster '%s': %s", c["name"], exc)
+
         except Exception as exc:
             logger.warning("Collection loop error: %s", exc)
             await asyncio.sleep(30)
@@ -345,14 +421,10 @@ async def lifespan(app: FastAPI):
             async def _startup_sync():
                 from tools.real_kafka import RealKafkaCollector
                 import kafka_store as _ks
-                from database import engine
                 for c in enabled:
                     # Restore last known snapshot — instant dashboard while scans run
                     cid = str(c.get("id", "default"))
-                    if engine is not None:
-                        restored = await restore_snapshot_from_db(cid, engine)
-                    else:
-                        restored = False
+                    restored = await restore_from_db(cid)
                     if restored:
                         logger.info("Startup: restored snapshot for '%s' from DB", c["name"])
                     try:
@@ -522,8 +594,7 @@ async def lifespan(app: FastAPI):
                                         source_type=c.get("source_type", "kafka_internal"),
                                         cluster_id=str(c.get("id", "default")),
                                     )
-                                    if engine is not None:
-                                        await save_snapshot_to_db(str(c.get("id", "default")), engine)
+                                    await save_to_db(str(c.get("id", "default")))
                                     _lag_elapsed = round(_t.time() - _lag_start, 1)
                                     logger.info("Lag scan: enriched %d/%d groups for '%s' in %ss",
                                                enriched, len(active_gids), c["name"], _lag_elapsed)
@@ -539,8 +610,7 @@ async def lifespan(app: FastAPI):
                             source_type=c.get("source_type", "kafka_internal"),
                             cluster_id=str(c.get("id", "default")),
                         )
-                        if engine is not None:
-                            await save_snapshot_to_db(str(c.get("id", "default")), engine)
+                        await save_to_db(str(c.get("id", "default")))
                     except Exception as exc:
                         logger.warning("Startup: failed to sync cluster '%s': %s", c["name"], exc)
             asyncio.create_task(_startup_sync())
