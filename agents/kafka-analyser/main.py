@@ -281,47 +281,49 @@ async def lifespan(app: FastAPI):
         clusters = await get_backend().get_clusters(settings.agent_slug)
         enabled = [c for c in clusters if c.get("enabled")]
         if enabled:
-            logger.info("Startup: found %d enabled cluster(s) — syncing", len(enabled))
-            from tools.real_kafka import RealKafkaCollector
-            import kafka_store as _ks
-            for c in enabled:
-                try:
-                    collector = RealKafkaCollector({
-                        "bootstrap_servers": c["bootstrap_servers"],
-                        "auth_type": "none" if c["auth_type"] == "none" else "sasl",
-                        "sasl_username": c.get("sasl_username"),
-                        "sasl_password": c.get("sasl_password"),
-                        "sasl_mechanism": c.get("sasl_mechanism", "PLAIN"),
-                        "tls_enabled": c.get("tls_enabled", False),
-                        "cluster_label": c["name"],
-                        "jmx_port": c.get("jmx_port"),
-                    })
-                    data = await collector.collect()
-                    _ks.set_cluster_data(
-                        data,
-                        source_type=c.get("source_type", "kafka_internal"),
-                        cluster_id=str(c.get("id", "default")),
-                    )
-                    from datetime import datetime, timezone
-                    from storage import get_backend
-                    topics = data.get("topics", [])
-                    if topics and c.get("id"):
-                        try:
-                            await get_backend().save_topic_metrics(
-                                cluster_id=int(c["id"]),
-                                topics=topics,
-                                collected_at=datetime.now(timezone.utc),
-                            )
-                        except Exception as _te:
-                            logger.warning("save_topic_metrics failed for cluster %s: %s", c["name"], _te)
-                    logger.info(
-                        "Startup: synced cluster '%s' (id=%s) — brokers=%d, topics=%d",
-                        c["name"], c.get("id"),
-                        len(data.get("brokers", [])),
-                        len(data.get("topics", [])),
-                    )
-                except Exception as exc:
-                    logger.warning("Startup: failed to sync cluster '%s': %s", c["name"], exc)
+            logger.info("Startup: found %d enabled cluster(s) — syncing in background", len(enabled))
+            async def _startup_sync():
+                from tools.real_kafka import RealKafkaCollector
+                import kafka_store as _ks
+                for c in enabled:
+                    try:
+                        collector = RealKafkaCollector({
+                            "bootstrap_servers": c["bootstrap_servers"],
+                            "auth_type": "none" if c["auth_type"] == "none" else "sasl",
+                            "sasl_username": c.get("sasl_username"),
+                            "sasl_password": c.get("sasl_password"),
+                            "sasl_mechanism": c.get("sasl_mechanism", "PLAIN"),
+                            "tls_enabled": c.get("tls_enabled", False),
+                            "cluster_label": c["name"],
+                            "jmx_port": c.get("jmx_port"),
+                        })
+                        data = await collector.collect()
+                        _ks.set_cluster_data(
+                            data,
+                            source_type=c.get("source_type", "kafka_internal"),
+                            cluster_id=str(c.get("id", "default")),
+                        )
+                        from datetime import datetime, timezone
+                        from storage import get_backend
+                        topics = data.get("topics", [])
+                        if topics and c.get("id"):
+                            try:
+                                await get_backend().save_topic_metrics(
+                                    cluster_id=int(c["id"]),
+                                    topics=topics,
+                                    collected_at=datetime.now(timezone.utc),
+                                )
+                            except Exception as _te:
+                                logger.warning("save_topic_metrics failed for cluster %s: %s", c["name"], _te)
+                        logger.info(
+                            "Startup: synced cluster '%s' (id=%s) — brokers=%d, topics=%d",
+                            c["name"], c.get("id"),
+                            len(data.get("brokers", [])),
+                            len(data.get("topics", [])),
+                        )
+                    except Exception as exc:
+                        logger.warning("Startup: failed to sync cluster '%s': %s", c["name"], exc)
+            asyncio.create_task(_startup_sync())
         else:
             logger.info("Startup: no enabled clusters — starting with empty store")
     except Exception as exc:
