@@ -102,9 +102,9 @@ def get_sync_meta(cluster_id: str | None = None) -> dict[str, Any]:
         return {
             "loaded": True, "source_type": "kafka_internal",
             "last_synced": datetime.now(timezone.utc).isoformat(),
-            "broker_count": len(d.get("brokers", [])),
-            "consumer_group_count": len(d.get("consumer_groups", [])),
-            "topic_count": len(d.get("topics", [])),
+            "broker_count": d.get("counts", {}).get("total_brokers") or len(d.get("brokers", [])),
+            "consumer_group_count": d.get("counts", {}).get("total_groups") or len(d.get("consumer_groups", [])),
+            "topic_count": d.get("counts", {}).get("total_topics") or len(d.get("topics", [])),
             "connector_count": len(d.get("connectors", [])),
         }
 
