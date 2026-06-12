@@ -41,13 +41,13 @@ async def get_overview(cluster_id: str | None = None, hours: int | None = None) 
     return {
         "cluster": {
             **data["cluster"],
-            "topic_count": len(topics),
-            "consumer_group_count": len(consumer_groups),
+            "topic_count": data.get("counts", {}).get("total_topics") or len(topics),
+            "consumer_group_count": data.get("counts", {}).get("total_groups") or len(consumer_groups),
         },
         "brokers": data["brokers"],
         "anomalies": data["anomalies"],
-        "topic_count": len(topics),
-        "consumer_group_count": len(consumer_groups),
+        "topic_count": data.get("counts", {}).get("total_topics") or len(topics),
+        "consumer_group_count": data.get("counts", {}).get("total_groups") or len(consumer_groups),
     }
 
 
