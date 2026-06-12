@@ -361,6 +361,14 @@ async def _collection_loop() -> None:
                             logger.warning("save_topic_metrics failed for '%s': %s", c["name"], _te)
 
                     logger.info("Collection loop: completed full enrichment for '%s'", c["name"])
+                    # Update last_synced timestamp
+                    try:
+                        from routes_settings import _config as _rs_config, _upsert
+                        from datetime import datetime, timezone
+                        _rs_config["last_synced"] = datetime.now(timezone.utc).isoformat()
+                        await _upsert("last_synced", _rs_config["last_synced"])
+                    except Exception as _ls_exc:
+                        logger.debug("Failed to update last_synced: %s", _ls_exc)
 
                     # Anomaly detection and Teams escalation
                     try:
