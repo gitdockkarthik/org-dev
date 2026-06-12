@@ -25,7 +25,6 @@ _FILTERED_METRICS = [
     "kafka_server_replicamanager_atminisrpartitioncount",
     "kafka_server_replicamanager_partitioncount",
     "kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent",
-    "kafka_network_requestmetrics_totaltimems",
 ]
 
 _THROUGHPUT_PREFIXES = [
@@ -128,10 +127,21 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
         if phase2_raw:
             kept = []
             for line in phase2_raw.splitlines():
+                if not line or line.startswith("#"):
+                    continue
+                # Throughput counters — match by prefix (unlabeled broker aggregates)
+                matched = False
                 for prefix in _THROUGHPUT_PREFIXES:
                     if line.startswith(prefix):
                         kept.append(line)
+                        matched = True
                         break
+                # Latency — match by substring (label order may vary)
+                if not matched and "requestmetrics_totaltimems" in line:
+                    if 'quantile="0.999"' in line and (
+                        'request="Produce"' in line or 'request="Fetch"' in line
+                    ):
+                        kept.append(line)
             if kept:
                 metrics.update(_parse_prometheus_text("\n".join(kept)))
 
