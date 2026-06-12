@@ -17,7 +17,7 @@ from routes_dashboard import router as dashboard_router
 from routes_reports import router as reports_router
 from routes_settings import load_config_from_db, router as settings_router
 from storage import init_storage
-from kafka_store import save_to_db, restore_from_db
+from kafka_store import save_to_db, restore_from_db, save_brokers, save_topics_structure, save_topics_metrics, save_groups
 from tools.kafka_tools import (
     AnomalyTool,
     BrokerMetricsTool,
@@ -341,7 +341,10 @@ async def _collection_loop() -> None:
                         source_type=c.get("source_type", "kafka_internal"),
                         cluster_id=cid,
                     )
-                    await save_to_db(cid)
+                    await save_topics_structure(cid)
+                    await save_brokers(cid)
+                    await save_topics_metrics(cid)
+                    await save_groups(cid)
 
                     # Save topic metrics history
                     from datetime import datetime, timezone
@@ -593,7 +596,6 @@ async def lifespan(app: FastAPI):
                                         source_type=c.get("source_type", "kafka_internal"),
                                         cluster_id=str(c.get("id", "default")),
                                     )
-                                    await save_to_db(str(c.get("id", "default")))
                                     _lag_elapsed = round(_t.time() - _lag_start, 1)
                                     logger.info("Lag scan: enriched %d/%d groups for '%s' in %ss",
                                                enriched, len(active_gids), c["name"], _lag_elapsed)
@@ -603,13 +605,16 @@ async def lifespan(app: FastAPI):
                         # Run both in parallel — independent data keys
                         await asyncio.gather(_run_prometheus(), _run_lag_scan())
 
-                        # Final save with all enrichments
+                        # Final save with all enrichments — split keys per scan type
                         _ks.set_cluster_data(
                             data,
                             source_type=c.get("source_type", "kafka_internal"),
                             cluster_id=str(c.get("id", "default")),
                         )
-                        await save_to_db(str(c.get("id", "default")))
+                        await save_topics_structure(cid)
+                        await save_brokers(cid)
+                        await save_topics_metrics(cid)
+                        await save_groups(cid)
                     except Exception as exc:
                         logger.warning("Startup: failed to sync cluster '%s': %s", c["name"], exc)
             asyncio.create_task(_startup_sync())
