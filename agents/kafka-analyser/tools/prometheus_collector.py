@@ -346,7 +346,7 @@ async def scrape_topic_metrics_and_top_by_size(
             # Collect ALL log sizes for top-by-size ranking
             if line.startswith("kafka_log_log_size{"):
                 topic_match = re.search(r'topic="([^"]*)"', line)
-                val_match = re.search(r'\}\s+([\d.eE+\-]+)', line)
+                val_match = re.search(r'[\},]\s*([\d.eE+\-]+)\s*$', line)
                 if topic_match and val_match:
                     topic = topic_match.group(1)
                     try:
