@@ -134,7 +134,7 @@ class MCPClient:
                             continue
                         if "jsonrpc" in raw:
                             try:
-                                data = json.loads(raw)
+                                data = json.loads(raw.strip())
                                 msg_id = data.get("id")
                                 if msg_id and msg_id in self._results:
                                     self._results[msg_id].set_result(data)
