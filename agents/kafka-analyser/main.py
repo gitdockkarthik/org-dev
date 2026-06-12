@@ -27,7 +27,7 @@ from tools.kafka_tools import (
 )
 
 try:
-    from tools.prometheus_collector import scrape_all_brokers, scrape_topic_metrics
+    from tools.prometheus_collector import scrape_all_brokers, scrape_topic_metrics_and_top_by_size
     _PROMETHEUS_AVAILABLE = True
 except ImportError:
     _PROMETHEUS_AVAILABLE = False
@@ -269,12 +269,12 @@ async def _collection_loop() -> None:
                                     bid = str(broker.get("broker_id", broker.get("host", "")))
                                     if bid in broker_metrics and broker_metrics[bid]:
                                         broker.update(broker_metrics[bid])
-                                top_topics = [t["name"] for t in data.get("topics", [])[:100]]
-                                if top_topics and data.get("brokers"):
+                                if data.get("brokers"):
                                     first_broker = data["brokers"][0].get("host", "")
                                     if first_broker:
-                                        topic_metrics = await scrape_topic_metrics(
-                                            first_broker, _prom_port, top_topics)
+                                        top_topics = [t["name"] for t in data.get("topics", [])[:100]]
+                                        topic_metrics, top_by_size = await scrape_topic_metrics_and_top_by_size(
+                                            first_broker, _prom_port, top_topics, top_n=20)
                                         for t in data.get("topics", []):
                                             if t["name"] in topic_metrics:
                                                 tm = topic_metrics[t["name"]]
@@ -286,6 +286,7 @@ async def _collection_loop() -> None:
                                             data["counts"]["total_hot"] = sum(
                                                 1 for t in data.get("topics", [])
                                                 if (t.get("messages_in_per_sec") or 0) > 1000)
+                                            data["counts"]["top_topics_by_size"] = top_by_size
                                 logger.info("Collection loop Prometheus: completed for '%s'", c["name"])
                             except Exception as _pe:
                                 logger.warning("Collection loop Prometheus failed for '%s': %s",
@@ -515,7 +516,7 @@ async def lifespan(app: FastAPI):
                             if _prom_port and _PROMETHEUS_AVAILABLE:
                                 try:
                                     import time as _t3
-                                    from tools.prometheus_collector import scrape_all_brokers, scrape_topic_metrics
+                                    from tools.prometheus_collector import scrape_all_brokers
                                     _prom_start = _t3.time()
                                     logger.info("Prometheus scan: scraping %d brokers on port %d for '%s'",
                                                len(data.get("brokers", [])), _prom_port, c["name"])
@@ -525,12 +526,12 @@ async def lifespan(app: FastAPI):
                                         bid = str(broker.get("broker_id", broker.get("host", "")))
                                         if bid in broker_metrics and broker_metrics[bid]:
                                             broker.update(broker_metrics[bid])
-                                    top_topics = [t["name"] for t in data.get("topics", [])[:100]]
-                                    if top_topics and data.get("brokers"):
+                                    if data.get("brokers"):
                                         first_broker = data["brokers"][0].get("host", "")
                                         if first_broker:
-                                            topic_metrics = await scrape_topic_metrics(
-                                                first_broker, _prom_port, top_topics)
+                                            top_topics = [t["name"] for t in data.get("topics", [])[:100]]
+                                            topic_metrics, top_by_size = await scrape_topic_metrics_and_top_by_size(
+                                                first_broker, _prom_port, top_topics, top_n=20)
                                             for t in data.get("topics", []):
                                                 if t["name"] in topic_metrics:
                                                     tm = topic_metrics[t["name"]]
@@ -542,6 +543,7 @@ async def lifespan(app: FastAPI):
                                                 data["counts"]["total_hot"] = sum(
                                                     1 for t in data.get("topics", [])
                                                     if (t.get("messages_in_per_sec") or 0) > 1000)
+                                                data["counts"]["top_topics_by_size"] = top_by_size
                                     _prom_elapsed = round(_t3.time() - _prom_start, 1)
                                     logger.info("Prometheus scan: completed for '%s' in %ss", c["name"], _prom_elapsed)
                                 except Exception as _prom_exc:

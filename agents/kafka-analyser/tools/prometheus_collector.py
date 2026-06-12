@@ -318,3 +318,75 @@ async def get_top_topics_by_log_size(host: str, prometheus_port: int,
         logger.warning("Top topics by log size failed for %s:%s: %s",
                       host, prometheus_port, exc)
         return []
+
+
+async def scrape_topic_metrics_and_top_by_size(
+        host: str, prometheus_port: int,
+        topic_names: list[str],
+        top_n: int = 20) -> tuple[dict[str, dict], list[dict]]:
+    """Single curl fetch — returns both per-topic metrics AND top N topics by log size.
+    Avoids double fetch that scrape_topic_metrics + get_top_topics_by_log_size would cause."""
+    result: dict[str, dict] = {}
+    top_by_size: list[dict] = []
+    if not topic_names:
+        return result, top_by_size
+    topic_set = set(topic_names)
+    try:
+        raw = await _curl_get(f"http://{host}:{prometheus_port}/metrics",
+                              max_time=_CURL_MAX_TIME)
+        if not raw:
+            return result, top_by_size
+
+        kept = []
+        all_sizes: dict[str, float] = {}
+
+        for line in raw.splitlines():
+            if not line or line.startswith("#"):
+                continue
+            # Collect ALL log sizes for top-by-size ranking
+            if line.startswith("kafka_log_log_size{"):
+                topic_match = re.search(r'topic="([^"]*)"', line)
+                val_match = re.search(r'\}\s+([\d.eE+\-]+)', line)
+                if topic_match and val_match:
+                    topic = topic_match.group(1)
+                    try:
+                        all_sizes[topic] = all_sizes.get(topic, 0) + float(val_match.group(1))
+                    except ValueError:
+                        pass
+                # Also keep for per-topic metrics if in topic_set
+                if topic_match and topic_match.group(1) in topic_set:
+                    kept.append(line)
+                continue
+            # Per-topic throughput metrics for requested topics only
+            if "kafka_server_brokertopicmetrics" in line:
+                topic_match = re.search(r'topic="([^"]*)"', line)
+                if topic_match and topic_match.group(1) in topic_set:
+                    kept.append(line)
+
+        # Build top N by size from all topics
+        sorted_sizes = sorted(all_sizes.items(), key=lambda x: x[1], reverse=True)
+        top_by_size = [{"name": t, "size_bytes": int(s)} for t, s in sorted_sizes[:top_n]]
+
+        # Parse per-topic metrics
+        metrics = _parse_prometheus_text("\n".join(kept))
+
+        topic_sizes: dict[str, float] = {}
+        for entry in metrics.get("kafka_log_log_size", []):
+            topic = entry["labels"].get("topic", "")
+            if topic:
+                topic_sizes[topic] = topic_sizes.get(topic, 0) + entry["value"]
+
+        for topic in topic_names:
+            result[topic] = {
+                "messages_in_per_sec": _get_topic(metrics,
+                    "kafka_server_brokertopicmetrics_messagesin_by_topic_total", topic),
+                "bytes_in_per_sec": _get_topic(metrics,
+                    "kafka_server_brokertopicmetrics_bytesin_by_topic_total", topic),
+                "bytes_out_per_sec": _get_topic(metrics,
+                    "kafka_server_brokertopicmetrics_bytesout_by_topic_total", topic),
+                "size_bytes": int(topic_sizes.get(topic, 0)),
+            }
+    except Exception as exc:
+        logger.warning("Topic metrics scrape failed for %s:%s: %s",
+                      host, prometheus_port, exc)
+    return result, top_by_size
