@@ -519,10 +519,7 @@ async def lifespan(app: FastAPI):
                                     _prom_start = _t3.time()
                                     logger.info("Prometheus scan: scraping %d brokers on port %d for '%s'",
                                                len(data.get("brokers", [])), _prom_port, c["name"])
-                                    # First scrape — warms up state for rate calculation
-                                    await scrape_all_brokers(data.get("brokers", []), _prom_port)
-                                    # Short delay then second scrape — gets real rates
-                                    await asyncio.sleep(5)
+                                    # Single scrape at startup — rates build over collection cycles
                                     broker_metrics = await scrape_all_brokers(data.get("brokers", []), _prom_port)
                                     for broker in data.get("brokers", []):
                                         bid = str(broker.get("broker_id", broker.get("host", "")))
