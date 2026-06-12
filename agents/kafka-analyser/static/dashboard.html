@@ -1312,7 +1312,7 @@
               </div>
               <div class="bm">
                 <div class="bm__label">Msgs/sec</div>
-                <div class="bm__value" style="font-size:.9rem">${fmtRate(b.messages_in_per_sec)}</div>
+                <div class="bm__value" style="font-size:.9rem">${b.throughput_available === false ? '—' : fmtRate(b.messages_in_per_sec || 0)}</div>
               </div>
               <div class="bm">
                 <div class="bm__label">Req Idle %</div>
@@ -1320,11 +1320,11 @@
               </div>
               <div class="bm">
                 <div class="bm__label">Bytes In/s</div>
-                <div class="bm__value" style="font-size:.85rem">${fmtBytes(b.bytes_in_per_sec || 0)}/s</div>
+                <div class="bm__value" style="font-size:.85rem">${b.throughput_available === false ? '—' : fmtBytes(b.bytes_in_per_sec || 0)+'/s'}</div>
               </div>
               <div class="bm">
                 <div class="bm__label">Bytes Out/s</div>
-                <div class="bm__value" style="font-size:.85rem">${fmtBytes(b.bytes_out_per_sec || 0)}/s</div>
+                <div class="bm__value" style="font-size:.85rem">${b.throughput_available === false ? '—' : fmtBytes(b.bytes_out_per_sec || 0)+'/s'}</div>
               </div>
               <div class="bm">
                 <div class="bm__label">ISR Shrink/s</div>

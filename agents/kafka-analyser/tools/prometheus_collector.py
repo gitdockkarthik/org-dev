@@ -112,6 +112,7 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
         "produce_latency_ms": 0.0, "fetch_latency_ms": 0.0,
         "under_replicated_partitions": 0, "at_min_isr_partitions": 0,
         "partition_count": 0,
+        "throughput_available": False,
     }
     state_key = f"{host}:{port}"
     try:
@@ -144,6 +145,8 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
                         kept.append(line)
             if kept:
                 metrics.update(_parse_prometheus_text("\n".join(kept)))
+
+        throughput_available = bool(phase2_raw)
 
         prev = _broker_state.get(state_key, {})
         prev_metrics = prev.get("metrics", {})
@@ -198,6 +201,7 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
             "produce_latency_ms": produce_latency, "fetch_latency_ms": fetch_latency,
             "under_replicated_partitions": urp, "at_min_isr_partitions": at_min_isr,
             "partition_count": partition_count,
+            "throughput_available": throughput_available,
         }
     except Exception as exc:
         logger.warning("Prometheus scrape failed for %s:%s: %s", host, port, exc)
