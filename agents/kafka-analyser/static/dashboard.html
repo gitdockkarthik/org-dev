@@ -1129,6 +1129,9 @@
         const activeTopics = filtered
           .filter(t => (t.messages_in_per_sec || 0) > 0 || (t.size_bytes || 0) === 0)
           .sort((a, b) => {
+            const aMsgs = a.messages_in_per_sec || 0;
+            const bMsgs = b.messages_in_per_sec || 0;
+            if (aMsgs !== bMsgs) return bMsgs - aMsgs;
             const aSize = a.size_bytes || 0;
             const bSize = b.size_bytes || 0;
             if (aSize !== bSize) return bSize - aSize;
@@ -1338,16 +1341,13 @@
         existing.remove();
         return;
       }
-      const cid = typeof _clusterId === 'function' ? _clusterId() : (document.getElementById('cluster-select') ? document.getElementById('cluster-select').value : '3');
       const detailRow = document.createElement('tr');
       detailRow.className = 'topic-detail-row';
       const cols = row.cells.length;
-      detailRow.innerHTML = `<td colspan="${cols}" style="background:var(--color-background-secondary);padding:12px 16px">
-        <div style="font-size:12px;color:var(--color-text-secondary)">⟳ Loading topic details...</div>
-      </td>`;
+      detailRow.innerHTML = `<td colspan="${cols}" style="background:var(--color-background-secondary);padding:12px 16px"><div style="font-size:12px;color:var(--color-text-secondary)">⟳ Loading topic details...</div></td>`;
       row.parentNode.insertBefore(detailRow, row.nextSibling);
       try {
-        const d = await api('/dashboard/topics/detail?name=' + encodeURIComponent(topicName) + '&cluster_id=' + cid);
+        const d = await api('/dashboard/topics/detail?name=' + encodeURIComponent(topicName));
         if (d.error) throw new Error(d.error);
         detailRow.innerHTML = `<td colspan="${cols}" style="background:var(--color-background-secondary);padding:12px 16px">
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;font-size:12px">
