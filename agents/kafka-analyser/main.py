@@ -508,11 +508,12 @@ async def lifespan(app: FastAPI):
 
                                         # Keep top 500 for display: anomalous first (already sorted by describe_all_topics)
                                         data["topics"] = described_topics[:500]
-
-                                        _ks.set_cluster_data(
-                                            data,
-                                            source_type=c.get("source_type", "kafka_internal"),
-                                            cluster_id=str(c.get("id", "default")),
+                                        _ks.update_topics_structure(
+                                            str(c.get("id", "default")),
+                                            described_topics[:500],
+                                            {k: data["counts"][k] for k in
+                                             ["total_topics","total_rf1","total_urp","total_partitions","total_brokers","total_groups"]
+                                             if k in data.get("counts",{})}
                                         )
                                     _topic_elapsed = round(_t2.time() - _topic_start, 1)
                                     logger.info(
@@ -603,6 +604,10 @@ async def lifespan(app: FastAPI):
                                             enriched += 1
                                     data["consumer_groups"].sort(
                                         key=lambda g: g.get("total_lag", 0), reverse=True)
+                                    _ks.update_groups(
+                                        str(c.get("id", "default")),
+                                        data["consumer_groups"]
+                                    )
                                     _lag_elapsed = round(_t.time() - _lag_start, 1)
                                     logger.info("Lag scan: enriched %d/%d groups for '%s' in %ss",
                                                enriched, len(active_gids), c["name"], _lag_elapsed)
