@@ -303,8 +303,13 @@ async def save_brokers(cluster_id: str) -> None:
     data = get_cluster_data(cluster_id)
     if not data:
         return
-    await _insert_metric(cluster_id, SCAN_BROKERS, data.get("brokers", []))
+    brokers = data.get("brokers", [])
+    await _insert_metric(cluster_id, SCAN_BROKERS, brokers)
     await _maybe_cleanup()
+    # Update cache to reflect DB write
+    with _lock:
+        if cluster_id in _cache:
+            _cache[cluster_id]["brokers"] = brokers
     logger.info("Brokers appended to history for cluster %s", cluster_id)
 
 
@@ -352,6 +357,16 @@ async def save_topics_metrics(cluster_id: str) -> None:
     if counts:
         await _insert_metric(cluster_id, SCAN_COUNTS, counts)
     await _maybe_cleanup()
+    # Update cache to reflect DB write
+    with _lock:
+        if cluster_id in _cache:
+            _cache[cluster_id]["counts"] = counts
+            # Update topic metrics in cache
+            topics = _cache[cluster_id].get("topics", [])
+            for t in topics:
+                name = t.get("name", "")
+                if name in topic_metrics:
+                    t.update(topic_metrics[name])
     logger.info("Topics metrics appended to history for cluster %s", cluster_id)
 
 
@@ -360,8 +375,13 @@ async def save_groups(cluster_id: str) -> None:
     data = get_cluster_data(cluster_id)
     if not data:
         return
-    await _insert_metric(cluster_id, SCAN_GROUPS, data.get("consumer_groups", []))
+    groups = data.get("consumer_groups", [])
+    await _insert_metric(cluster_id, SCAN_GROUPS, groups)
     await _maybe_cleanup()
+    # Update cache to reflect DB write
+    with _lock:
+        if cluster_id in _cache:
+            _cache[cluster_id]["consumer_groups"] = groups
     logger.info("Groups appended to history for cluster %s", cluster_id)
 
 
