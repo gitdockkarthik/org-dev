@@ -953,7 +953,7 @@
         return `<span class="sev sev--healthy">HEALTHY</span>`;
       };
 
-      const topicRowHtml = t => `<tr>
+      const topicRowHtml = t => `<tr class="topic-row" style="cursor:pointer" onclick="window._expandTopicRow(this, '${(t.name || t.topic || '')}')">
           <td style="font-weight:600"><code style="font-size:.8rem">${(t.name || t.topic || 'Unknown')}</code></td>
           <td style="text-align:center">${(t.partition_count || t.partitions || 0)}</td>
           <td style="text-align:center">${t.replication_factor}</td>
@@ -1052,7 +1052,7 @@
           </div>
         </div>`;
 
-      document.getElementById('tab-topics').innerHTML = '<div style="text-align:center;padding:8px 0;"><span id="topic-loading-badge" style="display:none;align-items:center;gap:8px;padding:8px 20px;background:linear-gradient(135deg,#ff6b35,#f7931e);color:#fff;border-radius:20px;font-size:14px;font-weight:600;box-shadow:0 2px 8px rgba(255,107,53,0.3);animation:pulse-badge 1.5s ease-in-out infinite;">⟳ Loading topics...</span></div>' + topicKpis + topicBarCharts + topicFilters + `
+      document.getElementById('tab-topics').innerHTML = '<div style="display:flex;justify-content:flex-end;margin-bottom:6px"><button id="topic-analyse-btn" style="background:var(--navy-1);color:var(--accent);border:1px solid var(--accent);border-radius:20px;padding:8px 16px;font-size:.82rem;font-weight:600;cursor:pointer">🤖 Analyse</button></div>' + '<div style="text-align:center;padding:8px 0;"><span id="topic-loading-badge" style="display:none;align-items:center;gap:8px;padding:8px 20px;background:linear-gradient(135deg,#ff6b35,#f7931e);color:#fff;border-radius:20px;font-size:14px;font-weight:600;box-shadow:0 2px 8px rgba(255,107,53,0.3);animation:pulse-badge 1.5s ease-in-out infinite;">⟳ Loading topics...</span></div>' + topicKpis + topicBarCharts + topicFilters + `
         <div class="chart-card" style="margin-bottom:22px">
           <div class="chart-card__title">Top 10 Topics by Message Rate</div>
           <div class="chart-wrap"><canvas id="topicChart"></canvas></div>
@@ -1082,6 +1082,10 @@
           <span id="topic-count-label" class="dash-label"></span>
           <button id="topic-show-more" class="btn btn--secondary btn--sm" onclick="window._topicShowMore()">Show More</button>
         </div>`;
+
+      // Wire the top-of-tab Analyse button (Topics only) — shared FAB left unchanged
+      const _topicAnalyseBtn = document.getElementById('topic-analyse-btn');
+      if (_topicAnalyseBtn) _topicAnalyseBtn.addEventListener('click', () => { _openAIDrawer(); _runAIDrawer('topics'); });
 
       // Show spinner on JMX-dependent KPIs until streaming enriches
       const _realTotal = (window._clusterCounts || {}).total_topics;
@@ -1334,7 +1338,7 @@
         existing.remove();
         return;
       }
-      const cid = _clusterId();
+      const cid = typeof _clusterId === 'function' ? _clusterId() : (document.getElementById('cluster-select') ? document.getElementById('cluster-select').value : '3');
       const detailRow = document.createElement('tr');
       detailRow.className = 'topic-detail-row';
       const cols = row.cells.length;
