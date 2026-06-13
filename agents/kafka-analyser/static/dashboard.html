@@ -1083,16 +1083,13 @@
       window._applyTopicView = function () {
         const st = window._topicView;
         const filtered = allTopics.filter(t => topicMatches(t, st));
-        // Sort: anomalous first, then by log size desc if available, then partition count desc
-        const hasLogSize = filtered.some(t => (t.size_bytes || 0) > 0);
-        const sorted = hasLogSize
-            ? [...filtered].sort((a, b) => {
-                const aAnomaly = a.status === 'degraded' ? 0 : a.replication_factor === 1 ? 1 : 2;
-                const bAnomaly = b.status === 'degraded' ? 0 : b.replication_factor === 1 ? 1 : 2;
-                if (aAnomaly !== bAnomaly) return aAnomaly - bAnomaly;
-                return (b.size_bytes || 0) - (a.size_bytes || 0);
-              })
-            : filtered;
+        // Sort: log size desc, then partition count desc as fallback
+        const sorted = [...filtered].sort((a, b) => {
+            const aSize = a.size_bytes || 0;
+            const bSize = b.size_bytes || 0;
+            if (aSize !== bSize) return bSize - aSize;
+            return (b.partition_count || 0) - (a.partition_count || 0);
+        });
         const shown = sorted.slice(0, st.visible);
         const tbody = document.getElementById('topic-tbody');
         if (tbody) {
