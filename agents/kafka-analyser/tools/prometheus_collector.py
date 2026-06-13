@@ -17,6 +17,84 @@ _BROKER_TIMEOUT = 60.0
 _broker_state: dict[str, dict] = {}
 _topic_state: dict[str, dict] = {}  # host:port → {topic: {counter: value, time: ts}}
 
+import asyncio as _asyncio
+import json as _json
+
+async def _save_scrape_state(key: str, state: dict) -> None:
+    """Persist scrape state to AgentConfig for rate continuity across restarts."""
+    try:
+        from database import SessionLocal
+        from models import AgentConfig
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        from datetime import datetime, timezone
+        if SessionLocal is None:
+            return
+        value = _json.dumps(state, default=str)
+        now = datetime.now(timezone.utc)
+        async with SessionLocal() as session:
+            stmt = (
+                pg_insert(AgentConfig)
+                .values(agent_slug="kafka-analyser", key=key, value=value, updated_at=now)
+                .on_conflict_do_update(
+                    index_elements=["agent_slug", "key"],
+                    set_={"value": value, "updated_at": now},
+                )
+            )
+            await session.execute(stmt)
+            await session.commit()
+    except Exception:
+        pass  # Never break scraping due to state persistence failure
+
+
+async def _load_scrape_state(key: str) -> dict:
+    """Load scrape state from AgentConfig."""
+    try:
+        from database import SessionLocal
+        from models import AgentConfig
+        from sqlalchemy import select
+        if SessionLocal is None:
+            return {}
+        async with SessionLocal() as session:
+            row = (await session.execute(
+                select(AgentConfig).where(
+                    AgentConfig.agent_slug == "kafka-analyser",
+                    AgentConfig.key == key,
+                )
+            )).scalar_one_or_none()
+        if row:
+            return _json.loads(row.value)
+        return {}
+    except Exception:
+        return {}
+
+
+async def restore_scrape_states() -> None:
+    """Restore broker and topic scrape states from DB on startup."""
+    global _broker_state, _topic_state
+    try:
+        from database import SessionLocal
+        from models import AgentConfig
+        from sqlalchemy import select
+        if SessionLocal is None:
+            return
+        async with SessionLocal() as session:
+            rows = (await session.execute(
+                select(AgentConfig).where(
+                    AgentConfig.agent_slug == "kafka-analyser",
+                    AgentConfig.key.like("scrape_state_%"),
+                )
+            )).scalars().all()
+        for row in rows:
+            state = _json.loads(row.value)
+            key = row.key.replace("scrape_state_", "")
+            if ":topic_metrics" in key:
+                _topic_state[key] = state
+            else:
+                _broker_state[key] = state
+        logger.info("Restored %d scrape states from DB", len(rows))
+    except Exception as exc:
+        logger.warning("Failed to restore scrape states: %s", exc)
+
 _FILTERED_METRICS = [
     "jvm_memory_bytes_used",
     "jvm_memory_bytes_max",
@@ -193,6 +271,10 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
                        in metrics else 100.0)
 
         _broker_state[state_key] = {"metrics": metrics, "time": now}
+        _asyncio.ensure_future(_save_scrape_state(
+            f"scrape_state_{state_key}",
+            {"metrics": metrics, "time": now}
+        ))
 
         return {
             "heap_pct": heap_pct, "cpu_pct": cpu_pct, "gc_pause_ms": gc_ms,
@@ -309,6 +391,10 @@ async def scrape_topic_metrics(host: str, prometheus_port: int,
             }
 
         _topic_state[state_key] = new_state
+        _asyncio.ensure_future(_save_scrape_state(
+            f"scrape_state_{state_key}",
+            new_state
+        ))
     except Exception as exc:
         logger.warning("Topic metrics scrape failed for %s:%s: %s",
                       host, prometheus_port, exc)
@@ -433,6 +519,10 @@ async def scrape_topic_metrics_and_top_by_size(
             }
 
         _topic_state[state_key] = new_state
+        _asyncio.ensure_future(_save_scrape_state(
+            f"scrape_state_{state_key}",
+            new_state
+        ))
     except Exception as exc:
         logger.warning("Topic metrics scrape failed for %s:%s: %s",
                       host, prometheus_port, exc)

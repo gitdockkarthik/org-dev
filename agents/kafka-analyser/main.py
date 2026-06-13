@@ -433,6 +433,8 @@ async def lifespan(app: FastAPI):
             async def _startup_sync():
                 from tools.real_kafka import RealKafkaCollector
                 import kafka_store as _ks
+                from tools.prometheus_collector import restore_scrape_states
+                await restore_scrape_states()
                 for c in enabled:
                     # Restore last known snapshot — instant dashboard while scans run
                     cid = str(c.get("id", "default"))
