@@ -670,7 +670,12 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("Startup: could not restore from DB: %s", exc)
 
-    collection_task = asyncio.create_task(_collection_loop())
+    async def _delayed_collection_loop():
+        """Wait for startup scans to complete before starting collection loop."""
+        await asyncio.sleep(300)  # 5 mins — enough for topic describe + prometheus + lag
+        await _collection_loop()
+
+    collection_task = asyncio.create_task(_delayed_collection_loop())
 
     yield
 
