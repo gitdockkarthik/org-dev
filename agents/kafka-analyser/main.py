@@ -278,7 +278,11 @@ async def _collection_loop() -> None:
                                         first_broker
                                     )
                                     if available_broker:
-                                        top_topics = [t["name"] for t in data.get("topics", [])[:100]]
+                                        # Pass top_by_size names to get their msgs/sec; add described topics for rate tracking
+                                        existing_top = data.get("counts", {}).get("top_topics_by_size", [])
+                                        top_size_names = [t["name"] for t in existing_top] if existing_top else []
+                                        described_names = [t["name"] for t in data.get("topics", [])[:50]]
+                                        top_topics = list(dict.fromkeys(top_size_names + described_names))
                                         topic_metrics, top_by_size = await scrape_topic_metrics_and_top_by_size(
                                             available_broker, _prom_port, top_topics, top_n=20)
                                         for t in data.get("topics", []):
@@ -563,7 +567,10 @@ async def lifespan(app: FastAPI):
                                             first_broker
                                         )
                                         if available_broker:
-                                            top_topics = [t["name"] for t in data.get("topics", [])[:100]]
+                                            existing_top = data.get("counts", {}).get("top_topics_by_size", [])
+                                            top_size_names = [t["name"] for t in existing_top] if existing_top else []
+                                            described_names = [t["name"] for t in data.get("topics", [])[:50]]
+                                            top_topics = list(dict.fromkeys(top_size_names + described_names))
                                             topic_metrics, top_by_size = await scrape_topic_metrics_and_top_by_size(
                                                 available_broker, _prom_port, top_topics, top_n=20)
                                             for t in data.get("topics", []):
