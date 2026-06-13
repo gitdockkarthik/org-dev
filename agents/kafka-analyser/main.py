@@ -283,7 +283,7 @@ async def _collection_loop() -> None:
                                         top_size_names = [t["name"] for t in existing_top] if existing_top else []
                                         described_names = [t["name"] for t in data.get("topics", [])[:50]]
                                         top_topics = list(dict.fromkeys(top_size_names + described_names))
-                                        topic_metrics, top_by_size = await scrape_topic_metrics_and_top_by_size(
+                                        topic_metrics, top_by_size, top_by_msg_rate = await scrape_topic_metrics_and_top_by_size(
                                             available_broker, _prom_port, top_topics, top_n=20)
                                         for t in data.get("topics", []):
                                             if t["name"] in topic_metrics:
@@ -292,21 +292,23 @@ async def _collection_loop() -> None:
                                                 t["bytes_in_per_sec"] = tm.get("bytes_in_per_sec", 0.0)
                                                 t["bytes_out_per_sec"] = tm.get("bytes_out_per_sec", 0.0)
                                                 t["size_bytes"] = tm.get("size_bytes", 0)
-                                        # Scrape msgs/sec for top_by_size topics specifically
-                                        if top_by_size:
-                                            top_size_names = [t["name"] for t in top_by_size]
-                                            top_size_metrics, _ = await scrape_topic_metrics_and_top_by_size(
-                                                available_broker, _prom_port, top_size_names, top_n=0)
-                                            for t in top_by_size:
-                                                if t["name"] in top_size_metrics:
-                                                    t["messages_in_per_sec"] = top_size_metrics[t["name"]].get("messages_in_per_sec", 0.0)
-                                                    t["bytes_in_per_sec"] = top_size_metrics[t["name"]].get("bytes_in_per_sec", 0.0)
+                                        # Scrape msgs/sec for top_by_msg_rate topics specifically
+                                        if top_by_msg_rate:
+                                            msg_rate_names = [t["name"] for t in top_by_msg_rate]
+                                            rate_metrics, _, _ = await scrape_topic_metrics_and_top_by_size(
+                                                available_broker, _prom_port, msg_rate_names, top_n=0)
+                                            for t in top_by_msg_rate:
+                                                if t["name"] in rate_metrics:
+                                                    t["messages_in_per_sec"] = rate_metrics[t["name"]].get("messages_in_per_sec", 0.0)
+                                                    t["bytes_in_per_sec"] = rate_metrics[t["name"]].get("bytes_in_per_sec", 0.0)
+                                                    t["size_bytes"] = rate_metrics[t["name"]].get("size_bytes", t.get("size_bytes", 0))
                                         if "counts" not in data:
                                             data["counts"] = {}
                                         data["counts"]["top_topics_by_size"] = top_by_size
-                                        data["topics"] = list(top_by_size)
+                                        data["counts"]["top_topics_by_msg_rate"] = top_by_msg_rate
+                                        data["topics"] = list(top_by_msg_rate)
                                         data["counts"]["total_hot"] = sum(
-                                            1 for t in top_by_size
+                                            1 for t in top_by_msg_rate
                                             if (t.get("messages_in_per_sec") or 0) > 1000)
                                 logger.info("Collection loop Prometheus: completed for '%s'", c["name"])
                             except Exception as _pe:
@@ -562,7 +564,7 @@ async def lifespan(app: FastAPI):
                                             top_size_names = [t["name"] for t in existing_top] if existing_top else []
                                             described_names = [t["name"] for t in data.get("topics", [])[:50]]
                                             top_topics = list(dict.fromkeys(top_size_names + described_names))
-                                            topic_metrics, top_by_size = await scrape_topic_metrics_and_top_by_size(
+                                            topic_metrics, top_by_size, top_by_msg_rate = await scrape_topic_metrics_and_top_by_size(
                                                 available_broker, _prom_port, top_topics, top_n=20)
                                             for t in data.get("topics", []):
                                                 if t["name"] in topic_metrics:
@@ -571,27 +573,30 @@ async def lifespan(app: FastAPI):
                                                     t["bytes_in_per_sec"] = tm.get("bytes_in_per_sec", 0.0)
                                                     t["bytes_out_per_sec"] = tm.get("bytes_out_per_sec", 0.0)
                                                     t["size_bytes"] = tm.get("size_bytes", 0)
-                                            # Scrape msgs/sec for top_by_size topics specifically
-                                            if top_by_size:
-                                                top_size_names = [t["name"] for t in top_by_size]
-                                                top_size_metrics, _ = await scrape_topic_metrics_and_top_by_size(
-                                                    available_broker, _prom_port, top_size_names, top_n=0)
-                                                for t in top_by_size:
-                                                    if t["name"] in top_size_metrics:
-                                                        t["messages_in_per_sec"] = top_size_metrics[t["name"]].get("messages_in_per_sec", 0.0)
-                                                        t["bytes_in_per_sec"] = top_size_metrics[t["name"]].get("bytes_in_per_sec", 0.0)
+                                            # Scrape msgs/sec for top_by_msg_rate topics specifically
+                                            if top_by_msg_rate:
+                                                msg_rate_names = [t["name"] for t in top_by_msg_rate]
+                                                rate_metrics, _, _ = await scrape_topic_metrics_and_top_by_size(
+                                                    available_broker, _prom_port, msg_rate_names, top_n=0)
+                                                for t in top_by_msg_rate:
+                                                    if t["name"] in rate_metrics:
+                                                        t["messages_in_per_sec"] = rate_metrics[t["name"]].get("messages_in_per_sec", 0.0)
+                                                        t["bytes_in_per_sec"] = rate_metrics[t["name"]].get("bytes_in_per_sec", 0.0)
+                                                        t["size_bytes"] = rate_metrics[t["name"]].get("size_bytes", t.get("size_bytes", 0))
                                             if "counts" not in data:
                                                 data["counts"] = {}
                                             data["counts"]["top_topics_by_size"] = top_by_size
-                                            data["topics"] = list(top_by_size)
+                                            data["counts"]["top_topics_by_msg_rate"] = top_by_msg_rate
+                                            data["topics"] = list(top_by_msg_rate)
                                             data["counts"]["total_hot"] = sum(
-                                                1 for t in top_by_size
+                                                1 for t in top_by_msg_rate
                                                 if (t.get("messages_in_per_sec") or 0) > 1000)
                                             # Update cache counts with top_by_size
                                             _ks.update_topics_metrics(
                                                 str(c.get("id", "default")),
                                                 {},  # no per-topic metrics to update here
                                                 {"top_topics_by_size": top_by_size,
+                                                 "top_topics_by_msg_rate": top_by_msg_rate,
                                                  "total_hot": data["counts"].get("total_hot", 0)}
                                             )
                                     _prom_elapsed = round(_t3.time() - _prom_start, 1)
