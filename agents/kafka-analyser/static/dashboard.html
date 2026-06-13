@@ -1361,7 +1361,6 @@
             <div><span style="color:var(--color-text-secondary)">Under-replicated</span><br><strong>${d.under_replicated_partitions}</strong></div>
             <div><span style="color:var(--color-text-secondary)">Msg/s</span><br><strong>${fmtRate(d.messages_in_per_sec || 0)}</strong></div>
             <div><span style="color:var(--color-text-secondary)">Bytes/s</span><br><strong>${fmtBytes(d.bytes_in_per_sec || 0)}/s</strong></div>
-            <div><span style="color:var(--color-text-secondary)">Log Size</span><br><strong>${fmtBytes(d.size_bytes || 0)}</strong></div>
           </div>
         </td>`;
       } catch(e) {
