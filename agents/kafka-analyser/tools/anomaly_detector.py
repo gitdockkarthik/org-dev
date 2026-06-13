@@ -51,6 +51,22 @@ def detect_anomalies(
                 ],
             })
 
+        # CPU check
+        cpu = broker.get("cpu_pct", 0.0)
+        if cpu >= 90:
+            anomalies.append({
+                "severity": "critical" if cpu >= 95 else "warning",
+                "category": "broker_cpu",
+                "description": (
+                    f"Broker {bid} CPU at {cpu:.0f}% — "
+                    f"{'critical' if cpu >= 95 else 'elevated'}. High CPU may impact request latency."
+                ),
+                "recommendations": [
+                    f"Check for expensive consumer groups on broker {bid}",
+                    "Review log compaction and cleanup policies",
+                    "Consider partition rebalancing to distribute load",
+                ],
+            })
         if urp > urp_threshold:
             anomalies.append({
                 "severity": "critical",

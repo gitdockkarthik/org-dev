@@ -38,16 +38,48 @@ async def get_overview(cluster_id: str | None = None, hours: int | None = None) 
         return {"empty": True}
     topics = data["topics"]
     consumer_groups = data["consumer_groups"]
+    brokers = data.get("brokers", [])
+    # Compute health score from real metrics
+    score = 100
+    # URP deduction
+    total_urp = data.get("counts", {}).get("total_urp", 0)
+    score -= total_urp * 5
+    # High heap deduction
+    for b in brokers:
+        heap = b.get("heap_pct", 0)
+        if heap >= 85:
+            score -= 15
+        elif heap >= 70:
+            score -= 5
+    # Critical consumer groups deduction
+    critical_groups = [g for g in consumer_groups if g.get("total_lag", 0) > 10000]
+    score -= len(critical_groups) * 2
+    # RF=1 topics deduction
+    rf1 = data.get("counts", {}).get("total_rf1", 0)
+    if rf1 > 100:
+        score -= 10
+    elif rf1 > 0:
+        score -= 5
+    health_score = max(0, min(100, score))
+    cluster = {**data["cluster"], "health_score": health_score}
+    # Determine status
+    if health_score >= 80:
+        cluster["status"] = "healthy"
+    elif health_score >= 50:
+        cluster["status"] = "degraded"
+    else:
+        cluster["status"] = "critical"
     return {
         "cluster": {
-            **data["cluster"],
+            **cluster,
             "topic_count": data.get("counts", {}).get("total_topics") or len(topics),
             "consumer_group_count": data.get("counts", {}).get("total_groups") or len(consumer_groups),
         },
-        "brokers": data["brokers"],
-        "anomalies": data["anomalies"],
+        "brokers": brokers,
+        "anomalies": data.get("anomalies", []),
         "topic_count": data.get("counts", {}).get("total_topics") or len(topics),
         "consumer_group_count": data.get("counts", {}).get("total_groups") or len(consumer_groups),
+        "health_score": health_score,
     }
 
 
