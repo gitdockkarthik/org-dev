@@ -1347,7 +1347,12 @@
       detailRow.innerHTML = `<td colspan="${cols}" style="background:var(--color-background-secondary);padding:12px 16px"><div style="font-size:12px;color:var(--color-text-secondary)">⟳ Loading topic details...</div></td>`;
       row.parentNode.insertBefore(detailRow, row.nextSibling);
       try {
-        const d = await api('/dashboard/topics/detail?name=' + encodeURIComponent(topicName));
+        const url = '/dashboard/topics/detail';
+        const res = await fetch(PROXY + url + '?name=' + encodeURIComponent(topicName) + '&cluster_id=' + (_currentClusterId || '3'), {
+          headers: _authHeaders ? _authHeaders() : {},
+          cache: 'no-store'
+        });
+        const d = await res.json();
         if (d.error) throw new Error(d.error);
         detailRow.innerHTML = `<td colspan="${cols}" style="background:var(--color-background-secondary);padding:12px 16px">
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;font-size:12px">
