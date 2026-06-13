@@ -417,7 +417,7 @@ async def get_topics_history(cluster_id: str | None = None, minutes: float = 144
         series = []
         for name in top_topics:
             vals = [round(topic_data[name].get(d, 0.0), 3) for d in all_days]
-            series.append({"topic": name, "values": vals})
+            series.append({"name": name, "values": vals})
         # If no data at all, return empty series with 7-day labels
         if not series:
             return {"labels": all_days, "series": [], "snapshot_count": 7}
@@ -485,7 +485,7 @@ async def get_topics_history(cluster_id: str | None = None, minutes: float = 144
     series = []
     for name in top_topics:
         vals = [round(topic_data[name].get(b, 0.0), 3) for b in all_buckets]
-        series.append({"topic": name, "values": vals})
+        series.append({"name": name, "values": vals})
 
     if not series:
         return {"labels": all_buckets, "series": [], "snapshot_count": total_buckets}
