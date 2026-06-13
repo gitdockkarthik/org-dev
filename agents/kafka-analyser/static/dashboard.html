@@ -957,8 +957,6 @@
           <td style="font-weight:600"><code style="font-size:.8rem">${(t.name || t.topic || 'Unknown')}</code></td>
           <td style="text-align:center">${(t.partition_count || t.partitions || 0)}</td>
           <td style="text-align:center">${t.replication_factor}</td>
-          <td>${fmtRate(t.messages_in_per_sec)}</td>
-          <td style="font-size:.82rem;color:var(--text-muted)">${fmtBytes(t.bytes_in_per_sec || 0)}/s</td>
           <td style="text-align:right;font-size:.82rem">${fmtBytes(t.size_bytes || 0)}</td>
           <td>${topicStatusBadge(t)}</td>
         </tr>`;
@@ -1043,20 +1041,12 @@
       const topicBarCharts = `
         <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:22px">
           <div class="chart-card" style="flex:1;min-width:300px;margin-bottom:0">
-            <div class="chart-card__title">Top 10 Topics by Messages/sec</div>
-            <div class="chart-wrap" style="height:260px"><canvas id="topic-msgs-chart"></canvas></div>
-          </div>
-          <div class="chart-card" style="flex:1;min-width:300px;margin-bottom:0">
             <div class="chart-card__title">Top 10 Topics by Log Size</div>
             <div class="chart-wrap" style="height:260px"><canvas id="topic-size-chart"></canvas></div>
           </div>
         </div>`;
 
       document.getElementById('tab-topics').innerHTML = '<div style="display:flex;justify-content:flex-end;margin-bottom:6px"><button id="topic-analyse-btn" style="background:var(--navy-1);color:var(--accent);border:1px solid var(--accent);border-radius:20px;padding:8px 16px;font-size:.82rem;font-weight:600;cursor:pointer">🤖 Analyse</button></div>' + '<div style="text-align:center;padding:8px 0;"><span id="topic-loading-badge" style="display:none;align-items:center;gap:8px;padding:8px 20px;background:linear-gradient(135deg,#ff6b35,#f7931e);color:#fff;border-radius:20px;font-size:14px;font-weight:600;box-shadow:0 2px 8px rgba(255,107,53,0.3);animation:pulse-badge 1.5s ease-in-out infinite;">⟳ Loading topics...</span></div>' + topicKpis + topicBarCharts + topicFilters + `
-        <div class="chart-card" style="margin-bottom:22px">
-          <div class="chart-card__title">Top 10 Topics by Message Rate</div>
-          <div class="chart-wrap"><canvas id="topicChart"></canvas></div>
-        </div>
         <div class="chart-card__title" style="margin-bottom:8px">🗑 Stale Large Topics — Cleanup Candidates</div>
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">No active ingestion · sorted by storage consumed · click row to see details</div>
         <div class="data-table-wrap">
@@ -1074,7 +1064,7 @@
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">Active ingestion · monitor growth · click row to see details</div>
         <div class="data-table-wrap">
           <table class="data-table">
-            <thead><tr><th>Topic</th><th style="text-align:center">Partitions</th><th style="text-align:center">RF</th><th>Msg/s</th><th>Bytes/s</th><th style="text-align:right">Log Size</th><th>Status</th></tr></thead>
+            <thead><tr><th>Topic</th><th style="text-align:center">Partitions</th><th style="text-align:center">RF</th><th style="text-align:right">Log Size</th><th>Status</th></tr></thead>
             <tbody id="topic-tbody"></tbody>
           </table>
         </div>

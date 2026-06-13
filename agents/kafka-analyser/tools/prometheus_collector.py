@@ -473,12 +473,21 @@ async def scrape_topic_metrics_and_top_by_size(
                 if topic_match and topic_match.group(1) in topic_set:
                     kept.append(line)
 
-        # Build top N by size from all topics
-        sorted_sizes = sorted(all_sizes.items(), key=lambda x: x[1], reverse=True)
-        top_by_size = [{"name": t, "size_bytes": int(s)} for t, s in sorted_sizes[:top_n]]
-
         # Parse per-topic metrics
         metrics = _parse_prometheus_text("\n".join(kept))
+
+        # Build top N by size from all topics
+        sorted_sizes = sorted(all_sizes.items(), key=lambda x: x[1], reverse=True)
+        top_by_size = []
+        for t, s in (sorted_sizes[:top_n] if top_n > 0 else []):
+            topic_msgs = 0.0
+            topic_bytes_in = 0.0
+            # Get msgs/sec from already-parsed metrics if available
+            for entry in metrics.get("kafka_server_brokertopicmetrics_messagesin_by_topic_total", []):
+                if entry.get("labels", {}).get("topic") == t:
+                    topic_msgs = float(entry.get("value", 0))
+                    break
+            top_by_size.append({"name": t, "size_bytes": int(s), "messages_in_per_sec": topic_msgs, "bytes_in_per_sec": topic_bytes_in})
 
         topic_sizes: dict[str, float] = {}
         for entry in metrics.get("kafka_log_log_size", []):
