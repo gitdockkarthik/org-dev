@@ -454,11 +454,8 @@ async def lifespan(app: FastAPI):
                             "jmx_port": c.get("jmx_port"),
                         })
                         data = await collector.collect_summary()
-                        _ks.set_cluster_data(
-                            data,
-                            source_type=c.get("source_type", "kafka_internal"),
-                            cluster_id=str(c.get("id", "default")),
-                        )
+                        # Do NOT overwrite restored cache with partial collect_summary data
+                        # Parallel scans will enrich data and update cache incrementally
                         from datetime import datetime, timezone
                         from storage import get_backend
                         topics = data.get("topics", [])
