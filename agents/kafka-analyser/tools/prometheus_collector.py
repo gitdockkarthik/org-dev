@@ -219,6 +219,15 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
             ))
         else:
             phase2_raw = await _curl_get(f"http://{host}:{port}/metrics", max_time=_CURL_MAX_TIME)
+            if not phase2_raw:
+                # Phase 2 timed out — increment fail count and save
+                new_fail_count = prev_fail_count + 1
+                _broker_state[state_key] = {**prev_state, "phase2_fail_count": new_fail_count}
+                _asyncio.ensure_future(_save_scrape_state(
+                    f"scrape_state_{state_key}",
+                    {**prev_state, "phase2_fail_count": new_fail_count}
+                ))
+                logger.info("Phase 2 timed out for %s — fail_count now %d", host, new_fail_count)
         if phase2_raw:
             kept = []
             for line in phase2_raw.splitlines():
