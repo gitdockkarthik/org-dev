@@ -250,7 +250,7 @@ async def _collection_loop() -> None:
                                     if "cluster" in data:
                                         data["cluster"]["under_replicated_partitions"] = total_urp
                                         data["cluster"]["partition_count"] = total_partitions
-                                    data["topics"] = described_topics[:500]
+                                    data["topics"] = []  # KPI counts computed above; topics populated after Prometheus
                                     logger.info(
                                         "Collection loop topic scan: %d topics (%d RF=1) for '%s'",
                                         len(described_topics), total_rf1, c["name"])
@@ -303,10 +303,11 @@ async def _collection_loop() -> None:
                                                     t["bytes_in_per_sec"] = top_size_metrics[t["name"]].get("bytes_in_per_sec", 0.0)
                                         if "counts" not in data:
                                             data["counts"] = {}
-                                        data["counts"]["total_hot"] = sum(
-                                            1 for t in data.get("topics", [])
-                                            if (t.get("messages_in_per_sec") or 0) > 1000)
                                         data["counts"]["top_topics_by_size"] = top_by_size
+                                        data["topics"] = list(top_by_size)
+                                        data["counts"]["total_hot"] = sum(
+                                            1 for t in top_by_size
+                                            if (t.get("messages_in_per_sec") or 0) > 1000)
                                 logger.info("Collection loop Prometheus: completed for '%s'", c["name"])
                             except Exception as _pe:
                                 logger.warning("Collection loop Prometheus failed for '%s': %s",
@@ -477,16 +478,6 @@ async def lifespan(app: FastAPI):
                         # Parallel scans will enrich data and update cache incrementally
                         from datetime import datetime, timezone
                         from storage import get_backend
-                        topics = data.get("topics", [])
-                        if topics and c.get("id"):
-                            try:
-                                await get_backend().save_topic_metrics(
-                                    cluster_id=int(c["id"]),
-                                    topics=topics,
-                                    collected_at=datetime.now(timezone.utc),
-                                )
-                            except Exception as _te:
-                                logger.warning("save_topic_metrics failed for cluster %s: %s", c["name"], _te)
                         logger.info(
                             "Startup: synced cluster '%s' (id=%s) — brokers=%d, topics=%d",
                             c["name"], c.get("id"),
@@ -523,10 +514,10 @@ async def lifespan(app: FastAPI):
                                             data["cluster"]["partition_count"] = total_partitions
 
                                         # Keep top 500 for display: anomalous first (already sorted by describe_all_topics)
-                                        data["topics"] = described_topics[:500]
+                                        data["topics"] = []  # KPI counts computed above; topics populated after Prometheus
                                         _ks.update_topics_structure(
                                             str(c.get("id", "default")),
-                                            described_topics[:500],
+                                            [],
                                             {k: data["counts"][k] for k in
                                              ["total_topics","total_rf1","total_urp","total_partitions","total_brokers","total_groups"]
                                              if k in data.get("counts",{})}
@@ -591,10 +582,11 @@ async def lifespan(app: FastAPI):
                                                         t["bytes_in_per_sec"] = top_size_metrics[t["name"]].get("bytes_in_per_sec", 0.0)
                                             if "counts" not in data:
                                                 data["counts"] = {}
-                                            data["counts"]["total_hot"] = sum(
-                                                1 for t in data.get("topics", [])
-                                                if (t.get("messages_in_per_sec") or 0) > 1000)
                                             data["counts"]["top_topics_by_size"] = top_by_size
+                                            data["topics"] = list(top_by_size)
+                                            data["counts"]["total_hot"] = sum(
+                                                1 for t in top_by_size
+                                                if (t.get("messages_in_per_sec") or 0) > 1000)
                                             # Update cache counts with top_by_size
                                             _ks.update_topics_metrics(
                                                 str(c.get("id", "default")),
@@ -669,6 +661,17 @@ async def lifespan(app: FastAPI):
                         await save_brokers(cid)
                         await save_topics_metrics(cid)
                         await save_groups(cid)
+                        # Save topic metrics to time-series table (after Prometheus enrichment)
+                        topics = data.get("topics", [])
+                        if topics and c.get("id"):
+                            try:
+                                await get_backend().save_topic_metrics(
+                                    cluster_id=int(c["id"]),
+                                    topics=topics,
+                                    collected_at=datetime.now(timezone.utc),
+                                )
+                            except Exception as _te:
+                                logger.warning("save_topic_metrics failed for '%s': %s", c["name"], _te)
                     except Exception as exc:
                         logger.warning("Startup: failed to sync cluster '%s': %s", c["name"], exc)
             asyncio.create_task(_startup_sync())
