@@ -211,7 +211,12 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
         if not prev_throughput and not should_retry:
             logger.info("Skipping Phase 2 for %s (fail_count=%d, retrying every 3rd)", host, prev_fail_count)
             phase2_raw = None
-            _broker_state[state_key] = {**prev_state, "phase2_fail_count": prev_fail_count + 1}
+            new_fail_count = prev_fail_count + 1
+            _broker_state[state_key] = {**prev_state, "phase2_fail_count": new_fail_count}
+            _asyncio.ensure_future(_save_scrape_state(
+                f"scrape_state_{state_key}",
+                {**prev_state, "phase2_fail_count": new_fail_count}
+            ))
         else:
             phase2_raw = await _curl_get(f"http://{host}:{port}/metrics", max_time=_CURL_MAX_TIME)
         if phase2_raw:
@@ -280,7 +285,7 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
                        "kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent"
                        in metrics else 100.0)
 
-        _broker_state[state_key] = {"metrics": metrics, "time": now}
+        _broker_state[state_key] = {"metrics": metrics, "time": now, "phase2_fail_count": 0}
         _asyncio.ensure_future(_save_scrape_state(
             f"scrape_state_{state_key}",
             {"metrics": metrics, "time": now}
