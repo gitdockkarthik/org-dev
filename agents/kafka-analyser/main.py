@@ -271,10 +271,16 @@ async def _collection_loop() -> None:
                                         broker.update(broker_metrics[bid])
                                 if data.get("brokers"):
                                     first_broker = data["brokers"][0].get("host", "")
-                                    if first_broker:
+                                    # Use first broker with throughput available for topic metrics
+                                    available_broker = next(
+                                        (b.get("host","") for b in data.get("brokers",[])
+                                         if b.get("throughput_available") is not False and b.get("host")),
+                                        first_broker
+                                    )
+                                    if available_broker:
                                         top_topics = [t["name"] for t in data.get("topics", [])[:100]]
                                         topic_metrics, top_by_size = await scrape_topic_metrics_and_top_by_size(
-                                            first_broker, _prom_port, top_topics, top_n=20)
+                                            available_broker, _prom_port, top_topics, top_n=20)
                                         for t in data.get("topics", []):
                                             if t["name"] in topic_metrics:
                                                 tm = topic_metrics[t["name"]]
@@ -542,10 +548,15 @@ async def lifespan(app: FastAPI):
                                     _ks.update_brokers(str(c.get("id", "default")), data.get("brokers", []))
                                     if data.get("brokers"):
                                         first_broker = data["brokers"][0].get("host", "")
-                                        if first_broker:
+                                        available_broker = next(
+                                            (b.get("host","") for b in data.get("brokers",[])
+                                             if b.get("throughput_available") is not False and b.get("host")),
+                                            first_broker
+                                        )
+                                        if available_broker:
                                             top_topics = [t["name"] for t in data.get("topics", [])[:100]]
                                             topic_metrics, top_by_size = await scrape_topic_metrics_and_top_by_size(
-                                                first_broker, _prom_port, top_topics, top_n=20)
+                                                available_broker, _prom_port, top_topics, top_n=20)
                                             for t in data.get("topics", []):
                                                 if t["name"] in topic_metrics:
                                                     tm = topic_metrics[t["name"]]
@@ -559,6 +570,13 @@ async def lifespan(app: FastAPI):
                                                 1 for t in data.get("topics", [])
                                                 if (t.get("messages_in_per_sec") or 0) > 1000)
                                             data["counts"]["top_topics_by_size"] = top_by_size
+                                            # Update cache counts with top_by_size
+                                            _ks.update_topics_metrics(
+                                                str(c.get("id", "default")),
+                                                {},  # no per-topic metrics to update here
+                                                {"top_topics_by_size": top_by_size,
+                                                 "total_hot": data["counts"].get("total_hot", 0)}
+                                            )
                                     _prom_elapsed = round(_t3.time() - _prom_start, 1)
                                     logger.info("Prometheus scan: completed for '%s' in %ss", c["name"], _prom_elapsed)
                                 except Exception as _prom_exc:
