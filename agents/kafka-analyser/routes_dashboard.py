@@ -80,6 +80,7 @@ async def get_overview(cluster_id: str | None = None, hours: int | None = None) 
         "topic_count": data.get("counts", {}).get("total_topics") or len(topics),
         "consumer_group_count": data.get("counts", {}).get("total_groups") or len(consumer_groups),
         "health_score": health_score,
+        "critical_count": len(critical_groups),
     }
 
 
