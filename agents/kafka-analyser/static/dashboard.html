@@ -1047,30 +1047,17 @@
         </div>`;
 
       document.getElementById('tab-topics').innerHTML = '<div style="display:flex;justify-content:flex-end;margin-bottom:6px"><button id="topic-analyse-btn" style="background:var(--navy-1);color:var(--accent);border:1px solid var(--accent);border-radius:20px;padding:8px 16px;font-size:.82rem;font-weight:600;cursor:pointer">🤖 Analyse</button></div>' + '<div style="text-align:center;padding:8px 0;"><span id="topic-loading-badge" style="display:none;align-items:center;gap:8px;padding:8px 20px;background:linear-gradient(135deg,#ff6b35,#f7931e);color:#fff;border-radius:20px;font-size:14px;font-weight:600;box-shadow:0 2px 8px rgba(255,107,53,0.3);animation:pulse-badge 1.5s ease-in-out infinite;">⟳ Loading topics...</span></div>' + topicKpis + topicBarCharts + topicFilters + `
-        <div class="chart-card__title" style="margin-bottom:8px">🗑 Stale Large Topics — Cleanup Candidates</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">No active ingestion · sorted by storage consumed · click row to see details</div>
+        <div class="chart-card__title" style="margin-bottom:8px">Top 20 Topics by Log Size</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">Sorted by storage consumed · click row to see details</div>
         <div class="data-table-wrap">
           <table class="data-table">
             <thead><tr><th>Topic</th><th style="text-align:right">Log Size</th><th>Status</th></tr></thead>
             <tbody id="topic-stale-tbody"></tbody>
           </table>
         </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px;margin-bottom:24px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px">
           <span id="topic-stale-count-label" class="dash-label"></span>
           <button id="topic-stale-show-more" class="btn btn--secondary btn--sm" onclick="window._topicStaleShowMore()">Show More</button>
-        </div>
-
-        <div class="chart-card__title" style="margin-bottom:8px">📈 Active Topics — Scaling Watch</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">Active ingestion · monitor growth · click row to see details</div>
-        <div class="data-table-wrap">
-          <table class="data-table">
-            <thead><tr><th>Topic</th><th style="text-align:center">Partitions</th><th style="text-align:center">RF</th><th style="text-align:right">Log Size</th><th>Status</th></tr></thead>
-            <tbody id="topic-tbody"></tbody>
-          </table>
-        </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px">
-          <span id="topic-count-label" class="dash-label"></span>
-          <button id="topic-show-more" class="btn btn--secondary btn--sm" onclick="window._topicShowMore()">Show More</button>
         </div>`;
 
       // Wire the top-of-tab Analyse button (Topics only) — shared FAB left unchanged
@@ -1112,21 +1099,17 @@
         const st = window._topicView;
         const filtered = allTopics.filter(t => topicMatches(t, st));
 
-        // Split into stale (no msgs, has size) and active (has msgs or no size yet)
-        const staleTopics = filtered
-          .filter(t => (t.size_bytes || 0) > 0 && (t.messages_in_per_sec || 0) === 0)
-          .sort((a, b) => (b.size_bytes || 0) - (a.size_bytes || 0));
-        const activeTopics = filtered
-          .filter(t => (t.messages_in_per_sec || 0) > 0 || (t.size_bytes || 0) === 0)
-          .sort((a, b) => {
-            const aMsgs = a.messages_in_per_sec || 0;
-            const bMsgs = b.messages_in_per_sec || 0;
-            if (aMsgs !== bMsgs) return bMsgs - aMsgs;
-            const aSize = a.size_bytes || 0;
-            const bSize = b.size_bytes || 0;
-            if (aSize !== bSize) return bSize - aSize;
-            return (b.partition_count || 0) - (a.partition_count || 0);
-          });
+        // Single top-20 table by log size — no active/stale split
+        const topBySize = (window._clusterCounts && window._clusterCounts.top_topics_by_size) || [];
+        const staleTopics = [...topBySize]
+          .sort((a, b) => (b.size_bytes || 0) - (a.size_bytes || 0))
+          .slice(0, 20)
+          .map(t => ({
+            ...t,
+            status: (t.size_bytes || 0) > 50 * 1024 * 1024 * 1024 ? 'retention-critical' :
+                    (t.size_bytes || 0) > 10 * 1024 * 1024 * 1024 ? 'retention-warning' : 'healthy'
+          }));
+        const activeTopics = [];
 
         // Populate stale table
         const staleVisible = st.staleVisible || 20;
@@ -1140,29 +1123,11 @@
               <td>${topicStatusBadge(t)}</td>
             </tr>`).join('') || '<tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:16px">No stale topics</td></tr>';
           const staleLabel = document.getElementById('topic-stale-count-label');
-          if (staleLabel) staleLabel.textContent = `Showing ${staleShown.length} of ${staleTopics.length} stale topics`;
+          if (staleLabel) staleLabel.textContent = `Showing ${staleShown.length} of ${staleTopics.length} topics by log size`;
           const staleMore = document.getElementById('topic-stale-show-more');
           if (staleMore) staleMore.style.display = staleTopics.length > staleVisible ? '' : 'none';
         }
         window._topicStaleShowMore = () => { st.staleVisible = (st.staleVisible || 20) + 20; window._applyTopicView(); };
-
-        // Active topics for main table
-        const sorted = activeTopics;
-        const shown = sorted.slice(0, st.visible);
-        const tbody = document.getElementById('topic-tbody');
-        if (tbody) {
-          tbody.innerHTML = shown.map(topicRowHtml).join('') ||
-            `<tr><td colspan="7" class="data-table__empty">No topics match</td></tr>`;
-        }
-        const label = document.getElementById('topic-count-label');
-        if (label) {
-          const _tot = (st.filter === 'all' && !st.userOnly && !st.search)
-            ? ((window._clusterCounts || {}).total_topics || filtered.length)
-            : filtered.length;
-          label.textContent = `Showing ${shown.length} of ${_tot.toLocaleString()} topics`;
-        }
-        const moreBtn = document.getElementById('topic-show-more');
-        if (moreBtn) moreBtn.style.display = shown.length < filtered.length ? '' : 'none';
       };
 
       const setActiveChip = (el) => {
@@ -1193,86 +1158,6 @@
       };
 
       window._applyTopicView();
-
-      setTimeout(async () => {
-        destroyChart('topic');
-        const ctx = document.getElementById('topicChart')?.getContext('2d');
-        if (!ctx) return;
-        try {
-          const mins = _getMinutes();
-          const qs = new URLSearchParams();
-          if (_currentClusterId) qs.set('cluster_id', _currentClusterId);
-          if (mins) qs.set('minutes', mins);
-          const hist = await fetch(`${PROXY}/dashboard/topics/history?${qs.toString()}`,
-            { headers: _authHeaders(), cache: 'no-store' }).then(r => r.json());
-
-          if (!hist.empty && hist.series && hist.series.length > 0) {
-            const colors = ['#FF6B35','#0D9488','#6366f1','#f59e0b','#16a34a'];
-            const timeVal = document.getElementById('ctrl-time').value;
-            let _lastDateLabel = '';
-            const labels = hist.labels.map(l => {
-              const d = new Date(l);
-              if (timeVal === '7d') {
-                return d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
-              }
-              if (timeVal === '24h') {
-                const hourLabel = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                return hourLabel;
-              }
-              if (timeVal === '6h' || timeVal === '1h') {
-                return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-              }
-              return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-            });
-            // Determine tick interval based on time range
-            let maxTicks = 10;
-            if (timeVal === '5m') maxTicks = 5;
-            else if (timeVal === '1h') maxTicks = 6;
-            else if (timeVal === '6h') maxTicks = 12;
-            else if (timeVal === '24h') maxTicks = 24;
-            else if (timeVal === '7d') maxTicks = 7;
-            charts['topic'] = new Chart(ctx, {
-              type: 'line',
-              data: {
-                labels,
-                datasets: hist.series.map((s, i) => ({
-                  label: s.topic,
-                  data: s.values,
-                  borderColor: colors[i % colors.length],
-                  backgroundColor: colors[i % colors.length] + '22',
-                  borderWidth: 2,
-                  pointRadius: labels.length < 20 ? 3 : 1,
-                  tension: 0.3,
-                  fill: false,
-                })),
-              },
-              options: {
-                responsive: true,
-                plugins: {
-                  legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
-                  title: { display: false },
-                },
-                scales: {
-                  x: { ticks: { maxTicksLimit: maxTicks, font: { size: 10 }, maxRotation: 45 } },
-                  y: { ticks: { callback: v => fmtRate(v), font: { size: 10 } }, beginAtZero: true },
-                },
-              },
-            });
-          } else {
-            // Fallback to bar chart if no history
-            charts['topic'] = new Chart(ctx, {
-              type: 'bar',
-              data: {
-                labels: topics.map(t => (t.name || t.topic || 'Unknown')),
-                datasets: [{ label: 'Messages/sec', data: topics.map(t => t.messages_in_per_sec), backgroundColor: '#FF6B35' }],
-              },
-              options: { indexAxis: 'y', responsive: true, plugins: { legend: { display: false } } },
-            });
-          }
-        } catch(e) {
-          console.warn('Topic history chart failed:', e);
-        }
-      }, 50);
 
       setTimeout(() => {
         if (window._topicMsgsChart) { window._topicMsgsChart.destroy(); window._topicMsgsChart = null; }
