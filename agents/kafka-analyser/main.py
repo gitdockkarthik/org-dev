@@ -282,11 +282,12 @@ async def _collection_loop() -> None:
                                                 t["bytes_in_per_sec"] = tm.get("bytes_in_per_sec", 0.0)
                                                 t["bytes_out_per_sec"] = tm.get("bytes_out_per_sec", 0.0)
                                                 t["size_bytes"] = tm.get("size_bytes", 0)
-                                        if "counts" in data:
-                                            data["counts"]["total_hot"] = sum(
-                                                1 for t in data.get("topics", [])
-                                                if (t.get("messages_in_per_sec") or 0) > 1000)
-                                            data["counts"]["top_topics_by_size"] = top_by_size
+                                        if "counts" not in data:
+                                            data["counts"] = {}
+                                        data["counts"]["total_hot"] = sum(
+                                            1 for t in data.get("topics", [])
+                                            if (t.get("messages_in_per_sec") or 0) > 1000)
+                                        data["counts"]["top_topics_by_size"] = top_by_size
                                 logger.info("Collection loop Prometheus: completed for '%s'", c["name"])
                             except Exception as _pe:
                                 logger.warning("Collection loop Prometheus failed for '%s': %s",
