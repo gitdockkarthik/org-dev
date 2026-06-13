@@ -538,6 +538,8 @@ async def lifespan(app: FastAPI):
                                         bid = str(broker.get("broker_id", broker.get("host", "")))
                                         if bid in broker_metrics and broker_metrics[bid]:
                                             broker.update(broker_metrics[bid])
+                                    # Update brokers in cache
+                                    _ks.update_brokers(str(c.get("id", "default")), data.get("brokers", []))
                                     if data.get("brokers"):
                                         first_broker = data["brokers"][0].get("host", "")
                                         if first_broker:
