@@ -199,3 +199,11 @@ async def platform_health() -> dict:
 
 if __name__ == "__main__":
     mcp.run(transport="sse")
+
+@mcp.tool()
+async def kafka_topic_detail(name: str, cluster_id: str | None = None) -> dict:
+    """Get detailed metadata for a single Kafka topic — partitions, RF, metrics."""
+    params = {"name": name}
+    if cluster_id:
+        params["cluster_id"] = cluster_id
+    return await _get(KAFKA_URL, "/dashboard/topics/detail", params)
