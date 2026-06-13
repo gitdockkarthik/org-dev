@@ -104,6 +104,48 @@ async def get_counts(cluster_id: str | None = None) -> dict:
     }
 
 
+@router.get("/dashboard/topics/detail")
+async def get_topic_detail(name: str, cluster_id: str | None = None) -> dict:
+    """Describe a single topic live from Kafka — partitions, RF, leaders, ISR."""
+    from storage import get_backend
+    clusters = await get_backend().get_clusters("kafka-analyser")
+    c = next((c for c in clusters if str(c.get("id")) == str(cluster_id) and c.get("enabled")), None)
+    if not c:
+        return {"error": "Cluster not found"}
+    try:
+        from tools.real_kafka import RealKafkaCollector
+        collector = RealKafkaCollector({
+            "bootstrap_servers": c["bootstrap_servers"],
+            "auth_type": "none" if c["auth_type"] == "none" else "sasl",
+            "sasl_username": c.get("sasl_username"),
+            "sasl_password": c.get("sasl_password"),
+            "sasl_mechanism": c.get("sasl_mechanism", "PLAIN"),
+            "tls_enabled": c.get("tls_enabled", False),
+            "cluster_label": c["name"],
+        })
+        # Describe single topic
+        described, _ = await collector.describe_all_topics([name], workers=1)
+        if not described:
+            return {"error": "Topic not found"}
+        topic = described[0]
+        # Get topic metrics from cache
+        import kafka_store
+        data = kafka_store.get_cluster_data(cluster_id)
+        cached_topic = next((t for t in data.get("topics", []) if t.get("name") == name), {}) if data else {}
+        return {
+            "name": name,
+            "partition_count": topic.get("partition_count", 0),
+            "replication_factor": topic.get("replication_factor", 0),
+            "under_replicated_partitions": topic.get("under_replicated_partitions", 0),
+            "messages_in_per_sec": cached_topic.get("messages_in_per_sec", 0.0),
+            "bytes_in_per_sec": cached_topic.get("bytes_in_per_sec", 0.0),
+            "size_bytes": cached_topic.get("size_bytes", 0),
+            "partitions": topic.get("partitions", []),
+        }
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
 @router.get("/dashboard/consumer-groups")
 async def get_consumer_groups(cluster_id: str | None = None, hours: int | None = None) -> dict:
     """Consumer group lag leaderboard sorted worst-first."""
