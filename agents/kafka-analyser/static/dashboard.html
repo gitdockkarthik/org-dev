@@ -1018,7 +1018,9 @@
         </div>`;
 
       const topByMsgs = [...allTopics].sort((a, b) => msgRate(b) - msgRate(a)).slice(0, 10);
-      const topBySize = [...allTopics].sort((a, b) => logSize(b) - logSize(a)).slice(0, 10);
+      const topBySize = (window._clusterCounts && window._clusterCounts.top_topics_by_size && window._clusterCounts.top_topics_by_size.length > 0)
+        ? window._clusterCounts.top_topics_by_size.slice(0, 10).map(t => ({ name: t.name, size_bytes: t.size_bytes }))
+        : [...allTopics].sort((a, b) => logSize(b) - logSize(a)).slice(0, 10);
 
       const topicBarCharts = `
         <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:22px">
