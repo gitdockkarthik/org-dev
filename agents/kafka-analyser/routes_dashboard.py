@@ -74,6 +74,7 @@ async def get_overview(cluster_id: str | None = None, hours: int | None = None) 
             **cluster,
             "topic_count": data.get("counts", {}).get("total_topics") or len(topics),
             "consumer_group_count": data.get("counts", {}).get("total_groups") or len(consumer_groups),
+            "critical_count": len(critical_groups),
         },
         "brokers": brokers,
         "anomalies": data.get("anomalies", []),
