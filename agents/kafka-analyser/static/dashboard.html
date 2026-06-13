@@ -946,6 +946,8 @@
       const topics = (data.topics || []).slice(0, 10);
 
       const topicStatusBadge = t => {
+        if (t.status === 'retention-critical') return `<span class="sev sev--critical" style="font-size:.72rem">HIGH RISK</span>`;
+        if (t.status === 'retention-warning') return `<span class="sev sev--warning" style="font-size:.72rem">ATTENTION</span>`;
         if (logSize(t) > 1000 && msgRate(t) === 0) return `<span class="sev" style="background:rgba(100,116,139,.12);color:var(--text-muted)">STALE</span>`;
         if (topicLowRep(t)) return `<span style="background:#666;color:#fff;padding:2px 8px;border-radius:4px;font-size:.72rem">LOW-REP</span>`;
         return `<span class="sev sev--healthy">HEALTHY</span>`;
@@ -991,7 +993,8 @@
           });
           // Add missing large topics not in the 500 cap
           topSizeMap.forEach((size_bytes, name) => {
-              allTopics.push({ name, size_bytes, partition_count: 0, replication_factor: 0, messages_in_per_sec: 0, bytes_in_per_sec: 0, bytes_out_per_sec: 0, status: 'unknown' });
+              const sizeStatus = size_bytes > 50 * 1024 * 1024 * 1024 ? 'retention-critical' : size_bytes > 10 * 1024 * 1024 * 1024 ? 'retention-warning' : 'healthy';
+              allTopics.push({ name, size_bytes, partition_count: 0, replication_factor: 0, messages_in_per_sec: 0, bytes_in_per_sec: 0, bytes_out_per_sec: 0, status: sizeStatus });
           });
       }
       window._topicAllTopics = allTopics;
