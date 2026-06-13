@@ -294,7 +294,10 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
                        "kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent"
                        in metrics else 100.0)
 
-        _broker_state[state_key] = {"metrics": metrics, "time": now, "phase2_fail_count": 0}
+        # Preserve fail_count — reset to 0 only if Phase 2 succeeded
+        current_fail_count = _broker_state.get(state_key, {}).get("phase2_fail_count", 0)
+        new_fail_count = 0 if phase2_raw else current_fail_count
+        _broker_state[state_key] = {"metrics": metrics, "time": now, "phase2_fail_count": new_fail_count}
         _asyncio.ensure_future(_save_scrape_state(
             f"scrape_state_{state_key}",
             {"metrics": metrics, "time": now}
