@@ -129,3 +129,30 @@ class KafkaAnomaly(Base):
     category: Mapped[str] = mapped_column(String(64), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class KafkaTopicMetricsHourly(Base):
+    __tablename__ = "kafka_topic_metrics_hourly"
+    __table_args__ = (
+        UniqueConstraint("cluster_id", "topic", "hour_bucket", name="uq_topic_metrics_hourly"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    cluster_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    topic: Mapped[str] = mapped_column(String(256), nullable=False)
+    hour_bucket: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    avg_msgs: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    max_msgs: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+class KafkaTopicName(Base):
+    __tablename__ = "kafka_topic_names"
+    __table_args__ = (
+        UniqueConstraint("cluster_id", "topic", name="uq_topic_names"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    cluster_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    topic: Mapped[str] = mapped_column(String(256), nullable=False)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
