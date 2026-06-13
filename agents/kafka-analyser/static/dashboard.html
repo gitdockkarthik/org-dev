@@ -1057,14 +1057,28 @@
           <div class="chart-card__title">Top 10 Topics by Message Rate</div>
           <div class="chart-wrap"><canvas id="topicChart"></canvas></div>
         </div>
-        <div class="chart-card__title">Topic Inventory</div>
+        <div class="chart-card__title" style="margin-bottom:8px">🗑 Stale Large Topics — Cleanup Candidates</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">No active ingestion · sorted by storage consumed · click row to see details</div>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead><tr><th>Topic</th><th style="text-align:right">Log Size</th><th>Status</th></tr></thead>
+            <tbody id="topic-stale-tbody"></tbody>
+          </table>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px;margin-bottom:24px">
+          <span id="topic-stale-count-label" class="dash-label"></span>
+          <button id="topic-stale-show-more" class="btn btn--secondary btn--sm" onclick="window._topicStaleShowMore()">Show More</button>
+        </div>
+
+        <div class="chart-card__title" style="margin-bottom:8px">📈 Active Topics — Scaling Watch</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">Active ingestion · monitor growth · click row to see details</div>
         <div class="data-table-wrap">
           <table class="data-table">
             <thead><tr><th>Topic</th><th style="text-align:center">Partitions</th><th style="text-align:center">RF</th><th>Msg/s</th><th>Bytes/s</th><th style="text-align:right">Log Size</th><th>Status</th></tr></thead>
             <tbody id="topic-tbody"></tbody>
           </table>
         </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px">
           <span id="topic-count-label" class="dash-label"></span>
           <button id="topic-show-more" class="btn btn--secondary btn--sm" onclick="window._topicShowMore()">Show More</button>
         </div>`;
@@ -1103,13 +1117,40 @@
       window._applyTopicView = function () {
         const st = window._topicView;
         const filtered = allTopics.filter(t => topicMatches(t, st));
-        // Sort: log size desc, then partition count desc as fallback
-        const sorted = [...filtered].sort((a, b) => {
+
+        // Split into stale (no msgs, has size) and active (has msgs or no size yet)
+        const staleTopics = filtered
+          .filter(t => (t.size_bytes || 0) > 0 && (t.messages_in_per_sec || 0) === 0)
+          .sort((a, b) => (b.size_bytes || 0) - (a.size_bytes || 0));
+        const activeTopics = filtered
+          .filter(t => (t.messages_in_per_sec || 0) > 0 || (t.size_bytes || 0) === 0)
+          .sort((a, b) => {
             const aSize = a.size_bytes || 0;
             const bSize = b.size_bytes || 0;
             if (aSize !== bSize) return bSize - aSize;
             return (b.partition_count || 0) - (a.partition_count || 0);
-        });
+          });
+
+        // Populate stale table
+        const staleVisible = st.staleVisible || 20;
+        const staleShown = staleTopics.slice(0, staleVisible);
+        const staleTbody = document.getElementById('topic-stale-tbody');
+        if (staleTbody) {
+          staleTbody.innerHTML = staleShown.map(t => `
+            <tr class="topic-row" data-name="${t.name}" style="cursor:pointer" onclick="window._expandTopicRow(this, '${t.name}')">
+              <td><code style="font-size:.8rem">${t.name}</code></td>
+              <td style="text-align:right">${fmtBytes(t.size_bytes || 0)}</td>
+              <td>${topicStatusBadge(t)}</td>
+            </tr>`).join('') || '<tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:16px">No stale topics</td></tr>';
+          const staleLabel = document.getElementById('topic-stale-count-label');
+          if (staleLabel) staleLabel.textContent = `Showing ${staleShown.length} of ${staleTopics.length} stale topics`;
+          const staleMore = document.getElementById('topic-stale-show-more');
+          if (staleMore) staleMore.style.display = staleTopics.length > staleVisible ? '' : 'none';
+        }
+        window._topicStaleShowMore = () => { st.staleVisible = (st.staleVisible || 20) + 20; window._applyTopicView(); };
+
+        // Active topics for main table
+        const sorted = activeTopics;
         const shown = sorted.slice(0, st.visible);
         const tbody = document.getElementById('topic-tbody');
         if (tbody) {
@@ -1286,6 +1327,38 @@
       }, 0);
       window._renderTabAI('topics', document.getElementById('tab-topics'));
     }
+
+    window._expandTopicRow = async function(row, topicName) {
+      const existing = row.nextElementSibling;
+      if (existing && existing.classList.contains('topic-detail-row')) {
+        existing.remove();
+        return;
+      }
+      const cid = _clusterId();
+      const detailRow = document.createElement('tr');
+      detailRow.className = 'topic-detail-row';
+      const cols = row.cells.length;
+      detailRow.innerHTML = `<td colspan="${cols}" style="background:var(--color-background-secondary);padding:12px 16px">
+        <div style="font-size:12px;color:var(--color-text-secondary)">⟳ Loading topic details...</div>
+      </td>`;
+      row.parentNode.insertBefore(detailRow, row.nextSibling);
+      try {
+        const d = await api('/dashboard/topics/detail?name=' + encodeURIComponent(topicName) + '&cluster_id=' + cid);
+        if (d.error) throw new Error(d.error);
+        detailRow.innerHTML = `<td colspan="${cols}" style="background:var(--color-background-secondary);padding:12px 16px">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;font-size:12px">
+            <div><span style="color:var(--color-text-secondary)">Partitions</span><br><strong>${d.partition_count}</strong></div>
+            <div><span style="color:var(--color-text-secondary)">Replication Factor</span><br><strong>${d.replication_factor}</strong></div>
+            <div><span style="color:var(--color-text-secondary)">Under-replicated</span><br><strong>${d.under_replicated_partitions}</strong></div>
+            <div><span style="color:var(--color-text-secondary)">Msg/s</span><br><strong>${fmtRate(d.messages_in_per_sec || 0)}</strong></div>
+            <div><span style="color:var(--color-text-secondary)">Bytes/s</span><br><strong>${fmtBytes(d.bytes_in_per_sec || 0)}/s</strong></div>
+            <div><span style="color:var(--color-text-secondary)">Log Size</span><br><strong>${fmtBytes(d.size_bytes || 0)}</strong></div>
+          </div>
+        </td>`;
+      } catch(e) {
+        detailRow.innerHTML = `<td colspan="${cols}" style="background:var(--color-background-secondary);padding:12px 16px;color:var(--color-text-danger);font-size:12px">Error: ${e.message}</td>`;
+      }
+    };
 
     // ── Tab 4: Brokers ────────────────────────────────────────────────────────
 
