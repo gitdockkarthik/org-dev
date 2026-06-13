@@ -552,11 +552,12 @@ async def lifespan(app: FastAPI):
                                                     t["bytes_in_per_sec"] = tm.get("bytes_in_per_sec", 0.0)
                                                     t["bytes_out_per_sec"] = tm.get("bytes_out_per_sec", 0.0)
                                                     t["size_bytes"] = tm.get("size_bytes", 0)
-                                            if "counts" in data:
-                                                data["counts"]["total_hot"] = sum(
-                                                    1 for t in data.get("topics", [])
-                                                    if (t.get("messages_in_per_sec") or 0) > 1000)
-                                                data["counts"]["top_topics_by_size"] = top_by_size
+                                            if "counts" not in data:
+                                                data["counts"] = {}
+                                            data["counts"]["total_hot"] = sum(
+                                                1 for t in data.get("topics", [])
+                                                if (t.get("messages_in_per_sec") or 0) > 1000)
+                                            data["counts"]["top_topics_by_size"] = top_by_size
                                     _prom_elapsed = round(_t3.time() - _prom_start, 1)
                                     logger.info("Prometheus scan: completed for '%s' in %ss", c["name"], _prom_elapsed)
                                 except Exception as _prom_exc:

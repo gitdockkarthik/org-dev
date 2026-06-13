@@ -100,6 +100,7 @@ async def get_counts(cluster_id: str | None = None) -> dict:
         "total_rf1": counts.get("total_rf1", 0),
         "total_urp": counts.get("total_urp", 0),
         "total_partitions": counts.get("total_partitions", 0),
+        "top_topics_by_size": counts.get("top_topics_by_size", []),
     }
 
 
