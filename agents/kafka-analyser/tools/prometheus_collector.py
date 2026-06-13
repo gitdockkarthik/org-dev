@@ -15,6 +15,7 @@ _CURL_MAX_TIME = 50
 _BROKER_TIMEOUT = 60.0
 
 _broker_state: dict[str, dict] = {}
+_topic_state: dict[str, dict] = {}  # host:port → {topic: {counter: value, time: ts}}
 
 _FILTERED_METRICS = [
     "jvm_memory_bytes_used",
@@ -277,16 +278,37 @@ async def scrape_topic_metrics(host: str, prometheus_port: int,
             if topic:
                 topic_sizes[topic] = topic_sizes.get(topic, 0) + entry["value"]
 
+        now = time.time()
+        state_key = f"{host}:{prometheus_port}:topic_metrics"
+        prev_state = _topic_state.get(state_key, {})
+        prev_time = prev_state.get("__time__", now)
+        elapsed = now - prev_time if now != prev_time else 60.0
+
+        new_state: dict = {"__time__": now}
         for topic in topic_names:
+            msgs_curr = _get_topic(metrics,
+                "kafka_server_brokertopicmetrics_messagesin_by_topic_total", topic)
+            bytes_in_curr = _get_topic(metrics,
+                "kafka_server_brokertopicmetrics_bytesin_by_topic_total", topic)
+            bytes_out_curr = _get_topic(metrics,
+                "kafka_server_brokertopicmetrics_bytesout_by_topic_total", topic)
+
+            msgs_prev = prev_state.get(f"{topic}__msgs", msgs_curr)
+            bytes_in_prev = prev_state.get(f"{topic}__bytes_in", bytes_in_curr)
+            bytes_out_prev = prev_state.get(f"{topic}__bytes_out", bytes_out_curr)
+
+            new_state[f"{topic}__msgs"] = msgs_curr
+            new_state[f"{topic}__bytes_in"] = bytes_in_curr
+            new_state[f"{topic}__bytes_out"] = bytes_out_curr
+
             result[topic] = {
-                "messages_in_per_sec": _get_topic(metrics,
-                    "kafka_server_brokertopicmetrics_messagesin_by_topic_total", topic),
-                "bytes_in_per_sec": _get_topic(metrics,
-                    "kafka_server_brokertopicmetrics_bytesin_by_topic_total", topic),
-                "bytes_out_per_sec": _get_topic(metrics,
-                    "kafka_server_brokertopicmetrics_bytesout_by_topic_total", topic),
+                "messages_in_per_sec": _rate(msgs_curr, msgs_prev, elapsed),
+                "bytes_in_per_sec": _rate(bytes_in_curr, bytes_in_prev, elapsed),
+                "bytes_out_per_sec": _rate(bytes_out_curr, bytes_out_prev, elapsed),
                 "size_bytes": int(topic_sizes.get(topic, 0)),
             }
+
+        _topic_state[state_key] = new_state
     except Exception as exc:
         logger.warning("Topic metrics scrape failed for %s:%s: %s",
                       host, prometheus_port, exc)
@@ -380,16 +402,37 @@ async def scrape_topic_metrics_and_top_by_size(
             if topic:
                 topic_sizes[topic] = topic_sizes.get(topic, 0) + entry["value"]
 
+        now = time.time()
+        state_key = f"{host}:{prometheus_port}:topic_metrics_top"
+        prev_state = _topic_state.get(state_key, {})
+        prev_time = prev_state.get("__time__", now)
+        elapsed = now - prev_time if now != prev_time else 60.0
+
+        new_state: dict = {"__time__": now}
         for topic in topic_names:
+            msgs_curr = _get_topic(metrics,
+                "kafka_server_brokertopicmetrics_messagesin_by_topic_total", topic)
+            bytes_in_curr = _get_topic(metrics,
+                "kafka_server_brokertopicmetrics_bytesin_by_topic_total", topic)
+            bytes_out_curr = _get_topic(metrics,
+                "kafka_server_brokertopicmetrics_bytesout_by_topic_total", topic)
+
+            msgs_prev = prev_state.get(f"{topic}__msgs", msgs_curr)
+            bytes_in_prev = prev_state.get(f"{topic}__bytes_in", bytes_in_curr)
+            bytes_out_prev = prev_state.get(f"{topic}__bytes_out", bytes_out_curr)
+
+            new_state[f"{topic}__msgs"] = msgs_curr
+            new_state[f"{topic}__bytes_in"] = bytes_in_curr
+            new_state[f"{topic}__bytes_out"] = bytes_out_curr
+
             result[topic] = {
-                "messages_in_per_sec": _get_topic(metrics,
-                    "kafka_server_brokertopicmetrics_messagesin_by_topic_total", topic),
-                "bytes_in_per_sec": _get_topic(metrics,
-                    "kafka_server_brokertopicmetrics_bytesin_by_topic_total", topic),
-                "bytes_out_per_sec": _get_topic(metrics,
-                    "kafka_server_brokertopicmetrics_bytesout_by_topic_total", topic),
+                "messages_in_per_sec": _rate(msgs_curr, msgs_prev, elapsed),
+                "bytes_in_per_sec": _rate(bytes_in_curr, bytes_in_prev, elapsed),
+                "bytes_out_per_sec": _rate(bytes_out_curr, bytes_out_prev, elapsed),
                 "size_bytes": int(topic_sizes.get(topic, 0)),
             }
+
+        _topic_state[state_key] = new_state
     except Exception as exc:
         logger.warning("Topic metrics scrape failed for %s:%s: %s",
                       host, prometheus_port, exc)
