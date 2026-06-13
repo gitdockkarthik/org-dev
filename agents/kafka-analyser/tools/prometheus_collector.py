@@ -415,7 +415,7 @@ async def get_top_topics_by_log_size(host: str, prometheus_port: int,
             if not line.startswith("kafka_log_log_size{"):
                 continue
             topic_match = re.search(r'topic="([^"]*)"', line)
-            val_match = re.search(r'\}\s+([\d.eE+\-]+)', line)
+            val_match = re.search(r'[\},]\s*([\d.eE+\-]+)\s*$', line)
             if topic_match and val_match:
                 topic = topic_match.group(1)
                 try:
