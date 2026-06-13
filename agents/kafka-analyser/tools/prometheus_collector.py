@@ -203,7 +203,17 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
         metrics = _parse_prometheus_text(phase1_raw)
 
         # Phase 2: full curl — gets throughput counters not available via filter
-        phase2_raw = await _curl_get(f"http://{host}:{port}/metrics", max_time=_CURL_MAX_TIME)
+        # Skip Phase 2 if broker previously timed out — retry every 3rd failure
+        prev_state = _broker_state.get(state_key, {})
+        prev_throughput = prev_state.get("metrics", {}).get("throughput_available", True)
+        prev_fail_count = prev_state.get("phase2_fail_count", 0)
+        should_retry = (prev_fail_count % 3 == 0)
+        if not prev_throughput and not should_retry:
+            logger.info("Skipping Phase 2 for %s (fail_count=%d, retrying every 3rd)", host, prev_fail_count)
+            phase2_raw = None
+            _broker_state[state_key] = {**prev_state, "phase2_fail_count": prev_fail_count + 1}
+        else:
+            phase2_raw = await _curl_get(f"http://{host}:{port}/metrics", max_time=_CURL_MAX_TIME)
         if phase2_raw:
             kept = []
             for line in phase2_raw.splitlines():
