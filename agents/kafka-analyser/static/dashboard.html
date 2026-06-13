@@ -979,6 +979,21 @@
       `;
 
       const allTopics = data.topics || [];
+      // Merge top_topics_by_size into allTopics for accurate log size display
+      if (window._clusterCounts && window._clusterCounts.top_topics_by_size && window._clusterCounts.top_topics_by_size.length > 0) {
+          const topSizeMap = new Map(window._clusterCounts.top_topics_by_size.map(t => [t.name, t.size_bytes]));
+          // Update size_bytes for existing topics
+          allTopics.forEach(t => {
+              if (topSizeMap.has(t.name)) {
+                  t.size_bytes = topSizeMap.get(t.name);
+                  topSizeMap.delete(t.name);
+              }
+          });
+          // Add missing large topics not in the 500 cap
+          topSizeMap.forEach((size_bytes, name) => {
+              allTopics.push({ name, size_bytes, partition_count: 0, replication_factor: 0, messages_in_per_sec: 0, bytes_in_per_sec: 0, bytes_out_per_sec: 0, status: 'unknown' });
+          });
+      }
       window._topicAllTopics = allTopics;
       const msgRate = t => (t.msgs_per_sec ?? t.messages_in_per_sec ?? 0);
       const logSize = t => (t.log_size_bytes ?? t.size_bytes ?? 0);
