@@ -440,9 +440,7 @@ async def scrape_topic_metrics_and_top_by_size(
     Avoids double fetch that scrape_topic_metrics + get_top_topics_by_log_size would cause."""
     result: dict[str, dict] = {}
     top_by_size: list[dict] = []
-    if not topic_names:
-        return result, top_by_size
-    topic_set = set(topic_names)
+    topic_set = set(topic_names) if topic_names else set()
     try:
         raw = await _curl_get(f"http://{host}:{prometheus_port}/metrics",
                               max_time=_CURL_MAX_TIME)
