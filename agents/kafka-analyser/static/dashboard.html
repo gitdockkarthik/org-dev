@@ -1080,19 +1080,6 @@
       const _topicAnalyseBtn = document.getElementById('topic-analyse-btn');
       if (_topicAnalyseBtn) _topicAnalyseBtn.addEventListener('click', () => { _openAIDrawer(); _runAIDrawer('topics'); });
 
-      // Show spinner on JMX-dependent KPIs until streaming enriches
-      const _realTotal = (window._clusterCounts || {}).total_topics;
-      if (_realTotal) {
-        const _kpis = document.querySelectorAll('#tab-topics .kpi__value');
-        if (_kpis.length >= 4) {
-          _kpis[0].textContent = _realTotal.toLocaleString();
-          // Cards 2-4 show spinner until enrichment completes
-          _kpis[1].classList.add('kpi-loading');
-          _kpis[2].classList.add('kpi-loading');
-          _kpis[3].classList.add('kpi-loading');
-        }
-      }
-
       // ── Self-contained topic table view: pagination + filter group + search (AND) ──
       const TOPIC_PAGE = 20;
       window._topicView = { filter: 'all', userOnly: false, search: '', visible: TOPIC_PAGE };
@@ -1141,7 +1128,7 @@
           const staleLabel = document.getElementById('topic-stale-count-label');
           if (staleLabel) staleLabel.textContent = `Showing ${staleShown.length} of ${staleTopics.length} topics by log size`;
           const staleMore = document.getElementById('topic-stale-show-more');
-          if (staleMore) staleMore.style.display = staleTopics.length > staleVisible ? '' : 'none';
+          if (staleMore) staleMore.style.display = staleTopics.length > staleVisible ? 'block' : 'none';
         }
         window._topicStaleShowMore = () => { st.staleVisible = (st.staleVisible || 20) + 20; window._applyTopicView(); };
       };
@@ -1377,7 +1364,8 @@
         if (window._topicTimeSeriesChart) { window._topicTimeSeriesChart.destroy(); window._topicTimeSeriesChart = null; }
         await window._renderTopicTimeSeries();
       }, 0);
-      window._renderTabAI('topics', document.getElementById('tab-topics'));
+      // Topics tab has its own Analyse button — skip _renderTabAI to avoid duplicate
+      // window._renderTabAI('topics', document.getElementById('tab-topics'));
     }
 
     window._expandTopicRow = async function(row, topicName) {
@@ -2927,7 +2915,8 @@
 
       // Mark KPIs as loading
       const kpiEl = document.getElementById('tab-topics');
-      if (kpiEl) kpiEl.querySelectorAll('.kpi__value').forEach(k => k.classList.add('kpi-loading'));
+      // KPI spinner disabled on Topics tab — values render directly from template
+      // if (kpiEl) kpiEl.querySelectorAll('.kpi__value').forEach(k => k.classList.add('kpi-loading'));
 
       try {
         const resp = await fetch(_base() + '/dashboard/topics/stream?cluster_id=' + cid, {
