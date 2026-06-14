@@ -116,8 +116,19 @@ async def get_counts(cluster_id: str | None = None) -> dict:
         metrics_str = _json.loads(metrics_raw) if metrics_raw else {}
         metrics = _json.loads(metrics_str) if isinstance(metrics_str, str) else metrics_str
 
-        brokers_raw = all_cfg.get(f"kafka_brokers_{cluster_id}")
-        brokers = _json.loads(brokers_raw) if brokers_raw else []
+        # Read broker count from kafka_metrics_history (same source as get_brokers)
+        brokers = []
+        if SessionLocal:
+            async with SessionLocal() as _sess2:
+                _br = await _sess2.execute(
+                    _text("""SELECT data_json FROM kafka_metrics_history
+                             WHERE cluster_id = :cid AND scan_type = 'brokers'
+                             ORDER BY collected_at DESC LIMIT 1"""),
+                    {"cid": cluster_id}
+                )
+                _br_row = _br.fetchone()
+                if _br_row:
+                    brokers = _json.loads(_br_row.data_json) or []
 
         return {
             "total_topics": structure.get("total_topics", 0),
@@ -199,11 +210,31 @@ async def get_topics(cluster_id: str | None = None, hours: int | None = None) ->
 
 @router.get("/dashboard/brokers")
 async def get_brokers(cluster_id: str | None = None, hours: int | None = None) -> dict:
-    """Per-broker CPU, heap, GC, and URP metrics."""
-    data = kafka_store.get_cluster_data(cluster_id, hours=hours)
-    if data is None:
+    """Per-broker CPU, heap, GC, and URP metrics — reads from DB directly."""
+    if not cluster_id:
         return {"empty": True}
-    return {"brokers": data["brokers"]}
+    try:
+        from database import SessionLocal
+        from sqlalchemy import text as _text
+        import json as _json
+        if SessionLocal is None:
+            return {"empty": True}
+        async with SessionLocal() as _sess:
+            _row = await _sess.execute(
+                _text("""SELECT data_json FROM kafka_metrics_history
+                         WHERE cluster_id = :cid AND scan_type = 'brokers'
+                         ORDER BY collected_at DESC LIMIT 1"""),
+                {"cid": cluster_id}
+            )
+            _r = _row.fetchone()
+        if not _r:
+            return {"empty": True}
+        brokers = _json.loads(_r.data_json)
+        if not brokers:
+            return {"empty": True}
+        return {"brokers": brokers}
+    except Exception as _e:
+        return {"empty": True, "error": str(_e)}
 
 
 @router.get("/dashboard/connectors")
