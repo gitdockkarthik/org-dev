@@ -1042,7 +1042,7 @@
               <div style="position:relative">
                 <input id="topic-compare-input" type="text" placeholder="🔍 Compare topics..." autocomplete="off"
                   style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--navy-1);color:var(--text);font-size:.82rem;width:200px"
-                  oninput="window._topicCompareSearch(this.value)"
+                  oninput="window._topicCompareSearchDebounced(this.value)"
                   onfocus="window._topicCompareSearch(this.value)">
                 <div id="topic-compare-dropdown" style="display:none;position:fixed;width:280px;background:var(--navy-1);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.3);z-index:1001;max-height:200px;overflow-y:auto"></div>
               </div>
@@ -1121,7 +1121,7 @@
               <td><code style="font-size:.8rem">${t.name}</code></td>
               <td style="text-align:right">${fmtBytes(t.size_bytes || 0)}</td>
               <td>${topicStatusBadge(t)}</td>
-            </tr>`).join('') || '<tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:16px">No stale topics</td></tr>';
+            </tr>`).join('') || '<tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:16px">No topics match your search</td></tr>';
           const staleLabel = document.getElementById('topic-stale-count-label');
           if (staleLabel) staleLabel.textContent = `Showing ${staleShown.length} of ${staleTopics.length} topics by log size`;
           const staleMore = document.getElementById('topic-stale-show-more');
@@ -1133,6 +1133,11 @@
       // ── Topic Compare UI ──────────────────────────────────────────────────
       window._topicCompareSelected = [];
 
+      let _compareSearchTimer = null;
+      window._topicCompareSearchDebounced = function(val) {
+        clearTimeout(_compareSearchTimer);
+        _compareSearchTimer = setTimeout(() => window._topicCompareSearch(val), 300);
+      };
       window._topicCompareSearch = async function(val) {
         const dropdown = document.getElementById('topic-compare-dropdown');
         if (!val || val.length < 2) { dropdown.style.display = 'none'; return; }
