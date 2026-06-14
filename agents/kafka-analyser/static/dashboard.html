@@ -964,15 +964,8 @@
           <span class="dash-label">Show:</span>
           <span class="filter-chip active" onclick="window._setTopicShow(false,this)">All</span>
           <span class="filter-chip" onclick="window._setTopicShow(true,this)">User Topics</span>
-          <input class="filter-input" id="topic-search" placeholder="Search topic…" oninput="_serverTopicSearch(this.value)" />
-        </div>
-        <div class="filter-bar">
-          <span class="dash-label">Filter:</span>
-          <span class="filter-chip active" onclick="window._setTopicFilter('all',this)">All</span>
-          <span class="filter-chip" onclick="window._setTopicFilter('anomalous',this)">Anomalous Only</span>
-          <span class="filter-chip" onclick="window._setTopicFilter('high',this)">High Traffic</span>
-          <span class="filter-chip" onclick="window._setTopicFilter('stale',this)">Stale</span>
           <span class="filter-chip" onclick="window._setTopicFilter('underrep',this)">Low Replication</span>
+          <input class="filter-input" id="topic-search" placeholder="Search topic name…" oninput="window._topicSearch(this.value)" style="margin-left:8px" />
         </div>
       `;
 
@@ -1063,8 +1056,8 @@
         </div>`;
 
       document.getElementById('tab-topics').innerHTML = '<div style="display:flex;justify-content:flex-end;margin-bottom:6px"><button id="topic-analyse-btn" style="background:var(--navy-1);color:var(--accent);border:1px solid var(--accent);border-radius:20px;padding:8px 16px;font-size:.82rem;font-weight:600;cursor:pointer">🤖 Analyse</button></div>' + topicKpis + topicBarCharts + topicFilters + `
-        <div class="chart-card__title" style="margin-bottom:8px">Top 20 Topics by Log Size</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">Sorted by storage consumed · click row to see details</div>
+        <div class="chart-card__title" style="margin-bottom:8px">Topics by Log Size</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">Sorted by storage consumed · click row to see details · showing top 20 per page</div>
         <div class="data-table-wrap">
           <table class="data-table">
             <thead><tr><th>Topic</th><th style="text-align:right">Log Size</th><th>Status</th></tr></thead>
@@ -1106,7 +1099,6 @@
         const topBySize = (window._clusterCounts && window._clusterCounts.top_topics_by_size) || [];
         const staleTopics = [...topBySize]
           .sort((a, b) => (b.size_bytes || 0) - (a.size_bytes || 0))
-          .slice(0, 20)
           .map(t => ({
             ...t,
             status: (t.size_bytes || 0) > 50 * 1024 * 1024 * 1024 ? 'retention-critical' :
