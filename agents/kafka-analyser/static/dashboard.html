@@ -1488,7 +1488,20 @@
               <span class="sev sev--${b.heap_pct === 0 && b.messages_in_per_sec === 0 && b.produce_latency_ms === 0 ? 'warning' : b.status === 'healthy' ? 'healthy' : b.status === 'warning' ? 'warning' : 'critical'}">${b.heap_pct === 0 && b.messages_in_per_sec === 0 && b.produce_latency_ms === 0 ? '⚠ METRICS UNAVAILABLE' : b.status.toUpperCase()}</span>
             </div>
             ${metricRow('Heap', b.heap_pct)}
-            ${metricRow('CPU', b.cpu_cores_configured ? b.cpu_pct + '%' : b.cpu_pct + ' cores')}
+            ${(() => {
+              const cpuDisplay = b.cpu_cores_configured ? b.cpu_pct + '%' : b.cpu_pct + ' cores';
+              const cpuFill = b.cpu_cores_configured ? Math.min(100, b.cpu_pct) : Math.min(100, b.cpu_pct * 25);
+              const cpuColor = metricColor(b.cpu_cores_configured ? b.cpu_pct : cpuFill);
+              return `<div style="margin-bottom:10px">
+                <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                  <span style="font-size:.73rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em">CPU</span>
+                  <span style="font-size:.85rem;font-weight:700;color:${cpuColor}">${cpuDisplay}</span>
+                </div>
+                <div class="progress-bar">
+                  <div class="progress-bar__fill" style="width:${cpuFill}%;background:${cpuColor}"></div>
+                </div>
+              </div>`;
+            })()}
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px">
               <div class="bm">
                 <div class="bm__label">GC Pauses</div>
