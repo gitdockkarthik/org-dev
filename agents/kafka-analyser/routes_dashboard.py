@@ -956,87 +956,144 @@ async def stream_tab_insights(
     from fastapi.responses import StreamingResponse
     import anthropic as _anthropic
 
-    data = kafka_store.get_cluster_data(cluster_id) if cluster_id else (
-        kafka_store.get_cluster_data(kafka_store.get_all_cluster_ids()[0])
-        if kafka_store.get_all_cluster_ids() else None
-    )
-    if not data:
-        async def empty():
-            yield 'data: No cluster data available. Run a sync first.\n\n'
-            yield 'data: [DONE]\n\n'
-        return StreamingResponse(empty(),
-            media_type="text/event-stream")
-
     api_key = request.headers.get("x-anthropic-key", "") or \
               os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key:
         async def nokey():
             yield 'data: Anthropic API key not configured.\n\n'
             yield 'data: [DONE]\n\n'
-        return StreamingResponse(nokey(),
-            media_type="text/event-stream")
+        return StreamingResponse(nokey(), media_type="text/event-stream")
 
-    concise = "Keep it concise, 200-400 words. No tables. Short paragraphs."
+    # Keep cache data for tabs not yet migrated to DB (connect/zk/schema/mirror)
+    data = kafka_store.get_cluster_data(cluster_id) if cluster_id else (
+        kafka_store.get_cluster_data(kafka_store.get_all_cluster_ids()[0])
+        if kafka_store.get_all_cluster_ids() else None
+    )
+    data = data or {}
+
+    # Read all data from DB directly
+    import json as _json2
+    from database import SessionLocal as _SL2
+    from sqlalchemy import text as _text2
+    from storage import get_backend as _gb2
+
+    try:
+        _all_cfg2 = await _gb2().get_all()
+        _brokers2, _groups2, _struct2 = [], [], {}
+        if _SL2:
+            async with _SL2() as _s2:
+                _r = await _s2.execute(_text2(
+                    "SELECT data_json FROM kafka_metrics_history WHERE cluster_id=:cid AND scan_type='brokers' ORDER BY collected_at DESC LIMIT 1"
+                ), {"cid": cluster_id})
+                _rr = _r.fetchone()
+                if _rr: _brokers2 = _json2.loads(_rr.data_json)
+
+                _r = await _s2.execute(_text2(
+                    "SELECT data_json FROM kafka_metrics_history WHERE cluster_id=:cid AND scan_type='groups' ORDER BY collected_at DESC LIMIT 1"
+                ), {"cid": cluster_id})
+                _rr = _r.fetchone()
+                if _rr: _groups2 = _json2.loads(_rr.data_json)
+
+                _r = await _s2.execute(_text2(
+                    "SELECT data_json FROM kafka_metrics_history WHERE cluster_id=:cid AND scan_type='topics_structure' ORDER BY collected_at DESC LIMIT 1"
+                ), {"cid": cluster_id})
+                _rr = _r.fetchone()
+                if _rr:
+                    _d = _json2.loads(_rr.data_json)
+                    _struct2 = _d.get("counts", {})
+
+        _metrics2_raw = _all_cfg2.get(f"kafka_counts_metrics_{cluster_id}")
+        _metrics2_str = _json2.loads(_metrics2_raw) if _metrics2_raw else {}
+        _metrics2 = _json2.loads(_metrics2_str) if isinstance(_metrics2_str, str) else _metrics2_str
+
+        # Phase2 status per broker
+        _b_phase2 = {}
+        for _b in _brokers2:
+            _h = _b.get("host", "")
+            _p = _all_cfg2.get(f"phase2_{_h}:7071")
+            if _p:
+                try: _b_phase2[_h] = _json2.loads(_p)
+                except: pass
+
+    except Exception:
+        _brokers2, _groups2, _struct2, _metrics2, _b_phase2 = [], [], {}, {}, {}
+
+    concise = "Keep it concise, 200-400 words. Be self-explanatory — assume the reader has no Kafka expertise. Focus on business impact and actionable recommendations."
 
     if tab == "brokers":
-        brokers = data.get("brokers", [])
-        broker_details = [{"id": b.get("id"), "heap": b.get("heap_pct"),
-            "cpu": b.get("cpu_pct"), "urp": b.get("urp_count"),
-            "gc_pause_ms": b.get("gc_pause_ms"),
+        _active = [b for b in _brokers2 if b.get("heap_pct", 0) > 0]
+        _degraded = [b for b in _brokers2 if b.get("heap_pct", 0) == 0 and b.get("cpu_pct", 0) == 0]
+        broker_details = [{"id": b.get("broker_id", b.get("id")), "host": b.get("host",""),
+            "heap_pct": b.get("heap_pct"), "cpu_pct": b.get("cpu_pct"),
             "produce_latency_ms": b.get("produce_latency_ms"),
             "fetch_latency_ms": b.get("fetch_latency_ms"),
-            "bytes_in": b.get("bytes_in_per_sec"),
-            "bytes_out": b.get("bytes_out_per_sec"),
-            "isr_shrinks": b.get("isr_shrinks_per_sec"),
-            "req_idle": b.get("request_handler_idle_pct")} for b in brokers]
-        prompt = f"""You are a Kafka broker health specialist. Analyse these broker metrics and provide:
-## Health Assessment — overall broker health, any at risk
-## Key Concerns — CPU/heap pressure, GC issues, latency anomalies, ISR instability
-## Recommendations — prioritised actions for broker health
+            "urp": b.get("urp_count"),
+            "status": "DEGRADED" if b.get("heap_pct",0)==0 and b.get("cpu_pct",0)==0 else "healthy",
+            "phase2_fails": _b_phase2.get(b.get("host",""), {}).get("phase2_fail_count", 0)
+        } for b in _brokers2]
+        prompt = f"""You are a Kafka broker health specialist. Explain findings in plain language — assume the reader is not a Kafka expert. Analyse these broker metrics and provide:
+## Health Assessment
+Overall broker health. Which brokers are healthy, which are degraded and why. Explain what "degraded" means for the cluster.
+## Key Concerns
+CPU/heap pressure, fetch latency (explain what 500ms+ fetch latency means for consumers), ISR stability.
+## Risk Assessment
+If the degraded broker stays down, what happens? What is the single point of failure risk?
+## Recommendations
+Prioritised actions — what to fix first and why.
 {concise}
 
-BROKER DATA ({len(brokers)} brokers):
+BROKER DATA ({len(_brokers2)} brokers, {len(_degraded)} degraded):
 {broker_details}
 """
 
     elif tab == "topics":
-        topics = data.get("topics", [])
-        total_partitions = sum(t.get("partition_count", 0) for t in topics)
-        sorted_by_msgs = sorted(topics, key=lambda t: t.get("messages_in_per_sec", 0), reverse=True)[:10]
-        top_topics = [{"name": t.get("name"), "msgs_sec": t.get("messages_in_per_sec", 0),
-                       "size_bytes": t.get("size_bytes", 0), "partitions": t.get("partition_count", 0),
-                       "rf": t.get("replication_factor", 0)} for t in sorted_by_msgs]
-        stale_topics = [t.get("name") for t in topics if t.get("messages_in_per_sec", 0) == 0 and t.get("size_bytes", 0) > 1000]
-        low_rep_count = len([t for t in topics if t.get("replication_factor", 0) == 1])
-        prompt = f"""You are a Kafka topic intelligence specialist. Analyse these topics and provide:
-## Topic Health Overview — traffic patterns, stale topics, partition balance
-## Risk Areas — under-replicated, orphaned, anomalous growth
-## Recommendations — cleanup candidates, replication fixes, partition rebalancing
+        _top_size = _metrics2.get("top_topics_by_size", [])
+        _top_msg = _metrics2.get("top_topics_by_msg_rate", [])
+        total_rf1 = _struct2.get("total_rf1", 0)
+        total_topics = _struct2.get("total_topics", 0)
+        total_partitions = _struct2.get("total_partitions", 0)
+        low_rep_count = total_rf1
+        top_by_size = [{"name": t["name"], "size_gb": round(t.get("size_bytes",0)/1024**3,1)} for t in _top_size[:10]]
+        top_by_msg = [{"name": t["name"], "msgs_per_sec": t.get("messages_in_per_sec",0)} for t in _top_msg[:10]]
+        prompt = f"""You are a Kafka topic intelligence specialist. Explain findings in plain language for a non-expert audience. Analyse these topics and provide:
+## Storage Risk Assessment
+Largest topics by disk usage. Explain what happens when topics grow unbounded — disk pressure, broker instability.
+## Traffic Analysis
+Active vs idle topics. Large topics with zero traffic — are they orphaned? What should be done?
+## Data Loss Risk
+{low_rep_count} topics have RF=1 (only 1 copy). Explain what this means — if one broker fails, this data is permanently lost.
+## Recommendations
+Prioritised actions with clear business justification.
 {concise}
 
-TOPIC DATA ({len(topics)} total, {total_partitions} partitions):
-- Top 10 by traffic: {top_topics}
-- Stale topics (data but no traffic): {stale_topics[:20]}
-- Low replication (RF=1): {low_rep_count} topics
+TOPIC DATA (Total: {total_topics:,}, Partitions: {total_partitions:,}, RF=1 risk: {low_rep_count:,}):
+- Top topics by storage: {top_by_size}
+- Active topics by message rate: {top_by_msg}
 """
 
     elif tab == "consumer-groups":
-        groups = data.get("consumer_groups", [])
-        critical_groups = [{"name": g.get("group_id") or g.get("name"), "lag": g.get("total_lag", 0),
-                            "trend": g.get("lag_trend")} for g in groups if g.get("total_lag", 0) > 10000]
-        warning_groups = [{"name": g.get("group_id") or g.get("name"), "lag": g.get("total_lag", 0)}
-                          for g in groups if 1000 < g.get("total_lag", 0) <= 10000]
+        groups = _groups2
+        critical_groups = [{"name": g.get("group_id"), "lag": g.get("total_lag", 0),
+                            "trend": g.get("lag_trend"), "state": g.get("state")}
+                           for g in groups if g.get("total_lag", 0) > 10000][:10]
+        warning_groups = [{"name": g.get("group_id"), "lag": g.get("total_lag", 0)}
+                          for g in groups if 1000 < g.get("total_lag", 0) <= 10000][:5]
         healthy_groups = len([g for g in groups if g.get("total_lag", 0) <= 1000])
-        prompt = f"""You are a Kafka consumer lag analyst. Analyse these consumer groups and provide:
-## Lag Assessment — which groups are critical, trend direction
-## Business Impact — what does this lag mean for data freshness and processing
-## Recommendations — how to reduce lag, which groups to prioritise
+        prompt = f"""You are a Kafka consumer lag analyst. Explain in plain language for non-experts. Analyse these consumer groups and provide:
+## Lag Situation
+What is consumer lag and why does it matter? Which groups are critically behind?
+## Business Impact
+What does millions of messages of lag mean for the business? Which downstream systems are affected? What data freshness issues exist?
+## Trend Analysis
+Is lag growing (producers faster than consumers = worsening), stable, or declining (recovering)?
+## Recommendations
+Which groups to fix first, how to investigate dead consumer groups, and what happens if ignored.
 {concise}
 
 CONSUMER GROUP DATA ({len(groups)} total):
-- Critical (lag >10k): {critical_groups}
-- Warning (lag 1k-10k): {warning_groups}
-- Healthy (lag <1k): {healthy_groups} groups
+- Critical lag (>10k msgs): {len(critical_groups)} groups — {critical_groups[:5]}
+- Warning lag (1k-10k): {len(warning_groups)} groups — {warning_groups[:3]}
+- Healthy (<1k): {healthy_groups} groups
 """
 
     elif tab == "kafka-connect":
