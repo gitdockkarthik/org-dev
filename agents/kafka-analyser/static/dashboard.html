@@ -158,11 +158,11 @@
       <div class="dash-divider"></div>
       <span class="dash-label">Time</span>
       <select class="dash-select" id="ctrl-time">
-        <option value="5m">Last 5 mins</option>
         <option value="1h">Last 1 hour</option>
         <option value="6h">Last 6 hours</option>
         <option value="24h" selected>Last 24 hours</option>
         <option value="7d">Last 7 days</option>
+        <option value="30d">Last 30 days</option>
       </select>
       <div class="dash-divider"></div>
       <span class="dash-label">Refresh</span>
@@ -222,11 +222,11 @@
 
     function _getMinutes() {
       const v = document.getElementById('ctrl-time').value;
-      if (v === '5m') return 5;
       if (v === '1h') return 60;
       if (v === '6h') return 360;
       if (v === '24h') return 1440;
       if (v === '7d') return 10080;
+      if (v === '30d') return 43200;
       return 1440;
     }
     function _getHours() { return _getMinutes() / 60; }
@@ -1044,6 +1044,24 @@
             <div class="chart-card__title">Top 10 Topics by Log Size</div>
             <div class="chart-wrap" style="height:260px"><canvas id="topic-size-chart"></canvas></div>
           </div>
+        </div>
+        <div class="chart-card" style="margin-bottom:22px">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+            <div class="chart-card__title" style="margin-bottom:0">Message Rate Trends</div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <div style="position:relative">
+                <input id="topic-compare-input" type="text" placeholder="🔍 Compare topics..." autocomplete="off"
+                  style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--navy-1);color:var(--text);font-size:.82rem;width:200px"
+                  oninput="window._topicCompareSearch(this.value)"
+                  onfocus="window._topicCompareSearch(this.value)">
+                <div id="topic-compare-dropdown" style="display:none;position:absolute;top:100%;left:0;width:280px;background:var(--navy-1);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.3);z-index:100;max-height:200px;overflow-y:auto"></div>
+              </div>
+              <button onclick="window._clearTopicCompare()" style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--navy-1);color:var(--text-muted);font-size:.82rem;cursor:pointer">Clear</button>
+            </div>
+          </div>
+          <div id="topic-compare-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;min-height:0"></div>
+          <div class="chart-wrap" style="height:260px"><canvas id="topicChart"></canvas></div>
+          <div id="topic-chart-empty" style="display:none;text-align:center;padding:20px;color:var(--text-muted);font-size:.85rem"></div>
         </div>`;
 
       document.getElementById('tab-topics').innerHTML = '<div style="display:flex;justify-content:flex-end;margin-bottom:6px"><button id="topic-analyse-btn" style="background:var(--navy-1);color:var(--accent);border:1px solid var(--accent);border-radius:20px;padding:8px 16px;font-size:.82rem;font-weight:600;cursor:pointer">🤖 Analyse</button></div>' + '<div style="text-align:center;padding:8px 0;"><span id="topic-loading-badge" style="display:none;align-items:center;gap:8px;padding:8px 20px;background:linear-gradient(135deg,#ff6b35,#f7931e);color:#fff;border-radius:20px;font-size:14px;font-weight:600;box-shadow:0 2px 8px rgba(255,107,53,0.3);animation:pulse-badge 1.5s ease-in-out infinite;">⟳ Loading topics...</span></div>' + topicKpis + topicBarCharts + topicFilters + `
@@ -1130,6 +1148,156 @@
         window._topicStaleShowMore = () => { st.staleVisible = (st.staleVisible || 20) + 20; window._applyTopicView(); };
       };
 
+      // ── Topic Compare UI ──────────────────────────────────────────────────
+      window._topicCompareSelected = [];
+
+      window._topicCompareSearch = async function(val) {
+        const dropdown = document.getElementById('topic-compare-dropdown');
+        if (!val || val.length < 2) { dropdown.style.display = 'none'; return; }
+        try {
+          const clusterId = window._currentClusterId || document.getElementById('ctrl-cluster')?.value;
+          const res = await fetch(`${PROXY}/dashboard/topics/name-search?cluster_id=${clusterId}&q=${encodeURIComponent(val)}`,
+            { headers: _authHeaders(), cache: 'no-store' });
+          const data = await res.json();
+          const results = data.results || [];
+          if (!results.length) { dropdown.style.display = 'none'; return; }
+          dropdown.innerHTML = results.map(r =>
+            `<div onclick="window._topicCompareAdd('${r.name.replace(/'/g, "\\'")}')"
+              style="padding:8px 12px;cursor:pointer;font-size:.82rem;border-bottom:1px solid var(--border)"
+              onmouseover="this.style.background='var(--navy-2)'" onmouseout="this.style.background=''">${r.name}</div>`
+          ).join('');
+          dropdown.style.display = 'block';
+        } catch(e) { dropdown.style.display = 'none'; }
+      };
+
+      window._topicCompareAdd = function(name) {
+        const dropdown = document.getElementById('topic-compare-dropdown');
+        dropdown.style.display = 'none';
+        document.getElementById('topic-compare-input').value = '';
+        if (window._topicCompareSelected.includes(name)) return;
+        if (window._topicCompareSelected.length >= 5) {
+          alert('Maximum 5 topics for comparison');
+          return;
+        }
+        window._topicCompareSelected.push(name);
+        window._renderTopicChips();
+        window._renderTopicTimeSeries();
+      };
+
+      window._topicCompareRemove = function(name) {
+        window._topicCompareSelected = window._topicCompareSelected.filter(t => t !== name);
+        window._renderTopicChips();
+        window._renderTopicTimeSeries();
+      };
+
+      window._clearTopicCompare = function() {
+        window._topicCompareSelected = [];
+        document.getElementById('topic-compare-input').value = '';
+        document.getElementById('topic-compare-dropdown').style.display = 'none';
+        window._renderTopicChips();
+        window._renderTopicTimeSeries();
+      };
+
+      window._renderTopicChips = function() {
+        const container = document.getElementById('topic-compare-chips');
+        if (!container) return;
+        container.innerHTML = window._topicCompareSelected.map(name =>
+          `<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:var(--accent);color:#fff;border-radius:12px;font-size:.78rem">
+            ${name}
+            <span onclick="window._topicCompareRemove('${name.replace(/'/g, "\\'")}')" style="cursor:pointer;font-size:1rem;line-height:1">×</span>
+          </span>`
+        ).join('');
+      };
+
+      window._renderTopicTimeSeries = async function() {
+        const canvas = document.getElementById('topicChart');
+        const emptyEl = document.getElementById('topic-chart-empty');
+        if (!canvas) return;
+        if (window._topicTimeSeriesChart) { window._topicTimeSeriesChart.destroy(); window._topicTimeSeriesChart = null; }
+        try {
+          const clusterId = window._currentClusterId || document.getElementById('ctrl-cluster')?.value;
+          const qs = new URLSearchParams();
+          qs.set('minutes', String(_getMinutes()));
+          if (clusterId) qs.set('cluster_id', clusterId);
+          if (window._topicCompareSelected.length > 0) {
+            qs.set('topics', window._topicCompareSelected.join(','));
+          }
+          const hist = await fetch(`${PROXY}/dashboard/topics/history?${qs.toString()}`,
+            { headers: _authHeaders(), cache: 'no-store' }).then(r => r.json());
+
+          if (!hist.series || !hist.series.length || !hist.labels || !hist.labels.length) {
+            canvas.style.display = 'none';
+            if (emptyEl) {
+              emptyEl.style.display = 'block';
+              emptyEl.textContent = window._topicCompareSelected.length > 0
+                ? 'No message activity recorded for selected topics in this window. Topics may be inactive or deleted.'
+                : 'No message rate data available for this time window yet. Data accumulates over collection cycles.';
+            }
+            return;
+          }
+          canvas.style.display = 'block';
+          if (emptyEl) emptyEl.style.display = 'none';
+
+          const timeVal = document.getElementById('ctrl-time')?.value || '24h';
+          let _lastLabel = '';
+          const labels = hist.labels.map(l => {
+            const d = new Date(l);
+            if (timeVal === '7d' || timeVal === '30d') {
+              return d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
+            }
+            if (timeVal === '24h') {
+              const day = d.toLocaleDateString([], { weekday: 'short' });
+              const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              if (day !== _lastLabel) { _lastLabel = day; return day + ' ' + t; }
+              return t;
+            }
+            return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          });
+
+          const colors = ['#FF6B35','#4FC3F7','#81C784','#FFD54F','#CE93D8','#F48FB1','#80DEEA','#FFCC02','#A5D6A7','#EF9A9A'];
+          window._topicTimeSeriesChart = new Chart(canvas.getContext('2d'), {
+            type: 'line',
+            data: {
+              labels,
+              datasets: hist.series.map((s, i) => ({
+                label: s.name || ('Topic ' + (i + 1)),
+                data: s.values || [],
+                borderColor: colors[i % colors.length],
+                backgroundColor: 'transparent',
+                borderWidth: 2,
+                pointRadius: labels.length <= 24 ? 3 : 0,
+                tension: 0.3,
+              })),
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: { display: true, position: 'bottom', labels: { font: { size: 10 }, boxWidth: 12, padding: 8 } },
+                title: { display: false },
+              },
+              scales: {
+                x: { ticks: { maxTicksLimit: 12, font: { size: 10 }, maxRotation: 45 } },
+                y: { ticks: { callback: v => fmtRate(v), font: { size: 10 } }, beginAtZero: true },
+              },
+            },
+          });
+        } catch(e) {
+          console.warn('Topic time-series chart failed:', e);
+          canvas.style.display = 'none';
+          if (emptyEl) { emptyEl.style.display = 'block'; emptyEl.textContent = 'Chart failed to load.'; }
+        }
+      };
+
+      // Close dropdown when clicking outside
+      document.addEventListener('click', function(e) {
+        const input = document.getElementById('topic-compare-input');
+        const dropdown = document.getElementById('topic-compare-dropdown');
+        if (dropdown && input && !input.contains(e.target) && !dropdown.contains(e.target)) {
+          dropdown.style.display = 'none';
+        }
+      }, { capture: true });
+
       const setActiveChip = (el) => {
         el.parentElement.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
         el.classList.add('active');
@@ -1159,7 +1327,7 @@
 
       window._applyTopicView();
 
-      setTimeout(() => {
+      setTimeout(async () => {
         if (window._topicMsgsChart) { window._topicMsgsChart.destroy(); window._topicMsgsChart = null; }
         const msgsCtx = document.getElementById('topic-msgs-chart')?.getContext('2d');
         if (msgsCtx) {
@@ -1206,6 +1374,10 @@
             },
           });
         }
+
+        // Time-series chart — Message Rate Trends
+        if (window._topicTimeSeriesChart) { window._topicTimeSeriesChart.destroy(); window._topicTimeSeriesChart = null; }
+        await window._renderTopicTimeSeries();
       }, 0);
       window._renderTabAI('topics', document.getElementById('tab-topics'));
     }
