@@ -1044,7 +1044,7 @@
                   style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--navy-1);color:var(--text);font-size:.82rem;width:200px"
                   oninput="window._topicCompareSearch(this.value)"
                   onfocus="window._topicCompareSearch(this.value)">
-                <div id="topic-compare-dropdown" style="display:none;position:absolute;top:100%;left:0;width:280px;background:var(--navy-1);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.3);z-index:100;max-height:200px;overflow-y:auto"></div>
+                <div id="topic-compare-dropdown" style="display:none;position:fixed;width:280px;background:var(--navy-1);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.3);z-index:1001;max-height:200px;overflow-y:auto"></div>
               </div>
               <button onclick="window._clearTopicCompare()" style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--navy-1);color:var(--text-muted);font-size:.82rem;cursor:pointer">Clear</button>
             </div>
@@ -1145,6 +1145,12 @@
           const data = await res.json();
           const results = data.results || [];
           if (!results.length) { dropdown.style.display = 'none'; return; }
+          const inputEl = document.getElementById('topic-compare-input');
+          if (inputEl) {
+            const rect = inputEl.getBoundingClientRect();
+            dropdown.style.top = rect.bottom + 'px';
+            dropdown.style.left = rect.left + 'px';
+          }
           dropdown.innerHTML = results.map(r =>
             `<div onclick="window._topicCompareAdd('${r.name.replace(/'/g, "\\'")}')"
               style="padding:8px 12px;cursor:pointer;font-size:.82rem;border-bottom:1px solid var(--border)"
