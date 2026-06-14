@@ -278,30 +278,8 @@ async def _collection_loop() -> None:
                                         first_broker
                                     )
                                     if available_broker:
-                                        # Pass top_by_size names to get their msgs/sec; add described topics for rate tracking
-                                        existing_top = data.get("counts", {}).get("top_topics_by_size", [])
-                                        top_size_names = [t["name"] for t in existing_top] if existing_top else []
-                                        described_names = [t["name"] for t in data.get("topics", [])[:50]]
-                                        top_topics = list(dict.fromkeys(top_size_names + described_names))
                                         topic_metrics, top_by_size, top_by_msg_rate = await scrape_topic_metrics_and_top_by_size(
-                                            available_broker, _prom_port, top_topics, top_n=20)
-                                        for t in data.get("topics", []):
-                                            if t["name"] in topic_metrics:
-                                                tm = topic_metrics[t["name"]]
-                                                t["messages_in_per_sec"] = tm.get("messages_in_per_sec", 0.0)
-                                                t["bytes_in_per_sec"] = tm.get("bytes_in_per_sec", 0.0)
-                                                t["bytes_out_per_sec"] = tm.get("bytes_out_per_sec", 0.0)
-                                                t["size_bytes"] = tm.get("size_bytes", 0)
-                                        # Scrape msgs/sec for top_by_msg_rate topics specifically
-                                        if top_by_msg_rate:
-                                            msg_rate_names = [t["name"] for t in top_by_msg_rate]
-                                            rate_metrics, _, _ = await scrape_topic_metrics_and_top_by_size(
-                                                available_broker, _prom_port, msg_rate_names, top_n=0)
-                                            for t in top_by_msg_rate:
-                                                if t["name"] in rate_metrics:
-                                                    t["messages_in_per_sec"] = rate_metrics[t["name"]].get("messages_in_per_sec", 0.0)
-                                                    t["bytes_in_per_sec"] = rate_metrics[t["name"]].get("bytes_in_per_sec", 0.0)
-                                                    t["size_bytes"] = rate_metrics[t["name"]].get("size_bytes", t.get("size_bytes", 0))
+                                            available_broker, _prom_port, [], top_n=20)
                                         if "counts" not in data:
                                             data["counts"] = {}
                                         data["counts"]["top_topics_by_size"] = top_by_size
@@ -369,19 +347,27 @@ async def _collection_loop() -> None:
                     await save_topics_metrics(cid)
                     await save_groups(cid)
 
-                    # Save topic metrics history
+                    # Save topic msg/sec to hourly aggregation table + upsert topic names
                     from datetime import datetime, timezone
                     from storage import get_backend
                     topics = data.get("topics", [])
                     if topics and c.get("id"):
                         try:
-                            await get_backend().save_topic_metrics(
+                            now_utc = datetime.now(timezone.utc)
+                            await get_backend().upsert_topic_metrics_hourly(
                                 cluster_id=int(c["id"]),
                                 topics=topics,
-                                collected_at=datetime.now(timezone.utc),
+                                collected_at=now_utc,
+                            )
+                            await get_backend().upsert_topic_names(
+                                cluster_id=int(c["id"]),
+                                topics=topics,
+                            )
+                            await get_backend().cleanup_topic_metrics_hourly(
+                                cluster_id=int(c["id"]),
                             )
                         except Exception as _te:
-                            logger.warning("save_topic_metrics failed for '%s': %s", c["name"], _te)
+                            logger.warning("upsert_topic_metrics_hourly failed for '%s': %s", c["name"], _te)
 
                     logger.info("Collection loop: completed full enrichment for '%s'", c["name"])
                     # Update last_synced timestamp
@@ -560,29 +546,8 @@ async def lifespan(app: FastAPI):
                                             first_broker
                                         )
                                         if available_broker:
-                                            existing_top = data.get("counts", {}).get("top_topics_by_size", [])
-                                            top_size_names = [t["name"] for t in existing_top] if existing_top else []
-                                            described_names = [t["name"] for t in data.get("topics", [])[:50]]
-                                            top_topics = list(dict.fromkeys(top_size_names + described_names))
                                             topic_metrics, top_by_size, top_by_msg_rate = await scrape_topic_metrics_and_top_by_size(
-                                                available_broker, _prom_port, top_topics, top_n=20)
-                                            for t in data.get("topics", []):
-                                                if t["name"] in topic_metrics:
-                                                    tm = topic_metrics[t["name"]]
-                                                    t["messages_in_per_sec"] = tm.get("messages_in_per_sec", 0.0)
-                                                    t["bytes_in_per_sec"] = tm.get("bytes_in_per_sec", 0.0)
-                                                    t["bytes_out_per_sec"] = tm.get("bytes_out_per_sec", 0.0)
-                                                    t["size_bytes"] = tm.get("size_bytes", 0)
-                                            # Scrape msgs/sec for top_by_msg_rate topics specifically
-                                            if top_by_msg_rate:
-                                                msg_rate_names = [t["name"] for t in top_by_msg_rate]
-                                                rate_metrics, _, _ = await scrape_topic_metrics_and_top_by_size(
-                                                    available_broker, _prom_port, msg_rate_names, top_n=0)
-                                                for t in top_by_msg_rate:
-                                                    if t["name"] in rate_metrics:
-                                                        t["messages_in_per_sec"] = rate_metrics[t["name"]].get("messages_in_per_sec", 0.0)
-                                                        t["bytes_in_per_sec"] = rate_metrics[t["name"]].get("bytes_in_per_sec", 0.0)
-                                                        t["size_bytes"] = rate_metrics[t["name"]].get("size_bytes", t.get("size_bytes", 0))
+                                                available_broker, _prom_port, [], top_n=20)
                                             if "counts" not in data:
                                                 data["counts"] = {}
                                             data["counts"]["top_topics_by_size"] = top_by_size
@@ -591,10 +556,9 @@ async def lifespan(app: FastAPI):
                                             data["counts"]["total_hot"] = sum(
                                                 1 for t in top_by_msg_rate
                                                 if (t.get("messages_in_per_sec") or 0) > 1000)
-                                            # Update cache counts with top_by_size
                                             _ks.update_topics_metrics(
                                                 str(c.get("id", "default")),
-                                                {},  # no per-topic metrics to update here
+                                                {},
                                                 {"top_topics_by_size": top_by_size,
                                                  "top_topics_by_msg_rate": top_by_msg_rate,
                                                  "total_hot": data["counts"].get("total_hot", 0)}
@@ -666,17 +630,21 @@ async def lifespan(app: FastAPI):
                         await save_brokers(cid)
                         await save_topics_metrics(cid)
                         await save_groups(cid)
-                        # Save topic metrics to time-series table (after Prometheus enrichment)
+                        # Save topic msg/sec to hourly aggregation table + upsert topic names
                         topics = data.get("topics", [])
                         if topics and c.get("id"):
                             try:
-                                await get_backend().save_topic_metrics(
+                                await get_backend().upsert_topic_metrics_hourly(
                                     cluster_id=int(c["id"]),
                                     topics=topics,
                                     collected_at=datetime.now(timezone.utc),
                                 )
+                                await get_backend().upsert_topic_names(
+                                    cluster_id=int(c["id"]),
+                                    topics=topics,
+                                )
                             except Exception as _te:
-                                logger.warning("save_topic_metrics failed for '%s': %s", c["name"], _te)
+                                logger.warning("upsert_topic_metrics_hourly failed for '%s': %s", c["name"], _te)
                     except Exception as exc:
                         logger.warning("Startup: failed to sync cluster '%s': %s", c["name"], exc)
             asyncio.create_task(_startup_sync())
