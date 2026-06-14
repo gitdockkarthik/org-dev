@@ -298,18 +298,18 @@ async def _maybe_cleanup() -> None:
     await cleanup_old_metrics()
 
 
-async def save_brokers(cluster_id: str) -> None:
+async def save_brokers(cluster_id: str, brokers: list | None = None) -> None:
     """Append broker data to history — called by Prometheus scan."""
-    data = get_cluster_data(cluster_id)
-    if not data:
+    if brokers is None:
+        # Fallback: read from cache (backward compat)
+        data = get_cluster_data(cluster_id)
+        if not data:
+            return
+        brokers = data.get("brokers", [])
+    if not brokers:
         return
-    brokers = data.get("brokers", [])
     await _insert_metric(cluster_id, SCAN_BROKERS, brokers)
     await _maybe_cleanup()
-    # Update cache to reflect DB write
-    with _lock:
-        if cluster_id in _cache:
-            _cache[cluster_id]["brokers"] = brokers
     logger.info("Brokers appended to history for cluster %s", cluster_id)
 
 

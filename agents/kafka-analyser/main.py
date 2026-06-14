@@ -408,7 +408,7 @@ async def _collection_loop() -> None:
                         cluster_id=cid,
                     )
                     await save_topics_structure(cid)
-                    await save_brokers(cid)
+                    await save_brokers(cid, brokers=data.get("brokers", []))
                     await save_topics_metrics(cid)
                     await save_groups(cid)
 
@@ -739,7 +739,7 @@ async def lifespan(app: FastAPI):
                             cluster_id=str(c.get("id", "default")),
                         )
                         await save_topics_structure(cid)
-                        await save_brokers(cid)
+                        await save_brokers(cid, brokers=data.get("brokers", []))
                         await save_topics_metrics(cid)
                         await save_groups(cid)
                         # Save topic msg/sec to hourly aggregation table + upsert topic names
