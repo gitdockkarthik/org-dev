@@ -152,6 +152,15 @@ async def _init_config() -> None:
                 ))
             except Exception as _mig_exc:
                 logger.warning("prometheus_port migration skipped: %s", _mig_exc)
+            try:
+                await conn.execute(text(
+                    "ALTER TABLE kafka_topic_names ADD COLUMN IF NOT EXISTS partition_count INTEGER DEFAULT 0"
+                ))
+                await conn.execute(text(
+                    "ALTER TABLE kafka_topic_names ADD COLUMN IF NOT EXISTS replication_factor INTEGER DEFAULT 0"
+                ))
+            except Exception as _mig_exc2:
+                logger.warning("kafka_topic_names migration skipped: %s", _mig_exc2)
         logger.info("_init_config: DB tables ensured")
 
     init_storage(settings.agent_slug)
@@ -254,6 +263,15 @@ async def _collection_loop() -> None:
                                     logger.info(
                                         "Collection loop topic scan: %d topics (%d RF=1) for '%s'",
                                         len(described_topics), total_rf1, c["name"])
+                                    # Upsert ALL topic names to kafka_topic_names for search autocomplete
+                                    try:
+                                        from storage import get_backend as _gb_names2
+                                        await _gb_names2().upsert_topic_names(
+                                            cluster_id=int(c.get("id", 0)),
+                                            topics=described_topics,
+                                        )
+                                    except Exception as _tne2:
+                                        logger.warning("upsert_topic_names (loop) failed: %s", _tne2)
                         except Exception as _te:
                             logger.warning("Collection loop topic scan failed for '%s': %s",
                                           c["name"], _te)
@@ -399,10 +417,6 @@ async def _collection_loop() -> None:
                                 cluster_id=int(c["id"]),
                                 topics=topics,
                                 collected_at=now_utc,
-                            )
-                            await get_backend().upsert_topic_names(
-                                cluster_id=int(c["id"]),
-                                topics=topics,
                             )
                             await get_backend().cleanup_topic_metrics_hourly(
                                 cluster_id=int(c["id"]),
@@ -556,6 +570,16 @@ async def lifespan(app: FastAPI):
                                         "Topic scan: described %d topics (%d RF=1, %d URP, %d partitions) for '%s' in %ss",
                                         len(described_topics), total_rf1, total_urp, total_partitions, c["name"], _topic_elapsed
                                     )
+                                    # Upsert ALL topic names to kafka_topic_names for search autocomplete
+                                    try:
+                                        from storage import get_backend as _gb_names
+                                        await _gb_names().upsert_topic_names(
+                                            cluster_id=int(c["id"]),
+                                            topics=described_topics,
+                                        )
+                                        logger.info("Topic names upserted: %d topics for '%s'", len(described_topics), c["name"])
+                                    except Exception as _tne:
+                                        logger.warning("upsert_topic_names failed for '%s': %s", c["name"], _tne)
                             except Exception as _topic_exc:
                                 logger.warning("Topic scan failed for '%s': %s", c["name"], _topic_exc)
 
@@ -720,10 +744,6 @@ async def lifespan(app: FastAPI):
                                     cluster_id=int(c["id"]),
                                     topics=topics,
                                     collected_at=datetime.now(timezone.utc),
-                                )
-                                await get_backend().upsert_topic_names(
-                                    cluster_id=int(c["id"]),
-                                    topics=topics,
                                 )
                             except Exception as _te:
                                 logger.warning("upsert_topic_metrics_hourly failed for '%s': %s", c["name"], _te)

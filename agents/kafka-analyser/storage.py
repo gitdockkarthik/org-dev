@@ -619,12 +619,21 @@ class PostgresBackend(StorageBackend):
                         continue
                     await session.execute(
                         text(
-                            """INSERT INTO kafka_topic_names (cluster_id, topic, last_seen)
-                               VALUES (:cluster_id, :topic, :last_seen)
+                            """INSERT INTO kafka_topic_names (cluster_id, topic, partition_count, replication_factor, last_seen)
+                               VALUES (:cluster_id, :topic, :partition_count, :replication_factor, :last_seen)
                                ON CONFLICT (cluster_id, topic)
-                               DO UPDATE SET last_seen = EXCLUDED.last_seen"""
+                               DO UPDATE SET
+                                 partition_count = EXCLUDED.partition_count,
+                                 replication_factor = EXCLUDED.replication_factor,
+                                 last_seen = EXCLUDED.last_seen"""
                         ),
-                        {"cluster_id": cluster_id, "topic": topic_name, "last_seen": now}
+                        {
+                            "cluster_id": cluster_id,
+                            "topic": topic_name,
+                            "partition_count": t.get("partition_count", 0),
+                            "replication_factor": t.get("replication_factor", 0),
+                            "last_seen": now,
+                        }
                     )
                 await session.commit()
         except Exception:
@@ -695,7 +704,7 @@ class PostgresBackend(StorageBackend):
             async with SessionLocal() as session:
                 result = await session.execute(
                     text(
-                        """SELECT topic FROM kafka_topic_names
+                        """SELECT topic, partition_count, replication_factor FROM kafka_topic_names
                            WHERE cluster_id = :cluster_id
                            AND topic ILIKE :query
                            AND last_seen >= NOW() - INTERVAL '30 days'
@@ -705,7 +714,7 @@ class PostgresBackend(StorageBackend):
                     {"cluster_id": cluster_id, "query": f"%{query}%"}
                 )
                 rows = result.fetchall()
-                return [{"name": row.topic} for row in rows]
+                return [{"name": row.topic, "partition_count": row.partition_count, "replication_factor": row.replication_factor} for row in rows]
         except Exception:
             logger.exception("PostgresBackend.topic_search: failed for cluster_id=%r", cluster_id)
             return []

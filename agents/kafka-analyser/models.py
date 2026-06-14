@@ -155,4 +155,6 @@ class KafkaTopicName(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     cluster_id: Mapped[int] = mapped_column(Integer, nullable=False)
     topic: Mapped[str] = mapped_column(String(256), nullable=False)
+    partition_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    replication_factor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
