@@ -1137,7 +1137,9 @@
         const dropdown = document.getElementById('topic-compare-dropdown');
         if (!val || val.length < 2) { dropdown.style.display = 'none'; return; }
         try {
-          const clusterId = window._currentClusterId || document.getElementById('ctrl-cluster')?.value;
+          const clusterId = (typeof _currentClusterId !== 'undefined' ? _currentClusterId : null)
+                           || window._currentClusterId
+                           || document.getElementById('ctrl-cluster')?.value;
           const res = await fetch(`${PROXY}/dashboard/topics/name-search?cluster_id=${clusterId}&q=${encodeURIComponent(val)}`,
             { headers: _authHeaders(), cache: 'no-store' });
           const data = await res.json();
@@ -1197,7 +1199,9 @@
         if (!canvas) return;
         if (window._topicTimeSeriesChart) { window._topicTimeSeriesChart.destroy(); window._topicTimeSeriesChart = null; }
         try {
-          const clusterId = window._currentClusterId || document.getElementById('ctrl-cluster')?.value;
+          const clusterId = (typeof _currentClusterId !== 'undefined' ? _currentClusterId : null)
+                           || window._currentClusterId
+                           || document.getElementById('ctrl-cluster')?.value;
           const qs = new URLSearchParams();
           qs.set('minutes', String(_getMinutes()));
           if (clusterId) qs.set('cluster_id', clusterId);
