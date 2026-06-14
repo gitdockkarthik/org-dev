@@ -154,6 +154,12 @@ async def _init_config() -> None:
                 logger.warning("prometheus_port migration skipped: %s", _mig_exc)
             try:
                 await conn.execute(text(
+                    "ALTER TABLE kafka_clusters ADD COLUMN IF NOT EXISTS cpu_cores INTEGER"
+                ))
+            except Exception as _mig_exc3:
+                logger.warning("cpu_cores migration skipped: %s", _mig_exc3)
+            try:
+                await conn.execute(text(
                     "ALTER TABLE kafka_topic_names ADD COLUMN IF NOT EXISTS partition_count INTEGER DEFAULT 0"
                 ))
                 await conn.execute(text(
@@ -296,7 +302,7 @@ async def _collection_loop() -> None:
                                         scrape_brokers = data.get("brokers", [])
                                 except Exception:
                                     scrape_brokers = data.get("brokers", [])
-                                broker_metrics = await scrape_all_brokers(scrape_brokers, _prom_port)
+                                broker_metrics = await scrape_all_brokers(scrape_brokers, _prom_port, cpu_cores=c.get("cpu_cores"))
                                 for broker in data.get("brokers", []):
                                     bid = str(broker.get("broker_id", broker.get("host", "")))
                                     if bid in broker_metrics and broker_metrics[bid]:
@@ -611,7 +617,7 @@ async def lifespan(app: FastAPI):
                                             scrape_brokers = data.get("brokers", [])
                                     except Exception:
                                         scrape_brokers = data.get("brokers", [])
-                                    broker_metrics = await scrape_all_brokers(scrape_brokers, _prom_port)
+                                    broker_metrics = await scrape_all_brokers(scrape_brokers, _prom_port, cpu_cores=c.get("cpu_cores"))
                                     for broker in data.get("brokers", []):
                                         bid = str(broker.get("broker_id", broker.get("host", "")))
                                         if bid in broker_metrics and broker_metrics[bid]:

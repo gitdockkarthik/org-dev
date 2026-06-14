@@ -104,6 +104,7 @@ _FILTERED_METRICS = [
     "kafka_server_replicamanager_atminisrpartitioncount",
     "kafka_server_replicamanager_partitioncount",
     "kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent",
+    "kafka_network_socketserver_networkprocessoravgidlepercent",
 ]
 
 _THROUGHPUT_PREFIXES = [
@@ -181,7 +182,7 @@ async def _curl_get(url: str, max_time: int = 10) -> str:
         return ""
 
 
-async def scrape_broker(host: str, port: int) -> dict[str, Any]:
+async def scrape_broker(host: str, port: int, cpu_cores: int | None = None) -> dict[str, Any]:
     """Scrape one broker — Phase 1 filtered curl + Phase 2 curl for throughput."""
     defaults = {
         "heap_pct": 0.0, "cpu_pct": 0.0, "gc_pause_ms": 0.0,
@@ -255,7 +256,13 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
 
         cpu_curr = _get(metrics, "process_cpu_seconds_total")
         cpu_prev = _get(prev_metrics, "process_cpu_seconds_total") if prev_metrics else cpu_curr
-        cpu_pct = min(100.0, max(0.0, round(_rate(cpu_curr, cpu_prev, elapsed) * 100, 1)))
+        cpu_rate = _rate(cpu_curr, cpu_prev, elapsed)
+        if cpu_cores:
+            # Accurate per-core CPU% using configured core count
+            cpu_pct = min(100.0, max(0.0, round((cpu_rate / cpu_cores) * 100, 1)))
+        else:
+            # Fallback — show raw cores used (multi-core counter)
+            cpu_pct = round(cpu_rate, 2)
 
         gc_curr = _get(metrics, "jvm_gc_collection_seconds_sum", {"gc": "G1 Young Generation"})
         gc_prev = _get(prev_metrics, "jvm_gc_collection_seconds_sum",
@@ -286,6 +293,8 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
         req_idle_pct = (req_idle if
                        "kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent"
                        in metrics else 100.0)
+        net_idle_raw = _get(metrics, "kafka_network_socketserver_networkprocessoravgidlepercent")
+        net_idle_pct = round(net_idle_raw * 100, 1) if net_idle_raw else 100.0
 
         _broker_state[state_key] = {"metrics": metrics, "time": now}
         _asyncio.ensure_future(_save_scrape_state(
@@ -299,7 +308,10 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
             })
 
         return {
-            "heap_pct": heap_pct, "cpu_pct": cpu_pct, "gc_pause_ms": gc_ms,
+            "heap_pct": heap_pct, "cpu_pct": cpu_pct,
+            "cpu_cores_configured": cpu_cores is not None,
+            "gc_pause_ms": gc_ms,
+            "network_processor_idle_pct": net_idle_pct,
             "messages_in_per_sec": msgs_in, "bytes_in_per_sec": bytes_in,
             "bytes_out_per_sec": bytes_out, "request_handler_idle_pct": req_idle_pct,
             "isr_shrinks_per_sec": isr_shrinks, "isr_expands_per_sec": isr_expands,
@@ -314,12 +326,13 @@ async def scrape_broker(host: str, port: int) -> dict[str, Any]:
 
 
 async def scrape_all_brokers(brokers: list[dict], prometheus_port: int,
+                              cpu_cores: int | None = None,
                               per_broker_timeout: float = _BROKER_TIMEOUT) -> dict[str, dict]:
     """Scrape all brokers in parallel — each with independent timeout."""
     async def scrape_with_timeout(host: str, broker_id: str):
         try:
             result = await asyncio.wait_for(
-                scrape_broker(host, prometheus_port),
+                scrape_broker(host, prometheus_port, cpu_cores=cpu_cores),
                 timeout=per_broker_timeout
             )
             return broker_id, result

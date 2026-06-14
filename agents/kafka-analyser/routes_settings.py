@@ -154,6 +154,7 @@ class ClusterPayload(BaseModel):
     kafka_connect_url: str = ""
     jmx_port: int | None = None
     prometheus_port: int | None = None
+    cpu_cores: int | None = None
     mirror_source_cluster_id: int | None = None
     mirror_mode: str = "none"
     enabled: bool = False
@@ -236,6 +237,7 @@ async def test_connection(payload: TestConnectionPayload) -> dict:
         "tls_enabled": payload.tls_enabled,
         "cluster_label": payload.cluster_label,
         "jmx_port": getattr(payload, 'jmx_port', None),
+        "cpu_cores": getattr(payload, 'cpu_cores', None),
     })
     try:
         result = await collector.ping()
@@ -319,6 +321,7 @@ async def test_cluster(cluster_id: int) -> dict:
             "tls_enabled": cluster.get("tls_enabled", False),
             "cluster_label": cluster["name"],
             "jmx_port": cluster.get("jmx_port"),
+            "cpu_cores": cluster.get("cpu_cores"),
         })
         data = await collector.collect()
         await get_backend().update_cluster_status(
@@ -368,6 +371,7 @@ async def sync_metrics() -> dict:
                     "tls_enabled": c.get("tls_enabled", False),
                     "cluster_label": c["name"],
                     "jmx_port": c.get("jmx_port"),
+                    "cpu_cores": c.get("cpu_cores"),
                 })
                 data = await collector.collect()
                 kafka_store.set_cluster_data(

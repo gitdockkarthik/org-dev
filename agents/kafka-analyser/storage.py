@@ -280,6 +280,7 @@ class PostgresBackend(StorageBackend):
         "kafka_connect_url",
         "jmx_port",
         "prometheus_port",
+        "cpu_cores",
         "mirror_source_cluster_id",
         "mirror_mode",
     )
@@ -319,6 +320,7 @@ class PostgresBackend(StorageBackend):
             "kafka_connect_url": row.kafka_connect_url or "",
             "jmx_port": row.jmx_port,
             "prometheus_port": row.prometheus_port,
+            "cpu_cores": row.cpu_cores,
             "mirror_source_cluster_id": row.mirror_source_cluster_id,
             "mirror_mode": row.mirror_mode or "none",
         }

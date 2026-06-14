@@ -592,7 +592,7 @@
             </div>
             <div class="broker-metrics">
               <div class="bm"><div class="bm__label">Heap</div><div class="bm__value" style="color:${metricColor(b.heap_pct)}">${b.heap_pct}%</div></div>
-              <div class="bm"><div class="bm__label">CPU</div><div class="bm__value" style="color:${metricColor(b.cpu_pct)}">${b.cpu_pct}%</div></div>
+              <div class="bm"><div class="bm__label">CPU</div><div class="bm__value" style="color:${metricColor(b.cpu_pct)}">${b.cpu_cores_configured ? b.cpu_pct + '%' : b.cpu_pct + ' cores'}</div></div>
               <div class="bm"><div class="bm__label">URPs</div><div class="bm__value" style="color:${b.urp_count > 0 ? 'var(--danger)' : 'var(--success)'}">${b.urp_count}</div></div>
               <div class="bm"><div class="bm__label">GC Pauses</div><div class="bm__value" style="color:${(b.gc_pause_count ?? b.gc_pause_ms ?? 0) > 0 ? '#d97706' : 'var(--success)'}">${(b.gc_pause_count ?? b.gc_pause_ms ?? 0)}</div></div>
             </div>
@@ -1488,7 +1488,7 @@
               <span class="sev sev--${b.heap_pct === 0 && b.messages_in_per_sec === 0 && b.produce_latency_ms === 0 ? 'warning' : b.status === 'healthy' ? 'healthy' : b.status === 'warning' ? 'warning' : 'critical'}">${b.heap_pct === 0 && b.messages_in_per_sec === 0 && b.produce_latency_ms === 0 ? '⚠ METRICS UNAVAILABLE' : b.status.toUpperCase()}</span>
             </div>
             ${metricRow('Heap', b.heap_pct)}
-            ${metricRow('CPU', b.cpu_pct)}
+            ${metricRow('CPU', b.cpu_cores_configured ? b.cpu_pct + '%' : b.cpu_pct + ' cores')}
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px">
               <div class="bm">
                 <div class="bm__label">GC Pauses</div>
@@ -1609,7 +1609,7 @@
             data: {
               labels: brokerLabels,
               datasets: [
-                { label: 'CPU %',  data: brokers.map(b => b.cpu_pct || 0),  backgroundColor: '#FF6B35', borderWidth: 0 },
+                { label: 'CPU',  data: brokers.map(b => b.cpu_pct || 0),  backgroundColor: '#FF6B35', borderWidth: 0 },
                 { label: 'Heap %', data: brokers.map(b => b.heap_pct || 0), backgroundColor: '#4FC3F7', borderWidth: 0 },
                 { label: 'Req Idle %', data: brokers.map(b => b.request_handler_idle_pct || 0), backgroundColor: '#4CAF50', borderWidth: 0 },
               ],
