@@ -964,7 +964,6 @@
           <span class="dash-label">Show:</span>
           <span class="filter-chip active" onclick="window._setTopicShow(false,this)">All</span>
           <span class="filter-chip" onclick="window._setTopicShow(true,this)">User Topics</span>
-          <span class="filter-chip" onclick="window._setTopicFilter('underrep',this)">Low Replication</span>
           <input class="filter-input" id="topic-search" placeholder="Search topic name…" oninput="window._topicSearch(this.value)" style="margin-left:8px" />
         </div>
       `;
@@ -1097,7 +1096,13 @@
 
         // Single top-20 table by log size — no active/stale split
         const topBySize = (window._clusterCounts && window._clusterCounts.top_topics_by_size) || [];
+        const _search = (st.search || '').toLowerCase().trim();
         const staleTopics = [...topBySize]
+          .filter(t => {
+            if (_search && !(t.name || '').toLowerCase().includes(_search)) return false;
+            if (st.userOnly && (t.name || '').startsWith('_')) return false;
+            return true;
+          })
           .sort((a, b) => (b.size_bytes || 0) - (a.size_bytes || 0))
           .map(t => ({
             ...t,
