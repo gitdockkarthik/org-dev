@@ -425,114 +425,120 @@ Be specific — use actual group names, numbers, and timeframes from the data.""
 
 
 @router.get("/dashboard/topics/history")
-async def get_topics_history(cluster_id: str | None = None, minutes: float = 1440.0, hours: float | None = None) -> dict:
-    """Return per-topic msgs/sec trend from PostgreSQL for timeline chart."""
+async def get_topics_history(
+    cluster_id: str | None = None,
+    minutes: float = 1440.0,
+    topics: str | None = None,
+) -> dict:
+    """Return per-topic msgs/sec trend from kafka_topic_metrics_hourly.
+    topics param: comma-separated list of up to 5 topic names (custom compare mode).
+    No topics param: top 10 by max rate in window (default mode).
+    Time filters: 60=1hr, 360=6hr, 1440=24hr, 10080=7d, 43200=30d.
+    """
     from storage import get_backend
+    from collections import defaultdict
+    from datetime import datetime, timedelta, timezone
+
     if not cluster_id:
         return {"empty": True, "series": []}
-    # Support both minutes and legacy hours parameter
-    effective_minutes = minutes
-    if hours is not None:
-        effective_minutes = hours * 60
 
-    # Use daily aggregation for 7-day view (10080 minutes)
-    if effective_minutes >= 10080:
-        try:
-            rows = await get_backend().get_topic_history_daily(int(cluster_id), days=7)
-        except Exception:
-            return {"empty": True, "series": []}
-        if not rows:
-            return {"empty": True, "series": []}
-        from collections import defaultdict
-        from datetime import datetime, timedelta, timezone
-        # Always generate all 7 days regardless of data availability
-        today = datetime.now(timezone.utc).date()
-        all_days = [(today - timedelta(days=6-i)).isoformat() for i in range(7)]
-        topic_data: dict[str, dict[str, float]] = defaultdict(dict)
-        for r in rows:
-            if not r["topic"].startswith("_"):
-                topic_data[r["topic"]][r["day"]] = r["avg_msgs"]
-        if topic_data:
-            topic_maxes = {t: max(v.values()) for t, v in topic_data.items()}
-            top_topics = sorted(topic_maxes, key=lambda n: topic_maxes[n], reverse=True)[:5]
-        else:
-            top_topics = []
-        series = []
-        for name in top_topics:
-            vals = [round(topic_data[name].get(d, 0.0), 3) for d in all_days]
-            series.append({"name": name, "values": vals})
-        # If no data at all, return empty series with 7-day labels
-        if not series:
-            return {"labels": all_days, "series": [], "snapshot_count": 7}
-        return {"labels": all_days, "series": series, "snapshot_count": 7}
+    # Parse optional topic filter (up to 5)
+    topic_filter: list[str] | None = None
+    if topics:
+        topic_filter = [t.strip() for t in topics.split(",") if t.strip()][:5]
 
-    # Determine bucket size based on time range
-    from datetime import datetime, timedelta, timezone
-    if effective_minutes <= 5:
-        bucket_minutes = 1
-        total_buckets = 5
-    elif effective_minutes <= 60:
-        bucket_minutes = 10
+    # Determine hour buckets for selected window
+    now = datetime.now(timezone.utc)
+    if minutes <= 60:
+        total_buckets = 2       # current hour + previous hour
+        delta_hours = 2
+    elif minutes <= 360:
         total_buckets = 6
-    elif effective_minutes <= 360:
-        bucket_minutes = 30
-        total_buckets = 12
-    else:
-        bucket_minutes = 60
+        delta_hours = 6
+    elif minutes <= 1440:
         total_buckets = 24
+        delta_hours = 24
+    elif minutes <= 10080:
+        total_buckets = 168
+        delta_hours = 168
+    else:
+        total_buckets = 720
+        delta_hours = 720
+
+    # Generate all expected hour bucket labels (zero-filled)
+    current_hour = now.replace(minute=0, second=0, microsecond=0)
+    all_buckets = []
+    bucket_dts = []
+    for i in range(total_buckets - 1, -1, -1):
+        b = current_hour - timedelta(hours=i)
+        all_buckets.append(b.isoformat())
+        bucket_dts.append(b)
 
     try:
-        rows = await get_backend().get_topic_history_bucketed(
-            int(cluster_id), minutes=effective_minutes, bucket_minutes=bucket_minutes
+        rows = await get_backend().get_topic_history_hourly(
+            int(cluster_id),
+            minutes=float(delta_hours * 60),
+            topic_filter=topic_filter,
         )
     except Exception:
         return {"empty": True, "series": []}
 
-    # Generate all expected bucket timestamps (zero-filled). Keep parsed
-    # datetimes alongside the ISO labels so the snap loop below doesn't
-    # re-parse on every row.
-    now = datetime.now(timezone.utc)
-    # Round now down to current bucket boundary
-    now_minute = (now.minute // bucket_minutes) * bucket_minutes
-    bucket_end = now.replace(minute=now_minute, second=0, microsecond=0)
-    all_buckets = []          # ISO labels (returned to the client)
-    bucket_dts = []           # parsed datetimes (used for snapping)
-    for i in range(total_buckets - 1, -1, -1):
-        b = bucket_end - timedelta(minutes=i * bucket_minutes)
-        all_buckets.append(b.isoformat())
-        bucket_dts.append(b)
+    if not rows:
+        if topic_filter:
+            # Return empty series for each requested topic
+            series = [{"name": t, "values": [0.0] * total_buckets} for t in topic_filter]
+            return {"labels": all_buckets, "series": series, "snapshot_count": total_buckets, "empty_reason": "no_data"}
+        return {"empty": True, "series": []}
 
-    from collections import defaultdict
+    # Group rows by topic — snap to nearest hour bucket
     topic_data: dict[str, dict[str, float]] = defaultdict(dict)
     for r in rows:
-        if not r["topic"].startswith("_"):
-            # Find closest bucket. Coerce naive timestamps to UTC so the
-            # subtraction never hits an aware/naive mismatch (the column is
-            # timestamptz, but a non-UTC session or naive backend could
-            # otherwise break this).
-            rt = datetime.fromisoformat(r["time"])
-            if rt.tzinfo is None:
-                rt = rt.replace(tzinfo=timezone.utc)
-            idx = min(
-                range(len(bucket_dts)),
-                key=lambda j: abs((bucket_dts[j] - rt).total_seconds()),
-            )
-            topic_data[r["topic"]][all_buckets[idx]] = r["avg_msgs"]
+        if r["topic"].startswith("_"):
+            continue
+        rt = datetime.fromisoformat(r["time"])
+        if rt.tzinfo is None:
+            rt = rt.replace(tzinfo=timezone.utc)
+        # Snap to nearest bucket
+        idx = min(
+            range(len(bucket_dts)),
+            key=lambda j: abs((bucket_dts[j] - rt).total_seconds()),
+        )
+        topic_data[r["topic"]][all_buckets[idx]] = r["avg_msgs"]
 
-    if topic_data:
-        topic_maxes = {t: max(v.values()) for t, v in topic_data.items()}
-        top_topics = sorted(topic_maxes, key=lambda n: topic_maxes[n], reverse=True)[:5]
+    if topic_filter:
+        # Custom mode — return requested topics in order (even if no data)
+        series = []
+        for name in topic_filter:
+            vals = [round(topic_data[name].get(b, 0.0), 4) for b in all_buckets]
+            series.append({"name": name, "values": vals})
     else:
-        top_topics = []
-
-    series = []
-    for name in top_topics:
-        vals = [round(topic_data[name].get(b, 0.0), 3) for b in all_buckets]
-        series.append({"name": name, "values": vals})
+        # Default mode — top 10 by max rate in window
+        if topic_data:
+            topic_maxes = {t: max(v.values()) for t, v in topic_data.items()}
+            top_topics = sorted(topic_maxes, key=lambda n: topic_maxes[n], reverse=True)[:10]
+        else:
+            top_topics = []
+        series = []
+        for name in top_topics:
+            vals = [round(topic_data[name].get(b, 0.0), 4) for b in all_buckets]
+            series.append({"name": name, "values": vals})
 
     if not series:
         return {"labels": all_buckets, "series": [], "snapshot_count": total_buckets}
     return {"labels": all_buckets, "series": series, "snapshot_count": total_buckets}
+
+
+@router.get("/dashboard/topics/name-search")
+async def search_topic_names(cluster_id: str | None = None, q: str = "") -> dict:
+    """Autocomplete topic name search from kafka_topic_names table (DB-backed)."""
+    from storage import get_backend
+    if not cluster_id or not q or len(q) < 2:
+        return {"results": []}
+    try:
+        results = await get_backend().topic_search(int(cluster_id), q.strip())
+        return {"results": results}
+    except Exception:
+        return {"results": []}
 
 
 @router.post("/dashboard/insights/narrative/stream")
