@@ -706,70 +706,150 @@ async def stream_insights_narrative(
     from fastapi.responses import StreamingResponse
     import anthropic as _anthropic
 
-    data = kafka_store.get_cluster_data(cluster_id) if cluster_id else (
-        kafka_store.get_cluster_data(kafka_store.get_all_cluster_ids()[0])
-        if kafka_store.get_all_cluster_ids() else None
-    )
-    if not data:
-        async def empty():
-            yield 'data: No cluster data available. Run a sync first.\n\n'
-            yield 'data: [DONE]\n\n'
-        return StreamingResponse(empty(),
-            media_type="text/event-stream")
-
     api_key = request.headers.get("x-anthropic-key", "") or \
               os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key:
         async def nokey():
             yield 'data: Anthropic API key not configured.\n\n'
             yield 'data: [DONE]\n\n'
-        return StreamingResponse(nokey(),
-            media_type="text/event-stream")
+        return StreamingResponse(nokey(), media_type="text/event-stream")
 
-    brokers = data.get("brokers", [])
-    topics = data.get("topics", {})
-    groups = data.get("consumer_groups", {})
-    anomalies = data.get("anomalies", [])
+    # Read all data from DB directly — no cache dependency
+    import json as _json
+    from database import SessionLocal
+    from sqlalchemy import text as _text
+    from storage import get_backend as _gb
 
-    # Compute aggregates
-    total_partitions = sum(t.get("partition_count", 0) for t in topics)
+    try:
+        _all_cfg = await _gb().get_all()
+
+        # Structure counts (total topics, RF=1, partitions etc)
+        _struct_raw = None
+        _groups_raw = None
+        _brokers_raw = None
+        if SessionLocal:
+            async with SessionLocal() as _sess:
+                # Latest broker data
+                _br = await _sess.execute(_text(
+                    "SELECT data_json FROM kafka_metrics_history WHERE cluster_id=:cid AND scan_type='brokers' ORDER BY collected_at DESC LIMIT 1"
+                ), {"cid": cluster_id})
+                _br_row = _br.fetchone()
+                _brokers_raw = _json.loads(_br_row.data_json) if _br_row else []
+
+                # Latest groups data
+                _gr = await _sess.execute(_text(
+                    "SELECT data_json FROM kafka_metrics_history WHERE cluster_id=:cid AND scan_type='groups' ORDER BY collected_at DESC LIMIT 1"
+                ), {"cid": cluster_id})
+                _gr_row = _gr.fetchone()
+                _groups_raw = _json.loads(_gr_row.data_json) if _gr_row else []
+
+                # Structure counts
+                _st = await _sess.execute(_text(
+                    "SELECT data_json FROM kafka_metrics_history WHERE cluster_id=:cid AND scan_type='topics_structure' ORDER BY collected_at DESC LIMIT 1"
+                ), {"cid": cluster_id})
+                _st_row = _st.fetchone()
+                if _st_row:
+                    _st_data = _json.loads(_st_row.data_json)
+                    _struct_raw = _st_data.get("counts", {})
+
+                # Lag trend (last 24h)
+                _lt = await _sess.execute(_text(
+                    """SELECT date_trunc('hour', collected_at) as bucket, data_json
+                       FROM kafka_metrics_history WHERE cluster_id=:cid AND scan_type='groups'
+                       AND collected_at >= NOW() - INTERVAL '24 hours'
+                       ORDER BY bucket ASC"""
+                ), {"cid": cluster_id})
+                _lt_rows = _lt.fetchall()
+                lag_trend_points = []
+                for _lr in _lt_rows:
+                    try:
+                        _lgroups = _json.loads(_lr.data_json)
+                        _total = sum(g.get("total_lag", 0) for g in _lgroups if isinstance(g, dict))
+                        lag_trend_points.append({"time": str(_lr.bucket)[:16], "total_lag": _total})
+                    except Exception:
+                        pass
+
+        brokers = _brokers_raw or []
+        groups = _groups_raw or []
+        structure = _struct_raw or {}
+
+        # Metrics counts (top by size, msg rate)
+        _metrics_raw = _all_cfg.get(f"kafka_counts_metrics_{cluster_id}")
+        _metrics_str = _json.loads(_metrics_raw) if _metrics_raw else {}
+        metrics_counts = _json.loads(_metrics_str) if isinstance(_metrics_str, str) else _metrics_str
+
+        # Phase2 broker status
+        broker_phase2 = {}
+        for b in brokers:
+            host = b.get("host", "")
+            _p2 = _all_cfg.get(f"phase2_{host}:7071") or _all_cfg.get(f"phase2_{host}:{_all_cfg.get('prometheus_port', 7071)}")
+            if _p2:
+                try:
+                    _p2d = _json.loads(_p2)
+                    broker_phase2[host] = _p2d
+                except Exception:
+                    pass
+
+        # Anomalies from cache (still valid)
+        data = kafka_store.get_cluster_data(cluster_id) if cluster_id else None
+        anomalies = (data or {}).get("anomalies", [])
+
+    except Exception as _de:
+        brokers, groups, structure, metrics_counts, broker_phase2, lag_trend_points, anomalies = [], [], {}, {}, {}, [], []
+
+    # Build rich context
+    total_topics = structure.get("total_topics", 0)
+    total_rf1 = structure.get("total_rf1", 0)
+    total_urp = structure.get("total_urp", 0)
+    total_partitions = structure.get("total_partitions", 0)
+    total_groups = structure.get("total_groups", 0)
+
+    top_by_size = metrics_counts.get("top_topics_by_size", [])
+    top_by_msg = metrics_counts.get("top_topics_by_msg_rate", [])
+
+    # Broker health
+    active_brokers = [b for b in brokers if b.get("heap_pct", 0) > 0]
+    degraded_brokers = [b for b in brokers if b.get("heap_pct", 0) == 0 and b.get("cpu_pct", 0) == 0]
+    avg_heap = round(sum(b.get("heap_pct", 0) for b in active_brokers) / max(len(active_brokers), 1), 1)
+    avg_cpu = round(sum(b.get("cpu_pct", 0) for b in active_brokers) / max(len(active_brokers), 1), 1)
     total_urps = sum(b.get("urp_count", 0) for b in brokers)
-    avg_heap = round(sum(b.get("heap_pct", 0) for b in brokers) / max(len(brokers), 1), 1)
-    avg_cpu = round(sum(b.get("cpu_pct", 0) for b in brokers) / max(len(brokers), 1), 1)
-    avg_req_idle = round(sum(b.get("request_handler_idle_pct", 0) for b in brokers) / max(len(brokers), 1), 1)
 
-    # Top topics by traffic
-    sorted_by_msgs = sorted(topics, key=lambda t: t.get("messages_in_per_sec", 0), reverse=True)[:10]
-    top_topics = [{"name": t.get("name"), "msgs_sec": t.get("messages_in_per_sec", 0),
-                   "size_bytes": t.get("size_bytes", 0), "partitions": t.get("partition_count", 0),
-                   "rf": t.get("replication_factor", 0)} for t in sorted_by_msgs]
-
-    # Stale topics
-    stale_topics = [t.get("name") for t in topics if t.get("messages_in_per_sec", 0) == 0 and t.get("size_bytes", 0) > 1000]
+    broker_details = []
+    for b in brokers:
+        host = b.get("host", "")
+        p2 = broker_phase2.get(host, {})
+        broker_details.append({
+            "id": b.get("broker_id", b.get("id")),
+            "host": host,
+            "heap_pct": b.get("heap_pct", 0),
+            "cpu_pct": b.get("cpu_pct", 0),
+            "produce_latency_ms": b.get("produce_latency_ms", 0),
+            "fetch_latency_ms": b.get("fetch_latency_ms", 0),
+            "urp": b.get("urp_count", 0),
+            "status": "DEGRADED - metrics unavailable" if b.get("heap_pct", 0) == 0 and b.get("cpu_pct", 0) == 0 else "healthy",
+            "phase2_fails": p2.get("phase2_fail_count", 0),
+            "throughput_available": p2.get("throughput_available", True),
+        })
 
     # Consumer group health
-    critical_groups = [{"name": g.get("group_id") or g.get("name"), "lag": g.get("total_lag", 0),
-                        "trend": g.get("lag_trend")} for g in groups if g.get("total_lag", 0) > 10000]
-    warning_groups = [{"name": g.get("group_id") or g.get("name"), "lag": g.get("total_lag", 0)}
-                      for g in groups if 1000 < g.get("total_lag", 0) <= 10000]
+    critical_groups = [{"name": g.get("group_id"), "lag": g.get("total_lag", 0),
+                        "trend": g.get("lag_trend"), "state": g.get("state")}
+                       for g in groups if g.get("total_lag", 0) > 10000][:10]
+    warning_groups = [{"name": g.get("group_id"), "lag": g.get("total_lag", 0)}
+                      for g in groups if 1000 < g.get("total_lag", 0) <= 10000][:5]
     healthy_groups = len([g for g in groups if g.get("total_lag", 0) <= 1000])
 
-    # Pre-build structures (avoid dict literals inside f-string expressions)
-    broker_details = [{"id": b.get("id"), "heap": b.get("heap_pct"),
-        "cpu": b.get("cpu_pct"), "urp": b.get("urp_count"),
-        "gc_pause_ms": b.get("gc_pause_ms"),
-        "produce_latency_ms": b.get("produce_latency_ms"),
-        "fetch_latency_ms": b.get("fetch_latency_ms"),
-        "bytes_in": b.get("bytes_in_per_sec"),
-        "bytes_out": b.get("bytes_out_per_sec"),
-        "isr_shrinks": b.get("isr_shrinks_per_sec"),
-        "req_idle": b.get("request_handler_idle_pct")} for b in brokers]
+    # Lag trend summary
+    if lag_trend_points:
+        lag_start = lag_trend_points[0]["total_lag"]
+        lag_end = lag_trend_points[-1]["total_lag"]
+        lag_change = lag_end - lag_start
+        lag_trend_summary = f"24h trend: {lag_start:,} → {lag_end:,} ({'+' if lag_change > 0 else ''}{lag_change:,} msgs, {'GROWING ⚠️' if lag_change > 100000 else 'STABLE ✅' if abs(lag_change) < 50000 else 'DECLINING ✅'})"
+    else:
+        lag_trend_summary = "No trend data available"
 
-    anomaly_details = [{"severity": a.get("severity"),
-        "category": a.get("category"),
-        "description": a.get("description")} for a in anomalies[:10]]
-
-    low_rep_count = len([t for t in topics if t.get("replication_factor", 0) == 1])
+    anomaly_details = [{"severity": a.get("severity"), "category": a.get("category"),
+                        "description": a.get("description")} for a in anomalies[:10]]
 
     prompt = f"""You are a senior Kafka platform intelligence agent providing an executive-level cluster analysis report.
 
@@ -802,22 +882,23 @@ Prioritised list with effort estimate (quick win / medium / large). Each action 
 ---
 CLUSTER DATA:
 
-Brokers ({len(brokers)} active):
+Brokers ({len(active_brokers)} active, {len(degraded_brokers)} degraded):
 - Average Heap: {avg_heap}%
 - Average CPU: {avg_cpu}%
-- Average Request Handler Idle: {avg_req_idle}%
 - Under-replicated Partitions: {total_urps}
 - Broker details: {broker_details}
 
-Topics ({len(topics)} total, {total_partitions} partitions):
-- Top 10 by traffic: {top_topics}
-- Stale topics (data but no traffic): {stale_topics[:20]}
-- Low replication (RF=1): {low_rep_count} topics
+Topics ({total_topics} total, {total_partitions} partitions):
+- Top 10 by message rate: {top_by_msg}
+- Top 10 by size: {top_by_size}
+- Low replication (RF=1): {total_rf1} topics
+- Under-replicated (URP): {total_urp}
 
-Consumer Groups ({len(groups)} total):
+Consumer Groups ({total_groups} total):
 - Critical (lag >10k): {critical_groups}
 - Warning (lag 1k-10k): {warning_groups}
 - Healthy (lag <1k): {healthy_groups} groups
+- {lag_trend_summary}
 
 Anomalies ({len(anomalies)} detected):
 {anomaly_details}
