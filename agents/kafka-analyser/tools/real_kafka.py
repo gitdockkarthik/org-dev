@@ -301,7 +301,7 @@ class RealKafkaCollector(KafkaCollector):
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self._fetch_group_lags_sync, group_ids)
 
-    async def fetch_all_group_lags(self, group_ids: list[str], workers: int = 10) -> list[dict[str, Any]]:
+    async def fetch_all_group_lags(self, group_ids: list[str], workers: int = 15) -> list[dict[str, Any]]:
         """Parallel lag fetch using multiple threads — 10x faster than sequential."""
         if not group_ids:
             return []

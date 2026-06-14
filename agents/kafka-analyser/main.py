@@ -250,7 +250,7 @@ async def _collection_loop() -> None:
                                     if "cluster" in data:
                                         data["cluster"]["under_replicated_partitions"] = total_urp
                                         data["cluster"]["partition_count"] = total_partitions
-                                    data["topics"] = []  # KPI counts computed above; topics populated after Prometheus
+                                    # data["topics"] owned by _loop_prometheus (parallel-safe; no write here)
                                     logger.info(
                                         "Collection loop topic scan: %d topics (%d RF=1) for '%s'",
                                         len(described_topics), total_rf1, c["name"])
@@ -263,8 +263,12 @@ async def _collection_loop() -> None:
                         _jmx_port = c.get("jmx_port")
                         if _prom_port and _PROMETHEUS_AVAILABLE:
                             try:
-                                broker_metrics = await scrape_all_brokers(
-                                    data.get("brokers", []), _prom_port)
+                                # Skip brokers with throughput_available=False (broker02 always times out)
+                                scrape_brokers = [b for b in data.get("brokers", [])
+                                                  if b.get("throughput_available") is not False]
+                                if not scrape_brokers:
+                                    scrape_brokers = data.get("brokers", [])
+                                broker_metrics = await scrape_all_brokers(scrape_brokers, _prom_port)
                                 for broker in data.get("brokers", []):
                                     bid = str(broker.get("broker_id", broker.get("host", "")))
                                     if bid in broker_metrics and broker_metrics[bid]:
@@ -274,7 +278,7 @@ async def _collection_loop() -> None:
                                     # Use first broker with throughput available for topic metrics
                                     available_broker = next(
                                         (b.get("host","") for b in data.get("brokers",[])
-                                         if b.get("throughput_available") is not False and b.get("host")),
+                                         if b.get("throughput_available") is True and b.get("host")),
                                         first_broker
                                     )
                                     if available_broker:
@@ -330,8 +334,9 @@ async def _collection_loop() -> None:
 
                     # Topic describe first (Prometheus reads topic list)
                     # Then Prometheus + lag in parallel (independent data keys)
-                    await _loop_topic_describe()
+                    # Run all 3 scans in parallel — no dependencies between them
                     await asyncio.gather(
+                        _loop_topic_describe(),
                         _loop_prometheus(),
                         _loop_lag_scan()
                     )
@@ -531,7 +536,12 @@ async def lifespan(app: FastAPI):
                                     logger.info("Prometheus scan: scraping %d brokers on port %d for '%s'",
                                                len(data.get("brokers", [])), _prom_port, c["name"])
                                     # Single scrape at startup — rates build over collection cycles
-                                    broker_metrics = await scrape_all_brokers(data.get("brokers", []), _prom_port)
+                                    # Skip brokers with throughput_available=False (broker02 always times out)
+                                    scrape_brokers = [b for b in data.get("brokers", [])
+                                                      if b.get("throughput_available") is not False]
+                                    if not scrape_brokers:
+                                        scrape_brokers = data.get("brokers", [])
+                                    broker_metrics = await scrape_all_brokers(scrape_brokers, _prom_port)
                                     for broker in data.get("brokers", []):
                                         bid = str(broker.get("broker_id", broker.get("host", "")))
                                         if bid in broker_metrics and broker_metrics[bid]:
@@ -542,7 +552,7 @@ async def lifespan(app: FastAPI):
                                         first_broker = data["brokers"][0].get("host", "")
                                         available_broker = next(
                                             (b.get("host","") for b in data.get("brokers",[])
-                                             if b.get("throughput_available") is not False and b.get("host")),
+                                             if b.get("throughput_available") is True and b.get("host")),
                                             first_broker
                                         )
                                         if available_broker:
