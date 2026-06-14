@@ -276,11 +276,28 @@ async def _collection_loop() -> None:
                                 if data.get("brokers"):
                                     first_broker = data["brokers"][0].get("host", "")
                                     # Use first broker with throughput available for topic metrics
-                                    available_broker = next(
-                                        (b.get("host","") for b in data.get("brokers",[])
-                                         if b.get("throughput_available") is True and b.get("host")),
-                                        first_broker
-                                    )
+                                    # Pick available broker from DB phase2 state — single DB read
+                                    available_broker = ""
+                                    try:
+                                        from storage import get_backend as _gb
+                                        import json as _j
+                                        _all_cfg = await _gb().get_all()
+                                        for b in data.get("brokers", []):
+                                            _host = b.get("host", "")
+                                            if not _host:
+                                                continue
+                                            _p2 = _all_cfg.get(f"phase2_{_host}:{_prom_port}")
+                                            if _p2 and _j.loads(_p2).get("throughput_available") is True:
+                                                available_broker = _host
+                                                break
+                                    except Exception as _p2e:
+                                        logger.warning("phase2 broker lookup failed: %s", _p2e)
+                                    if not available_broker:
+                                        available_broker = next(
+                                            (b.get("host","") for b in data.get("brokers",[]) if b.get("host")),
+                                            ""
+                                        )
+                                    logger.info("Prometheus topic scrape: using broker %s", available_broker)
                                     if available_broker:
                                         topic_metrics, top_by_size, top_by_msg_rate = await scrape_topic_metrics_and_top_by_size(
                                             available_broker, _prom_port, [], top_n=20)
@@ -550,11 +567,28 @@ async def lifespan(app: FastAPI):
                                     _ks.update_brokers(str(c.get("id", "default")), data.get("brokers", []))
                                     if data.get("brokers"):
                                         first_broker = data["brokers"][0].get("host", "")
-                                        available_broker = next(
-                                            (b.get("host","") for b in data.get("brokers",[])
-                                             if b.get("throughput_available") is True and b.get("host")),
-                                            first_broker
-                                        )
+                                        # Pick available broker from DB phase2 state — single DB read
+                                        available_broker = ""
+                                        try:
+                                            from storage import get_backend as _gb
+                                            import json as _j
+                                            _all_cfg = await _gb().get_all()
+                                            for b in data.get("brokers", []):
+                                                _host = b.get("host", "")
+                                                if not _host:
+                                                    continue
+                                                _p2 = _all_cfg.get(f"phase2_{_host}:{_prom_port}")
+                                                if _p2 and _j.loads(_p2).get("throughput_available") is True:
+                                                    available_broker = _host
+                                                    break
+                                        except Exception as _p2e:
+                                            logger.warning("phase2 broker lookup failed: %s", _p2e)
+                                        if not available_broker:
+                                            available_broker = next(
+                                                (b.get("host","") for b in data.get("brokers",[]) if b.get("host")),
+                                                ""
+                                            )
+                                        logger.info("Prometheus topic scrape: using broker %s", available_broker)
                                         if available_broker:
                                             topic_metrics, top_by_size, top_by_msg_rate = await scrape_topic_metrics_and_top_by_size(
                                                 available_broker, _prom_port, [], top_n=20)
