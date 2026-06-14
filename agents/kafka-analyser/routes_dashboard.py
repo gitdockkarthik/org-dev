@@ -87,21 +87,52 @@ async def get_overview(cluster_id: str | None = None, hours: int | None = None) 
 
 @router.get("/dashboard/counts")
 async def get_counts(cluster_id: str | None = None) -> dict:
-    """Real cluster counts from summary data — no heavy fetch."""
-    data = kafka_store.get_cluster_data(cluster_id)
-    if data is None:
+    """Cluster counts — reads from DB directly, not cache."""
+    if not cluster_id:
         return {"empty": True}
-    counts = data.get("counts", {})
-    return {
-        "total_topics": counts.get("total_topics", len(data.get("topics", []))),
-        "total_groups": counts.get("total_groups", len(data.get("consumer_groups", []))),
-        "total_brokers": counts.get("total_brokers", len(data.get("brokers", []))),
-        "total_connectors": len(data.get("connectors", [])),
-        "total_rf1": counts.get("total_rf1", 0),
-        "total_urp": counts.get("total_urp", 0),
-        "total_partitions": counts.get("total_partitions", 0),
-        "top_topics_by_size": counts.get("top_topics_by_size", []),
-    }
+    try:
+        from storage import get_backend
+        import json as _json
+        all_cfg = await get_backend().get_all()
+
+        # Structure counts live in kafka_metrics_history (scan_type='topics_structure')
+        from database import SessionLocal
+        from sqlalchemy import text as _text
+        structure = {}
+        if SessionLocal:
+            async with SessionLocal() as _sess:
+                _row = await _sess.execute(
+                    _text("""SELECT data_json FROM kafka_metrics_history
+                             WHERE cluster_id = :cid AND scan_type = 'topics_structure'
+                             ORDER BY collected_at DESC LIMIT 1"""),
+                    {"cid": cluster_id}
+                )
+                _r = _row.fetchone()
+                if _r:
+                    _d = _json.loads(_r.data_json)
+                    structure = _d.get("counts", _d) if isinstance(_d, dict) else {}
+
+        metrics_raw = all_cfg.get(f"kafka_counts_metrics_{cluster_id}")
+        metrics_str = _json.loads(metrics_raw) if metrics_raw else {}
+        metrics = _json.loads(metrics_str) if isinstance(metrics_str, str) else metrics_str
+
+        brokers_raw = all_cfg.get(f"kafka_brokers_{cluster_id}")
+        brokers = _json.loads(brokers_raw) if brokers_raw else []
+
+        return {
+            "total_topics": structure.get("total_topics", 0),
+            "total_groups": structure.get("total_groups", 0),
+            "total_brokers": structure.get("total_brokers", len(brokers)),
+            "total_connectors": 0,
+            "total_rf1": structure.get("total_rf1", 0),
+            "total_urp": structure.get("total_urp", 0),
+            "total_partitions": structure.get("total_partitions", 0),
+            "top_topics_by_size": metrics.get("top_topics_by_size", []),
+            "top_topics_by_msg_rate": metrics.get("top_topics_by_msg_rate", []),
+            "total_hot": metrics.get("total_hot", 0),
+        }
+    except Exception as _e:
+        return {"empty": True, "error": str(_e)}
 
 
 @router.get("/dashboard/topics/detail")

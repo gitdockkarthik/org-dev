@@ -374,11 +374,9 @@ async def sync_metrics() -> dict:
                     "cpu_cores": c.get("cpu_cores"),
                 })
                 data = await collector.collect()
-                kafka_store.set_cluster_data(
-                    data,
-                    source_type=c.get("source_type", "kafka_internal"),
-                    cluster_id=str(c.get("id", "default"))
-                )
+                # Do NOT overwrite cache with partial collect_summary data
+                # Cache is maintained by the background collection loop with full scan data
+                # kafka_store.set_cluster_data intentionally skipped here
                 # Persist topic metrics to PostgreSQL for historical trending
                 from datetime import datetime, timezone
                 collected_at = datetime.now(timezone.utc)
