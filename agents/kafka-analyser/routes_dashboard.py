@@ -426,7 +426,7 @@ Be specific — use actual group names, numbers, and timeframes from the data.""
 
 @router.get("/dashboard/overview/lag-trend")
 async def get_lag_trend(cluster_id: str | None = None, minutes: float = 1440.0) -> dict:
-    """Return total consumer lag trend over time from kafka_metrics_history."""
+    """Return total consumer lag trend over time, bucketed by time interval."""
     if not cluster_id:
         return {"empty": True, "points": []}
     try:
@@ -434,36 +434,80 @@ async def get_lag_trend(cluster_id: str | None = None, minutes: float = 1440.0) 
         from sqlalchemy import text
         if SessionLocal is None:
             return {"empty": True, "points": []}
+
+        # Determine bucket size based on time range
+        if minutes <= 60:
+            bucket_minutes = 5
+        elif minutes <= 360:
+            bucket_minutes = 30
+        elif minutes <= 1440:
+            bucket_minutes = 60
+        elif minutes <= 10080:
+            bucket_minutes = 1440   # daily
+        else:
+            bucket_minutes = 1440   # daily for 30 days
+
+        # Use daily truncation for 7d/30d, minute-bucket for shorter windows
+        use_daily = bucket_minutes >= 1440
         async with SessionLocal() as session:
-            result = await session.execute(
-                text("""
-                    SELECT collected_at, data_json
-                    FROM kafka_metrics_history
-                    WHERE cluster_id = :cluster_id
-                    AND scan_type = 'groups'
-                    AND collected_at >= NOW() - ((:minutes) * INTERVAL '1 minute')
-                    ORDER BY collected_at ASC
-                """),
-                {"cluster_id": cluster_id, "minutes": float(minutes)}
-            )
+            if use_daily:
+                result = await session.execute(
+                    text("""
+                        SELECT
+                            date_trunc('day', collected_at) as bucket_time,
+                            data_json
+                        FROM kafka_metrics_history
+                        WHERE cluster_id = :cluster_id
+                        AND scan_type = 'groups'
+                        AND collected_at >= NOW() - ((:minutes) * INTERVAL '1 minute')
+                        ORDER BY bucket_time ASC
+                    """),
+                    {"cluster_id": cluster_id, "minutes": float(minutes)}
+                )
+            else:
+                result = await session.execute(
+                    text("""
+                        SELECT
+                            date_trunc('hour', collected_at) +
+                            (FLOOR(EXTRACT(minute FROM collected_at) / :bucket) * :bucket) * INTERVAL '1 minute' as bucket_time,
+                            data_json
+                        FROM kafka_metrics_history
+                        WHERE cluster_id = :cluster_id
+                        AND scan_type = 'groups'
+                        AND collected_at >= NOW() - ((:minutes) * INTERVAL '1 minute')
+                        ORDER BY bucket_time ASC
+                    """),
+                    {"cluster_id": cluster_id, "minutes": float(minutes), "bucket": bucket_minutes}
+                )
             rows = result.fetchall()
+
         if not rows:
             return {"empty": True, "points": []}
+
         import json as _json
         from datetime import datetime, timezone
-        points = []
+        from collections import defaultdict
+
+        # Group by bucket and average the total lag
+        buckets: dict = defaultdict(list)
         for row in rows:
             try:
                 groups = _json.loads(row.data_json)
                 total_lag = sum(g.get("total_lag", 0) for g in groups if isinstance(g, dict))
-                rt = row.collected_at
-                if rt.tzinfo is None:
-                    rt = rt.replace(tzinfo=timezone.utc)
-                points.append({"time": rt.isoformat(), "total_lag": total_lag})
+                bt = row.bucket_time
+                if bt.tzinfo is None:
+                    bt = bt.replace(tzinfo=timezone.utc)
+                buckets[bt.isoformat()].append(total_lag)
             except Exception:
                 continue
-        if not points:
+
+        if not buckets:
             return {"empty": True, "points": []}
+
+        points = [
+            {"time": t, "total_lag": int(sum(v) / len(v))}
+            for t, v in sorted(buckets.items())
+        ]
         return {"empty": False, "points": points}
     except Exception:
         return {"empty": True, "points": []}
