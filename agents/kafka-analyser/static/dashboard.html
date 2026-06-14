@@ -592,7 +592,7 @@
             </div>
             <div class="broker-metrics">
               <div class="bm"><div class="bm__label">Heap</div><div class="bm__value" style="color:${metricColor(b.heap_pct)}">${b.heap_pct}%</div></div>
-              <div class="bm"><div class="bm__label">CPU</div><div class="bm__value" style="color:${metricColor(b.cpu_pct)}">${b.cpu_cores_configured ? b.cpu_pct + '%' : b.cpu_pct + ' cores'}</div></div>
+              <div class="bm"><div class="bm__label">CPU</div><div class="bm__value" style="color:${b.cpu_pct === 0 && b.heap_pct === 0 ? 'var(--text-muted)' : metricColor(b.cpu_pct)}">${b.cpu_pct === 0 && b.heap_pct === 0 ? '—' : b.cpu_cores_configured ? b.cpu_pct + '%' : b.cpu_pct + ' cores'}</div></div>
               <div class="bm"><div class="bm__label">URPs</div><div class="bm__value" style="color:${b.urp_count > 0 ? 'var(--danger)' : 'var(--success)'}">${b.urp_count}</div></div>
               <div class="bm"><div class="bm__label">GC Pauses</div><div class="bm__value" style="color:${(b.gc_pause_count ?? b.gc_pause_ms ?? 0) > 0 ? '#d97706' : 'var(--success)'}">${(b.gc_pause_count ?? b.gc_pause_ms ?? 0)}</div></div>
             </div>
@@ -1489,9 +1489,10 @@
             </div>
             ${metricRow('Heap', b.heap_pct)}
             ${(() => {
-              const cpuDisplay = b.cpu_cores_configured ? b.cpu_pct + '%' : b.cpu_pct + ' cores';
-              const cpuFill = b.cpu_cores_configured ? Math.min(100, b.cpu_pct) : Math.min(100, b.cpu_pct * 25);
-              const cpuColor = metricColor(b.cpu_cores_configured ? b.cpu_pct : cpuFill);
+              const unavailable = b.heap_pct === 0 && b.cpu_pct === 0 && b.produce_latency_ms === 0;
+              const cpuDisplay = unavailable ? '—' : b.cpu_cores_configured ? b.cpu_pct + '%' : b.cpu_pct + ' cores';
+              const cpuFill = unavailable ? 0 : b.cpu_cores_configured ? Math.min(100, b.cpu_pct) : Math.min(100, b.cpu_pct * 25);
+              const cpuColor = unavailable ? 'var(--text-muted)' : metricColor(b.cpu_cores_configured ? b.cpu_pct : cpuFill);
               return `<div style="margin-bottom:10px">
                 <div style="display:flex;justify-content:space-between;margin-bottom:4px">
                   <span style="font-size:.73rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em">CPU</span>
