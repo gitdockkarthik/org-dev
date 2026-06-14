@@ -948,8 +948,6 @@
       const topicStatusBadge = t => {
         if (t.status === 'retention-critical') return `<span class="sev sev--critical" style="font-size:.72rem">HIGH RISK</span>`;
         if (t.status === 'retention-warning') return `<span class="sev sev--warning" style="font-size:.72rem">ATTENTION</span>`;
-        if (logSize(t) > 1000 && msgRate(t) === 0) return `<span class="sev" style="background:rgba(100,116,139,.12);color:var(--text-muted)">STALE</span>`;
-        if (topicLowRep(t)) return `<span style="background:#666;color:#fff;padding:2px 8px;border-radius:4px;font-size:.72rem">LOW-REP</span>`;
         return `<span class="sev sev--healthy">HEALTHY</span>`;
       };
 
@@ -1027,9 +1025,9 @@
             <div class="kpi__sub">&gt; 1k msgs/sec</div>
           </div>
           <div class="kpi kpi--orange">
-            <div class="kpi__label">Retention Risk</div>
-            <div class="kpi__value">0</div>
-            <div class="kpi__sub">&gt; 70% capacity</div>
+            <div class="kpi__label">Large Topics</div>
+            <div class="kpi__value">${((window._clusterCounts && window._clusterCounts.top_topics_by_size) || []).filter(t => (t.size_bytes||0) > 10*1024*1024*1024).length}</div>
+            <div class="kpi__sub">&gt; 10GB storage</div>
           </div>
         </div>`;
 
@@ -1064,7 +1062,7 @@
           <div id="topic-chart-empty" style="display:none;text-align:center;padding:20px;color:var(--text-muted);font-size:.85rem"></div>
         </div>`;
 
-      document.getElementById('tab-topics').innerHTML = '<div style="display:flex;justify-content:flex-end;margin-bottom:6px"><button id="topic-analyse-btn" style="background:var(--navy-1);color:var(--accent);border:1px solid var(--accent);border-radius:20px;padding:8px 16px;font-size:.82rem;font-weight:600;cursor:pointer">🤖 Analyse</button></div>' + '<div style="text-align:center;padding:8px 0;"><span id="topic-loading-badge" style="display:none;align-items:center;gap:8px;padding:8px 20px;background:linear-gradient(135deg,#ff6b35,#f7931e);color:#fff;border-radius:20px;font-size:14px;font-weight:600;box-shadow:0 2px 8px rgba(255,107,53,0.3);animation:pulse-badge 1.5s ease-in-out infinite;">⟳ Loading topics...</span></div>' + topicKpis + topicBarCharts + topicFilters + `
+      document.getElementById('tab-topics').innerHTML = '<div style="display:flex;justify-content:flex-end;margin-bottom:6px"><button id="topic-analyse-btn" style="background:var(--navy-1);color:var(--accent);border:1px solid var(--accent);border-radius:20px;padding:8px 16px;font-size:.82rem;font-weight:600;cursor:pointer">🤖 Analyse</button></div>' + topicKpis + topicBarCharts + topicFilters + `
         <div class="chart-card__title" style="margin-bottom:8px">Top 20 Topics by Log Size</div>
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">Sorted by storage consumed · click row to see details</div>
         <div class="data-table-wrap">
@@ -2328,15 +2326,19 @@
       const existing = document.getElementById('tab-ai-fab-' + tabId);
       if (existing) existing.remove();
 
+      // Inject Analyse button into top-right header area of tab — never overlaps content
+      const fabWrap = document.createElement('div');
+      fabWrap.id = 'tab-ai-fab-wrap-' + tabId;
+      fabWrap.style.cssText = 'display:flex;justify-content:flex-end;margin-bottom:6px';
       const fab = document.createElement('button');
       fab.id = 'tab-ai-fab-' + tabId;
       fab.textContent = '🤖 Analyse';
-      fab.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:900;'
-        + 'background:var(--navy-1);color:var(--accent);border:1px solid var(--accent);'
+      fab.style.cssText = 'background:var(--navy-1);color:var(--accent);border:1px solid var(--accent);'
         + 'border-radius:20px;padding:8px 16px;font-size:.82rem;font-weight:600;cursor:pointer;'
         + 'box-shadow:0 2px 10px rgba(0,0,0,0.15)';
       fab.addEventListener('click', () => { _openAIDrawer(); _runAIDrawer(tabId); });
-      containerEl.appendChild(fab);
+      fabWrap.appendChild(fab);
+      containerEl.insertBefore(fabWrap, containerEl.firstChild);
     };
 
     // ── Init ──────────────────────────────────────────────────────────────────
