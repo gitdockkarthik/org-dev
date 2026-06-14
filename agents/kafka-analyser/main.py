@@ -309,6 +309,18 @@ async def _collection_loop() -> None:
                                         data["counts"]["total_hot"] = sum(
                                             1 for t in top_by_msg_rate
                                             if (t.get("messages_in_per_sec") or 0) > 1000)
+                                        # Persist counts directly to DB — bypasses cache dependency
+                                        try:
+                                            from routes_settings import _upsert
+                                            import json as _j
+                                            await _upsert(f"kafka_counts_metrics_{cid}",
+                                                _j.dumps({
+                                                    "top_topics_by_size": top_by_size,
+                                                    "top_topics_by_msg_rate": top_by_msg_rate,
+                                                    "total_hot": data["counts"].get("total_hot", 0),
+                                                }))
+                                        except Exception as _ue:
+                                            logger.warning("Failed to persist counts to DB: %s", _ue)
                                 logger.info("Collection loop Prometheus: completed for '%s'", c["name"])
                             except Exception as _pe:
                                 logger.warning("Collection loop Prometheus failed for '%s': %s",
@@ -600,6 +612,18 @@ async def lifespan(app: FastAPI):
                                             data["counts"]["total_hot"] = sum(
                                                 1 for t in top_by_msg_rate
                                                 if (t.get("messages_in_per_sec") or 0) > 1000)
+                                            # Persist counts directly to DB — bypasses cache dependency
+                                            try:
+                                                from routes_settings import _upsert
+                                                import json as _j
+                                                await _upsert(f"kafka_counts_metrics_{cid}",
+                                                    _j.dumps({
+                                                        "top_topics_by_size": top_by_size,
+                                                        "top_topics_by_msg_rate": top_by_msg_rate,
+                                                        "total_hot": data["counts"].get("total_hot", 0),
+                                                    }))
+                                            except Exception as _ue:
+                                                logger.warning("Failed to persist counts to DB: %s", _ue)
                                             _ks.update_topics_metrics(
                                                 str(c.get("id", "default")),
                                                 {},
