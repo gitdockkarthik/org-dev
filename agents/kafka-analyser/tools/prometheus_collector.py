@@ -506,34 +506,17 @@ async def scrape_topic_metrics_and_top_by_size(
                     if topic_match.group(1) in topic_set:
                         kept.append(line)
 
-        # Parse per-topic metrics
+        # Parse per-topic metrics (for topic_set requested topics only)
         metrics = _parse_prometheus_text("\n".join(kept))
 
         # Build top N by size from all topics
         sorted_sizes = sorted(all_sizes.items(), key=lambda x: x[1], reverse=True)
         top_by_size = []
         for t, s in (sorted_sizes[:top_n] if top_n > 0 else []):
-            topic_msgs = 0.0
-            topic_bytes_in = 0.0
-            # Get msgs/sec from already-parsed metrics if available
-            for entry in metrics.get("kafka_server_brokertopicmetrics_messagesin_by_topic_total", []):
-                if entry.get("labels", {}).get("topic") == t:
-                    topic_msgs = float(entry.get("value", 0))
-                    break
-            top_by_size.append({"name": t, "size_bytes": int(s), "messages_in_per_sec": topic_msgs, "bytes_in_per_sec": topic_bytes_in})
+            top_by_size.append({"name": t, "size_bytes": int(s), "messages_in_per_sec": 0.0, "bytes_in_per_sec": 0.0})
 
-        sorted_msgs = sorted(all_msgs.items(), key=lambda x: x[1], reverse=True)
-        top_by_msg_rate = [
-            {"name": t, "messages_in_per_sec": m, "size_bytes": int(all_sizes.get(t, 0))}
-            for t, m in sorted_msgs[:10]
-        ]
-
-        topic_sizes: dict[str, float] = {}
-        for entry in metrics.get("kafka_log_log_size", []):
-            topic = entry["labels"].get("topic", "")
-            if topic:
-                topic_sizes[topic] = topic_sizes.get(topic, 0) + entry["value"]
-
+        # Compute rates for ALL topics using _topic_state
+        # This is the single source of truth — no second scrape needed
         now = time.time()
         state_key = f"{host}:{prometheus_port}:topic_metrics_top"
         prev_state = _topic_state.get(state_key, {})
@@ -541,6 +524,22 @@ async def scrape_topic_metrics_and_top_by_size(
         elapsed = now - prev_time if now != prev_time else 60.0
 
         new_state: dict = {"__time__": now}
+
+        # Compute rates for ALL topics in all_msgs (full 18k+ topic set)
+        all_rates: dict[str, float] = {}
+        for topic, msgs_curr in all_msgs.items():
+            msgs_prev = prev_state.get(f"{topic}__msgs", msgs_curr)
+            rate = _rate(msgs_curr, msgs_prev, elapsed)
+            all_rates[topic] = rate
+            new_state[f"{topic}__msgs"] = msgs_curr
+
+        # Also compute rates for explicitly requested topics (broker metrics)
+        topic_sizes: dict[str, float] = {}
+        for entry in metrics.get("kafka_log_log_size", []):
+            topic = entry["labels"].get("topic", "")
+            if topic:
+                topic_sizes[topic] = topic_sizes.get(topic, 0) + entry["value"]
+
         for topic in topic_names:
             msgs_curr = _get_topic(metrics,
                 "kafka_server_brokertopicmetrics_messagesin_by_topic_total", topic)
@@ -564,6 +563,17 @@ async def scrape_topic_metrics_and_top_by_size(
                 "size_bytes": int(topic_sizes.get(topic, 0)),
             }
 
+        # Build top_by_msg_rate from computed rates (not raw counters)
+        # Cap at 200 non-zero rate topics for DB storage
+        active_topics = sorted(
+            [{"name": t, "messages_in_per_sec": r, "size_bytes": int(all_sizes.get(t, 0))}
+             for t, r in all_rates.items() if r > 0],
+            key=lambda x: x["messages_in_per_sec"],
+            reverse=True
+        )[:200]
+        top_by_msg_rate = active_topics
+
+        # Save state — ALL topic counters stored so next cycle has prev for any topic
         _topic_state[state_key] = new_state
         _asyncio.ensure_future(_save_scrape_state(
             f"scrape_state_{state_key}",
