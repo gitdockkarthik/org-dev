@@ -424,6 +424,51 @@ Be specific — use actual group names, numbers, and timeframes from the data.""
         }
 
 
+@router.get("/dashboard/overview/lag-trend")
+async def get_lag_trend(cluster_id: str | None = None, minutes: float = 1440.0) -> dict:
+    """Return total consumer lag trend over time from kafka_metrics_history."""
+    if not cluster_id:
+        return {"empty": True, "points": []}
+    try:
+        from database import SessionLocal
+        from sqlalchemy import text
+        if SessionLocal is None:
+            return {"empty": True, "points": []}
+        async with SessionLocal() as session:
+            result = await session.execute(
+                text("""
+                    SELECT collected_at, data_json
+                    FROM kafka_metrics_history
+                    WHERE cluster_id = :cluster_id
+                    AND scan_type = 'groups'
+                    AND collected_at >= NOW() - ((:minutes) * INTERVAL '1 minute')
+                    ORDER BY collected_at ASC
+                """),
+                {"cluster_id": cluster_id, "minutes": float(minutes)}
+            )
+            rows = result.fetchall()
+        if not rows:
+            return {"empty": True, "points": []}
+        import json as _json
+        from datetime import datetime, timezone
+        points = []
+        for row in rows:
+            try:
+                groups = _json.loads(row.data_json)
+                total_lag = sum(g.get("total_lag", 0) for g in groups if isinstance(g, dict))
+                rt = row.collected_at
+                if rt.tzinfo is None:
+                    rt = rt.replace(tzinfo=timezone.utc)
+                points.append({"time": rt.isoformat(), "total_lag": total_lag})
+            except Exception:
+                continue
+        if not points:
+            return {"empty": True, "points": []}
+        return {"empty": False, "points": points}
+    except Exception:
+        return {"empty": True, "points": []}
+
+
 @router.get("/dashboard/topics/history")
 async def get_topics_history(
     cluster_id: str | None = None,

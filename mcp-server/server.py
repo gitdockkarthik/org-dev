@@ -83,6 +83,24 @@ async def kafka_topic_history(cluster_id: str, minutes: float = 1440.0) -> dict:
 
 
 @mcp.tool()
+async def kafka_topic_name_search(cluster_id: str, q: str) -> dict:
+    """Search Kafka topic names for autocomplete — returns up to 20 matching topics with partition count and replication factor."""
+    return await _get(KAFKA_URL, "/dashboard/topics/name-search", {
+        "cluster_id": cluster_id,
+        "q": q,
+    })
+
+
+@mcp.tool()
+async def kafka_lag_trend(cluster_id: str, minutes: float = 1440.0) -> dict:
+    """Get total consumer lag trend over time — shows if cluster lag is growing, stable, or recovering."""
+    return await _get(KAFKA_URL, "/dashboard/overview/lag-trend", {
+        "cluster_id": cluster_id,
+        "minutes": minutes,
+    })
+
+
+@mcp.tool()
 async def kafka_consumer_groups(cluster_id: str | None = None) -> dict:
     """Get all consumer groups with state (Stable/Empty/Dead), topic assignments, and consumer lag per partition."""
     params = {}

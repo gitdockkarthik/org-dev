@@ -25,6 +25,8 @@ _TOOL_MAP: dict[tuple[str, str, str], str] = {
     ("kafka-analyser", "GET", "dashboard/topics"): "kafka_topics",
     ("kafka-analyser", "GET", "dashboard/topics/detail"): "kafka_topic_detail",
     ("kafka-analyser", "GET", "dashboard/topics/history"): "kafka_topic_history",
+    ("kafka-analyser", "GET", "dashboard/topics/name-search"): "kafka_topic_name_search",
+    ("kafka-analyser", "GET", "dashboard/overview/lag-trend"): "kafka_lag_trend",
     ("kafka-analyser", "GET", "dashboard/consumer-groups"): "kafka_consumer_groups",
     ("kafka-analyser", "GET", "dashboard/schema-registry"): "kafka_schema_registry",
     ("kafka-analyser", "GET", "dashboard/zookeeper"): "kafka_zookeeper",
