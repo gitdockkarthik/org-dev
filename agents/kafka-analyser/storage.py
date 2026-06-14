@@ -169,6 +169,21 @@ class MemoryBackend(StorageBackend):
     async def get_topic_history_bucketed(self, cluster_id: int, minutes: float, bucket_minutes: int) -> list[dict]:
         return []
 
+    async def upsert_topic_metrics_hourly(self, cluster_id: int, topics: list[dict], collected_at) -> None:
+        return None
+
+    async def upsert_topic_names(self, cluster_id: int, topics: list[dict]) -> None:
+        return None
+
+    async def get_topic_history_hourly(self, cluster_id: int, minutes: float, topic_filter: list[str] | None = None) -> list[dict]:
+        return []
+
+    async def topic_search(self, cluster_id: int, query: str) -> list[dict]:
+        return []
+
+    async def cleanup_topic_metrics_hourly(self, cluster_id: int) -> None:
+        return None
+
 
 # ── Postgres backend ────────────────────────────────────────────────────────
 class PostgresBackend(StorageBackend):
@@ -546,6 +561,173 @@ class PostgresBackend(StorageBackend):
         except Exception:
             logger.exception("PostgresBackend.get_topic_history_bucketed: failed for cluster_id=%r", cluster_id)
             return []
+
+    async def upsert_topic_metrics_hourly(self, cluster_id: int, topics: list[dict], collected_at) -> None:
+        """UPSERT per-topic msg/sec into hourly bucket — rolling average."""
+        from database import SessionLocal
+        if SessionLocal is None or not topics:
+            return
+        from datetime import timezone
+        try:
+            # Truncate to current hour bucket
+            hour_bucket = collected_at.replace(minute=0, second=0, microsecond=0)
+            if hour_bucket.tzinfo is None:
+                hour_bucket = hour_bucket.replace(tzinfo=timezone.utc)
+            async with SessionLocal() as session:
+                for t in topics:
+                    topic_name = t.get("name", "")
+                    if not topic_name:
+                        continue
+                    msgs = float(t.get("messages_in_per_sec", 0.0))
+                    await session.execute(
+                        text(
+                            """INSERT INTO kafka_topic_metrics_hourly
+                               (cluster_id, topic, hour_bucket, avg_msgs, max_msgs, sample_count)
+                               VALUES (:cluster_id, :topic, :hour_bucket, :msgs, :msgs, 1)
+                               ON CONFLICT (cluster_id, topic, hour_bucket)
+                               DO UPDATE SET
+                                 avg_msgs = (kafka_topic_metrics_hourly.avg_msgs
+                                             * kafka_topic_metrics_hourly.sample_count
+                                             + EXCLUDED.avg_msgs)
+                                             / (kafka_topic_metrics_hourly.sample_count + 1),
+                                 max_msgs = GREATEST(kafka_topic_metrics_hourly.max_msgs, EXCLUDED.max_msgs),
+                                 sample_count = kafka_topic_metrics_hourly.sample_count + 1"""
+                        ),
+                        {
+                            "cluster_id": cluster_id,
+                            "topic": topic_name,
+                            "hour_bucket": hour_bucket,
+                            "msgs": msgs,
+                        }
+                    )
+                await session.commit()
+        except Exception:
+            logger.exception("PostgresBackend.upsert_topic_metrics_hourly: failed for cluster_id=%r", cluster_id)
+
+    async def upsert_topic_names(self, cluster_id: int, topics: list[dict]) -> None:
+        """Upsert topic names with last_seen timestamp for autocomplete."""
+        from database import SessionLocal
+        if SessionLocal is None or not topics:
+            return
+        from datetime import datetime, timezone
+        try:
+            now = datetime.now(timezone.utc)
+            async with SessionLocal() as session:
+                for t in topics:
+                    topic_name = t.get("name", "")
+                    if not topic_name:
+                        continue
+                    await session.execute(
+                        text(
+                            """INSERT INTO kafka_topic_names (cluster_id, topic, last_seen)
+                               VALUES (:cluster_id, :topic, :last_seen)
+                               ON CONFLICT (cluster_id, topic)
+                               DO UPDATE SET last_seen = EXCLUDED.last_seen"""
+                        ),
+                        {"cluster_id": cluster_id, "topic": topic_name, "last_seen": now}
+                    )
+                await session.commit()
+        except Exception:
+            logger.exception("PostgresBackend.upsert_topic_names: failed for cluster_id=%r", cluster_id)
+
+    async def get_topic_history_hourly(self, cluster_id: int, minutes: float, topic_filter: list[str] | None = None) -> list[dict]:
+        """Return hourly bucketed msg/sec for chart. Top 10 by max rate, or specific topics."""
+        from database import SessionLocal
+        if SessionLocal is None:
+            return []
+        try:
+            async with SessionLocal() as session:
+                if topic_filter:
+                    # Specific topics requested (custom compare mode)
+                    result = await session.execute(
+                        text(
+                            """SELECT hour_bucket, topic, avg_msgs, max_msgs
+                               FROM kafka_topic_metrics_hourly
+                               WHERE cluster_id = :cluster_id
+                               AND hour_bucket >= NOW() - ((:minutes) * INTERVAL '1 minute')
+                               AND topic = ANY(:topics)
+                               ORDER BY hour_bucket ASC"""
+                        ),
+                        {"cluster_id": cluster_id, "minutes": float(minutes), "topics": topic_filter}
+                    )
+                else:
+                    # Top 10 by max rate in window
+                    result = await session.execute(
+                        text(
+                            """WITH top_topics AS (
+                                 SELECT topic, MAX(max_msgs) as peak
+                                 FROM kafka_topic_metrics_hourly
+                                 WHERE cluster_id = :cluster_id
+                                 AND hour_bucket >= NOW() - ((:minutes) * INTERVAL '1 minute')
+                                 GROUP BY topic
+                                 ORDER BY peak DESC
+                                 LIMIT 10
+                               )
+                               SELECT h.hour_bucket, h.topic, h.avg_msgs, h.max_msgs
+                               FROM kafka_topic_metrics_hourly h
+                               JOIN top_topics t ON h.topic = t.topic
+                               WHERE h.cluster_id = :cluster_id
+                               AND h.hour_bucket >= NOW() - ((:minutes) * INTERVAL '1 minute')
+                               ORDER BY h.hour_bucket ASC"""
+                        ),
+                        {"cluster_id": cluster_id, "minutes": float(minutes)}
+                    )
+                rows = result.fetchall()
+                return [
+                    {
+                        "time": row.hour_bucket.isoformat(),
+                        "topic": row.topic,
+                        "avg_msgs": round(float(row.avg_msgs), 4),
+                        "max_msgs": round(float(row.max_msgs), 4),
+                    }
+                    for row in rows
+                ]
+        except Exception:
+            logger.exception("PostgresBackend.get_topic_history_hourly: failed for cluster_id=%r", cluster_id)
+            return []
+
+    async def topic_search(self, cluster_id: int, query: str) -> list[dict]:
+        """Search topic names for autocomplete — last 30 days only."""
+        from database import SessionLocal
+        if SessionLocal is None:
+            return []
+        try:
+            async with SessionLocal() as session:
+                result = await session.execute(
+                    text(
+                        """SELECT topic FROM kafka_topic_names
+                           WHERE cluster_id = :cluster_id
+                           AND topic ILIKE :query
+                           AND last_seen >= NOW() - INTERVAL '30 days'
+                           ORDER BY last_seen DESC
+                           LIMIT 20"""
+                    ),
+                    {"cluster_id": cluster_id, "query": f"%{query}%"}
+                )
+                rows = result.fetchall()
+                return [{"name": row.topic} for row in rows]
+        except Exception:
+            logger.exception("PostgresBackend.topic_search: failed for cluster_id=%r", cluster_id)
+            return []
+
+    async def cleanup_topic_metrics_hourly(self, cluster_id: int) -> None:
+        """Delete hourly topic metrics older than 30 days."""
+        from database import SessionLocal
+        if SessionLocal is None:
+            return
+        try:
+            async with SessionLocal() as session:
+                await session.execute(
+                    text(
+                        """DELETE FROM kafka_topic_metrics_hourly
+                           WHERE cluster_id = :cluster_id
+                           AND hour_bucket < NOW() - INTERVAL '30 days'"""
+                    ),
+                    {"cluster_id": cluster_id}
+                )
+                await session.commit()
+        except Exception:
+            logger.exception("PostgresBackend.cleanup_topic_metrics_hourly: failed for cluster_id=%r", cluster_id)
 
 
 # ── Factory ─────────────────────────────────────────────────────────────────
