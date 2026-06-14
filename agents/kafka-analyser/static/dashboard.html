@@ -576,8 +576,8 @@
             <div class="chart-wrap" id="overview-activity-wrap" style="height:220px"><canvas id="overview-activity-chart"></canvas></div>
           </div>
           <div class="chart-card" style="flex:1;min-width:300px;margin-bottom:0">
-            <div class="chart-card__title">Partition Distribution by Topic</div>
-            <div class="chart-wrap" style="height:220px"><canvas id="overview-partitions-chart"></canvas></div>
+            <div class="chart-card__title">Consumer Lag Trend</div>
+            <div class="chart-wrap" style="height:220px"><canvas id="overview-lag-trend-chart"></canvas></div>
           </div>
         </div>`;
 
@@ -693,26 +693,71 @@
           }
         }
 
-        if (window._overviewPartitionsChart) { window._overviewPartitionsChart.destroy(); window._overviewPartitionsChart = null; }
-        const partsCtx = document.getElementById('overview-partitions-chart')?.getContext('2d');
-        if (partsCtx) {
-          window._overviewPartitionsChart = new Chart(partsCtx, {
-            type: 'bar',
-            data: {
-              labels: topByParts.map(nameOf),
-              datasets: [{ label: 'Partitions', data: topByParts.map(partsOf), backgroundColor: '#4FC3F7', borderWidth: 0 }],
-            },
-            options: {
-              indexAxis: 'y',
-              responsive: true,
-              maintainAspectRatio: false,
-              plugins: { legend: { display: false }, title: { display: false } },
-              scales: {
-                x: { ticks: { callback: v => fmtNum(v), font: { size: 10 } }, beginAtZero: true },
-                y: { ticks: { font: { size: 10 } } },
-              },
-            },
-          });
+        if (window._overviewLagTrendChart) { window._overviewLagTrendChart.destroy(); window._overviewLagTrendChart = null; }
+        const lagCtx = document.getElementById('overview-lag-trend-chart')?.getContext('2d');
+        if (lagCtx) {
+          try {
+            const clusterId = _currentClusterId || document.getElementById('ctrl-cluster')?.value;
+            const qs2 = new URLSearchParams();
+            qs2.set('minutes', String(_getMinutes()));
+            if (clusterId) qs2.set('cluster_id', clusterId);
+            const lagData = await fetch(`${PROXY}/dashboard/overview/lag-trend?${qs2.toString()}`,
+              { headers: _authHeaders(), cache: 'no-store' }).then(r => r.json());
+            if (!lagData.empty && lagData.points && lagData.points.length) {
+              const timeVal = document.getElementById('ctrl-time')?.value || '24h';
+              let _lastDayLabel = '';
+              const lagLabels = lagData.points.map(p => {
+                const d = new Date(p.time);
+                if (timeVal === '7d' || timeVal === '30d') {
+                  return d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
+                }
+                if (timeVal === '24h') {
+                  const day = d.toLocaleDateString([], { weekday: 'short' });
+                  const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                  if (day !== _lastDayLabel) { _lastDayLabel = day; return day + ' ' + t; }
+                  return t;
+                }
+                return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              });
+              const lagValues = lagData.points.map(p => p.total_lag);
+              window._overviewLagTrendChart = new Chart(lagCtx, {
+                type: 'line',
+                data: {
+                  labels: lagLabels,
+                  datasets: [{
+                    label: 'Total Consumer Lag',
+                    data: lagValues,
+                    borderColor: '#FF6B35',
+                    backgroundColor: 'rgba(255,107,53,0.1)',
+                    borderWidth: 2,
+                    pointRadius: lagLabels.length < 30 ? 2 : 0,
+                    tension: 0.3,
+                    fill: true,
+                  }],
+                },
+                options: {
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                      callbacks: {
+                        label: ctx => 'Lag: ' + ctx.parsed.y.toLocaleString() + ' msgs'
+                      }
+                    }
+                  },
+                  scales: {
+                    x: { ticks: { maxTicksLimit: 10, font: { size: 10 }, maxRotation: 45 } },
+                    y: { ticks: { callback: v => v >= 1000000 ? (v/1000000).toFixed(1)+'M' : v >= 1000 ? (v/1000).toFixed(0)+'K' : v, font: { size: 10 } }, beginAtZero: false },
+                  },
+                },
+              });
+            } else {
+              lagCtx.canvas.parentElement.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:.85rem">No lag history available</div>';
+            }
+          } catch(e) {
+            console.warn('Lag trend chart failed:', e);
+          }
         }
       }, 0);
     }
