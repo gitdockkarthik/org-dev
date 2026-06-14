@@ -114,6 +114,25 @@
     .cg-cell { display: flex; align-items: center; gap: 4px; overflow: hidden; }
     .cg-cell-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
     .cg-cell .copy-icon { flex-shrink: 0; }
+    .skeleton {
+      background: linear-gradient(90deg, var(--navy-2) 25%, var(--navy-1) 50%, var(--navy-2) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+      border-radius: 6px;
+    }
+    @keyframes shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+    .skeleton-kpi {
+      background: var(--navy-1);
+      border: 1px solid var(--border);
+      border-radius: var(--r-sm);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
   </style>
 </head>
 <body>
@@ -293,9 +312,30 @@
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     function skeletonHTML() {
-      return `<div style="display:flex;flex-direction:column;gap:12px;padding:4px 0">
-        ${[80,60,90,70].map(w=>`<div class="skeleton" style="height:14px;width:${w}%"></div>`).join('')}
-      </div>`;
+      const kpiCard = `
+        <div class="skeleton-kpi">
+          <div class="skeleton" style="height:11px;width:50%"></div>
+          <div class="skeleton" style="height:28px;width:40%"></div>
+          <div class="skeleton" style="height:10px;width:60%"></div>
+        </div>`;
+      return `
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:22px">
+          ${kpiCard.repeat(4)}
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:22px">
+          <div class="skeleton-kpi" style="height:180px">
+            <div class="skeleton" style="height:12px;width:40%;margin-bottom:16px"></div>
+            <div class="skeleton" style="height:120px;width:100%;border-radius:8px"></div>
+          </div>
+          <div class="skeleton-kpi" style="height:180px">
+            <div class="skeleton" style="height:12px;width:40%;margin-bottom:16px"></div>
+            <div class="skeleton" style="height:120px;width:100%;border-radius:8px"></div>
+          </div>
+        </div>
+        <div class="skeleton-kpi" style="margin-bottom:14px">
+          <div class="skeleton" style="height:12px;width:30%"></div>
+          ${[100,85,70,90,60].map(w=>`<div class="skeleton" style="height:10px;width:${w}%"></div>`).join('')}
+        </div>`;
     }
     function emptyState(icon, title, sub) {
       return `<div class="empty-state"><div class="empty-state__icon">${icon}</div>
