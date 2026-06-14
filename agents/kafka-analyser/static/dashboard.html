@@ -3126,32 +3126,6 @@
       _groupStreamActive = false;
     }
 
-    /* ── Server-side topic search ────────────────────────── */
-    let _topicSearchTimer = null;
-    function _serverTopicSearch(query) {
-      clearTimeout(_topicSearchTimer);
-      if (!query || query.length < 2) {
-        // Fall back to client-side filter on summary data
-        if (window._topicSearch) window._topicSearch(query);
-        return;
-      }
-      _topicSearchTimer = setTimeout(async () => {
-        const cid = _clusterId();
-        try {
-          const d = await api('/dashboard/topics/search?cluster_id=' + cid + '&q=' + encodeURIComponent(query));
-          if (d.topics && d.topics.length > 0) {
-            // Replace visible topics with search results
-            window._topicAllTopics = d.topics;
-            window._applyTopicView && window._applyTopicView();
-          } else if (window._topicSearch) {
-            window._topicSearch(query);
-          }
-        } catch (e) {
-          if (window._topicSearch) window._topicSearch(query);
-        }
-      }, 400);
-    }
-
     /* ── Server-side group search ────────────────────────── */
     let _groupSearchTimer = null;
     function _serverGroupSearch(query) {

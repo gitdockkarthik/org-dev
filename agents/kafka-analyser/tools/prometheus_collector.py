@@ -457,7 +457,7 @@ async def get_top_topics_by_log_size(host: str, prometheus_port: int,
 async def scrape_topic_metrics_and_top_by_size(
         host: str, prometheus_port: int,
         topic_names: list[str],
-        top_n: int = 20) -> tuple[dict[str, dict], list[dict], list[dict]]:
+        top_n: int = 200) -> tuple[dict[str, dict], list[dict], list[dict]]:
     """Single curl fetch — returns per-topic metrics, top N by log size, AND top 10 by msg rate.
     Avoids double fetch that scrape_topic_metrics + get_top_topics_by_log_size would cause."""
     result: dict[str, dict] = {}

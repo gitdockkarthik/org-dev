@@ -263,10 +263,20 @@ async def _collection_loop() -> None:
                         _jmx_port = c.get("jmx_port")
                         if _prom_port and _PROMETHEUS_AVAILABLE:
                             try:
-                                # Skip brokers with throughput_available=False (broker02 always times out)
-                                scrape_brokers = [b for b in data.get("brokers", [])
-                                                  if b.get("throughput_available") is not False]
-                                if not scrape_brokers:
+                                from storage import get_backend as _gb_all
+                                import json as _j_all
+                                _all_cfg = await _gb_all().get_all()
+                                # Skip brokers marked throughput_available=False in DB — saves timeout wait
+                                try:
+                                    scrape_brokers = [
+                                        b for b in data.get("brokers", [])
+                                        if b.get("host") and _j_all.loads(
+                                            _all_cfg.get(f"phase2_{b['host']}:{_prom_port}", '{"throughput_available": true}')
+                                        ).get("throughput_available") is not False
+                                    ]
+                                    if not scrape_brokers:
+                                        scrape_brokers = data.get("brokers", [])
+                                except Exception:
                                     scrape_brokers = data.get("brokers", [])
                                 broker_metrics = await scrape_all_brokers(scrape_brokers, _prom_port)
                                 for broker in data.get("brokers", []):
@@ -279,15 +289,12 @@ async def _collection_loop() -> None:
                                     # Pick available broker from DB phase2 state — single DB read
                                     available_broker = ""
                                     try:
-                                        from storage import get_backend as _gb
-                                        import json as _j
-                                        _all_cfg = await _gb().get_all()
                                         for b in data.get("brokers", []):
                                             _host = b.get("host", "")
                                             if not _host:
                                                 continue
                                             _p2 = _all_cfg.get(f"phase2_{_host}:{_prom_port}")
-                                            if _p2 and _j.loads(_p2).get("throughput_available") is True:
+                                            if _p2 and _j_all.loads(_p2).get("throughput_available") is True:
                                                 available_broker = _host
                                                 break
                                     except Exception as _p2e:
@@ -300,7 +307,7 @@ async def _collection_loop() -> None:
                                     logger.info("Prometheus topic scrape: using broker %s", available_broker)
                                     if available_broker:
                                         topic_metrics, top_by_size, top_by_msg_rate = await scrape_topic_metrics_and_top_by_size(
-                                            available_broker, _prom_port, [], top_n=20)
+                                            available_broker, _prom_port, [], top_n=200)
                                         if "counts" not in data:
                                             data["counts"] = {}
                                         data["counts"]["top_topics_by_size"] = top_by_size
@@ -559,16 +566,26 @@ async def lifespan(app: FastAPI):
                             _jmx_port = c.get("jmx_port")
                             if _prom_port and _PROMETHEUS_AVAILABLE:
                                 try:
+                                    from storage import get_backend as _gb_all
+                                    import json as _j_all
+                                    _all_cfg = await _gb_all().get_all()
                                     import time as _t3
                                     from tools.prometheus_collector import scrape_all_brokers
                                     _prom_start = _t3.time()
                                     logger.info("Prometheus scan: scraping %d brokers on port %d for '%s'",
                                                len(data.get("brokers", [])), _prom_port, c["name"])
                                     # Single scrape at startup — rates build over collection cycles
-                                    # Skip brokers with throughput_available=False (broker02 always times out)
-                                    scrape_brokers = [b for b in data.get("brokers", [])
-                                                      if b.get("throughput_available") is not False]
-                                    if not scrape_brokers:
+                                    # Skip brokers marked throughput_available=False in DB — saves timeout wait
+                                    try:
+                                        scrape_brokers = [
+                                            b for b in data.get("brokers", [])
+                                            if b.get("host") and _j_all.loads(
+                                                _all_cfg.get(f"phase2_{b['host']}:{_prom_port}", '{"throughput_available": true}')
+                                            ).get("throughput_available") is not False
+                                        ]
+                                        if not scrape_brokers:
+                                            scrape_brokers = data.get("brokers", [])
+                                    except Exception:
                                         scrape_brokers = data.get("brokers", [])
                                     broker_metrics = await scrape_all_brokers(scrape_brokers, _prom_port)
                                     for broker in data.get("brokers", []):
@@ -582,15 +599,12 @@ async def lifespan(app: FastAPI):
                                         # Pick available broker from DB phase2 state — single DB read
                                         available_broker = ""
                                         try:
-                                            from storage import get_backend as _gb
-                                            import json as _j
-                                            _all_cfg = await _gb().get_all()
                                             for b in data.get("brokers", []):
                                                 _host = b.get("host", "")
                                                 if not _host:
                                                     continue
                                                 _p2 = _all_cfg.get(f"phase2_{_host}:{_prom_port}")
-                                                if _p2 and _j.loads(_p2).get("throughput_available") is True:
+                                                if _p2 and _j_all.loads(_p2).get("throughput_available") is True:
                                                     available_broker = _host
                                                     break
                                         except Exception as _p2e:
@@ -603,7 +617,7 @@ async def lifespan(app: FastAPI):
                                         logger.info("Prometheus topic scrape: using broker %s", available_broker)
                                         if available_broker:
                                             topic_metrics, top_by_size, top_by_msg_rate = await scrape_topic_metrics_and_top_by_size(
-                                                available_broker, _prom_port, [], top_n=20)
+                                                available_broker, _prom_port, [], top_n=200)
                                             if "counts" not in data:
                                                 data["counts"] = {}
                                             data["counts"]["top_topics_by_size"] = top_by_size
