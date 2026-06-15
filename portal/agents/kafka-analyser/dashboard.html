@@ -743,7 +743,7 @@
                   maintainAspectRatio: false,
                   plugins: { legend: { display: false }, title: { display: false } },
                   scales: {
-                    x: { ticks: { maxTicksLimit: 12, font: { size: 10 }, maxRotation: 45 } },
+                    x: { ticks: { autoSkip: false, maxRotation: 45, font: { size: 10 } } },
                     y: { ticks: { callback: v => fmtRate(v), font: { size: 10 } }, beginAtZero: true },
                   },
                 },
@@ -821,7 +821,7 @@
                     }
                   },
                   scales: {
-                    x: { ticks: { maxTicksLimit: 10, font: { size: 10 }, maxRotation: 45 } },
+                    x: { ticks: { autoSkip: false, maxRotation: 45, font: { size: 10 } } },
                     y: { ticks: { callback: v => v >= 1000000 ? (v/1000000).toFixed(1)+'M' : v >= 1000 ? (v/1000).toFixed(0)+'K' : v, font: { size: 10 } }, beginAtZero: false },
                   },
                 },
@@ -1411,7 +1411,7 @@
                 title: { display: false },
               },
               scales: {
-                x: { ticks: { maxTicksLimit: 12, font: { size: 10 }, maxRotation: 45 } },
+                x: { ticks: { autoSkip: false, maxRotation: 45, font: { size: 10 } } },
                 y: { ticks: { callback: v => fmtRate(v), font: { size: 10 } }, beginAtZero: true },
               },
             },
