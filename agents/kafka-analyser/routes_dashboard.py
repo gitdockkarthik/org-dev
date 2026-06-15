@@ -537,44 +537,22 @@ async def get_lag_trend(cluster_id: str | None = None, minutes: float = 1440.0) 
 
         async with SessionLocal() as session:
             sql = f"""
-                WITH buckets AS (
-                    SELECT generate_series(
-                        date_bin(
-                            '{bucket_interval}'::INTERVAL,
-                            NOW() - ((:minutes) * INTERVAL '1 minute'),
-                            TIMESTAMP '2001-01-01'
-                        ),
-                        date_bin(
-                            '{bucket_interval}'::INTERVAL,
-                            NOW(),
-                            TIMESTAMP '2001-01-01'
-                        ),
-                        '{bucket_interval}'::INTERVAL
-                    ) AS bucket_time
-                ),
-                actuals AS (
-                    SELECT
-                        date_bin(
-                            '{bucket_interval}'::INTERVAL,
-                            collected_at,
-                            TIMESTAMP '2001-01-01'
-                        ) AS bucket_time,
-                        AVG(total_lag)::bigint AS avg_lag
-                    FROM kafka_lag_snapshots
-                    WHERE cluster_id = :cluster_id
-                    AND collected_at >= NOW() - ((:minutes) * INTERVAL '1 minute')
-                    GROUP BY date_bin(
+                SELECT
+                    date_bin(
                         '{bucket_interval}'::INTERVAL,
                         collected_at,
                         TIMESTAMP '2001-01-01'
-                    )
+                    ) AS bucket_time,
+                    AVG(total_lag)::bigint AS avg_lag
+                FROM kafka_lag_snapshots
+                WHERE cluster_id = :cluster_id
+                AND collected_at >= NOW() - ((:minutes) * INTERVAL '1 minute')
+                GROUP BY date_bin(
+                    '{bucket_interval}'::INTERVAL,
+                    collected_at,
+                    TIMESTAMP '2001-01-01'
                 )
-                SELECT
-                    b.bucket_time,
-                    COALESCE(a.avg_lag, 0) AS avg_lag
-                FROM buckets b
-                LEFT JOIN actuals a ON b.bucket_time = a.bucket_time
-                ORDER BY b.bucket_time ASC
+                ORDER BY bucket_time ASC
             """
             result = await session.execute(
                 text(sql),
