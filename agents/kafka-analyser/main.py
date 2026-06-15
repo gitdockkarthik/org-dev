@@ -412,6 +412,34 @@ async def _collection_loop() -> None:
                     await save_topics_metrics(cid)
                     await save_groups(cid)
 
+                    # Insert lag snapshot for fast trend queries
+                    try:
+                        from database import SessionLocal
+                        from sqlalchemy import text as _text
+                        groups = data.get("consumer_groups", [])
+                        _total_lag = sum(
+                            g.get("total_lag", 0)
+                            for g in groups
+                            if isinstance(g, dict)
+                        )
+                        _group_count = len(groups)
+                        async with SessionLocal() as _sess:
+                            await _sess.execute(
+                                _text("""
+                                    INSERT INTO kafka_lag_snapshots
+                                      (cluster_id, total_lag, group_count, collected_at)
+                                    VALUES (:cid, :lag, :cnt, NOW())
+                                """),
+                                {
+                                    "cid": str(cid),
+                                    "lag": int(_total_lag),
+                                    "cnt": int(_group_count)
+                                }
+                            )
+                            await _sess.commit()
+                    except Exception as _e:
+                        logger.warning(f"[cluster {cid}] lag snapshot insert failed: {_e}")
+
                     # Save topic msg/sec to hourly aggregation table + upsert topic names
                     from datetime import datetime, timezone
                     from storage import get_backend
@@ -742,6 +770,35 @@ async def lifespan(app: FastAPI):
                         await save_brokers(cid, brokers=data.get("brokers", []))
                         await save_topics_metrics(cid)
                         await save_groups(cid)
+
+                        # Insert lag snapshot for fast trend queries
+                        try:
+                            from database import SessionLocal
+                            from sqlalchemy import text as _text
+                            groups = data.get("consumer_groups", [])
+                            _total_lag = sum(
+                                g.get("total_lag", 0)
+                                for g in groups
+                                if isinstance(g, dict)
+                            )
+                            _group_count = len(groups)
+                            async with SessionLocal() as _sess:
+                                await _sess.execute(
+                                    _text("""
+                                        INSERT INTO kafka_lag_snapshots
+                                          (cluster_id, total_lag, group_count, collected_at)
+                                        VALUES (:cid, :lag, :cnt, NOW())
+                                    """),
+                                    {
+                                        "cid": str(cid),
+                                        "lag": int(_total_lag),
+                                        "cnt": int(_group_count)
+                                    }
+                                )
+                                await _sess.commit()
+                        except Exception as _e:
+                            logger.warning(f"[cluster {cid}] lag snapshot insert failed: {_e}")
+
                         # Save topic msg/sec to hourly aggregation table + upsert topic names
                         topics = data.get("topics", [])
                         if topics and c.get("id"):
