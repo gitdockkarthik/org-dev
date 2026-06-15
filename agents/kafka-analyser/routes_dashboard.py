@@ -534,71 +534,43 @@ async def get_lag_trend(cluster_id: str | None = None, minutes: float = 1440.0) 
         else:
             bucket_minutes = 1440   # daily for 30 days
 
-        # Use daily truncation for 7d/30d, minute-bucket for shorter windows
-        use_daily = bucket_minutes >= 1440
         async with SessionLocal() as session:
-            if use_daily:
-                result = await session.execute(
-                    text("""
-                        SELECT
-                            date_trunc('day', collected_at) as bucket_time,
-                            data_json
-                        FROM kafka_metrics_history
-                        WHERE cluster_id = :cluster_id
-                        AND scan_type = 'groups'
-                        AND collected_at >= NOW() - ((:minutes) * INTERVAL '1 minute')
-                        ORDER BY bucket_time ASC
-                    """),
-                    {"cluster_id": cluster_id, "minutes": float(minutes)}
-                )
-            else:
-                result = await session.execute(
-                    text("""
-                        SELECT
-                            date_trunc('hour', collected_at) +
-                            (FLOOR(EXTRACT(minute FROM collected_at) / :bucket) * :bucket) * INTERVAL '1 minute' as bucket_time,
-                            data_json
-                        FROM kafka_metrics_history
-                        WHERE cluster_id = :cluster_id
-                        AND scan_type = 'groups'
-                        AND collected_at >= NOW() - ((:minutes) * INTERVAL '1 minute')
-                        ORDER BY bucket_time ASC
-                    """),
-                    {"cluster_id": cluster_id, "minutes": float(minutes), "bucket": bucket_minutes}
-                )
+            result = await session.execute(
+                text("""
+                    SELECT
+                        date_trunc('hour', collected_at) +
+                        (FLOOR(EXTRACT(epoch FROM collected_at) / (:bucket * 60))
+                         * (:bucket * 60)) * INTERVAL '1 second' as bucket_time,
+                        AVG(total_lag)::bigint as avg_lag
+                    FROM kafka_lag_snapshots
+                    WHERE cluster_id = :cluster_id
+                    AND collected_at >= NOW() - ((:minutes) * INTERVAL '1 minute')
+                    GROUP BY bucket_time
+                    ORDER BY bucket_time ASC
+                """),
+                {
+                    "cluster_id": str(cluster_id),
+                    "minutes": float(minutes),
+                    "bucket": int(bucket_minutes)
+                }
+            )
             rows = result.fetchall()
 
         if not rows:
             return {"empty": True, "points": []}
 
-        import json as _json
-        from datetime import datetime, timezone
-        from collections import defaultdict
-
-        # Group by bucket and average the total lag
-        buckets: dict = defaultdict(list)
-        for row in rows:
-            try:
-                groups = _json.loads(row.data_json)
-                total_lag = sum(g.get("total_lag", 0) for g in groups if isinstance(g, dict))
-                bt = row.bucket_time
-                if bt.tzinfo is None:
-                    bt = bt.replace(tzinfo=timezone.utc)
-                buckets[bt.isoformat()].append(total_lag)
-            except Exception:
-                continue
-
-        if not buckets:
-            return {"empty": True, "points": []}
-
         points = [
-            {"time": t, "total_lag": int(sum(v) / len(v))}
-            for t, v in sorted(buckets.items())
+            {"time": str(row.bucket_time)[:16], "total_lag": int(row.avg_lag)}
+            for row in rows
         ]
+
         result = {"empty": False, "points": points}
         _set_lag_trend_cached(_cache_key, result)
         return result
-    except Exception:
+
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"lag_trend error: {e}")
         return {"empty": True, "points": []}
 
 
