@@ -2501,11 +2501,6 @@ ${JSON.stringify(payload, null, 2)}
           filename = DASH.report.filename; activeId = DASH.report.id;
         }
 
-        // Fetch raw rows for cross-tabs (env×month, env×category) — best effort
-        if (activeId != null) {
-          try { ROWS = await api(`/reports/${activeId}/data`); } catch (_) { ROWS = []; }
-        }
-
         // Multi-select report picker (single-report mode on first load)
         currentReportId = activeId;
         _selectedReportIds = activeId != null ? [activeId] : [];
