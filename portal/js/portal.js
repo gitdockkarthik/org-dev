@@ -185,8 +185,62 @@ function renderMarkdown(raw) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
   // Fenced code blocks
-  s = s.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) =>
-    `<pre><code class="lang-${lang}">${code.trim()}</code></pre>`);
+  s = s.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    const trimmed = code.trim();
+    // Detect Chart.js JSON blobs and render as table
+    if (lang === 'json' || trimmed.startsWith('{')) {
+      try {
+        const obj = JSON.parse(trimmed);
+        if (obj.type && obj.labels && obj.datasets) {
+          const labels = obj.labels;
+          const datasets = obj.datasets;
+          let html = '<table class="md-table"><thead><tr><th>Label</th>';
+          datasets.forEach(ds => {
+            html += `<th>${ds.label || 'Value'}</th>`;
+          });
+          html += '</tr></thead><tbody>';
+          labels.forEach((lbl, i) => {
+            html += `<tr><td>${lbl}</td>`;
+            datasets.forEach(ds => {
+              const val = ds.data?.[i];
+              html += `<td>${val != null ? (typeof val === 'number' ? val.toLocaleString() : val) : '—'}</td>`;
+            });
+            html += '</tr>';
+          });
+          html += '</tbody></table>';
+          return html;
+        }
+      } catch(e) { /* not JSON — fall through to code block */ }
+    }
+    return `<pre><code class="lang-${lang}">${trimmed}</code></pre>`;
+  });
+
+  // Bare chart JSON blobs (not in code fences)
+  s = s.replace(/^\s*(\{"type":"(?:bar|line|doughnut)"[\s\S]*?\})\s*$/gm, (_, json) => {
+    try {
+      const obj = JSON.parse(json);
+      if (obj.type && obj.labels && obj.datasets) {
+        const labels = obj.labels;
+        const datasets = obj.datasets;
+        let html = '<table class="md-table"><thead><tr><th>Label</th>';
+        datasets.forEach(ds => {
+          html += `<th>${ds.label || 'Value'}</th>`;
+        });
+        html += '</tr></thead><tbody>';
+        labels.forEach((lbl, i) => {
+          html += `<tr><td>${lbl}</td>`;
+          datasets.forEach(ds => {
+            const val = ds.data?.[i];
+            html += `<td>${val != null ? (typeof val === 'number' ? val.toLocaleString() : val) : '—'}</td>`;
+          });
+          html += '</tr>';
+        });
+        html += '</tbody></table>';
+        return html;
+      }
+    } catch(e) {}
+    return _;
+  });
   // Inline code
   s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
   // Bold / italic
