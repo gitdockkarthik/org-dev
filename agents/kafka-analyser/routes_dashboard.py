@@ -589,7 +589,7 @@ async def get_lag_trend(cluster_id: str | None = None, minutes: float = 1440.0) 
             return {"empty": True, "points": []}
 
         points = [
-            {"time": str(row.bucket_time)[:16], "total_lag": int(row.avg_lag)}
+            {"time": str(row.bucket_time)[:16].replace(' ', 'T'), "total_lag": int(row.avg_lag)}
             for row in rows
         ]
 
