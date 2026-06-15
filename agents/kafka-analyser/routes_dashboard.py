@@ -629,27 +629,35 @@ async def get_topics_history(
     # Determine hour buckets for selected window
     now = datetime.now(timezone.utc)
     if minutes <= 60:
-        total_buckets = 2       # current hour + previous hour
+        total_buckets = 2
         delta_hours = 2
+        bucket_hours = 1
     elif minutes <= 360:
         total_buckets = 6
         delta_hours = 6
+        bucket_hours = 1
     elif minutes <= 1440:
         total_buckets = 24
         delta_hours = 24
+        bucket_hours = 1
     elif minutes <= 10080:
-        total_buckets = 168
+        total_buckets = 28
         delta_hours = 168
+        bucket_hours = 6
     else:
-        total_buckets = 720
+        total_buckets = 30
         delta_hours = 720
+        bucket_hours = 24
 
     # Generate all expected hour bucket labels (zero-filled)
     current_hour = now.replace(minute=0, second=0, microsecond=0)
+    # Align to bucket boundary
+    bucket_offset = current_hour.hour % bucket_hours
+    current_bucket = current_hour - timedelta(hours=bucket_offset)
     all_buckets = []
     bucket_dts = []
     for i in range(total_buckets - 1, -1, -1):
-        b = current_hour - timedelta(hours=i)
+        b = current_bucket - timedelta(hours=i * bucket_hours)
         all_buckets.append(b.isoformat())
         bucket_dts.append(b)
 
@@ -669,20 +677,25 @@ async def get_topics_history(
             return {"labels": all_buckets, "series": series, "snapshot_count": total_buckets, "empty_reason": "no_data"}
         return {"empty": True, "series": []}
 
-    # Group rows by topic — snap to nearest hour bucket
-    topic_data: dict[str, dict[str, float]] = defaultdict(dict)
+    from collections import defaultdict
+    bucket_sum = defaultdict(lambda: defaultdict(float))
+    bucket_cnt = defaultdict(lambda: defaultdict(int))
     for r in rows:
         if r["topic"].startswith("_"):
             continue
         rt = datetime.fromisoformat(r["time"])
         if rt.tzinfo is None:
             rt = rt.replace(tzinfo=timezone.utc)
-        # Snap to nearest bucket
-        idx = min(
-            range(len(bucket_dts)),
-            key=lambda j: abs((bucket_dts[j] - rt).total_seconds()),
-        )
-        topic_data[r["topic"]][all_buckets[idx]] = r["avg_msgs"]
+        idx = min(range(len(bucket_dts)),
+                  key=lambda j: abs((bucket_dts[j] - rt).total_seconds()))
+        b = all_buckets[idx]
+        bucket_sum[r["topic"]][b] += float(r["avg_msgs"] or 0)
+        bucket_cnt[r["topic"]][b] += 1
+
+    topic_data: dict[str, dict[str, float]] = defaultdict(dict)
+    for t, buckets in bucket_sum.items():
+        for b, total in buckets.items():
+            topic_data[t][b] = total / bucket_cnt[t][b]
 
     if topic_filter:
         # Custom mode — return requested topics in order (even if no data)
