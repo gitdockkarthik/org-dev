@@ -8,7 +8,7 @@ from tools.dashboard_builder import compute_dashboard
 router = APIRouter(tags=["dashboard"])
 
 _dashboard_cache: dict = {}
-_DASHBOARD_CACHE_TTL_SECS = 120
+_DASHBOARD_CACHE_TTL_SECS = 600
 
 
 def _get_cached_dashboard(report_id: int):
