@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi import Query as FastAPIQuery
 
 from report_store import add_report, list_reports, get_report_rows, get_report_csv, persist_report
+from routes_dashboard import invalidate_dashboard_cache
 from tools.duckdb_engine import (
     get_total_cost, get_cost_by_service, get_daily_trend,
     get_cost_by_region, get_cost_by_account, get_cost_by_environment,
@@ -314,6 +315,8 @@ async def upload_report(file: UploadFile) -> dict:
         file_size=len(raw),
     )
     await persist_report(report["id"])
+    invalidate_dashboard_cache(report["id"])
+    invalidate_dashboard_cache(None)
     return report
 
 
