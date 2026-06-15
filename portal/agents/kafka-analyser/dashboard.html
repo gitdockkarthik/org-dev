@@ -690,7 +690,16 @@
               let _lastDateLabel = '';
               const labels = hist.labels.map(l => {
                 const d = new Date(l);
-                if (timeVal === '7d' || timeVal === '30d') {
+                if (timeVal === '30d') {
+                  const dayLabel = d.toLocaleDateString([],
+                    { day: 'numeric', month: 'short' });
+                  if (dayLabel !== _lastDateLabel) {
+                    _lastDateLabel = dayLabel;
+                    return dayLabel;
+                  }
+                  return '';
+                }
+                if (timeVal === '7d') {
                   const dayLabel = d.toLocaleDateString([],
                     { weekday: 'short', day: 'numeric', month: 'short' });
                   if (dayLabel !== _lastDateLabel) {
@@ -698,7 +707,8 @@
                     return dayLabel;
                   }
                   return '';
-                } else if (timeVal === '24h') {
+                }
+                if (timeVal === '24h') {
                   const dayLabel = d.toLocaleDateString([], { weekday: 'short' });
                   const timeLabel = d.toLocaleTimeString([],
                     { hour: '2-digit', minute: '2-digit' });
@@ -707,9 +717,9 @@
                     return dayLabel + ' ' + timeLabel;
                   }
                   return timeLabel;
-                } else {
-                  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                 }
+                return d.toLocaleTimeString([],
+                  { hour: '2-digit', minute: '2-digit' });
               });
               const totals = hist.labels.map((_, i) =>
                 hist.series.reduce((sum, s) => sum + ((s.values && s.values[i]) || 0), 0));
@@ -1349,19 +1359,33 @@
           let _lastDayLabel = '';
           const labels = hist.labels.map(l => {
             const d = new Date(l);
-            if (timeVal === '7d' || timeVal === '30d') {
-              const dayLabel = d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
-              const tLabel = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-              if (dayLabel !== _lastDayLabel) { _lastDayLabel = dayLabel; return dayLabel; }
-              return tLabel;
+            if (timeVal === '30d') {
+              const dayLabel = d.toLocaleDateString([],
+                { day: 'numeric', month: 'short' });
+              if (dayLabel !== _lastDayLabel) {
+                _lastDayLabel = dayLabel;
+                return dayLabel;
+              }
+              return '';
+            }
+            if (timeVal === '7d') {
+              const dayLabel = d.toLocaleDateString([],
+                { weekday: 'short', day: 'numeric', month: 'short' });
+              if (dayLabel !== _lastDayLabel) {
+                _lastDayLabel = dayLabel;
+                return dayLabel;
+              }
+              return '';
             }
             if (timeVal === '24h') {
               const day = d.toLocaleDateString([], { weekday: 'short' });
-              const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              const t = d.toLocaleTimeString([],
+                { hour: '2-digit', minute: '2-digit' });
               if (day !== _lastLabel) { _lastLabel = day; return day + ' ' + t; }
               return t;
             }
-            return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            return d.toLocaleTimeString([],
+              { hour: '2-digit', minute: '2-digit' });
           });
 
           const colors = ['#FF6B35','#4FC3F7','#81C784','#FFD54F','#CE93D8','#F48FB1','#80DEEA','#FFCC02','#A5D6A7','#EF9A9A'];
