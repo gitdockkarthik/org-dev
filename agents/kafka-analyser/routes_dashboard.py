@@ -538,9 +538,7 @@ async def get_lag_trend(cluster_id: str | None = None, minutes: float = 1440.0) 
             result = await session.execute(
                 text("""
                     SELECT
-                        date_trunc('hour', collected_at) +
-                        (FLOOR(EXTRACT(epoch FROM collected_at) / (:bucket * 60))
-                         * (:bucket * 60)) * INTERVAL '1 second' as bucket_time,
+                        date_trunc('hour', collected_at) as bucket_time,
                         AVG(total_lag)::bigint as avg_lag
                     FROM kafka_lag_snapshots
                     WHERE cluster_id = :cluster_id
@@ -550,8 +548,7 @@ async def get_lag_trend(cluster_id: str | None = None, minutes: float = 1440.0) 
                 """),
                 {
                     "cluster_id": str(cluster_id),
-                    "minutes": float(minutes),
-                    "bucket": int(bucket_minutes)
+                    "minutes": float(minutes)
                 }
             )
             rows = result.fetchall()
