@@ -74,6 +74,22 @@ async def _upsert(key: str, value) -> None:
 async def load_config_from_db() -> dict:
     try:
         raw_dict = await get_backend().get_all()
+        # Internal keys stored in agent_config — never expose to frontend
+        _INTERNAL_KEY_PREFIXES = (
+            'cluster_snapshot_',
+            'kafka_topics_structure_',
+            'kafka_topics_metrics_',
+            'kafka_counts_structure_',
+            'kafka_counts_metrics_',
+            'kafka_groups_',
+            'kafka_brokers_',
+            'scrape_state_',
+            'phase2_',
+        )
+        raw_dict = {
+            k: v for k, v in raw_dict.items()
+            if not any(k.startswith(p) for p in _INTERNAL_KEY_PREFIXES)
+        }
         if not raw_dict:
             return {}
         db_cfg: dict = {}
