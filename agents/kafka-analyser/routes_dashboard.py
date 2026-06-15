@@ -516,39 +516,71 @@ async def get_lag_trend(cluster_id: str | None = None, minutes: float = 1440.0) 
     _cached = _get_lag_trend_cached(_cache_key)
     if _cached is not None:
         return _cached
+
+    # Determine bucket size based on time range
+    if minutes <= 60:
+        bucket_interval = '5 minutes'
+    elif minutes <= 360:
+        bucket_interval = '15 minutes'
+    elif minutes <= 1440:
+        bucket_interval = '1 hour'
+    elif minutes <= 10080:
+        bucket_interval = '6 hours'
+    else:
+        bucket_interval = '1 day'
+
     try:
         from database import SessionLocal
         from sqlalchemy import text
         if SessionLocal is None:
             return {"empty": True, "points": []}
 
-        # Determine bucket size based on time range
-        if minutes <= 60:
-            bucket_minutes = 5
-        elif minutes <= 360:
-            bucket_minutes = 30
-        elif minutes <= 1440:
-            bucket_minutes = 60
-        elif minutes <= 10080:
-            bucket_minutes = 1440   # daily
-        else:
-            bucket_minutes = 1440   # daily for 30 days
-
         async with SessionLocal() as session:
             result = await session.execute(
                 text("""
+                    WITH buckets AS (
+                        SELECT generate_series(
+                            date_bin(
+                                (:bucket_interval)::INTERVAL,
+                                NOW() - ((:minutes) * INTERVAL '1 minute'),
+                                TIMESTAMP '2001-01-01'
+                            ),
+                            date_bin(
+                                (:bucket_interval)::INTERVAL,
+                                NOW(),
+                                TIMESTAMP '2001-01-01'
+                            ),
+                            (:bucket_interval)::INTERVAL
+                        ) AS bucket_time
+                    ),
+                    actuals AS (
+                        SELECT
+                            date_bin(
+                                (:bucket_interval)::INTERVAL,
+                                collected_at,
+                                TIMESTAMP '2001-01-01'
+                            ) AS bucket_time,
+                            AVG(total_lag)::bigint AS avg_lag
+                        FROM kafka_lag_snapshots
+                        WHERE cluster_id = :cluster_id
+                        AND collected_at >= NOW() - ((:minutes) * INTERVAL '1 minute')
+                        GROUP BY date_bin(
+                            (:bucket_interval)::INTERVAL,
+                            collected_at,
+                            TIMESTAMP '2001-01-01'
+                        )
+                    )
                     SELECT
-                        date_trunc('hour', collected_at) as bucket_time,
-                        AVG(total_lag)::bigint as avg_lag
-                    FROM kafka_lag_snapshots
-                    WHERE cluster_id = :cluster_id
-                    AND collected_at >= NOW() - ((:minutes) * INTERVAL '1 minute')
-                    GROUP BY bucket_time
-                    ORDER BY bucket_time ASC
+                        b.bucket_time,
+                        COALESCE(a.avg_lag, 0) AS avg_lag
+                    FROM buckets b
+                    LEFT JOIN actuals a ON b.bucket_time = a.bucket_time
+                    ORDER BY b.bucket_time ASC
                 """),
                 {
                     "cluster_id": str(cluster_id),
-                    "minutes": float(minutes)
+                    "minutes": float(minutes),
+                    "bucket_interval": bucket_interval
                 }
             )
             rows = result.fetchall()
