@@ -689,7 +689,7 @@
               const timeVal = document.getElementById('ctrl-time').value;
               let _lastDateLabel = '';
               const labels = hist.labels.map(l => {
-                const d = new Date(l + 'Z');
+                const d = new Date(l);
                 if (timeVal === '7d' || timeVal === '30d') {
                   const dayLabel = d.toLocaleDateString([],
                     { weekday: 'short', day: 'numeric', month: 'short' });
@@ -1348,7 +1348,7 @@
           let _lastLabel = '';
           let _lastDayLabel = '';
           const labels = hist.labels.map(l => {
-            const d = new Date(l + 'Z');
+            const d = new Date(l);
             if (timeVal === '7d' || timeVal === '30d') {
               const dayLabel = d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
               const tLabel = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
