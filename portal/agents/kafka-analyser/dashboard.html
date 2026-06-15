@@ -2461,6 +2461,7 @@
     async function loadClusterSelector() {
       try {
         await portalReady;
+        document.getElementById('tab-overview').innerHTML = skeletonHTML();
         const r = await fetch(`${PROXY}/settings/clusters`, { headers: _authHeaders() });
         const d = await r.json();
         const clusters = (d.clusters || []).filter(c => c.enabled);
