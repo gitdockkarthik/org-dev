@@ -179,9 +179,9 @@
       <div class="dash-divider"></div>
       <span class="dash-label">Time</span>
       <select class="dash-select" id="ctrl-time">
-        <option value="1h">Last 1 hour</option>
+        <option value="1h" selected>Last 1 hour</option>
         <option value="6h">Last 6 hours</option>
-        <option value="24h" selected>Last 24 hours</option>
+        <option value="24h">Last 24 hours</option>
         <option value="7d">Last 7 days</option>
         <option value="30d">Last 30 days</option>
       </select>
@@ -751,7 +751,10 @@
               const lagLabels = lagData.points.map(p => {
                 const d = new Date(p.time);
                 if (timeVal === '7d' || timeVal === '30d') {
-                  return d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
+                  const dayLabel = d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
+                  const tLabel = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                  if (dayLabel !== _lastDayLabel) { _lastDayLabel = dayLabel; return dayLabel; }
+                  return tLabel;
                 }
                 if (timeVal === '24h') {
                   const day = d.toLocaleDateString([], { weekday: 'short' });
@@ -1324,10 +1327,14 @@
 
           const timeVal = document.getElementById('ctrl-time')?.value || '24h';
           let _lastLabel = '';
+          let _lastDayLabel = '';
           const labels = hist.labels.map(l => {
             const d = new Date(l);
             if (timeVal === '7d' || timeVal === '30d') {
-              return d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
+              const dayLabel = d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
+              const tLabel = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              if (dayLabel !== _lastDayLabel) { _lastDayLabel = dayLabel; return dayLabel; }
+              return tLabel;
             }
             if (timeVal === '24h') {
               const day = d.toLocaleDateString([], { weekday: 'short' });
