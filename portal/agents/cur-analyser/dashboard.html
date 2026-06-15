@@ -373,6 +373,8 @@
     let _insightsTs = null;
     const _insightsCache = {};    // keyed by report_id
     const _insightsCacheTs = {};
+    const _dashCache = {};         // keyed by report_id — /dashboard payload cache
+    const _DASH_CACHE_TTL_MS = 60000; // 60 seconds
 
     // Service → category map (mirrors the synthetic generator) for client-side labelling
     const SERVICE_CAT = {
@@ -1789,6 +1791,7 @@ ${JSON.stringify(payload, null, 2)}
     }
     function onReportChange() {
       const v = document.getElementById('reportSelect').value;
+      delete _dashCache[v ? parseInt(v, 10) : null];
       window.location.search = v ? `?report_id=${v}` : '';
     }
     function populateSelector(activeFilename) {
@@ -1820,6 +1823,7 @@ ${JSON.stringify(payload, null, 2)}
 
     // Single-report load reuses the existing URL-driven flow (full reload → init()).
     function loadDashboard(id) {
+      delete _dashCache[id != null ? id : null];
       window.location.search = id != null ? `?report_id=${id}` : '';
     }
 
@@ -2474,7 +2478,13 @@ ${JSON.stringify(payload, null, 2)}
       REPORT_ID = getReportIdParam();
       try {
         REPORTS = await api('/reports').catch(() => []);
-        DASH = await api('/dashboard' + (REPORT_ID !== null ? `?report_id=${REPORT_ID}` : ''));
+        const _dashHit = _dashCache[REPORT_ID];
+        if (_dashHit && (Date.now() - _dashHit.ts) < _DASH_CACHE_TTL_MS) {
+          DASH = _dashHit.data;
+        } else {
+          DASH = await api('/dashboard' + (REPORT_ID !== null ? `?report_id=${REPORT_ID}` : ''));
+          _dashCache[REPORT_ID] = { data: DASH, ts: Date.now() };
+        }
         document.getElementById('loadingState').style.display = 'none';
 
         if (!DASH || DASH.empty) {
