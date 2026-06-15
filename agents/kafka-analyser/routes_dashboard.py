@@ -4,11 +4,31 @@ from tools.real_kafka import RealKafkaCollector
 from storage import get_backend
 import json
 import asyncio
+import time
 
 import httpx
 import os
 
 import kafka_store
+
+_lag_trend_cache: dict = {}
+_LAG_TREND_CACHE_TTL_SECS = 300  # 5 minutes — matches collection interval
+
+
+def _get_lag_trend_cached(key: str):
+    entry = _lag_trend_cache.get(key)
+    if entry is None:
+        return None
+    data, cached_at = entry
+    if (time.time() - cached_at) > _LAG_TREND_CACHE_TTL_SECS:
+        del _lag_trend_cache[key]
+        return None
+    return data
+
+
+def _set_lag_trend_cached(key: str, data: dict):
+    _lag_trend_cache[key] = (data, time.time())
+
 
 router = APIRouter(tags=["dashboard"])
 
@@ -491,6 +511,11 @@ async def get_lag_trend(cluster_id: str | None = None, minutes: float = 1440.0) 
     """Return total consumer lag trend over time, bucketed by time interval."""
     if not cluster_id:
         return {"empty": True, "points": []}
+
+    _cache_key = f"{cluster_id}:{minutes}"
+    _cached = _get_lag_trend_cached(_cache_key)
+    if _cached is not None:
+        return _cached
     try:
         from database import SessionLocal
         from sqlalchemy import text
@@ -570,7 +595,9 @@ async def get_lag_trend(cluster_id: str | None = None, minutes: float = 1440.0) 
             {"time": t, "total_lag": int(sum(v) / len(v))}
             for t, v in sorted(buckets.items())
         ]
-        return {"empty": False, "points": points}
+        result = {"empty": False, "points": points}
+        _set_lag_trend_cached(_cache_key, result)
+        return result
     except Exception:
         return {"empty": True, "points": []}
 
