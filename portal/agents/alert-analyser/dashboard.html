@@ -737,13 +737,18 @@
         ${row1HTML}${row2HTML}
         <div class="chart-grid">
           <div class="chart-card"><div class="chart-card__title">Genuine vs Noise</div><div class="chart-wrap"><canvas id="donutChart"></canvas></div></div>
-          <div class="chart-card"><div class="chart-card__title">Alert Volume by Day</div><div class="chart-wrap"><canvas id="trendChart"></canvas></div></div>
+          ${isCompare ? '' : `
+            <div class="chart-card">
+              <div class="chart-card__title">Alert Volume by Day</div>
+              <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
+            </div>
+          `}
         </div>
         ${s.data_quality ? renderDataQuality(s.data_quality) : ''}`;
       setTimeout(() => {
         destroyChart('donut');
         const c = document.getElementById('donutChart')?.getContext('2d');
-        if (c) charts['donut'] = new Chart(c, { type:'doughnut', data:{ labels:['Genuine','Noise'], datasets:[{ data:[s.genuine_count,s.noise_count], backgroundColor:['#16a34a','#dc2626'], borderWidth:0 }] }, options:{ responsive:true, cutout:'65%', plugins:{legend:{position:'bottom'}} } });
+        if (c) charts['donut'] = new Chart(c, { type:'doughnut', data:{ labels:['Genuine','Noise'], datasets:[{ data:[sAllTime.genuine_count,sAllTime.noise_count], backgroundColor:['#16a34a','#dc2626'], borderWidth:0 }] }, options:{ responsive:true, cutout:'65%', plugins:{legend:{position:'bottom'}} } });
         destroyChart('trend');
         const t = document.getElementById('trendChart')?.getContext('2d');
         if (t && s.daily_trend.length) charts['trend'] = new Chart(t, { type:'line', data:{ labels:s.daily_trend.map(d=>d.date), datasets:[
