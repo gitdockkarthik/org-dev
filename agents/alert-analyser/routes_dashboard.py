@@ -147,3 +147,97 @@ async def get_dashboard_trend(
     except Exception as e:
         _log.error(f"trend error: {e}")
         return {"empty": True, "points": []}
+
+
+@router.get("/dashboard/period-summary")
+async def get_period_summary(
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> dict:
+    """Return summed delta alerts for a time period from
+    alert_report_summary. Used for Row 2 KPI cards."""
+    from database import SessionLocal
+    from sqlalchemy import text
+    from datetime import datetime, timezone
+    import logging
+    _log = logging.getLogger(__name__)
+    if SessionLocal is None:
+        return {"empty": True}
+    try:
+        async with SessionLocal() as sess:
+            # Get oldest sync date for Row 1 label
+            oldest = await sess.execute(
+                text("""
+                    SELECT MIN(synced_at) as oldest,
+                           MAX(synced_at) as newest
+                    FROM alert_report_summary
+                    WHERE agent_slug = 'alert-analyser'
+                """)
+            )
+            oldest_row = oldest.fetchone()
+            oldest_date = str(oldest_row.oldest)[:10] \
+                if oldest_row and oldest_row.oldest else None
+            newest_date = str(oldest_row.newest)[:16] \
+                if oldest_row and oldest_row.newest else None
+
+            # Build period filter
+            sql = """
+                SELECT
+                    COUNT(*) as sync_count,
+                    SUM(new_alerts) as new_alerts,
+                    SUM(new_genuine) as new_genuine,
+                    SUM(new_noise) as new_noise,
+                    SUM(new_suspect) as new_suspect,
+                    MIN(synced_at) as period_from,
+                    MAX(synced_at) as period_to
+                FROM alert_report_summary
+                WHERE agent_slug = 'alert-analyser'
+            """
+            params = {}
+            if from_date:
+                sql += " AND synced_at >= :from_date"
+                try:
+                    params["from_date"] = datetime.strptime(
+                        from_date, '%Y-%m-%d %H:%M'
+                    ).replace(tzinfo=timezone.utc)
+                except ValueError:
+                    params["from_date"] = datetime.strptime(
+                        from_date, '%Y-%m-%d'
+                    ).replace(tzinfo=timezone.utc)
+            if to_date:
+                sql += " AND synced_at <= :to_date"
+                try:
+                    params["to_date"] = datetime.strptime(
+                        to_date, '%Y-%m-%d %H:%M'
+                    ).replace(tzinfo=timezone.utc)
+                except ValueError:
+                    params["to_date"] = datetime.strptime(
+                        to_date + ' 23:59:59', '%Y-%m-%d %H:%M:%S'
+                    ).replace(tzinfo=timezone.utc)
+
+            result = await sess.execute(text(sql), params)
+            row = result.fetchone()
+
+        if not row or not row.sync_count:
+            return {
+                "empty": True,
+                "sync_count": 0,
+                "oldest_date": oldest_date,
+                "newest_date": newest_date,
+            }
+
+        return {
+            "empty": False,
+            "sync_count": int(row.sync_count),
+            "new_alerts": int(row.new_alerts or 0),
+            "new_genuine": int(row.new_genuine or 0),
+            "new_noise": int(row.new_noise or 0),
+            "new_suspect": int(row.new_suspect or 0),
+            "period_from": str(row.period_from)[:16] if row.period_from else None,
+            "period_to": str(row.period_to)[:16] if row.period_to else None,
+            "oldest_date": oldest_date,
+            "newest_date": newest_date,
+        }
+    except Exception as e:
+        _log.error(f"period_summary error: {e}")
+        return {"empty": True}
