@@ -47,15 +47,47 @@ async def get_dashboard(
                     reports = result.scalars().all()
                 if reports:
                     latest = reports[0]
-                    stats = _json.loads(latest.stats_data) \
-                        if latest.stats_data else {}
+                    import json as _json
+                    from tools.dashboard_builder import compute_dashboard_stats
+
+                    # Load classified alerts and filter by createdAt for true period stats
+                    raw_classified = _json.loads(latest.report_data) \
+                        if latest.report_data else []
+
+                    # Filter alerts by createdAt within the selected period
+                    filtered = []
+                    for alert in raw_classified:
+                        created = alert.get('createdAt', '')
+                        if not created:
+                            filtered.append(alert)
+                            continue
+                        try:
+                            # Parse ISO timestamp from OpsGenie
+                            from datetime import datetime, timezone
+                            alert_dt = datetime.fromisoformat(
+                                created.replace('Z', '+00:00')
+                            )
+                            if from_date and alert_dt < dt_from:
+                                continue
+                            if to_date and alert_dt > dt_to:
+                                continue
+                            filtered.append(alert)
+                        except Exception:
+                            filtered.append(alert)
+
+                    # Recompute stats from filtered alerts
+                    if filtered:
+                        stats = compute_dashboard_stats(filtered)
+                    else:
+                        stats = _json.loads(latest.stats_data) \
+                            if latest.stats_data else {}
                     return {
                         "stats": stats,
                         "report": {
-                            "total_alerts": latest.total_alerts,
-                            "genuine_count": latest.genuine_count,
-                            "noise_count": latest.noise_count,
-                            "suspect_count": latest.suspect_count,
+                            "total_alerts": stats.get("total", latest.total_alerts),
+                            "genuine_count": stats.get("genuine_count", latest.genuine_count),
+                            "noise_count": stats.get("noise_count", latest.noise_count),
+                            "suspect_count": stats.get("suspect_count", latest.suspect_count),
                             "created_at": str(latest.created_at),
                             "filename": latest.filename,
                         },

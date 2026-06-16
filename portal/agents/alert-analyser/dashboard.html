@@ -762,10 +762,20 @@
         <div class="data-table-wrap"><table class="data-table noise-table">
           <thead><tr>
             <th>Alert Alias</th>
-            <th>${isCompare ? `<span style="color:var(--accent)">${window._compareLabelA||'Period A'}</span>` : 'Fire Count'}</th>
-            ${isCompare ? `<th><span style="color:var(--warn)">${window._compareLabelB||'Period B'}</span></th><th>Change</th>` : ''}
+            <th>Fire Count</th>
+            ${isCompare ? '<th>Change</th>' : ''}
           </tr></thead>
-          <tbody>${(() => {
+          <tbody>${isCompare ? `<tr style="background:var(--navy-2)">
+            <td style="font-size:.72rem;color:var(--text-muted);padding:4px 14px">
+              Counts filtered by alert createdAt timestamp
+            </td>
+            <td style="font-size:.72rem">
+              <span style="color:var(--accent)">${window._compareLabelA||'A'}</span>
+              →
+              <span style="color:var(--warn)">${window._compareLabelB||'B'}</span>
+            </td>
+            <td></td>
+          </tr>` : ''}${(() => {
             const rowsA = sA.repeat_offenders || [];
             if (!isCompare || !sB) {
               return rowsA.map(r=>`<tr>
@@ -784,21 +794,32 @@
               return `<tr>
                 <td class="msg-cell"><span class="msg-text"><code>${alias}</code></span>
                   <button class="msg-copy" title="Copy" onclick="copyMsgCell(this)">📋</button></td>
-                <td>${cA}</td>
-                <td>${cB}</td>
+                <td>${cA} → ${cB}</td>
                 <td>${_cmpArrow(cA, cB)}</td></tr>`;
-            }).join('') || '<tr><td colspan="4" class="data-table__empty">No repeat offenders</td></tr>';
+            }).join('') || `<tr><td colspan="${isCompare ? 3 : 2}"
+              class="data-table__empty">No repeat offenders</td></tr>`;
           })()}</tbody>
         </table></div>
         <div class="data-table-wrap" style="margin-top:16px"><table class="data-table noise-table">
           <caption style="text-align:left;padding:14px 14px 0;font-size:.87rem;font-weight:600">Suppression Recommendations</caption>
           <thead><tr>
             <th>Alert</th>
-            <th>${isCompare ? `<span style="color:var(--accent)">${window._compareLabelA||'Period A'}</span>` : 'Occurrences'}</th>
-            ${isCompare ? `<th><span style="color:var(--warn)">${window._compareLabelB||'Period B'}</span></th><th>Change</th>` : ''}
+            <th>Occurrences</th>
+            ${isCompare ? '<th>Change</th>' : ''}
             <th>Action</th>
           </tr></thead>
-          <tbody>${(() => {
+          <tbody>${isCompare ? `<tr style="background:var(--navy-2)">
+            <td style="font-size:.72rem;color:var(--text-muted);padding:4px 14px">
+              Counts filtered by alert createdAt timestamp
+            </td>
+            <td style="font-size:.72rem">
+              <span style="color:var(--accent)">${window._compareLabelA||'A'}</span>
+              →
+              <span style="color:var(--warn)">${window._compareLabelB||'B'}</span>
+            </td>
+            <td></td>
+            <td></td>
+          </tr>` : ''}${(() => {
             const rowsA = sA.suppression_recommendations || [];
             if (!isCompare || !sB) {
               return rowsA.length
@@ -819,11 +840,11 @@
               return `<tr>
                 <td class="msg-cell"><span class="msg-text"><code>${alias}</code></span>
                   <button class="msg-copy" title="Copy" onclick="copyMsgCell(this)">📋</button></td>
-                <td>${cA}</td>
-                <td>${cB}</td>
+                <td>${cA} → ${cB}</td>
                 <td>${_cmpArrow(cA, cB)}</td>
                 <td><span class="badge badge--deprecated">Suppress</span></td></tr>`;
-            }).join('') || '<tr><td colspan="5" class="data-table__empty">No strong suppression candidates</td></tr>';
+            }).join('') || `<tr><td colspan="${isCompare ? 4 : 3}"
+              class="data-table__empty">No strong suppression candidates</td></tr>`;
           })()}</tbody>
         </table></div>`;
       setTimeout(() => {
@@ -878,12 +899,22 @@
         </div>` : ''}
         <div class="chart-card" style="margin-top:16px"><div class="chart-card__title">Team Alert Breakdown</div><div class="chart-wrap"><canvas id="teamChart"></canvas></div></div>
         <div class="data-table-wrap" style="margin-top:16px"><table class="data-table genuine-table" style="table-layout:auto">
-          <caption style="text-align:left;padding:14px 14px 0;font-size:.87rem;font-weight:600">High Severity Genuine Alerts</caption>
+          <caption style="text-align:left;padding:14px 14px 0;font-size:.87rem;font-weight:600">High Severity Genuine Alerts
+            ${isCompare ? `<span style="font-size:.75rem;font-weight:400;
+              color:var(--accent);margin-left:8px">
+              — ${window._compareLabelA||'Period A'}
+            </span>` : ''}
+          </caption>
           <thead><tr><th>Message</th><th>Source</th><th>Priority</th></tr></thead>
           <tbody>${sA.high_severity_genuine.map(a=>`<tr><td class="msg-cell" style="white-space:normal;overflow:visible;word-break:break-word;max-width:none"><span class="msg-text" style="white-space:normal;overflow:visible;word-break:break-word">${a.message}</span><button class="msg-copy" title="Copy message" onclick="copyMsgCell(this)">📋</button></td><td>${a.source}</td><td><span class="${priClass(a.priority)}">${a.priority}</span></td></tr>`).join('') || '<tr><td colspan="3" class="data-table__empty">None</td></tr>'}</tbody>
         </table></div>
         <div class="data-table-wrap" style="margin-top:16px"><table class="data-table genuine-table" style="table-layout:auto">
-          <caption style="text-align:left;padding:14px 14px 0;font-size:.87rem;font-weight:600">Unresolved Genuine Alerts</caption>
+          <caption style="text-align:left;padding:14px 14px 0;font-size:.87rem;font-weight:600">Unresolved Genuine Alerts
+            ${isCompare ? `<span style="font-size:.75rem;font-weight:400;
+              color:var(--accent);margin-left:8px">
+              — ${window._compareLabelA||'Period A'}
+            </span>` : ''}
+          </caption>
           <thead><tr><th style="max-width:none;width:100%">Message</th><th>Source</th><th>Priority</th><th>Team</th></tr></thead>
           <tbody>${sA.unresolved_genuine.map(a=>`<tr><td class="msg-cell" style="white-space:normal;overflow:visible;word-break:break-word"><span class="msg-text" style="white-space:normal;overflow:visible;word-break:break-word">${a.message}</span><button class="msg-copy" title="Copy message" onclick="copyMsgCell(this)">📋</button></td><td>${a.source}</td><td><span class="${priClass(a.priority)}">${a.priority}</span></td><td>${cleanTeam((a.teams||['—'])[0])}</td></tr>`).join('') || '<tr><td colspan="4" class="data-table__empty">All genuine alerts resolved</td></tr>'}</tbody>
         </table></div>`;
