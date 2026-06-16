@@ -196,23 +196,25 @@ async def get_period_summary(
             params = {}
             if from_date:
                 sql += " AND synced_at >= :from_date"
+                _fd = from_date.replace('T', ' ')
                 try:
                     params["from_date"] = datetime.strptime(
-                        from_date, '%Y-%m-%d %H:%M'
+                        _fd, '%Y-%m-%d %H:%M'
                     ).replace(tzinfo=timezone.utc)
                 except ValueError:
                     params["from_date"] = datetime.strptime(
-                        from_date, '%Y-%m-%d'
+                        _fd, '%Y-%m-%d'
                     ).replace(tzinfo=timezone.utc)
             if to_date:
                 sql += " AND synced_at <= :to_date"
+                _td = to_date.replace('T', ' ')
                 try:
                     params["to_date"] = datetime.strptime(
-                        to_date, '%Y-%m-%d %H:%M'
+                        _td, '%Y-%m-%d %H:%M'
                     ).replace(tzinfo=timezone.utc)
                 except ValueError:
                     params["to_date"] = datetime.strptime(
-                        to_date + ' 23:59:59', '%Y-%m-%d %H:%M:%S'
+                        _td + ' 23:59:59', '%Y-%m-%d %H:%M:%S'
                     ).replace(tzinfo=timezone.utc)
 
             result = await sess.execute(text(sql), params)
