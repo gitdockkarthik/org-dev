@@ -465,6 +465,8 @@
         <span style="font-weight:700${color ? ';color:' + color : ''}">${value}</span></div>`;
     }
     function renderDataQuality(dq) {
+      const pd = window._periodData || {};
+      const hasLc = pd.avg_never_closed_pct != null;
       const lc = dq.lifecycle, pr = dq.priority, ack = dq.acknowledgement;
       const srcRows = (dq.sources || []).map(s => `<tr${s.flagged ? ' style="background:rgba(220,38,38,.06)"' : ''}>
           <td>${s.source}</td><td>${s.auto_resolve_rate}%</td><td>${s.avg_close_mins}m</td>
@@ -483,11 +485,33 @@
         <div class="chart-grid">
           <div class="chart-card">
             <div class="chart-card__title">Alert Lifecycle Health</div>
-            ${dqRow('Never closed', lc.never_closed_pct + '%')}
-            ${dqRow('Proper open/close cycle', lc.proper_cycle_pct + '%')}
-            ${dqRow('Acknowledged', lc.acknowledged_pct + '%', 'var(--success)')}
-            ${dqRow('Unacknowledged', lc.unacknowledged_pct + '%')}
-            ${lc.recommendation ? dqRec(lc.recommendation) : ''}
+            <table class="data-table" style="margin-top:8px">
+              <thead><tr>
+                <th>Metric</th>
+                <th style="color:var(--accent)">All Time</th>
+                ${hasLc ? '<th style="color:var(--warn)">This Period</th>' : ''}
+              </tr></thead>
+              <tbody>
+                <tr><td>Never closed</td>
+                  <td>${_fmtPct(lc.never_closed_pct)}</td>
+                  ${hasLc ? `<td>${_fmtPct(pd.avg_never_closed_pct)}</td>` : ''}
+                </tr>
+                <tr><td>Proper open/close cycle</td>
+                  <td>${_fmtPct(lc.proper_cycle_pct)}</td>
+                  ${hasLc ? `<td>${_fmtPct(pd.avg_proper_cycle_pct)}</td>` : ''}
+                </tr>
+                <tr><td>Acknowledged</td>
+                  <td style="color:var(--success);font-weight:600">${_fmtPct(lc.acknowledged_pct)}</td>
+                  ${hasLc ? `<td style="color:var(--success);font-weight:600">${_fmtPct(pd.avg_acknowledged_pct)}</td>` : ''}
+                </tr>
+                <tr><td>Unacknowledged</td>
+                  <td>${_fmtPct(lc.unacknowledged_pct)}</td>
+                  ${hasLc ? `<td>${_fmtPct(pd.avg_never_acked_pct)}</td>` : ''}
+                </tr>
+              </tbody>
+            </table>
+            ${lc.recommendation ? `<div class="insight-box" style="margin-top:10px;
+              font-size:.78rem">${lc.recommendation}</div>` : ''}
           </div>
           <div class="chart-card">
             <div class="chart-card__title">Source Health</div>
@@ -503,8 +527,23 @@
           </div>
           <div class="chart-card">
             <div class="chart-card__title">Acknowledgement Rate</div>
-            ${dqRow('Acknowledged', ack.acknowledged_pct + '%', 'var(--success)')}
-            ${dqRow('Never acknowledged', ack.never_acked_pct + '%')}
+            <table class="data-table" style="margin-top:8px">
+              <thead><tr>
+                <th>Metric</th>
+                <th style="color:var(--accent)">All Time</th>
+                ${hasLc ? '<th style="color:var(--warn)">This Period</th>' : ''}
+              </tr></thead>
+              <tbody>
+                <tr><td>Acknowledged</td>
+                  <td style="color:var(--success);font-weight:600">${_fmtPct(ack.acknowledged_pct)}</td>
+                  ${hasLc ? `<td style="color:var(--success);font-weight:600">${_fmtPct(pd.avg_acknowledged_pct)}</td>` : ''}
+                </tr>
+                <tr><td>Never acknowledged</td>
+                  <td>${_fmtPct(ack.never_acked_pct)}</td>
+                  ${hasLc ? `<td>${_fmtPct(pd.avg_never_acked_pct)}</td>` : ''}
+                </tr>
+              </tbody>
+            </table>
             <div style="font-size:.72rem;color:var(--text-muted);margin-top:8px">
               Within-15-min timing requires acknowledgement timestamps,
               not tracked in current alert data.
