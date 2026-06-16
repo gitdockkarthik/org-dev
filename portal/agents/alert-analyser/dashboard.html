@@ -505,7 +505,10 @@
     function renderDataQuality(dq) {
       const pd = window._periodData || {};
       const hasLc = pd.avg_never_closed_pct != null;
-      const lc = dq.lifecycle, pr = dq.priority, ack = dq.acknowledgement;
+      const atDq = window._allTimeData?.stats?.data_quality || dq;
+      const lc = atDq.lifecycle || dq.lifecycle || {};
+      const pr = atDq.priority || dq.priority || {};
+      const ack = atDq.acknowledgement || dq.acknowledgement || {};
       const srcRows = (dq.sources || []).map(s => `<tr${s.flagged ? ' style="background:rgba(220,38,38,.06)"' : ''}>
           <td>${s.source}</td><td>${s.auto_resolve_rate}%</td><td>${s.avg_close_mins}m</td>
           <td style="${s.flagged ? 'color:var(--danger);font-weight:700' : ''}">${s.never_close_rate}%</td></tr>`
@@ -614,6 +617,7 @@
 
     function renderOverview() {
       const s = stats;
+      const sAllTime = window._allTimeData?.stats || stats;
       const suspectCount = s.suspect_count || 0;
       const noisePct = s.total ? Math.round(s.noise_count / s.total * 1000) / 10 : 0;
       const suspectPct = s.total ? Math.round(suspectCount / s.total * 1000) / 10 : 0;
@@ -639,27 +643,27 @@
       <div class="kpi-grid" style="margin-bottom:20px">
         <div class="kpi kpi--accent">
           <div class="kpi__label">TOTAL ALERTS</div>
-          <div class="kpi__value">${s.total.toLocaleString()}</div>
+          <div class="kpi__value">${sAllTime.total.toLocaleString()}</div>
           <div class="kpi__sub">in dataset</div>
         </div>
         <div class="kpi kpi--danger">
           <div class="kpi__label">NOISE</div>
-          <div class="kpi__value">${s.noise_count.toLocaleString()}</div>
-          <div class="kpi__sub">${s.noise_ratio}% noise + ${s.suspect_ratio?.toFixed(1) || 0}% suspect = ${((s.noise_count + s.suspect_count) / s.total * 100).toFixed(1)}% total</div>
+          <div class="kpi__value">${sAllTime.noise_count.toLocaleString()}</div>
+          <div class="kpi__sub">${sAllTime.noise_ratio}% noise + ${sAllTime.suspect_ratio?.toFixed(1) || 0}% suspect = ${((sAllTime.noise_count + sAllTime.suspect_count) / sAllTime.total * 100).toFixed(1)}% total</div>
         </div>
         <div class="kpi kpi--warn">
           <div class="kpi__label">NOISE SUSPECT</div>
-          <div class="kpi__value">${s.suspect_count.toLocaleString()}</div>
+          <div class="kpi__value">${sAllTime.suspect_count.toLocaleString()}</div>
           <div class="kpi__sub">needs human review</div>
         </div>
         <div class="kpi kpi--success">
           <div class="kpi__label">GENUINE</div>
-          <div class="kpi__value">${s.genuine_count.toLocaleString()}</div>
+          <div class="kpi__value">${sAllTime.genuine_count.toLocaleString()}</div>
           <div class="kpi__sub">require attention</div>
         </div>
         <div class="kpi kpi--warn">
           <div class="kpi__label">MTTR</div>
-          <div class="kpi__value">${Math.round(s.mttr_minutes)}m</div>
+          <div class="kpi__value">${Math.round(sAllTime.mttr_minutes)}m</div>
           <div class="kpi__sub">mean time to resolve</div>
         </div>
       </div>`;
