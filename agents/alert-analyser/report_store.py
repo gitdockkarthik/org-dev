@@ -146,12 +146,12 @@ async def store_report(classified: list[dict], meta: dict) -> None:
             session.add(report)
             await session.commit()
 
-            # Keep only the 30 most recent reports for this agent.
+            # Keep only the 48 most recent reports (~12 hours) for this agent.
             result = await session.execute(
                 select(AlertReport)
                 .where(AlertReport.agent_slug == settings.agent_slug)
                 .order_by(AlertReport.created_at.desc())
-                .offset(30)
+                .offset(48)
             )
             for old in result.scalars().all():
                 await session.delete(old)
