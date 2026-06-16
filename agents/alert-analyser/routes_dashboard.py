@@ -15,6 +15,7 @@ async def get_dashboard(
         from database import SessionLocal
         from models import AlertReport
         from sqlalchemy import select
+        from datetime import datetime, timezone
         import json as _json
         if SessionLocal is not None:
             try:
@@ -22,18 +23,16 @@ async def get_dashboard(
                     q = select(AlertReport).where(
                         AlertReport.agent_slug == 'alert-analyser'
                     ).order_by(AlertReport.created_at.desc())
-                    from sqlalchemy import cast
-                    from sqlalchemy.dialects.postgresql import TIMESTAMP
                     if from_date:
-                        q = q.where(
-                            AlertReport.created_at >= cast(from_date, TIMESTAMP(timezone=True))
-                        )
+                        dt_from = datetime.strptime(
+                            from_date, '%Y-%m-%d'
+                        ).replace(tzinfo=timezone.utc)
+                        q = q.where(AlertReport.created_at >= dt_from)
                     if to_date:
-                        q = q.where(
-                            AlertReport.created_at <= cast(
-                                to_date + ' 23:59:59', TIMESTAMP(timezone=True)
-                            )
-                        )
+                        dt_to = datetime.strptime(
+                            to_date + ' 23:59:59', '%Y-%m-%d %H:%M:%S'
+                        ).replace(tzinfo=timezone.utc)
+                        q = q.where(AlertReport.created_at <= dt_to)
                     result = await sess.execute(q)
                     reports = result.scalars().all()
                 if reports:
