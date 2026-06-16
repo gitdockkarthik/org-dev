@@ -22,11 +22,17 @@ async def get_dashboard(
                     q = select(AlertReport).where(
                         AlertReport.agent_slug == 'alert-analyser'
                     ).order_by(AlertReport.created_at.desc())
+                    from sqlalchemy import cast
+                    from sqlalchemy.dialects.postgresql import TIMESTAMP
                     if from_date:
-                        q = q.where(AlertReport.created_at >= from_date)
+                        q = q.where(
+                            AlertReport.created_at >= cast(from_date, TIMESTAMP(timezone=True))
+                        )
                     if to_date:
                         q = q.where(
-                            AlertReport.created_at <= to_date + ' 23:59:59'
+                            AlertReport.created_at <= cast(
+                                to_date + ' 23:59:59', TIMESTAMP(timezone=True)
+                            )
                         )
                     result = await sess.execute(q)
                     reports = result.scalars().all()
