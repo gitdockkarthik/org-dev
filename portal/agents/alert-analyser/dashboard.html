@@ -391,12 +391,14 @@
         if (_activeToDate) _qs.set('to_date', _activeToDate);
         const _dashUrl = '/dashboard' + (_qs.toString() ? '?' + _qs.toString() : '');
         const _periodUrl = '/dashboard/period-summary' + (_qs.toString() ? '?' + _qs.toString() : '');
-        const [data, cfg, periodData] = await Promise.all([
+        const [data, cfg, periodData, allTimeData] = await Promise.all([
             api(_dashUrl),
             api('/settings').catch(() => ({})),
             api(_periodUrl).catch(() => ({})),
+            api('/dashboard').catch(() => ({})),
         ]);
         window._periodData = periodData;
+        window._allTimeData = allTimeData;
         const sourceType = cfg.source_type || 'synthetic';
         const genBtn = document.getElementById('genBtn');
         if (genBtn) genBtn.style.display = sourceType === 'synthetic' ? '' : 'none';
@@ -464,6 +466,12 @@
     }
     function renderDataQuality(dq) {
       const lc = dq.lifecycle, pr = dq.priority, ack = dq.acknowledgement;
+      const atDq = (window._allTimeData?.stats?.data_quality) || {};
+      const pdDq = dq || {};
+      const atLc = atDq.lifecycle || {};
+      const pdLc = pdDq.lifecycle || {};
+      const atAck = window._allTimeData?.stats?.data_quality?.acknowledgement || {};
+      const pdAck = dq.acknowledgement || {};
       const srcRows = (dq.sources || []).map(s => `<tr${s.flagged ? ' style="background:rgba(220,38,38,.06)"' : ''}>
           <td>${s.source}</td><td>${s.auto_resolve_rate}%</td><td>${s.avg_close_mins}m</td>
           <td style="${s.flagged ? 'color:var(--danger);font-weight:700' : ''}">${s.never_close_rate}%</td></tr>`
@@ -481,11 +489,28 @@
         <div class="chart-grid">
           <div class="chart-card">
             <div class="chart-card__title">Alert Lifecycle Health</div>
-            ${dqRow('Never closed', lc.never_closed_pct + '%', lc.never_closed_pct > 50 ? 'var(--warn)' : '')}
-            ${dqRow('Proper open/close cycle', lc.proper_cycle_pct + '%')}
-            ${dqRow('Acknowledged', lc.acknowledged_pct + '%')}
-            ${dqRow('Unacknowledged', lc.unacknowledged_pct + '%')}
-            ${dqRec(lc.recommendation)}
+            <table class="data-table" style="margin-top:8px">
+              <thead><tr>
+                <th>Metric</th>
+                <th style="color:var(--accent)">All Time</th>
+                <th style="color:var(--warn)">This Period</th>
+              </tr></thead>
+              <tbody>
+                <tr><td>Never closed</td>
+                  <td>${_fmtPct(atLc.never_closed_pct)}</td>
+                  <td>${_fmtPct(pdLc.never_closed_pct)}</td></tr>
+                <tr><td>Proper open/close cycle</td>
+                  <td>${_fmtPct(atLc.proper_cycle_pct)}</td>
+                  <td>${_fmtPct(pdLc.proper_cycle_pct)}</td></tr>
+                <tr><td>Acknowledged</td>
+                  <td style="color:var(--success);font-weight:600">${_fmtPct(atLc.acknowledged_pct)}</td>
+                  <td style="color:var(--success);font-weight:600">${_fmtPct(pdLc.acknowledged_pct)}</td></tr>
+                <tr><td>Unacknowledged</td>
+                  <td>${_fmtPct(atLc.unacknowledged_pct)}</td>
+                  <td>${_fmtPct(pdLc.unacknowledged_pct)}</td></tr>
+              </tbody>
+            </table>
+            ${atLc.recommendation ? `<div class="insight-box" style="margin-top:10px;font-size:.78rem">${atLc.recommendation}</div>` : ''}
           </div>
           <div class="chart-card">
             <div class="chart-card__title">Source Health</div>
@@ -501,10 +526,25 @@
           </div>
           <div class="chart-card">
             <div class="chart-card__title">Acknowledgement Rate</div>
-            ${dqRow('Acknowledged', ack.acknowledged_pct + '%', 'var(--success)')}
-            ${dqRow('Never acknowledged', ack.never_acked_pct + '%', ack.never_acked_pct > 30 ? 'var(--danger)' : '')}
-            <div style="margin-top:6px;font-size:.72rem;color:var(--text-dim)">Within-15-min timing requires acknowledgement timestamps, not tracked in current alert data.</div>
-            ${dqRec(ack.recommendation)}
+            <table class="data-table" style="margin-top:8px">
+              <thead><tr>
+                <th>Metric</th>
+                <th style="color:var(--accent)">All Time</th>
+                <th style="color:var(--warn)">This Period</th>
+              </tr></thead>
+              <tbody>
+                <tr><td>Acknowledged</td>
+                  <td style="color:var(--success);font-weight:600">${_fmtPct(atAck.acknowledged_pct)}</td>
+                  <td style="color:var(--success);font-weight:600">${_fmtPct(pdAck.acknowledged_pct)}</td></tr>
+                <tr><td>Never acknowledged</td>
+                  <td>${_fmtPct(atAck.never_acked_pct)}</td>
+                  <td>${_fmtPct(pdAck.never_acked_pct)}</td></tr>
+              </tbody>
+            </table>
+            <div style="font-size:.72rem;color:var(--text-muted);margin-top:8px">
+              Within-15-min timing requires acknowledgement timestamps,
+              not tracked in current alert data.
+            </div>
           </div>
         </div>`;
     }
@@ -517,6 +557,10 @@
       return m ? `Team-${m[1]}` : s;
     }
     function destroyChart(k) { if (charts[k]) { charts[k].destroy(); delete charts[k]; } }
+
+    function _fmtPct(v) {
+      return v != null ? v.toFixed(1) + '%' : '—';
+    }
 
     function renderOverview() {
       const s = stats;
