@@ -165,7 +165,6 @@ async def store_report(classified: list[dict], meta: dict) -> None:
             suspect = stats.get("suspect_count", 0)
             noise_pct = round((noise / total * 100), 2) if total else 0
 
-            # Extract per-priority counts from stats if available
             priority_counts = stats.get("priority_counts", {})
             p1 = priority_counts.get("P1", 0)
             p2 = priority_counts.get("P2", 0)
@@ -174,26 +173,54 @@ async def store_report(classified: list[dict], meta: dict) -> None:
             p5 = priority_counts.get("P5", 0)
 
             async with SessionLocal() as _sum_sess:
+                # Get previous row to compute deltas
+                _prev = await _sum_sess.execute(
+                    text("""
+                        SELECT total_alerts, genuine_count,
+                               noise_count, suspect_count
+                        FROM alert_report_summary
+                        WHERE agent_slug = :slug
+                        ORDER BY synced_at DESC LIMIT 1
+                    """),
+                    {"slug": settings.agent_slug}
+                )
+                _prev_row = _prev.fetchone()
+                if _prev_row:
+                    new_alerts  = max(0, total - (_prev_row.total_alerts or 0))
+                    new_genuine = max(0, genuine - (_prev_row.genuine_count or 0))
+                    new_noise   = max(0, noise - (_prev_row.noise_count or 0))
+                    new_suspect = max(0, suspect - (_prev_row.suspect_count or 0))
+                else:
+                    new_alerts  = total
+                    new_genuine = genuine
+                    new_noise   = noise
+                    new_suspect = suspect
+
                 await _sum_sess.execute(
                     text("""
                         INSERT INTO alert_report_summary
                           (agent_slug, synced_at, total_alerts,
                            genuine_count, noise_count, suspect_count,
                            noise_pct, p1_count, p2_count, p3_count,
-                           p4_count, p5_count)
+                           p4_count, p5_count,
+                           new_alerts, new_genuine, new_noise, new_suspect)
                         VALUES
                           (:slug, NOW(), :total, :genuine, :noise,
-                           :suspect, :noise_pct, :p1, :p2, :p3, :p4, :p5)
+                           :suspect, :noise_pct, :p1, :p2, :p3, :p4, :p5,
+                           :new_alerts, :new_genuine,
+                           :new_noise, :new_suspect)
                     """),
                     {
                         "slug": settings.agent_slug,
-                        "total": total,
-                        "genuine": genuine,
-                        "noise": noise,
-                        "suspect": suspect,
+                        "total": total, "genuine": genuine,
+                        "noise": noise, "suspect": suspect,
                         "noise_pct": noise_pct,
                         "p1": p1, "p2": p2, "p3": p3,
                         "p4": p4, "p5": p5,
+                        "new_alerts": new_alerts,
+                        "new_genuine": new_genuine,
+                        "new_noise": new_noise,
+                        "new_suspect": new_suspect,
                     }
                 )
                 await _sum_sess.commit()
