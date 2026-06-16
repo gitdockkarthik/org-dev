@@ -89,12 +89,17 @@ async def get_dashboard_trend(
                 WHERE agent_slug = 'alert-analyser'
             """
             params = {}
+            from datetime import datetime, timezone
             if from_date:
                 sql += " AND synced_at >= :from_date"
-                params["from_date"] = from_date
+                params["from_date"] = datetime.strptime(
+                    from_date, '%Y-%m-%d'
+                ).replace(tzinfo=timezone.utc)
             if to_date:
                 sql += " AND synced_at <= :to_date"
-                params["to_date"] = to_date + " 23:59:59"
+                params["to_date"] = datetime.strptime(
+                    to_date + ' 23:59:59', '%Y-%m-%d %H:%M:%S'
+                ).replace(tzinfo=timezone.utc)
             sql += " ORDER BY synced_at ASC"
             result = await sess.execute(text(sql), params)
             rows = result.fetchall()
