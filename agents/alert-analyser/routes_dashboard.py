@@ -189,7 +189,11 @@ async def get_period_summary(
                     SUM(new_noise) as new_noise,
                     SUM(new_suspect) as new_suspect,
                     MIN(synced_at) as period_from,
-                    MAX(synced_at) as period_to
+                    MAX(synced_at) as period_to,
+                    AVG(never_closed_pct) as avg_never_closed_pct,
+                    AVG(acknowledged_pct) as avg_acknowledged_pct,
+                    AVG(proper_cycle_pct) as avg_proper_cycle_pct,
+                    AVG(never_acked_pct) as avg_never_acked_pct
                 FROM alert_report_summary
                 WHERE agent_slug = 'alert-analyser'
             """
@@ -237,6 +241,10 @@ async def get_period_summary(
             "new_suspect": int(row.new_suspect or 0),
             "period_from": str(row.period_from)[:16] if row.period_from else None,
             "period_to": str(row.period_to)[:16] if row.period_to else None,
+            "avg_never_closed_pct": round(float(row.avg_never_closed_pct), 1) if row.avg_never_closed_pct else None,
+            "avg_acknowledged_pct": round(float(row.avg_acknowledged_pct), 1) if row.avg_acknowledged_pct else None,
+            "avg_proper_cycle_pct": round(float(row.avg_proper_cycle_pct), 1) if row.avg_proper_cycle_pct else None,
+            "avg_never_acked_pct": round(float(row.avg_never_acked_pct), 1) if row.avg_never_acked_pct else None,
             "oldest_date": oldest_date,
             "newest_date": newest_date,
         }
