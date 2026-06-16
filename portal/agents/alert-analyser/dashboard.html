@@ -606,8 +606,9 @@
     function _cmpArrow(a, b) {
       if (a == null || b == null) return '';
       const d = b - a;
-      if (d > 0) return `<span style="color:#dc2626;font-size:.8rem">▲ ${d > 0 ? '+' : ''}${typeof d === 'number' && !Number.isInteger(d) ? d.toFixed(1) : d}</span>`;
-      if (d < 0) return `<span style="color:#16a34a;font-size:.8rem">▼ ${d}</span>`;
+      const dRounded = Math.round(d * 10) / 10;
+      if (dRounded > 0) return `<span style="color:#dc2626;font-size:.8rem">▲ ${dRounded > 0 ? '+' : ''}${typeof dRounded === 'number' && !Number.isInteger(dRounded) ? dRounded.toFixed(1) : dRounded}</span>`;
+      if (dRounded < 0) return `<span style="color:#16a34a;font-size:.8rem">▼ ${dRounded}</span>`;
       return `<span style="color:var(--text-muted);font-size:.8rem">— 0</span>`;
     }
 
@@ -863,12 +864,14 @@
       const isCompare = window._compareActive;
       const sA = isCompare ? (window._compareDataA?.stats || stats) : stats;
       const sB = isCompare ? (window._compareDataB?.stats || null) : null;
+      const cmpSumA = window._compareSummaryA || {};
+      const cmpSumB = window._compareSummaryB || {};
       document.getElementById('tab-genuine').innerHTML = `
         <div class="kpi-grid">
           <div class="kpi kpi--success">
             <div class="kpi__label">Total Genuine</div>
             <div class="kpi__value">${isCompare && sB
-              ? `${sA.genuine_count.toLocaleString()} → ${sB.genuine_count.toLocaleString()} ${_cmpArrow(sA.genuine_count, sB.genuine_count)}`
+              ? `+${(cmpSumA.new_genuine||0)} → +${(cmpSumB.new_genuine||0)} ${_cmpArrow(cmpSumA.new_genuine||0, cmpSumB.new_genuine||0)}`
               : sA.genuine_count.toLocaleString()
             }</div>
             <div class="kpi__sub">real incidents</div>
