@@ -390,7 +390,13 @@
         if (_activeFromDate) _qs.set('from_date', _activeFromDate);
         if (_activeToDate) _qs.set('to_date', _activeToDate);
         const _dashUrl = '/dashboard' + (_qs.toString() ? '?' + _qs.toString() : '');
-        const [data, cfg] = await Promise.all([api(_dashUrl), api('/settings').catch(() => ({}))]);
+        const _periodUrl = '/dashboard/period-summary' + (_qs.toString() ? '?' + _qs.toString() : '');
+        const [data, cfg, periodData] = await Promise.all([
+            api(_dashUrl),
+            api('/settings').catch(() => ({})),
+            api(_periodUrl).catch(() => ({})),
+        ]);
+        window._periodData = periodData;
         const sourceType = cfg.source_type || 'synthetic';
         const genBtn = document.getElementById('genBtn');
         if (genBtn) genBtn.style.display = sourceType === 'synthetic' ? '' : 'none';
@@ -518,14 +524,89 @@
       const noisePct = s.total ? Math.round(s.noise_count / s.total * 1000) / 10 : 0;
       const suspectPct = s.total ? Math.round(suspectCount / s.total * 1000) / 10 : 0;
       const totalNoisePct = s.noise_ratio != null ? s.noise_ratio : noisePct + suspectPct;
-      document.getElementById('tab-overview').innerHTML = `
-        <div class="kpi-grid">
-          <div class="kpi kpi--accent"><div class="kpi__label">Total Alerts</div><div class="kpi__value">${s.total.toLocaleString()}</div><div class="kpi__sub">in dataset</div></div>
-          <div class="kpi kpi--danger"><div class="kpi__label">Noise</div><div class="kpi__value">${s.noise_count}</div><div class="kpi__sub">${noisePct}% noise + ${suspectPct}% suspect = ${totalNoisePct}% total</div></div>
-          <div class="kpi kpi--warn"><div class="kpi__label">Noise Suspect</div><div class="kpi__value" id="kpiSuspect">${suspectCount.toLocaleString()}</div><div class="kpi__sub">needs human review</div></div>
-          <div class="kpi kpi--success"><div class="kpi__label">Genuine</div><div class="kpi__value">${s.genuine_count}</div><div class="kpi__sub">require attention</div></div>
-          <div class="kpi kpi--warn"><div class="kpi__label">MTTR</div><div class="kpi__value">${s.mttr_minutes}m</div><div class="kpi__sub">mean time to resolve</div></div>
+
+      const pd = window._periodData || {};
+      const oldestLabel = pd.oldest_date
+          ? `Since ${pd.oldest_date}`
+          : 'All time';
+      const periodLabel = (pd.period_from && pd.period_to)
+          ? pd.period_from.slice(0,16) + ' → ' + pd.period_to.slice(0,16)
+          : 'Selected period';
+      const syncNote = pd.sync_count
+          ? `${pd.sync_count} sync${pd.sync_count > 1 ? 's' : ''}`
+          : 'No syncs';
+
+      // Row 1 — All time totals
+      const row1HTML = `
+      <div style="font-size:.75rem;font-weight:600;color:var(--text-muted);
+        letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px">
+        ${oldestLabel} — Overall
+      </div>
+      <div class="kpi-grid" style="margin-bottom:20px">
+        <div class="kpi kpi--accent">
+          <div class="kpi__label">TOTAL ALERTS</div>
+          <div class="kpi__value">${s.total.toLocaleString()}</div>
+          <div class="kpi__sub">in dataset</div>
         </div>
+        <div class="kpi kpi--danger">
+          <div class="kpi__label">NOISE</div>
+          <div class="kpi__value">${s.noise_count.toLocaleString()}</div>
+          <div class="kpi__sub">${s.noise_ratio}% noise + ${s.suspect_ratio?.toFixed(1) || 0}% suspect = ${((s.noise_count + s.suspect_count) / s.total * 100).toFixed(1)}% total</div>
+        </div>
+        <div class="kpi kpi--warn">
+          <div class="kpi__label">NOISE SUSPECT</div>
+          <div class="kpi__value">${s.suspect_count.toLocaleString()}</div>
+          <div class="kpi__sub">needs human review</div>
+        </div>
+        <div class="kpi kpi--success">
+          <div class="kpi__label">GENUINE</div>
+          <div class="kpi__value">${s.genuine_count.toLocaleString()}</div>
+          <div class="kpi__sub">require attention</div>
+        </div>
+        <div class="kpi kpi--warn">
+          <div class="kpi__label">MTTR</div>
+          <div class="kpi__value">${Math.round(s.mttr_minutes)}m</div>
+          <div class="kpi__sub">mean time to resolve</div>
+        </div>
+      </div>`;
+
+      // Row 2 — Selected period deltas
+      const noData = pd.empty || !pd.sync_count;
+      const row2HTML = `
+      <div style="font-size:.75rem;font-weight:600;color:var(--text-muted);
+        letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px">
+        ${periodLabel} — New Alerts (${syncNote})
+      </div>
+      <div class="kpi-grid" style="margin-bottom:24px">
+        <div class="kpi kpi--accent" style="border-top:3px solid var(--accent)">
+          <div class="kpi__label">NEW ALERTS</div>
+          <div class="kpi__value">${noData ? '—' : ('+' + (pd.new_alerts || 0).toLocaleString())}</div>
+          <div class="kpi__sub">received in period</div>
+        </div>
+        <div class="kpi kpi--danger" style="border-top:3px solid #dc2626">
+          <div class="kpi__label">NEW NOISE</div>
+          <div class="kpi__value">${noData ? '—' : ('+' + (pd.new_noise || 0).toLocaleString())}</div>
+          <div class="kpi__sub">${noData ? '—' : (pd.new_alerts ? Math.round(pd.new_noise / pd.new_alerts * 100) + '% of new' : '0% of new')}</div>
+        </div>
+        <div class="kpi kpi--warn" style="border-top:3px solid #f59e0b">
+          <div class="kpi__label">NEW SUSPECT</div>
+          <div class="kpi__value">${noData ? '—' : ('+' + (pd.new_suspect || 0).toLocaleString())}</div>
+          <div class="kpi__sub">needs review</div>
+        </div>
+        <div class="kpi kpi--success" style="border-top:3px solid #16a34a">
+          <div class="kpi__label">NEW GENUINE</div>
+          <div class="kpi__value">${noData ? '—' : ('+' + (pd.new_genuine || 0).toLocaleString())}</div>
+          <div class="kpi__sub">${noData ? '—' : (pd.new_alerts ? Math.round(pd.new_genuine / pd.new_alerts * 100) + '% of new' : '0% of new')}</div>
+        </div>
+        <div class="kpi ${noData ? 'kpi--accent' : (pd.new_alerts && pd.new_noise/pd.new_alerts > 0.5 ? 'kpi--danger' : 'kpi--success')}" style="border-top:3px solid var(--accent)">
+          <div class="kpi__label">NOISE RATE</div>
+          <div class="kpi__value">${noData ? '—' : (pd.new_alerts ? Math.round(pd.new_noise / pd.new_alerts * 100) + '%' : '0%')}</div>
+          <div class="kpi__sub">in this period</div>
+        </div>
+      </div>`;
+
+      document.getElementById('tab-overview').innerHTML = `
+        ${row1HTML}${row2HTML}
         <div class="chart-grid">
           <div class="chart-card"><div class="chart-card__title">Genuine vs Noise</div><div class="chart-wrap"><canvas id="donutChart"></canvas></div></div>
           <div class="chart-card"><div class="chart-card__title">Alert Volume by Day</div><div class="chart-wrap"><canvas id="trendChart"></canvas></div></div>
