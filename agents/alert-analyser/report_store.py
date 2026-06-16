@@ -172,6 +172,13 @@ async def store_report(classified: list[dict], meta: dict) -> None:
             p4 = priority_counts.get("P4", 0)
             p5 = priority_counts.get("P5", 0)
 
+            _lc = stats.get("data_quality", {}).get("lifecycle", {})
+            _ack = stats.get("data_quality", {}).get("acknowledgement", {})
+            never_closed_pct = _lc.get("never_closed_pct")
+            acknowledged_pct = _lc.get("acknowledged_pct")
+            proper_cycle_pct = _lc.get("proper_cycle_pct")
+            never_acked_pct = _ack.get("never_acked_pct")
+
             async with SessionLocal() as _sum_sess:
                 # Get previous row to compute deltas
                 _prev = await _sum_sess.execute(
@@ -203,12 +210,16 @@ async def store_report(classified: list[dict], meta: dict) -> None:
                            genuine_count, noise_count, suspect_count,
                            noise_pct, p1_count, p2_count, p3_count,
                            p4_count, p5_count,
-                           new_alerts, new_genuine, new_noise, new_suspect)
+                           new_alerts, new_genuine, new_noise, new_suspect,
+                           never_closed_pct, acknowledged_pct,
+                           proper_cycle_pct, never_acked_pct)
                         VALUES
                           (:slug, NOW(), :total, :genuine, :noise,
                            :suspect, :noise_pct, :p1, :p2, :p3, :p4, :p5,
                            :new_alerts, :new_genuine,
-                           :new_noise, :new_suspect)
+                           :new_noise, :new_suspect,
+                           :never_closed_pct, :acknowledged_pct,
+                           :proper_cycle_pct, :never_acked_pct)
                     """),
                     {
                         "slug": settings.agent_slug,
@@ -221,6 +232,10 @@ async def store_report(classified: list[dict], meta: dict) -> None:
                         "new_genuine": new_genuine,
                         "new_noise": new_noise,
                         "new_suspect": new_suspect,
+                        "never_closed_pct": never_closed_pct,
+                        "acknowledged_pct": acknowledged_pct,
+                        "proper_cycle_pct": proper_cycle_pct,
+                        "never_acked_pct": never_acked_pct,
                     }
                 )
                 await _sum_sess.commit()
