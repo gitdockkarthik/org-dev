@@ -24,14 +24,24 @@ async def get_dashboard(
                         AlertReport.agent_slug == 'alert-analyser'
                     ).order_by(AlertReport.created_at.desc())
                     if from_date:
-                        dt_from = datetime.strptime(
-                            from_date, '%Y-%m-%d'
-                        ).replace(tzinfo=timezone.utc)
+                        try:
+                            dt_from = datetime.strptime(
+                                from_date, '%Y-%m-%d %H:%M'
+                            ).replace(tzinfo=timezone.utc)
+                        except ValueError:
+                            dt_from = datetime.strptime(
+                                from_date, '%Y-%m-%d'
+                            ).replace(tzinfo=timezone.utc)
                         q = q.where(AlertReport.created_at >= dt_from)
                     if to_date:
-                        dt_to = datetime.strptime(
-                            to_date + ' 23:59:59', '%Y-%m-%d %H:%M:%S'
-                        ).replace(tzinfo=timezone.utc)
+                        try:
+                            dt_to = datetime.strptime(
+                                to_date, '%Y-%m-%d %H:%M'
+                            ).replace(tzinfo=timezone.utc)
+                        except ValueError:
+                            dt_to = datetime.strptime(
+                                to_date + ' 23:59:59', '%Y-%m-%d %H:%M:%S'
+                            ).replace(tzinfo=timezone.utc)
                         q = q.where(AlertReport.created_at <= dt_to)
                     result = await sess.execute(q)
                     reports = result.scalars().all()
@@ -92,14 +102,26 @@ async def get_dashboard_trend(
             from datetime import datetime, timezone
             if from_date:
                 sql += " AND synced_at >= :from_date"
-                params["from_date"] = datetime.strptime(
-                    from_date, '%Y-%m-%d'
-                ).replace(tzinfo=timezone.utc)
+                try:
+                    dt_from = datetime.strptime(
+                        from_date, '%Y-%m-%d %H:%M'
+                    ).replace(tzinfo=timezone.utc)
+                except ValueError:
+                    dt_from = datetime.strptime(
+                        from_date, '%Y-%m-%d'
+                    ).replace(tzinfo=timezone.utc)
+                params["from_date"] = dt_from
             if to_date:
                 sql += " AND synced_at <= :to_date"
-                params["to_date"] = datetime.strptime(
-                    to_date + ' 23:59:59', '%Y-%m-%d %H:%M:%S'
-                ).replace(tzinfo=timezone.utc)
+                try:
+                    dt_to = datetime.strptime(
+                        to_date, '%Y-%m-%d %H:%M'
+                    ).replace(tzinfo=timezone.utc)
+                except ValueError:
+                    dt_to = datetime.strptime(
+                        to_date + ' 23:59:59', '%Y-%m-%d %H:%M:%S'
+                    ).replace(tzinfo=timezone.utc)
+                params["to_date"] = dt_to
             sql += " ORDER BY synced_at ASC"
             result = await sess.execute(text(sql), params)
             rows = result.fetchall()

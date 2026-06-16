@@ -108,11 +108,11 @@
     <!-- Global Date Filter Bar -->
     <div id="date-filter-bar" style="display:flex;align-items:center;gap:10px;padding:12px 0 8px;flex-wrap:wrap">
       <span style="font-size:.8rem;font-weight:600;color:var(--text-muted)">DATE RANGE</span>
-      <input type="date" id="filter-from" class="dash-select"
+      <input type="datetime-local" id="filter-from" class="dash-select"
         style="font-size:.82rem;padding:4px 8px"
         title="From date">
       <span style="color:var(--text-muted);font-size:.85rem">to</span>
-      <input type="date" id="filter-to" class="dash-select"
+      <input type="datetime-local" id="filter-to" class="dash-select"
         style="font-size:.82rem;padding:4px 8px"
         title="To date">
       <button class="btn btn--primary" id="filter-apply-btn"
@@ -134,15 +134,18 @@
         align-items:center;gap:8px;flex-wrap:wrap">
         <span style="font-size:.8rem;font-weight:600;
           color:var(--text-muted)">PERIOD B</span>
-        <input type="date" id="compare-from" class="dash-select"
+        <input type="datetime-local" id="compare-from" class="dash-select"
           style="font-size:.82rem;padding:4px 8px">
         <span style="color:var(--text-muted);font-size:.85rem">to</span>
-        <input type="date" id="compare-to" class="dash-select"
+        <input type="datetime-local" id="compare-to" class="dash-select"
           style="font-size:.82rem;padding:4px 8px">
         <button class="btn btn--primary" id="compare-btn"
           onclick="applyCompare()"
           style="padding:4px 14px;font-size:.82rem">Compare</button>
       </div>
+      <span style="font-size:.75rem;color:var(--text-muted);margin-left:auto">
+        🕐 All times in UTC
+      </span>
     </div>
 
     <div class="tab-bar">
@@ -219,12 +222,16 @@
     let _compareMode = false;
 
     function applyDateFilter() {
-      _activeFromDate = document.getElementById('filter-from').value || null;
-      _activeToDate = document.getElementById('filter-to').value || null;
+      const _fv = document.getElementById('filter-from').value;
+      const _tv = document.getElementById('filter-to').value;
+      _activeFromDate = _fv ? _fv.replace('T', ' ') : null;
+      _activeToDate = _tv ? _tv.replace('T', ' ') : null;
       const badge = document.getElementById('filter-badge');
       if (_activeFromDate || _activeToDate) {
         badge.style.display = 'inline';
-        badge.textContent = (_activeFromDate || '…') + ' → ' + (_activeToDate || 'now');
+        const _fd = _activeFromDate ? _activeFromDate.slice(0,16) : '…';
+        const _td = _activeToDate ? _activeToDate.slice(0,16) : 'now';
+        badge.textContent = _fd + ' → ' + _td;
       } else {
         badge.style.display = 'none';
       }
@@ -249,10 +256,10 @@
     }
 
     async function applyCompare() {
-      const fromA = document.getElementById('filter-from').value || null;
-      const toA = document.getElementById('filter-to').value || null;
-      const fromB = document.getElementById('compare-from').value || null;
-      const toB = document.getElementById('compare-to').value || null;
+      const fromA = document.getElementById('filter-from').value?.replace('T',' ') || null;
+      const toA = document.getElementById('filter-to').value?.replace('T',' ') || null;
+      const fromB = document.getElementById('compare-from').value?.replace('T',' ') || null;
+      const toB = document.getElementById('compare-to').value?.replace('T',' ') || null;
       if (!fromA && !fromB) return;
       // Fetch both periods in parallel
       const qA = new URLSearchParams();
