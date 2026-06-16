@@ -729,8 +729,11 @@
         <div class="kpi kpi--accent" style="border-top:3px solid var(--accent)">
           <div class="kpi__label">NEW ALERTS</div>
           <div class="kpi__value">${isCompare
-            ? `+${(cmpA.new_alerts||0).toLocaleString()} → +${(cmpB.new_alerts||0).toLocaleString()} ${_cmpArrow(cmpA.new_alerts, cmpB.new_alerts)}`
-            : (noData ? '—' : '+' + (pd.new_alerts||0).toLocaleString())
+            ? `+${((cmpA.new_genuine||0) + (cmpA.new_noise||0) + (cmpA.new_suspect||0)).toLocaleString()} → +${((cmpB.new_genuine||0) + (cmpB.new_noise||0) + (cmpB.new_suspect||0)).toLocaleString()} ${_cmpArrow(
+              (cmpA.new_genuine||0)+(cmpA.new_noise||0)+(cmpA.new_suspect||0),
+              (cmpB.new_genuine||0)+(cmpB.new_noise||0)+(cmpB.new_suspect||0)
+            )}`
+            : (noData ? '—' : '+' + ((pd.new_genuine||0) + (pd.new_noise||0) + (pd.new_suspect||0)).toLocaleString())
           }</div>
           <div class="kpi__sub">${isCompare ? 'A → B' : 'received in period'}</div>
         </div>
