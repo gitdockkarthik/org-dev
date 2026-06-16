@@ -15,7 +15,7 @@ import threading
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from tools.dashboard_builder import compute_dashboard_stats
 
@@ -156,6 +156,49 @@ async def store_report(classified: list[dict], meta: dict) -> None:
             for old in result.scalars().all():
                 await session.delete(old)
             await session.commit()
+
+        # Insert lightweight summary row for 90-day trend analysis
+        try:
+            total = meta.get("total_alerts", 0)
+            genuine = meta.get("genuine_count", 0)
+            noise = meta.get("noise_count", 0)
+            suspect = stats.get("suspect_count", 0)
+            noise_pct = round((noise / total * 100), 2) if total else 0
+
+            # Extract per-priority counts from stats if available
+            priority_counts = stats.get("priority_counts", {})
+            p1 = priority_counts.get("P1", 0)
+            p2 = priority_counts.get("P2", 0)
+            p3 = priority_counts.get("P3", 0)
+            p4 = priority_counts.get("P4", 0)
+            p5 = priority_counts.get("P5", 0)
+
+            async with SessionLocal() as _sum_sess:
+                await _sum_sess.execute(
+                    text("""
+                        INSERT INTO alert_report_summary
+                          (agent_slug, synced_at, total_alerts,
+                           genuine_count, noise_count, suspect_count,
+                           noise_pct, p1_count, p2_count, p3_count,
+                           p4_count, p5_count)
+                        VALUES
+                          (:slug, NOW(), :total, :genuine, :noise,
+                           :suspect, :noise_pct, :p1, :p2, :p3, :p4, :p5)
+                    """),
+                    {
+                        "slug": settings.agent_slug,
+                        "total": total,
+                        "genuine": genuine,
+                        "noise": noise,
+                        "suspect": suspect,
+                        "noise_pct": noise_pct,
+                        "p1": p1, "p2": p2, "p3": p3,
+                        "p4": p4, "p5": p5,
+                    }
+                )
+                await _sum_sess.commit()
+        except Exception as _e:
+            logger.warning("store_report: summary insert failed: %s", _e)
 
         logger.info("store_report: saved to DB, total=%d", meta.get("total_alerts", 0))
     except Exception as e:
