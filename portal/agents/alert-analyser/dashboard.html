@@ -109,11 +109,13 @@
     <div id="date-filter-bar" style="display:flex;align-items:center;gap:10px;padding:12px 0 8px;flex-wrap:wrap">
       <span style="font-size:.8rem;font-weight:600;color:var(--text-muted)">DATE RANGE</span>
       <input type="datetime-local" id="filter-from" class="dash-select"
-        style="font-size:.82rem;padding:4px 8px"
+        step="60"
+        style="font-size:.82rem;padding:4px 8px;min-width:175px"
         title="From date">
       <span style="color:var(--text-muted);font-size:.85rem">to</span>
       <input type="datetime-local" id="filter-to" class="dash-select"
-        style="font-size:.82rem;padding:4px 8px"
+        step="60"
+        style="font-size:.82rem;padding:4px 8px;min-width:175px"
         title="To date">
       <button class="btn btn--primary" id="filter-apply-btn"
         onclick="applyDateFilter()"
@@ -135,10 +137,12 @@
         <span style="font-size:.8rem;font-weight:600;
           color:var(--text-muted)">PERIOD B</span>
         <input type="datetime-local" id="compare-from" class="dash-select"
-          style="font-size:.82rem;padding:4px 8px">
+          step="60"
+          style="font-size:.82rem;padding:4px 8px;min-width:175px">
         <span style="color:var(--text-muted);font-size:.85rem">to</span>
         <input type="datetime-local" id="compare-to" class="dash-select"
-          style="font-size:.82rem;padding:4px 8px">
+          step="60"
+          style="font-size:.82rem;padding:4px 8px;min-width:175px">
         <button class="btn btn--primary" id="compare-btn"
           onclick="applyCompare()"
           style="padding:4px 14px;font-size:.82rem">Compare</button>
@@ -219,6 +223,21 @@
     // ── Date filter helpers ──────────────────────────────────────────
     let _activeFromDate = null;
     let _activeToDate = null;
+
+    function _initDefaultDateRange() {
+      const now = new Date();
+      const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+      const fmt = d => d.toISOString().slice(0, 16);
+      const fromVal = fmt(oneHourAgo);
+      const toVal = fmt(now);
+      document.getElementById('filter-from').value = fromVal;
+      document.getElementById('filter-to').value = toVal;
+      _activeFromDate = fromVal.replace('T', ' ');
+      _activeToDate = toVal.replace('T', ' ');
+      const badge = document.getElementById('filter-badge');
+      badge.style.display = 'inline';
+      badge.textContent = fromVal.slice(0, 16) + ' → ' + toVal.slice(0, 16);
+    }
     let _compareMode = false;
 
     function applyDateFilter() {
@@ -591,6 +610,13 @@
       const hourly = s.hourly_distribution;
       const maxH = Math.max(...hourly.map(h=>h.count), 1);
       document.getElementById('tab-trends').innerHTML = `
+        <div class="chart-card" id="noise-trend-placeholder"
+          style="margin-bottom:16px">
+          <div class="chart-card__title">Noise % Trend Over Time</div>
+          <div class="chart-wrap">
+            <canvas id="noiseTrendChart"></canvas>
+          </div>
+        </div>
         <div class="chart-grid">
           <div class="chart-card">
             <div class="chart-card__title">Alert Volume by Hour</div>
@@ -640,13 +666,6 @@
     api('/dashboard/trend' + (_tqs.toString() ? '?' + _tqs.toString() : ''))
       .then(td => {
         if (td.empty || !td.points?.length) return;
-        // Add trend chart card after existing content
-        const trendDiv = document.createElement('div');
-        trendDiv.className = 'chart-card';
-        trendDiv.style.marginTop = '16px';
-        trendDiv.innerHTML = '<div class="chart-card__title">Noise % Trend Over Time</div>' +
-          '<div class="chart-wrap"><canvas id="noiseTrendChart"></canvas></div>';
-        document.getElementById('tab-trends').appendChild(trendDiv);
         setTimeout(() => {
           const ctx = document.getElementById('noiseTrendChart')?.getContext('2d');
           if (!ctx) return;
@@ -854,6 +873,7 @@
       }
     }
 
+    _initDefaultDateRange();
     loadDashboard();
   </script>
   <script>
