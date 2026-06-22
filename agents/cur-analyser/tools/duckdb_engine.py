@@ -376,9 +376,13 @@ def get_cost_by_region(csv_text: str) -> list[dict]:
         region_col = _detect_region_col(list(df.columns))
         if not cost_col or not region_col:
             return []
+        # Exclude rows with no region (blank / NULL AvailabilityZone) so they
+        # don't surface as an empty-label region bucket in the breakdown.
         rows = con.execute(
             f'SELECT "{region_col}", SUM("{cost_col}") AS cost '
-            f'FROM cur_data GROUP BY "{region_col}"'
+            f'FROM cur_data '
+            f"WHERE \"{region_col}\" IS NOT NULL AND CAST(\"{region_col}\" AS VARCHAR) <> '' "
+            f'GROUP BY "{region_col}"'
         ).fetchall()
         # Fold AZ ids to their region prefix (legacy CUR groups by
         # AvailabilityZone, e.g. us-east-1a) and re-aggregate.
