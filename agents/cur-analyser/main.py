@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, Header
+from fastapi import FastAPI, Header, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -211,6 +211,182 @@ app.include_router(settings_router)
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "agent": settings.agent_slug}
+
+
+# ── Data-source abstraction endpoints ───────────────────────────────────────────
+# Additive only — none of these modify the existing /reports or /dashboard routes.
+
+_MAX_CUR_BYTES = 100 * 1024 * 1024       # 100 MB (matches /reports/upload)
+_MAX_INVENTORY_BYTES = 12 * 1024 * 1024  # ~12 MB (10 MB inventory + headroom)
+
+
+def _require_registry():
+    from tools.data_sources.registry import get_registry
+
+    reg = get_registry()
+    if reg is None:
+        raise HTTPException(status_code=503, detail="Data-source registry not initialised")
+    return reg
+
+
+async def _active_cur_csv(reg) -> str | None:
+    """Resolve the CSV text for the active CUR source (registry first, then the
+    most-recent report as a fallback so this works even before any source is
+    explicitly registered)."""
+    try:
+        providers = await reg.get_active_cur_providers()
+        if providers:
+            return await providers[0].fetch()
+    except Exception:
+        logger.exception("_active_cur_csv: provider fetch failed")
+    from report_store import get_latest_csv
+    return get_latest_csv()
+
+
+@app.post("/data-sources/cur/upload")
+async def ds_cur_upload(file: UploadFile) -> dict:
+    """Upload a new CUR file (CSV / CSV.zip / Parquet) and register it as a
+    data source. Reuses the existing report store so the dashboard picks it up."""
+    from report_store import add_report, persist_report
+    from routes_dashboard import invalidate_dashboard_cache
+    from tools.data_sources.file_providers import FileUploadCURProvider, cur_bytes_to_csv
+    from tools.duckdb_engine import get_total_cost
+
+    reg = _require_registry()
+    raw = await file.read()
+    if len(raw) > _MAX_CUR_BYTES:
+        raise HTTPException(status_code=413, detail="File too large (max 100 MB)")
+
+    try:
+        csv_text, resolved = cur_bytes_to_csv(file.filename or "", raw)
+    except ValueError as exc:
+        code = 400 if "Unsupported" in str(exc) else 422
+        raise HTTPException(status_code=code, detail=str(exc))
+
+    summary = get_total_cost(csv_text)
+    if "error" in summary:
+        raise HTTPException(status_code=422, detail=summary["error"])
+
+    report = add_report(
+        filename=resolved,
+        csv_text=csv_text,
+        row_count=summary.get("row_count", 0),
+        total_cost=summary.get("total_cost", 0.0),
+        file_size=len(raw),
+    )
+    await persist_report(report["id"])
+    invalidate_dashboard_cache(report["id"])
+    invalidate_dashboard_cache(None)
+
+    provider = FileUploadCURProvider(
+        source_id=f"cur-{report['id']}",
+        filename=resolved,
+        csv_text=csv_text,
+        record_count=summary.get("row_count", 0),
+        total_cost=summary.get("total_cost", 0.0),
+        file_size=len(raw),
+        report_id=report["id"],
+    )
+    meta = await reg.register_cur(provider)
+    return {"ok": True, "report": report, "source": meta.to_dict()}
+
+
+@app.post("/data-sources/inventory/upload")
+async def ds_inventory_upload(file: UploadFile) -> dict:
+    """Upload an inventory XLSX and set it as the active inventory source."""
+    from uuid import uuid4
+
+    from tools.data_sources.file_providers import FileUploadInventoryProvider
+
+    reg = _require_registry()
+    filename = file.filename or ""
+    if not filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Inventory must be an .xlsx file")
+
+    raw = await file.read()
+    if len(raw) > _MAX_INVENTORY_BYTES:
+        raise HTTPException(status_code=413, detail="Inventory file too large (max 10 MB)")
+
+    try:
+        provider = FileUploadInventoryProvider.from_upload(
+            f"inv-{uuid4().hex[:8]}", filename, raw
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Failed to read inventory: {exc}")
+
+    if provider.get_resource_count() == 0:
+        raise HTTPException(
+            status_code=422,
+            detail="No recognised inventory sheets/resources found. Expected sheets "
+                   "like EC2, EBS, RDS, S3, Lambda, ALB/ELB, Redis, DynamoDB, EKS "
+                   "with a join-key column and an account id column.",
+        )
+
+    meta = await reg.set_inventory(provider, raw)
+    return {
+        "ok": True,
+        "source": meta.to_dict(),
+        "resource_count": provider.get_resource_count(),
+        "per_sheet_counts": provider.per_sheet_counts,
+        "unmatched_count": provider.unmatched_count,
+        "enrichment_enabled": settings.enable_inventory_enrichment,
+    }
+
+
+@app.get("/data-sources/status")
+async def ds_status() -> dict:
+    """Registry status — sources, active selection, staleness, archives."""
+    reg = _require_registry()
+    status = reg.status()
+    status["enabled"] = settings.enable_inventory_enrichment
+    return status
+
+
+@app.get("/data-sources/inventory/coverage")
+async def ds_inventory_coverage() -> dict:
+    """Per-service match rates and cost coverage after enriching the active CUR
+    with the loaded inventory."""
+    from tools.duckdb_engine import get_enrichment_summary
+    from tools.inventory_enricher import build_enricher
+
+    reg = _require_registry()
+    if reg.get_inventory() is None:
+        return {"active": False, "inventory_loaded": False,
+                "enabled": settings.enable_inventory_enrichment}
+
+    enricher = await build_enricher(reg)
+    if not enricher.active:
+        # Inventory present but enrichment disabled by feature flag.
+        return {"active": False, "inventory_loaded": True,
+                "enabled": settings.enable_inventory_enrichment}
+
+    csv_text = await _active_cur_csv(reg)
+    if not csv_text:
+        return {"active": True, "joinable": False, "inventory_loaded": True,
+                "enabled": True, "reason": "No CUR data loaded yet"}
+
+    summary = get_enrichment_summary(csv_text, enricher)
+    summary["inventory_loaded"] = True
+    summary["enabled"] = True
+    return summary
+
+
+@app.delete("/data-sources/cur/{source_id}")
+async def ds_delete_cur(source_id: str) -> dict:
+    reg = _require_registry()
+    removed = await reg.delete_cur(source_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"CUR source {source_id} not found")
+    return {"ok": True, "deleted": source_id}
+
+
+@app.delete("/data-sources/inventory")
+async def ds_delete_inventory() -> dict:
+    reg = _require_registry()
+    removed = await reg.delete_inventory()
+    if not removed:
+        raise HTTPException(status_code=404, detail="No inventory loaded")
+    return {"ok": True}
 
 
 @app.post("/invoke", response_model=InvokeResponse)

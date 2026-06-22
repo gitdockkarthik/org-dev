@@ -88,6 +88,8 @@ services:
       BACKEND_API_KEY: ${BACKEND_API_KEY}
       DATABASE_URL: ${DATABASE_URL}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      # Inventory enrichment is opt-in; disabled by default (zero impact when off).
+      ENABLE_INVENTORY_ENRICHMENT: ${ENABLE_INVENTORY_ENRICHMENT:-false}
     depends_on:
       - backend
 
