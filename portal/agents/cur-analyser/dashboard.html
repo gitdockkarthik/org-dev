@@ -2945,6 +2945,15 @@ ${JSON.stringify(payload, null, 2)}
               _loaded.delete(_streamActiveTab);
               renderTab(_streamActiveTab);
             }
+            // The environment panels (KPI cards, per-month chart, ownership
+            // table, env×category matrix) derive their costs from the
+            // fully-streamed rows. If that tab was rendered before the stream
+            // finished it shows $0 — re-render it now (after computeFromRows has
+            // populated the breakdowns above) so it never stays stuck at $0,
+            // even when it isn't the active tab.
+            if (_streamActiveTab !== 'environments' && _loaded.has('environments')) {
+              renderEnvironments();
+            }
             // Populate filter dropdowns from actual data
             buildMultiSelect('fAccountWrap', 'Account',
               getDistinctValues(rows, fAccount),
