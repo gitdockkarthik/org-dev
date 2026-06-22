@@ -240,67 +240,79 @@ async def generate_sample() -> dict:
 
 @router.post("/upload")
 async def upload_report(file: UploadFile) -> dict:
+    import os
+
+    from tools.data_sources.file_providers import (
+        UploadTooLarge,
+        stream_upload_to_temp,
+    )
+
     filename = file.filename or ""
     fname_lower = filename.lower()
 
-    # File size check — 2GB limit (large CUR exports)
-    raw = await file.read()
-    if len(raw) > 2048 * 1024 * 1024:
+    # Stream the upload to a temp file on disk (bounded memory) instead of
+    # loading the whole CUR into memory via ``await file.read()``.
+    # File size check — 2GB limit (large CUR exports) is enforced while streaming.
+    try:
+        tmp_path, file_size = await stream_upload_to_temp(
+            file, max_bytes=2048 * 1024 * 1024
+        )
+    except UploadTooLarge:
         raise HTTPException(status_code=413,
             detail="File too large (max 2 GB)")
 
-    # ── CSV ──────────────────────────────────────────────────────
-    if fname_lower.endswith(".csv"):
-        csv_text = raw.decode("utf-8-sig", errors="replace")
+    try:
+        # ── CSV ──────────────────────────────────────────────────────
+        if fname_lower.endswith(".csv"):
+            # Read in text mode so only the decoded string is held — never the
+            # raw bytes alongside it.
+            with open(tmp_path, encoding="utf-8-sig", errors="replace") as f:
+                csv_text = f.read()
 
-    # ── ZIP containing CSV ───────────────────────────────────────
-    elif fname_lower.endswith(".zip"):
-        try:
-            with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                # Find first CSV file inside the zip
-                csv_names = [n for n in zf.namelist()
-                             if n.lower().endswith(".csv")
-                             and not n.startswith("__MACOSX")]
-                if not csv_names:
-                    raise HTTPException(status_code=422,
-                        detail="No CSV file found inside the ZIP archive")
-                with zf.open(csv_names[0]) as f:
-                    csv_text = f.read().decode("utf-8-sig", errors="replace")
-                # Use the inner CSV filename
-                filename = csv_names[0].split("/")[-1]
-        except zipfile.BadZipFile:
-            raise HTTPException(status_code=422,
-                detail="Invalid ZIP file")
-
-    # ── PARQUET ──────────────────────────────────────────────────
-    elif fname_lower.endswith(".parquet"):
-        try:
-            import duckdb
-            import tempfile
-            import os
-            # Write parquet bytes to a temp file — DuckDB reads from path
-            with tempfile.NamedTemporaryFile(
-                suffix=".parquet", delete=False
-            ) as tmp:
-                tmp.write(raw)
-                tmp_path = tmp.name
+        # ── ZIP containing CSV ───────────────────────────────────────
+        elif fname_lower.endswith(".zip"):
             try:
+                with zipfile.ZipFile(tmp_path) as zf:
+                    # Find first CSV file inside the zip
+                    csv_names = [n for n in zf.namelist()
+                                 if n.lower().endswith(".csv")
+                                 and not n.startswith("__MACOSX")]
+                    if not csv_names:
+                        raise HTTPException(status_code=422,
+                            detail="No CSV file found inside the ZIP archive")
+                    with zf.open(csv_names[0]) as f:
+                        csv_text = io.TextIOWrapper(
+                            f, encoding="utf-8-sig", errors="replace"
+                        ).read()
+                    # Use the inner CSV filename
+                    filename = csv_names[0].split("/")[-1]
+            except zipfile.BadZipFile:
+                raise HTTPException(status_code=422,
+                    detail="Invalid ZIP file")
+
+        # ── PARQUET ──────────────────────────────────────────────────
+        elif fname_lower.endswith(".parquet"):
+            try:
+                import duckdb
                 con = duckdb.connect()
-                # Read parquet and convert to CSV string
+                # Read parquet from the temp file path and convert to CSV string
                 csv_text = con.execute(
                     f"SELECT * FROM read_parquet('{tmp_path}')"
                 ).df().to_csv(index=False)
                 con.close()
-            finally:
-                os.unlink(tmp_path)
-        except Exception as e:
-            raise HTTPException(status_code=422,
-                detail=f"Failed to read Parquet file: {str(e)}")
+            except Exception as e:
+                raise HTTPException(status_code=422,
+                    detail=f"Failed to read Parquet file: {str(e)}")
 
-    else:
-        raise HTTPException(status_code=400,
-            detail="Unsupported file format. "
-                   "Supported: .csv, .zip (containing CSV), .parquet")
+        else:
+            raise HTTPException(status_code=400,
+                detail="Unsupported file format. "
+                       "Supported: .csv, .zip (containing CSV), .parquet")
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
     # ── Common processing ─────────────────────────────────────────
     summary = get_total_cost(csv_text)
@@ -312,7 +324,7 @@ async def upload_report(file: UploadFile) -> dict:
         csv_text=csv_text,
         row_count=summary.get("row_count", 0),
         total_cost=summary.get("total_cost", 0.0),
-        file_size=len(raw),
+        file_size=file_size,
     )
     await persist_report(report["id"])
     invalidate_dashboard_cache(report["id"])

@@ -90,6 +90,104 @@ def cur_bytes_to_csv(filename: str, raw: bytes) -> tuple[str, str]:
     )
 
 
+class UploadTooLarge(Exception):
+    """Raised by ``stream_upload_to_temp`` when an upload exceeds its byte limit."""
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        super().__init__(f"Upload exceeds limit of {limit} bytes")
+
+
+async def stream_upload_to_temp(
+    file: Any,
+    *,
+    suffix: str = "",
+    max_bytes: Optional[int] = None,
+    chunk_size: int = 8 * 1024 * 1024,
+) -> tuple[str, int]:
+    """Stream an ``UploadFile`` to a temp file on disk in chunks.
+
+    Returns ``(temp_path, total_bytes)``. Keeps memory bounded (only one
+    ``chunk_size`` slice is resident at a time) instead of materialising the
+    whole upload via ``await file.read()``. Enforces ``max_bytes`` while
+    streaming — on overflow the partial temp file is removed and
+    ``UploadTooLarge`` is raised. The caller is responsible for deleting the
+    returned path once finished.
+    """
+    import os
+    import tempfile
+
+    fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+    size = 0
+    try:
+        with os.fdopen(fd, "wb") as out:
+            while True:
+                chunk = await file.read(chunk_size)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if max_bytes is not None and size > max_bytes:
+                    raise UploadTooLarge(max_bytes)
+                out.write(chunk)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+    return tmp_path, size
+
+
+def cur_file_to_csv(filename: str, path: str) -> tuple[str, str]:
+    """Disk-based counterpart of :func:`cur_bytes_to_csv`.
+
+    Reads an uploaded CUR file from ``path`` (instead of an in-memory ``bytes``
+    blob) and returns ``(csv_text, resolved_filename)``. CSV is read in text
+    mode so only the decoded string is held — never the raw bytes alongside it.
+    Supports ``.csv``, ``.zip`` (first inner CSV) and ``.parquet``; raises
+    ``ValueError`` on unsupported or malformed input.
+    """
+    fname_lower = (filename or "").lower()
+
+    if fname_lower.endswith(".csv"):
+        with open(path, encoding="utf-8-sig", errors="replace") as f:
+            return f.read(), filename
+
+    if fname_lower.endswith(".zip"):
+        try:
+            with zipfile.ZipFile(path) as zf:
+                csv_names = [
+                    n for n in zf.namelist()
+                    if n.lower().endswith(".csv") and not n.startswith("__MACOSX")
+                ]
+                if not csv_names:
+                    raise ValueError("No CSV file found inside the ZIP archive")
+                with zf.open(csv_names[0]) as f:
+                    csv_text = io.TextIOWrapper(
+                        f, encoding="utf-8-sig", errors="replace"
+                    ).read()
+                return csv_text, csv_names[0].split("/")[-1]
+        except zipfile.BadZipFile as exc:
+            raise ValueError("Invalid ZIP file") from exc
+
+    if fname_lower.endswith(".parquet"):
+        import duckdb
+
+        try:
+            con = duckdb.connect()
+            csv_text = con.execute(
+                f"SELECT * FROM read_parquet('{path}')"
+            ).df().to_csv(index=False)
+            con.close()
+            return csv_text, filename
+        except Exception as exc:  # pragma: no cover - defensive
+            raise ValueError(f"Failed to read Parquet file: {exc}") from exc
+
+    raise ValueError(
+        "Unsupported file format. Supported: .csv, .zip (containing CSV), .parquet"
+    )
+
+
 class FileUploadCURProvider(CURDataProvider):
     """CUR data sourced from an uploaded file (CSV / CSV.zip / Parquet)."""
 

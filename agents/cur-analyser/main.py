@@ -247,21 +247,40 @@ async def _active_cur_csv(reg) -> str | None:
 async def ds_cur_upload(file: UploadFile) -> dict:
     """Upload a new CUR file (CSV / CSV.zip / Parquet) and register it as a
     data source. Reuses the existing report store so the dashboard picks it up."""
+    import os
+
     from report_store import add_report, persist_report
     from routes_dashboard import invalidate_dashboard_cache
-    from tools.data_sources.file_providers import FileUploadCURProvider, cur_bytes_to_csv
+    from tools.data_sources.file_providers import (
+        FileUploadCURProvider,
+        UploadTooLarge,
+        cur_file_to_csv,
+        stream_upload_to_temp,
+    )
     from tools.duckdb_engine import get_total_cost
 
     reg = _require_registry()
-    raw = await file.read()
-    if len(raw) > _MAX_CUR_BYTES:
+
+    # Stream the upload to a temp file on disk (bounded memory) rather than
+    # loading the whole CUR into memory via ``await file.read()``.
+    try:
+        tmp_path, file_size = await stream_upload_to_temp(
+            file, max_bytes=_MAX_CUR_BYTES
+        )
+    except UploadTooLarge:
         raise HTTPException(status_code=413, detail="File too large (max 2 GB)")
 
     try:
-        csv_text, resolved = cur_bytes_to_csv(file.filename or "", raw)
-    except ValueError as exc:
-        code = 400 if "Unsupported" in str(exc) else 422
-        raise HTTPException(status_code=code, detail=str(exc))
+        try:
+            csv_text, resolved = cur_file_to_csv(file.filename or "", tmp_path)
+        except ValueError as exc:
+            code = 400 if "Unsupported" in str(exc) else 422
+            raise HTTPException(status_code=code, detail=str(exc))
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
     summary = get_total_cost(csv_text)
     if "error" in summary:
@@ -272,7 +291,7 @@ async def ds_cur_upload(file: UploadFile) -> dict:
         csv_text=csv_text,
         row_count=summary.get("row_count", 0),
         total_cost=summary.get("total_cost", 0.0),
-        file_size=len(raw),
+        file_size=file_size,
     )
     await persist_report(report["id"])
     invalidate_dashboard_cache(report["id"])
@@ -284,7 +303,7 @@ async def ds_cur_upload(file: UploadFile) -> dict:
         csv_text=csv_text,
         record_count=summary.get("row_count", 0),
         total_cost=summary.get("total_cost", 0.0),
-        file_size=len(raw),
+        file_size=file_size,
         report_id=report["id"],
     )
     meta = await reg.register_cur(provider)
