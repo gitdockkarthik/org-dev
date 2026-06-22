@@ -677,6 +677,24 @@
         const v = r[n];
         if (v !== undefined && v !== null && v !== '') return v;
       }
+      // Case-insensitive fallback: real CUR headers vary in casing
+      // (Environment vs environment, CostCenter vs costcenter). Build a
+      // lowercased key map once per row, cached non-enumerably so it never
+      // leaks into Object.keys()/distinct-value scans.
+      let map = r.__lck;
+      if (!map) {
+        map = {};
+        for (const k in r) map[k.toLowerCase()] = k;
+        try { Object.defineProperty(r, '__lck', { value: map, enumerable: false }); }
+        catch (_) { /* frozen row — skip caching */ }
+      }
+      for (const n of names) {
+        const k = map[n.toLowerCase()];
+        if (k !== undefined) {
+          const v = r[k];
+          if (v !== undefined && v !== null && v !== '') return v;
+        }
+      }
       return '';
     }
     const COST_FIELDS       = ['line_item_unblended_cost','unblended_cost','UnBlendedCost','line_item_blended_cost','BlendedCost'];
@@ -688,11 +706,11 @@
     // rewrites slash-format tag columns: resourceTags/user:Environment becomes
     // resource_tags_user:Environment. Both raw and normalised forms are listed
     // so the accessors work whether reading raw CSV columns or streamed rows.
-    const ENV_FIELDS        = ['tag_Environment','tag_environment','resourceTags/user:Environment','resource_tags_user:Environment'];
-    const PRODUCT_FIELDS    = ['tag_Product','tag_product','resourceTags/user:Project','resourceTags/user:Product','resource_tags_user:Project','resource_tags_user:Product'];
-    const TEAM_FIELDS       = ['tag_Team','tag_team','resourceTags/user:Team','resource_tags_user:Team'];
-    const CUSTOMER_FIELDS   = ['tag_Customer','tag_customer','resourceTags/user:Customer','resource_tags_user:Customer'];
-    const COSTCENTRE_FIELDS = ['tag_CostCentre','tag_costcentre','resourceTags/user:CostCenter','resourceTags/user:CostCentre','resource_tags_user:CostCenter','resource_tags_user:CostCentre'];
+    const ENV_FIELDS        = ['tag_Environment','resourceTags/user:Environment','resource_tags_user_Environment'];
+    const PRODUCT_FIELDS    = ['tag_Product','resourceTags/user:Project','resourceTags/user:Product','resource_tags_user_Project','resource_tags_user_Product'];
+    const TEAM_FIELDS       = ['tag_Team','resourceTags/user:Team','resource_tags_user_Team'];
+    const CUSTOMER_FIELDS   = ['tag_Customer','resourceTags/user:Customer','resource_tags_user_Customer'];
+    const COSTCENTRE_FIELDS = ['tag_CostCentre','resourceTags/user:CostCenter','resourceTags/user:CostCentre','resource_tags_user_CostCenter','resource_tags_user_CostCentre'];
     function regionPrefix(v) {
       const s = String(v || '');
       const m = s.match(/^([a-z]{2}-[a-z]+-\d+)[a-z]$/);  // us-east-1a -> us-east-1
@@ -2841,10 +2859,14 @@ ${JSON.stringify(payload, null, 2)}
             // DEBUG: detected tag columns + distinct environment values in the
             // actual streamed rows, to diagnose real-CUR column naming.
             if (rows.length) {
-              const tagCols = Object.keys(rows[0]).filter(k =>
-                k.startsWith('tag_') || k.startsWith('resourceTags/user:') ||
-                k.startsWith('resource_tags_user:'));
-              console.log('[cur-analyser] streamed tag columns:', tagCols);
+              const allCols = Object.keys(rows[0]);
+              const tagCols = allCols.filter(k => {
+                const kl = k.toLowerCase();
+                return kl.startsWith('tag_') || kl.includes('resourcetags') ||
+                       kl.includes('tags_user') || kl.includes('tags/user');
+              });
+              console.log('[cur-analyser] streamed ALL columns:', allCols);
+              console.log('[cur-analyser] streamed tag-like columns:', tagCols);
               console.log('[cur-analyser] streamed distinct env values:',
                 [...new Set(rows.map(fEnv).filter(Boolean))].slice(0, 50));
             }

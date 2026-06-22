@@ -168,8 +168,16 @@ def _detect_resource_col(columns: list[str]) -> str | None:
 
 # ── Tag column detection ──────────────────────────────────────────────────────
 # Real AWS CUR exposes user tags as ``resourceTags/user:<Name>`` columns, while
-# synthetic / normalised data uses a ``tag_<Name>`` prefix.
-TAG_COL_PREFIXES = ["tag_", "resourceTags/user:"]
+# synthetic / normalised data uses a ``tag_<Name>`` prefix. Streamed rows are
+# normalised by report_store._normalise_key, which rewrites the slash form to
+# ``resource_tags_user_<Name>`` — all variants are listed so detection works on
+# raw CSV columns and normalised rows alike. Matched case-insensitively.
+TAG_COL_PREFIXES = [
+    "tag_",
+    "resourceTags/user:",
+    "resource_tags_user_",
+    "resource_tags_user:",
+]
 
 # Display-name aliases so a requested tag resolves across naming variants
 # (e.g. synthetic "CostCentre" vs real CUR "CostCenter", or synthetic
@@ -184,13 +192,17 @@ _TAG_DISPLAY_ALIASES = {
 
 def detect_tag_columns(df) -> dict[str, str]:
     """Returns ``{display_name: actual_column_name}`` for every tag column,
-    across both the ``tag_`` and ``resourceTags/user:`` prefixes."""
+    across the ``tag_`` / ``resourceTags/user:`` / ``resource_tags_user_`` /
+    ``resource_tags_user:`` prefixes (matched case-insensitively)."""
     found: dict[str, str] = {}
     for col in df.columns:
+        cl = str(col).lower()
         for prefix in TAG_COL_PREFIXES:
-            if col.startswith(prefix):
-                display = col[len(prefix):]  # strip prefix for display
-                found[display] = col
+            if cl.startswith(prefix.lower()):
+                display = str(col)[len(prefix):]  # strip prefix for display
+                if display:
+                    found[display] = col
+                break
     return found
 
 
@@ -309,6 +321,9 @@ def _load_df(
 def get_total_cost(csv_text: str) -> dict:
     df, con = _load_df(csv_text)
     try:
+        # DEBUG: log the raw CUR column names once per dashboard build so the
+        # actual header format (and any unexpected tag-column naming) is visible.
+        logger.info("get_total_cost: raw CUR columns = %s", list(df.columns))
         cost_col = _detect_cost_col(list(df.columns))
         if not cost_col:
             return {"error": "No cost column found in CUR data."}

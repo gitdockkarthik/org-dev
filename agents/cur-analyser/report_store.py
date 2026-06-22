@@ -26,17 +26,24 @@ def _needs_normalisation(columns: list[str]) -> bool:
     return any("/" in col for col in columns)
 
 def _normalise_key(k: str) -> str:
-    """Normalise slash-format CUR column names to snake_case.
-    lineItem/UsageAccountId -> line_item_usage_account_id
+    """Normalise slash-format CUR column names to a safe snake_case-ish key.
+    lineItem/UsageAccountId -> line_item_UsageAccountId
     product/region -> product_region
-    tag/Environment -> tag_Environment (preserve case after slash)
+    resourceTags/user:Environment -> resource_tags_user_Environment
+
+    The ':' in ``resourceTags/user:<Name>`` tag columns is replaced with '_' so
+    the resulting key is safe everywhere (DuckDB identifiers, JSON keys, JS
+    property accessors) and is never silently dropped by downstream consumers.
+    Case after the slash is preserved (Environment, Team, CostCenter, …).
     """
     if "/" not in k:
         return k  # Already normalised — return as-is
     prefix, _, rest = k.partition("/")
     # Convert camelCase prefix to snake_case
     prefix = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', prefix).lower()
-    # Keep rest as-is to preserve tag_Environment, tag_Team etc.
+    # Replace ':' (resourceTags/user:<Name>) with '_' for a safe key; the rest's
+    # case is otherwise preserved so tag display names stay intact.
+    rest = rest.replace(":", "_")
     return f"{prefix}_{rest}"
 
 def _parse_rows(csv_text: str) -> list[dict[str, str]]:
@@ -44,6 +51,10 @@ def _parse_rows(csv_text: str) -> list[dict[str, str]]:
     rows = [dict(row) for row in reader]
     if rows and _needs_normalisation(list(rows[0].keys())):
         rows = [{_normalise_key(k): v for k, v in row.items()} for row in rows]
+    # DEBUG: surface the actual (post-normalisation) column names so unexpected
+    # CUR header formats are visible in the logs while diagnosing real data.
+    if rows:
+        logger.info("_parse_rows: %d columns -> %s", len(rows[0]), list(rows[0].keys()))
     return rows
 
 
