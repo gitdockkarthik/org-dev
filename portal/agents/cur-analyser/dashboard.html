@@ -799,6 +799,39 @@
       } catch (_) {}
     }
 
+    // Build the original 7 filter dropdowns from the already-loaded /dashboard
+    // payload so they are ALWAYS visible — independent of the (potentially slow
+    // or failing) full row stream. The stream's onComplete later refines them
+    // with the exact per-row distinct values.
+    function populateBaseFilters() {
+      const D = DASH || {};
+      const pick = (arr, keyFn) =>
+        [...new Set((arr || []).map(keyFn)
+          .filter(v => v !== undefined && v !== null && v !== ''))]
+          .map(String).sort();
+      buildMultiSelect('fAccountWrap', 'Account',
+        pick(D.account_breakdown, a => a.account_name || a.account_id),
+        'accounts', true);
+      buildMultiSelect('fEnvWrap', 'Environment',
+        pick(D.environment_breakdown, e => e.environment),
+        'environments', true);
+      buildMultiSelect('fServiceWrap', 'Service',
+        pick(D.service_breakdown, s => s.service),
+        'services', true);
+      buildMultiSelect('fRegionWrap', 'Region',
+        pick(D.region_breakdown, r => r.region),
+        'regions', true);
+      buildMultiSelect('fPricingWrap', 'Pricing Term',
+        pick(D.pricing_term_breakdown, p => p.pricing_term),
+        'pricingTerms', true);
+      buildMultiSelect('fProductWrap', 'Product Tag',
+        pick(D.tag_product_breakdown, t => t.tag_value),
+        'tagProducts', true);
+      buildMultiSelect('fTeamWrap', 'Team Tag',
+        pick(D.tag_team_breakdown, t => t.tag_value),
+        'tagTeams', true);
+    }
+
     // ── Filter bar UI + filtering ─────────────────────────────
     let _filterBarOpen = false;
     let _currentFilename = null;   // active report filename for the info bar
@@ -2715,6 +2748,12 @@ ${JSON.stringify(payload, null, 2)}
         document.getElementById('dashboard').style.display = 'block';
         _loaded.add('overview');
         renderOverview();
+
+        // Build the original 7 filter dropdowns immediately from the dashboard
+        // payload (always visible). Enriched filters are inventory-gated and use
+        // their own lightweight endpoint — also independent of the row stream.
+        populateBaseFilters();
+        if (_invActive) populateEnrichedFilters(currentReportId);
 
         // Stream raw rows for filtering
         const progEl = document.getElementById('filterProgress');
