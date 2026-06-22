@@ -279,131 +279,22 @@
         <div id="api-key-msg" class="action-msg hidden"></div>
       </div>
 
-      <!-- B: Cost Data Source -->
+      <!-- CUR Reports -->
       <div class="card">
-        <div class="card-title">Cost Data Source</div>
-        <div class="card-subtitle">Select the source from which AWS cost data will be loaded</div>
-
-        <div class="radio-cards">
-
-          <label class="radio-card" id="card-file">
-            <input type="radio" name="source" value="file" />
-            <div class="radio-card-body">
-              <div class="radio-card-label">File Upload</div>
-              <div class="radio-card-desc">Upload an AWS Cost &amp; Usage Report (CUR) CSV export from the Reports page</div>
-              <div class="radio-card-sub" id="file-upload-hint"
-                   style="display:none;margin-top:0.5rem;
-                   padding:0.5rem;background:#f0f9ff;
-                   border-radius:6px;border:1px solid #bae6fd">
-                📂 Upload your CUR CSV on the
-                <a href="/agents/cur-analyser/reports" data-standalone-href="reports.html"
-                   style="color:#0EA5E9;font-weight:600">
-                   Reports page</a>,
-                then return here and click Save &amp; Sync.
-              </div>
-            </div>
+        <div class="card-title">CUR Reports</div>
+        <div class="card-subtitle">AWS Cost &amp; Usage Report files loaded for analysis.</div>
+        <div id="ds-cur-info" style="font-size:0.875rem;color:#475569">Loading…</div>
+        <div class="actions" style="margin-top:0.875rem">
+          <label class="btn btn-primary" style="cursor:pointer">
+            + Upload CUR file
+            <input type="file" id="ds-cur-file" accept=".csv,.zip,.parquet" multiple style="display:none" />
           </label>
-
-          <label class="radio-card" id="card-synthetic">
-            <input type="radio" name="source" value="synthetic" />
-            <div class="radio-card-body">
-              <div class="radio-card-label">Synthetic Data</div>
-              <div class="radio-card-desc">Auto-generate realistic AWS cost data — no AWS account needed</div>
-            </div>
-          </label>
-
-          <label class="radio-card coming" id="card-aws">
-            <input type="radio" name="source" value="aws" />
-            <div class="radio-card-body">
-              <div class="radio-card-label">AWS Cost Explorer</div>
-              <div class="radio-card-desc">Fetch cost data directly from AWS Cost Explorer API</div>
-              <div class="radio-card-sub">Configure credentials in AWS Live Connectivity tab (Phase 2)</div>
-              <div class="coming-note">
-                AWS Cost Explorer connectivity available in Phase 2. Use File Upload or Synthetic Data for now.
-              </div>
-            </div>
-          </label>
-
         </div>
-      </div>
-
-      <!-- C: Sync Schedule -->
-      <div class="card" id="sync-schedule-card">
-        <div class="card-title">Sync Schedule</div>
-        <div class="sync-row" style="margin-top:0.75rem">
-          <div class="field">
-            <select id="sync-interval">
-              <option value="0">Disabled</option>
-              <option value="360">Every 6 hours</option>
-              <option value="1440">Daily at midnight</option>
-              <option value="10080">Weekly</option>
-            </select>
-          </div>
-          <span class="last-synced" id="last-synced-label">Loading…</span>
-        </div>
-        <p class="hint" style="margin-top:0.5rem">Cost data changes daily — hourly sync is rarely needed</p>
-      </div>
-
-      <!-- D: Cost Window -->
-      <div class="card" id="cost-window-card">
-        <div class="card-title">Cost Window</div>
-        <div class="field" style="margin-top:0.75rem">
-          <select id="cost-window">
-            <option value="current_month">Current month</option>
-            <option value="7">Last 7 days</option>
-            <option value="30" selected>Last 30 days</option>
-            <option value="90">Last 3 months</option>
-            <option value="180">Last 6 months</option>
-            <option value="last_month">Last month</option>
-          </select>
-        </div>
-        <p class="hint" style="margin-top:0.25rem">
-          Cost analysis is more meaningful over longer periods. Recommended: Last 30 days or longer
-          for accurate trend detection.
-        </p>
-      </div>
-
-      <!-- E: Action Buttons -->
-      <div class="card">
-        <div class="actions">
-          <button class="btn btn-primary" id="btn-save-sync">Save &amp; Sync</button>
-          <button class="btn btn-secondary" id="btn-save-only">Save Only</button>
-        </div>
-        <div id="action-msg" class="action-msg hidden"></div>
-      </div>
-
-      <!-- F: Sync Status -->
-      <div class="card">
-        <div class="card-title">Sync Status</div>
-        <div id="sync-status" class="status-rows" style="margin-top:0.75rem">
-          <span style="color:#94a3b8;font-style:italic;font-size:.875rem">Loading…</span>
-        </div>
-        <a href="/agents/cur-analyser/reports" data-standalone-href="reports.html"
-           style="font-size:0.8rem;color:#6366f1;margin-top:0.5rem;display:inline-block">
-           View all reports →
-        </a>
-      </div>
-
-      <!-- G: Data Sources (pluggable data-source abstraction layer) -->
-      <div class="card" id="data-sources-card">
-        <div class="card-title">Data Sources</div>
-        <div class="card-subtitle">
-          Pluggable cost &amp; inventory sources. Inventory enrichment is opt-in and adds
-          <code>inv_*</code> attributes (Customer, Application, Budget&nbsp;Code…) to your CUR data.
-        </div>
-
-        <!-- CUR Data Source -->
-        <div class="card-section" style="margin-top:0;padding-top:0;border-top:none">
-          <div class="card-section-title">CUR Data Source</div>
-          <div id="ds-cur-info" style="font-size:0.875rem;color:#475569">Loading…</div>
-          <div class="actions" style="margin-top:0.75rem">
-            <label class="btn btn-primary" style="cursor:pointer">
-              Upload new CUR
-              <input type="file" id="ds-cur-file" accept=".csv,.zip,.parquet" style="display:none" />
-            </label>
-          </div>
-          <div id="ds-cur-msg" class="action-msg hidden"></div>
-          <div class="radio-cards" style="margin-top:0.875rem">
+        <p class="hint" style="margin-top:0.5rem">Upload multiple CUR files to enable comparison mode.</p>
+        <div id="ds-cur-msg" class="action-msg hidden"></div>
+        <div class="card-section">
+          <div class="card-section-title">Coming soon</div>
+          <div class="radio-cards">
             <label class="radio-card coming">
               <input type="radio" disabled />
               <div class="radio-card-body">
@@ -422,21 +313,46 @@
             </label>
           </div>
         </div>
+      </div>
 
-        <!-- Inventory Data Source -->
+      <!-- Inventory File -->
+      <div class="card">
+        <div class="card-title">Inventory File</div>
+        <div class="card-subtitle">
+          Optional resource inventory (.xlsx) that enriches CUR rows with Customer, Application,
+          Budget&nbsp;Code, Environment and ownership via <code>inv_*</code> attributes.
+        </div>
+        <div id="ds-inv-staleness" class="banner-amber hidden" style="margin-bottom:0.75rem"></div>
+        <div id="ds-inv-info" style="font-size:0.875rem;color:#475569">Loading…</div>
+        <div class="actions" style="margin-top:0.875rem">
+          <label class="btn btn-primary" style="cursor:pointer">
+            <span id="ds-inv-btn-label">Upload inventory (.xlsx)</span>
+            <input type="file" id="ds-inv-file" accept=".xlsx" style="display:none" />
+          </label>
+          <button class="btn btn-secondary hidden" id="ds-inv-remove">Remove inventory</button>
+        </div>
+        <div id="ds-inv-msg" class="action-msg hidden"></div>
+        <div id="ds-inv-coverage" style="margin-top:0.875rem"></div>
         <div class="card-section">
-          <div class="card-section-title">Inventory Data Source</div>
-          <div id="ds-inv-staleness" class="banner-amber hidden" style="margin-bottom:0.75rem"></div>
-          <div id="ds-inv-info" style="font-size:0.875rem;color:#475569">Loading…</div>
-          <div class="actions" style="margin-top:0.75rem">
-            <label class="btn btn-primary" style="cursor:pointer">
-              <span id="ds-inv-btn-label">Upload inventory (.xlsx)</span>
-              <input type="file" id="ds-inv-file" accept=".xlsx" style="display:none" />
+          <div class="card-section-title">Coming soon</div>
+          <div class="radio-cards">
+            <label class="radio-card coming">
+              <input type="radio" disabled />
+              <div class="radio-card-body">
+                <div class="radio-card-label">S3 Watch
+                  <span class="phase-badge">Coming soon</span></div>
+                <div class="radio-card-desc">Watch an S3 location for updated inventory exports</div>
+              </div>
             </label>
-            <button class="btn btn-secondary hidden" id="ds-inv-remove">Remove inventory</button>
+            <label class="radio-card coming">
+              <input type="radio" disabled />
+              <div class="radio-card-body">
+                <div class="radio-card-label">Script Endpoint
+                  <span class="phase-badge">Coming soon</span></div>
+                <div class="radio-card-desc">Pull inventory from a custom script / HTTP endpoint on a schedule</div>
+              </div>
+            </label>
           </div>
-          <div id="ds-inv-msg" class="action-msg hidden"></div>
-          <div id="ds-inv-coverage" style="margin-top:0.875rem"></div>
         </div>
       </div>
 
@@ -769,59 +685,7 @@
       return '$' + Number(val).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
-    // ── Radio card selection ─────────────────────────────────────────────────────
-
-    function selectSource(value) {
-      document.querySelectorAll('.radio-card').forEach(card => {
-        const radio = card.querySelector('input[type="radio"]');
-        if (!radio) return;
-        const selected = radio.value === value;
-        radio.checked = selected;
-        card.classList.toggle('selected', selected);
-      });
-
-      const hint = $('file-upload-hint');
-      const schedCard = $('sync-schedule-card');
-      const winCard   = $('cost-window-card');
-
-      if (value === 'file') {
-        if (hint)      hint.style.display      = 'block';
-        if (schedCard) schedCard.style.display  = 'none';
-        if (winCard)   winCard.style.display    = 'none';
-      } else if (value === 'synthetic') {
-        if (hint)      hint.style.display      = 'none';
-        if (schedCard) schedCard.style.display  = 'none';
-        if (winCard)   winCard.style.display    = 'none';
-      } else {
-        if (hint)      hint.style.display      = 'none';
-        if (schedCard) schedCard.style.display  = 'block';
-        if (winCard)   winCard.style.display    = 'block';
-      }
-    }
-
-    document.querySelectorAll('input[name="source"]').forEach(radio => {
-      radio.addEventListener('change', () => selectSource(radio.value));
-    });
-
-    ['card-file', 'card-synthetic', 'card-aws'].forEach(id => {
-      const card = $(id);
-      if (!card) return;
-      card.addEventListener('click', () => {
-        const radio = card.querySelector('input[type="radio"]');
-        if (radio) selectSource(radio.value);
-      });
-    });
-
     // ── Build payloads ───────────────────────────────────────────────────────────
-
-    function buildSourcePayload() {
-      const radio = document.querySelector('input[name="source"]:checked');
-      return {
-        source_type:           radio ? radio.value : 'file',
-        sync_interval_minutes: parseInt($('sync-interval').value, 10),
-        cost_window:           $('cost-window').value,
-      };
-    }
 
     function buildTuningPayload() {
       return {
@@ -863,43 +727,6 @@
       }
     });
 
-    // ── Save & Sync ──────────────────────────────────────────────────────────────
-
-    $('btn-save-sync').addEventListener('click', async () => {
-      const msgEl = $('action-msg');
-      try {
-        await postSettings(buildSourcePayload());
-        showMsg(msgEl, 'Loading cost data… please wait', 'info', 120000);
-        const syncRes = await fetch(`${PROXY}/settings/sync`, {
-          method: 'POST',
-          headers: authHeaders(),
-        });
-        if (!syncRes.ok) throw new Error('Sync HTTP ' + syncRes.status);
-        const syncData = await syncRes.json();
-        const count = syncData.record_count ?? syncData.alert_count ?? '?';
-        const spend = syncData.total_cost != null
-          ? ' Total spend: ' + fmtCurrency(syncData.total_cost)
-          : '';
-        showMsg(msgEl, 'Sync complete — ' + count + ' records loaded.' + spend, 'ok');
-        await loadSettings();
-      } catch (err) {
-        showMsg(msgEl, 'Failed: ' + err.message, 'err');
-      }
-    });
-
-    // ── Save Only ────────────────────────────────────────────────────────────────
-
-    $('btn-save-only').addEventListener('click', async () => {
-      const msgEl = $('action-msg');
-      try {
-        await postSettings(buildSourcePayload());
-        showMsg(msgEl, 'Settings saved.', 'ok');
-        await loadSettings();
-      } catch (err) {
-        showMsg(msgEl, 'Failed: ' + err.message, 'err');
-      }
-    });
-
     // ── Save Tuning ──────────────────────────────────────────────────────────────
 
     $('btn-save-tuning').addEventListener('click', async () => {
@@ -911,27 +738,6 @@
         showMsg(msgEl, 'Failed: ' + err.message, 'err');
       }
     });
-
-    // ── Render sync status ───────────────────────────────────────────────────────
-
-    function renderSyncStatus(cfg) {
-      const el = $('sync-status');
-      el.innerHTML = '';
-
-      function addRow(label, valueHtml) {
-        const div = document.createElement('div');
-        div.className = 'status-row';
-        div.innerHTML =
-          '<span class="status-row-label">' + label + '</span>' +
-          '<span class="status-value">' + valueHtml + '</span>';
-        el.appendChild(div);
-      }
-
-      addRow('Source type', '<span class="badge">' + (cfg.source_type || 'file') + '</span>');
-      addRow('Last synced', fmtDatetime(cfg.last_synced || null));
-      addRow('Records loaded', cfg.record_count != null ? String(cfg.record_count) : '—');
-      addRow('Total cost in window', fmtCurrency(cfg.total_cost ?? null));
-    }
 
     // ── Load settings on page load ───────────────────────────────────────────────
 
@@ -953,36 +759,14 @@
           keyStatus.classList.add('hidden');
         }
 
-        // Source radio
-        selectSource(cfg.source_type || 'file');
-
-        // Sync interval
-        const intEl = $('sync-interval');
-        const intVal = String(cfg.sync_interval_minutes ?? 0);
-        if (intEl.querySelector('option[value="' + intVal + '"]')) intEl.value = intVal;
-
-        // Last synced label
-        $('last-synced-label').textContent =
-          cfg.last_synced ? 'Last synced: ' + fmtDatetime(cfg.last_synced) : 'Never synced';
-
-        // Cost window
-        const winEl = $('cost-window');
-        const winVal = String(cfg.cost_window ?? '30');
-        if (winEl.querySelector('option[value="' + winVal + '"]')) winEl.value = winVal;
-
-        // Tuning fields
+        // Tuning fields (Cost Tuning tab)
         if (cfg.display_currency)                $('display-currency').value    = cfg.display_currency;
         if (cfg.anomaly_threshold_pct  != null)  $('anomaly-threshold').value   = cfg.anomaly_threshold_pct;
         if (cfg.top_drivers_count      != null)  $('top-drivers-count').value   = cfg.top_drivers_count;
         if (cfg.min_cost_threshold     != null)  $('min-cost-threshold').value  = cfg.min_cost_threshold;
 
-        // Sync status section
-        renderSyncStatus(cfg);
-
       } catch (err) {
-        $('sync-status').innerHTML =
-          '<span style="color:#b91c1c;font-size:.875rem">Failed to load settings: ' + err.message + '</span>';
-        $('last-synced-label').textContent = '';
+        console.error('loadSettings failed:', err);
       }
     }
 
@@ -1022,23 +806,28 @@
       function renderCur(st) {
         const el = $('ds-cur-info');
         const sources = (st.cur_sources || []);
-        const active = sources.find(s => s.active) || sources[0];
-        if (!active) {
-          el.innerHTML = '<span style="color:#94a3b8">No CUR file registered yet. '
-            + 'Upload one here or from the Reports page.</span>';
+        if (!sources.length) {
+          el.innerHTML = '<span style="color:#94a3b8">No CUR files loaded yet. '
+            + 'Upload one to get started.</span>';
           return;
         }
-        const rng = (active.date_range_start && active.date_range_end)
-          ? escapeHtml(active.date_range_start) + ' → ' + escapeHtml(active.date_range_end) : '—';
+        const rowsHtml = sources.map(s => {
+          const rng = (s.date_range_start && s.date_range_end)
+            ? escapeHtml(s.date_range_start) + ' → ' + escapeHtml(s.date_range_end) : '—';
+          const rows = s.record_count != null ? Number(s.record_count).toLocaleString() : '—';
+          return '<div style="padding:0.5rem 0;border-top:1px solid #f1f5f9">'
+            + '<div><strong>' + escapeHtml(s.label) + '</strong>'
+            + (s.active ? ' <span class="badge" style="background:#dcfce7;color:#15803d">active</span>' : '')
+            + '</div>'
+            + '<div style="margin-top:0.2rem;color:#64748b;font-size:0.8rem">'
+            + 'Date range: ' + rng + ' &nbsp;·&nbsp; ' + rows + ' rows'
+            + ' &nbsp;·&nbsp; uploaded ' + fmtDatetime(s.last_synced) + '</div></div>';
+        }).join('');
         el.innerHTML =
-          '<div><strong>' + escapeHtml(active.label) + '</strong></div>'
-          + '<div style="margin-top:0.25rem;color:#64748b">'
-          + 'Date range: ' + rng + ' &nbsp;·&nbsp; '
-          + (active.record_count != null ? Number(active.record_count).toLocaleString() : '—') + ' rows'
-          + ' &nbsp;·&nbsp; uploaded ' + fmtDatetime(active.last_synced) + '</div>'
-          + (sources.length > 1
-              ? '<div style="margin-top:0.25rem;color:#94a3b8;font-size:0.8rem">'
-                + sources.length + ' CUR sources registered</div>' : '');
+          '<div style="color:#64748b;margin-bottom:0.25rem">'
+          + sources.length + ' CUR file' + (sources.length === 1 ? '' : 's') + ' loaded'
+          + (sources.length > 1 ? ' — comparison mode available' : '') + '</div>'
+          + rowsHtml;
       }
 
       function renderInv(st) {
@@ -1138,15 +927,20 @@
       }
 
       $('ds-cur-file').addEventListener('change', async (ev) => {
-        const file = ev.target.files[0];
-        if (!file) return;
+        const files = [...ev.target.files];
+        if (!files.length) return;
         const msgEl = $('ds-cur-msg');
+        let ok = 0;
         try {
-          const r = await uploadFile('/data-sources/cur/upload', file, msgEl);
-          showMsg(msgEl, 'CUR uploaded — ' + (r.source?.record_count ?? '?') + ' rows.', 'ok');
+          for (const file of files) {
+            await uploadFile('/data-sources/cur/upload', file, msgEl);
+            ok++;
+          }
+          showMsg(msgEl, ok + ' CUR file' + (ok === 1 ? '' : 's') + ' uploaded.', 'ok');
           await loadDataSources();
         } catch (e) {
-          showMsg(msgEl, 'Upload failed: ' + e.message, 'err');
+          showMsg(msgEl, 'Upload failed after ' + ok + ' file(s): ' + e.message, 'err');
+          await loadDataSources();
         } finally { ev.target.value = ''; }
       });
 
