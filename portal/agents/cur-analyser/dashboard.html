@@ -437,14 +437,14 @@
     }
 
     // ── Cross-tabs from raw rows ─────────────────────────────────────────────────
-    function rowCost(r) { return parseFloat(r.line_item_unblended_cost || r.line_item_blended_cost || 0) || 0; }
-    function rowEnv(r) { const e = (r.tag_Environment || '').trim(); return e || 'Untagged'; }
+    function rowCost(r) { return fCost(r); }
+    function rowEnv(r) { const e = fEnv(r).trim(); return e || 'Untagged'; }
 
     function envByMonth() {
       // returns { months:[...], envs:[...], matrix: {env: {month: cost}} }
       const months = new Set(), envs = new Set(), m = {};
       _filteredRows.forEach(r => {
-        const d = (r.line_item_usage_start_date || '').slice(0, 7);
+        const d = fDate(r).slice(0, 7);
         if (!d) return;
         const env = rowEnv(r);
         months.add(d); envs.add(env);
@@ -659,12 +659,7 @@
     function fCustomer(r)   { return _firstField(r, CUSTOMER_FIELDS); }
     function fCostCentre(r) { return _firstField(r, COSTCENTRE_FIELDS); }
 
-    function getCostCol(row) {
-      return parseFloat(
-        row.line_item_unblended_cost ||
-        row.unblended_cost || 0
-      );
-    }
+    function getCostCol(row) { return fCost(row); }
 
     function aggByKey(rows, keyFn, labelKey) {
       const map = {};
@@ -687,21 +682,16 @@
       if (!rows || !rows.length) return null;
       const total = rows.reduce((s,r) => s+getCostCol(r), 0);
 
-      const byService = aggByKey(rows,
-        r => r.line_item_product_code || r.productname,
-        'service');
+      const byService = aggByKey(rows, fService, 'service');
 
       const byRegion = aggByKey(rows,
         r => r.product_region || r.region,
         'region');
 
-      const byAccount = aggByKey(rows,
-        r => r.line_item_usage_account_name ||
-             r.line_item_usage_account_id,
-        'account_name');
+      const byAccount = aggByKey(rows, fAccount, 'account_name');
 
       const byEnvironment = aggByKey(rows,
-        r => r.tag_Environment || r.tag_environment || 'Untagged',
+        r => fEnv(r) || 'Untagged',
         'environment');
 
       const byCategory = aggByKey(rows,
@@ -713,25 +703,25 @@
         'pricing_term').filter(x => x.pricing_term);
 
       const byProduct = aggByKey(rows,
-        r => r.tag_Product || r.tag_product || 'Untagged',
+        r => fProduct(r) || 'Untagged',
         'tag_value');
 
       const byTeam = aggByKey(rows,
-        r => r.tag_Team || r.tag_team || 'Untagged',
+        r => fTeam(r) || 'Untagged',
         'tag_value');
 
       const byCustomer = aggByKey(rows,
-        r => r.tag_Customer || r.tag_customer || 'Untagged',
+        r => fCustomer(r) || 'Untagged',
         'tag_value');
 
       const byCostCentre = aggByKey(rows,
-        r => r.tag_CostCentre || r.tag_costcentre || 'Untagged',
+        r => fCostCentre(r) || 'Untagged',
         'tag_value');
 
       // Daily trend
       const dayMap = {};
       for (const r of rows) {
-        const d = (r.line_item_usage_start_date||'').slice(0,10);
+        const d = fDate(r).slice(0,10);
         if (d) dayMap[d] = (dayMap[d]||0) + getCostCol(r);
       }
       const daily_trend = Object.entries(dayMap)
@@ -741,7 +731,7 @@
       // Monthly trend
       const monMap = {};
       for (const r of rows) {
-        const m = (r.line_item_usage_start_date||'').slice(0,7);
+        const m = fDate(r).slice(0,7);
         if (m) monMap[m] = (monMap[m]||0) + getCostCol(r);
       }
       const monthly_trend = Object.entries(monMap)
