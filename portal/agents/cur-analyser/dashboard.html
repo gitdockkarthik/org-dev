@@ -1426,11 +1426,6 @@
       const env = DASH.environment_breakdown || [];
       const total = DASH.total_cost || 0;
 
-      // DEBUG: surface the actual environment values so unexpected spellings
-      // (e.g. "Production" vs "prod") are visible while testing real CUR data.
-      console.log('[cur-analyser] By Environment — distinct values:',
-        env.map(e => ({ value: e.environment, canon: envCanon(e.environment), cost: e.cost })));
-
       // Aggregate the raw environment values into canonical buckets so the KPI
       // cards match regardless of casing/spelling in the source data.
       const envAgg = {};
@@ -1764,11 +1759,6 @@
       const pricing = DASH.pricing_term_breakdown || [];
       const region = DASH.region_breakdown || [];
       const total = DASH.total_cost || 0;
-
-      // DEBUG: confirm region/pricing breakdowns are arriving from the backend
-      // (region is folded from AvailabilityZone -> region prefix for legacy CUR).
-      console.log('[cur-analyser] Trends — region rows:', region.length,
-        region.map(r => r.region), '| pricing rows:', pricing.length);
 
       // top service per month from mom_comparison (already ordered month, cost desc)
       const topByMonth = {};
@@ -2908,20 +2898,6 @@ ${JSON.stringify(payload, null, 2)}
             ROWS = rows;
             _filteredRows = rows;
             if (progEl) progEl.style.display = 'none';
-            // DEBUG: detected tag columns + distinct environment values in the
-            // actual streamed rows, to diagnose real-CUR column naming.
-            if (rows.length) {
-              const allCols = Object.keys(rows[0]);
-              const tagCols = allCols.filter(k => {
-                const kl = k.toLowerCase();
-                return kl.startsWith('tag_') || kl.includes('resourcetags') ||
-                       kl.includes('tags_user') || kl.includes('tags/user');
-              });
-              console.log('[cur-analyser] streamed ALL columns:', allCols);
-              console.log('[cur-analyser] streamed tag-like columns:', tagCols);
-              console.log('[cur-analyser] streamed distinct env values:',
-                [...new Set(rows.map(fEnv).filter(Boolean))].slice(0, 50));
-            }
             // Inventory enrichment is the source of truth for ownership/context
             // tags. When active, recompute ONLY the environment + tag breakdowns
             // and tag coverage from the enriched rows (inv_* primary, CUR tag

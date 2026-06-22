@@ -193,3 +193,41 @@ wizard at `http://<host>:3000/setup.html` → `up -d <agents>`.
 ---
 *Internal use only — Engineering, Internal Platforms. Verify ports against `.env`/`docker-compose.yml`
 and model IDs against the code, as both evolve.*
+
+### cur-analyser: Data Source Abstraction & Inventory Enrichment (2026-06-22)
+
+What was built:
+- Pluggable data source abstraction layer under
+  agents/cur-analyser/tools/data_sources/
+- FileUploadCURProvider: CSV, CSV.zip, Parquet
+- FileUploadInventoryProvider: 25-sheet XLSX,
+  9 join keys, 10 enrichment fields
+- DataSourceRegistry: Postgres persistence,
+  archive support
+- InventoryEnricher: resource-level + account-level
+  fallback, ARN-tail matching, inv_* prefix
+- Central resolve_col(): handles CUR 2.0, legacy,
+  normalised, synthetic formats
+- Two-CSV DBR zip: picks with-resources-and-tags variant
+
+Feature flag: ENABLE_INVENTORY_ENRICHMENT=true in .env
+
+Key decisions:
+- inv_* columns are primary tag source, CUR fallback
+- Account-level enrichment fallback when no ResourceId
+- Single inventory enriches all CUR files
+- Registry persists via Postgres across restarts
+
+Settings UI: Settings → Data Source tab with CUR
+Reports and Inventory File sections
+
+Known gaps for next session:
+- Real CUR validation pending — need non-anonymised
+  CUR from inventory accounts (382638150166,
+  516133168505, 433415038121, 517741648664)
+- Large file: DuckDB file-path mode for 2GB+ files
+- Performance: server-side pre-aggregation
+- Delete button for CUR files in UI
+- Data Quality recommendations panel
+
+Commits: ~35 commits on main, all rollbackable
