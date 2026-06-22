@@ -162,6 +162,50 @@ def _detect_resource_col(columns: list[str]) -> str | None:
     return _match_candidate(columns, RESOURCE_COL_CANDIDATES)
 
 
+# ── Tag column detection ──────────────────────────────────────────────────────
+# Real AWS CUR exposes user tags as ``resourceTags/user:<Name>`` columns, while
+# synthetic / normalised data uses a ``tag_<Name>`` prefix.
+TAG_COL_PREFIXES = ["tag_", "resourceTags/user:"]
+
+# Display-name aliases so a requested tag resolves across naming variants
+# (e.g. synthetic "CostCentre" vs real CUR "CostCenter").
+_TAG_DISPLAY_ALIASES = {
+    "costcentre": {"costcentre", "costcenter"},
+    "costcenter": {"costcentre", "costcenter"},
+}
+
+
+def detect_tag_columns(df) -> dict[str, str]:
+    """Returns ``{display_name: actual_column_name}`` for every tag column,
+    across both the ``tag_`` and ``resourceTags/user:`` prefixes."""
+    found: dict[str, str] = {}
+    for col in df.columns:
+        for prefix in TAG_COL_PREFIXES:
+            if col.startswith(prefix):
+                display = col[len(prefix):]  # strip prefix for display
+                found[display] = col
+    return found
+
+
+def _resolve_tag_col(df, requested: str) -> str | None:
+    """Resolve a requested tag column (e.g. ``tag_Environment``) to the actual
+    column present, tolerating prefix and display-name variants (incl. the
+    CostCentre/CostCenter alias). Returns ``None`` when the tag is absent."""
+    if requested in df.columns:
+        return requested  # exact native match (synthetic / normalised)
+    display = requested
+    for p in TAG_COL_PREFIXES:
+        if requested.startswith(p):
+            display = requested[len(p):]
+            break
+    target = display.lower()
+    targets = _TAG_DISPLAY_ALIASES.get(target, {target})
+    for disp, actual in detect_tag_columns(df).items():
+        if disp.lower() in targets:
+            return actual
+    return None
+
+
 # ── Core query functions (migrated from engine.py) ────────────────────────────
 
 def _load_df(
@@ -320,7 +364,8 @@ def get_cost_by_environment(csv_text: str) -> list[dict]:
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
-        if not cost_col or "tag_Environment" not in cols:
+        env_col = _resolve_tag_col(df, "tag_Environment")
+        if not cost_col or not env_col:
             return []
         total = float(con.execute(f'SELECT SUM("{cost_col}") FROM cur_data').fetchone()[0] or 0)
         has_team = "env_owner_team" in cols
@@ -332,8 +377,8 @@ def get_cost_by_environment(csv_text: str) -> list[dict]:
         if has_email:
             select_extra += ', MAX("env_owner_email")'
         rows = con.execute(
-            f'SELECT "tag_Environment", SUM("{cost_col}") AS cost{select_extra} '
-            f'FROM cur_data GROUP BY "tag_Environment" ORDER BY cost DESC{group_extra}'
+            f'SELECT "{env_col}", SUM("{cost_col}") AS cost{select_extra} '
+            f'FROM cur_data GROUP BY "{env_col}" ORDER BY cost DESC{group_extra}'
         ).fetchall()
         result = []
         for r in rows:
@@ -414,12 +459,13 @@ def get_cost_by_tag(csv_text: str, tag_col: str) -> list[dict]:
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
-        if not cost_col or tag_col not in cols:
+        actual_tag = _resolve_tag_col(df, tag_col)
+        if not cost_col or not actual_tag:
             return []
         total = float(con.execute(f'SELECT SUM("{cost_col}") FROM cur_data').fetchone()[0] or 0)
         rows = con.execute(
-            f'SELECT "{tag_col}", SUM("{cost_col}") AS cost '
-            f'FROM cur_data GROUP BY "{tag_col}" ORDER BY cost DESC'
+            f'SELECT "{actual_tag}", SUM("{cost_col}") AS cost '
+            f'FROM cur_data GROUP BY "{actual_tag}" ORDER BY cost DESC'
         ).fetchall()
         result = []
         for r in rows:
@@ -444,14 +490,9 @@ def get_untagged_resources(csv_text: str) -> dict:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
         total_rows = len(df)
-        tag_cols = [
-            "tag_Product", "tag_Environment", "tag_Team",
-            "tag_Customer", "tag_Owner", "tag_CostCentre",
-        ]
+        # Detect tag columns across tag_ and resourceTags/user: prefixes.
         coverage = []
-        for tag in tag_cols:
-            if tag not in cols:
-                continue
+        for tag in detect_tag_columns(df).values():
             untagged_count = int(con.execute(
                 f"SELECT COUNT(*) FROM cur_data "
                 f"WHERE \"{tag}\" IS NULL OR CAST(\"{tag}\" AS VARCHAR) = ''"
@@ -553,10 +594,12 @@ def get_top_resources(csv_text: str, limit: int = 10) -> list[dict]:
             return []
         svc_col = _detect_service_col(cols)
         region_col = _detect_region_col(cols)
+        env_col = _resolve_tag_col(df, "tag_Environment")
+        team_col = _resolve_tag_col(df, "tag_Team")
         svc_sel = f'MAX("{svc_col}")' if svc_col else "''"
         region_sel = f'MAX("{region_col}")' if region_col else "''"
-        env_sel = 'MAX("tag_Environment")' if "tag_Environment" in cols else "''"
-        team_sel = 'MAX("tag_Team")' if "tag_Team" in cols else "''"
+        env_sel = f'MAX("{env_col}")' if env_col else "''"
+        team_sel = f'MAX("{team_col}")' if team_col else "''"
         rows = con.execute(
             f'SELECT "{res_col}", {svc_sel}, {region_sel}, {env_sel}, {team_sel}, '
             f'SUM("{cost_col}") AS cost '
@@ -622,10 +665,11 @@ def get_savings_opportunities(csv_text: str) -> dict:
 
         # d) Untagged (no owner) cost
         untagged_cost = 0.0
-        if "tag_Owner" in cols:
+        owner_col = _resolve_tag_col(df, "tag_Owner")
+        if owner_col:
             untagged_cost = float(con.execute(
                 f'SELECT SUM("{cost_col}") FROM cur_data '
-                f"WHERE \"tag_Owner\" IS NULL OR CAST(\"tag_Owner\" AS VARCHAR) = ''"
+                f"WHERE \"{owner_col}\" IS NULL OR CAST(\"{owner_col}\" AS VARCHAR) = ''"
             ).fetchone()[0] or 0)
         untagged_pct = round(untagged_cost / total * 100, 1) if total else 0.0
 
@@ -778,8 +822,9 @@ def get_enrichment_summary(csv_text: str, enricher) -> dict:
             after_pct = 0.0
             if total_rows:
                 native_nonblank = pd.Series([False] * total_rows)
-                if native_col in df.columns:
-                    native_nonblank = df[native_col].astype(str).str.strip().ne("") & df[native_col].notna()
+                resolved_native = _resolve_tag_col(df, native_col)
+                if resolved_native:
+                    native_nonblank = df[resolved_native].astype(str).str.strip().ne("") & df[resolved_native].notna()
                 before_pct = round(float(native_nonblank.mean()) * 100, 1)
                 inv_nonblank = pd.Series([False] * total_rows)
                 if inv_col in df.columns:
