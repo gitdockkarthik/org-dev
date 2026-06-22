@@ -315,7 +315,6 @@
             <div id="fProductWrap"></div>
             <div id="fTeamWrap"></div>
             <div id="invFilters" style="display:none;align-items:center;gap:8px;flex-wrap:wrap">
-              <span style="font-size:.72rem;font-weight:600;color:var(--accent,#0891b2);text-transform:uppercase">Enriched</span>
               <div id="fInvApplicationWrap"></div>
               <div id="fInvBudgetWrap"></div>
               <div id="fInvCustomerWrap"></div>
@@ -804,9 +803,13 @@
       onFilterChange();
     }
 
-    function buildMultiSelect(wrapperId, label, values, filterKey) {
+    function buildMultiSelect(wrapperId, label, values, filterKey, alwaysShow = false) {
       const wrap = document.getElementById(wrapperId);
-      if (!wrap || !values.length) return;
+      if (!wrap) return;
+      // Original (non-enriched) filters always render so they remain visible
+      // even when a column yields no distinct values; enriched filters keep the
+      // hide-when-empty behaviour.
+      if (!values.length && !alwaysShow) return;
       const dropId = `drop_${filterKey}`;
       const btnId  = `btn_${filterKey}`;
 
@@ -2694,30 +2697,30 @@ ${JSON.stringify(payload, null, 2)}
               getDistinctValues(rows,
                 r => r.line_item_usage_account_name ||
                      r.line_item_usage_account_id),
-              'accounts');
+              'accounts', true);
             buildMultiSelect('fEnvWrap', 'Environment',
               getDistinctValues(rows,
                 r => r.tag_Environment || r.tag_environment),
-              'environments');
+              'environments', true);
             buildMultiSelect('fServiceWrap', 'Service',
               getDistinctValues(rows,
                 r => r.line_item_product_code || r.productname),
-              'services');
+              'services', true);
             buildMultiSelect('fRegionWrap', 'Region',
               getDistinctValues(rows,
                 r => r.product_region || r.region),
-              'regions');
+              'regions', true);
             buildMultiSelect('fPricingWrap', 'Pricing Term',
               getDistinctValues(rows, r => r.pricing_term),
-              'pricingTerms');
+              'pricingTerms', true);
             buildMultiSelect('fProductWrap', 'Product Tag',
               getDistinctValues(rows,
                 r => r.tag_Product || r.tag_product),
-              'tagProducts');
+              'tagProducts', true);
             buildMultiSelect('fTeamWrap', 'Team Tag',
               getDistinctValues(rows,
                 r => r.tag_Team || r.tag_team),
-              'tagTeams');
+              'tagTeams', true);
             // Inventory-enriched filters: populated from the lightweight
             // distinct-values endpoint (avoids scanning all streamed rows).
             if (_invActive) {
