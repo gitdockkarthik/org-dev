@@ -48,6 +48,17 @@ class Settings(BaseSettings):
     storage_backend: str = Field(default="postgres", alias="STORAGE_BACKEND")
     storage_url: str = Field(default="", alias="STORAGE_URL")
 
+    # ── Data-source abstraction / inventory enrichment ────────────────────────
+    # Opt-in feature flag. When False (default) the inventory enrichment layer is
+    # completely inert and the existing CUR flow is unaffected.
+    enable_inventory_enrichment: bool = Field(
+        default=False, alias="ENABLE_INVENTORY_ENRICHMENT"
+    )
+    # Inventory freshness threshold (hours) before a staleness warning is raised.
+    inventory_stale_threshold_hours: int = Field(
+        default=26, alias="INVENTORY_STALE_THRESHOLD_HOURS"
+    )
+
     @property
     def agent_system_prompt(self) -> str:
         return (
