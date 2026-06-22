@@ -383,6 +383,62 @@
         </a>
       </div>
 
+      <!-- G: Data Sources (pluggable data-source abstraction layer) -->
+      <div class="card" id="data-sources-card">
+        <div class="card-title">Data Sources</div>
+        <div class="card-subtitle">
+          Pluggable cost &amp; inventory sources. Inventory enrichment is opt-in and adds
+          <code>inv_*</code> attributes (Customer, Application, Budget&nbsp;Code…) to your CUR data.
+        </div>
+
+        <!-- CUR Data Source -->
+        <div class="card-section" style="margin-top:0;padding-top:0;border-top:none">
+          <div class="card-section-title">CUR Data Source</div>
+          <div id="ds-cur-info" style="font-size:0.875rem;color:#475569">Loading…</div>
+          <div class="actions" style="margin-top:0.75rem">
+            <label class="btn btn-primary" style="cursor:pointer">
+              Upload new CUR
+              <input type="file" id="ds-cur-file" accept=".csv,.zip,.parquet" style="display:none" />
+            </label>
+          </div>
+          <div id="ds-cur-msg" class="action-msg hidden"></div>
+          <div class="radio-cards" style="margin-top:0.875rem">
+            <label class="radio-card coming">
+              <input type="radio" disabled />
+              <div class="radio-card-body">
+                <div class="radio-card-label">AWS Cost Explorer API
+                  <span class="phase-badge">Coming soon</span></div>
+                <div class="radio-card-desc">Fetch cost data directly from the Cost Explorer API on a schedule</div>
+              </div>
+            </label>
+            <label class="radio-card coming">
+              <input type="radio" disabled />
+              <div class="radio-card-body">
+                <div class="radio-card-label">S3 Sync
+                  <span class="phase-badge">Coming soon</span></div>
+                <div class="radio-card-desc">Auto-sync CUR exports directly from an S3 bucket / prefix</div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- Inventory Data Source -->
+        <div class="card-section">
+          <div class="card-section-title">Inventory Data Source</div>
+          <div id="ds-inv-staleness" class="banner-amber hidden" style="margin-bottom:0.75rem"></div>
+          <div id="ds-inv-info" style="font-size:0.875rem;color:#475569">Loading…</div>
+          <div class="actions" style="margin-top:0.75rem">
+            <label class="btn btn-primary" style="cursor:pointer">
+              <span id="ds-inv-btn-label">Upload inventory (.xlsx)</span>
+              <input type="file" id="ds-inv-file" accept=".xlsx" style="display:none" />
+            </label>
+            <button class="btn btn-secondary hidden" id="ds-inv-remove">Remove inventory</button>
+          </div>
+          <div id="ds-inv-msg" class="action-msg hidden"></div>
+          <div id="ds-inv-coverage" style="margin-top:0.875rem"></div>
+        </div>
+      </div>
+
     </div><!-- /#panel-data-source -->
 
     <!-- ══════════════════════════════════════════════════════════ -->
@@ -929,6 +985,193 @@
     }
 
     loadSettings();
+  </script>
+  <script>
+    // ── Data Sources section (pluggable data-source abstraction layer) ─────
+    (function () {
+      const escapeHtml = s => String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+      function fmtBytes(n) {
+        if (!n) return '—';
+        if (n < 1024) return n + ' B';
+        if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+        return (n / 1048576).toFixed(1) + ' MB';
+      }
+
+      async function loadDataSources() {
+        try {
+          const res = await fetch(`${PROXY}/data-sources/status`, { headers: authHeaders() });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const st = await res.json();
+          renderCur(st);
+          renderInv(st);
+          if (st.inventory_loaded) loadCoverage(st);
+          else $('ds-inv-coverage').innerHTML = '';
+        } catch (e) {
+          if ($('ds-cur-info')) $('ds-cur-info').textContent = 'Failed to load data sources: ' + e.message;
+        }
+      }
+
+      function renderCur(st) {
+        const el = $('ds-cur-info');
+        const sources = (st.cur_sources || []);
+        const active = sources.find(s => s.active) || sources[0];
+        if (!active) {
+          el.innerHTML = '<span style="color:#94a3b8">No CUR file registered yet. '
+            + 'Upload one here or from the Reports page.</span>';
+          return;
+        }
+        const rng = (active.date_range_start && active.date_range_end)
+          ? escapeHtml(active.date_range_start) + ' → ' + escapeHtml(active.date_range_end) : '—';
+        el.innerHTML =
+          '<div><strong>' + escapeHtml(active.label) + '</strong></div>'
+          + '<div style="margin-top:0.25rem;color:#64748b">'
+          + 'Date range: ' + rng + ' &nbsp;·&nbsp; '
+          + (active.record_count != null ? Number(active.record_count).toLocaleString() : '—') + ' rows'
+          + ' &nbsp;·&nbsp; uploaded ' + fmtDatetime(active.last_synced) + '</div>'
+          + (sources.length > 1
+              ? '<div style="margin-top:0.25rem;color:#94a3b8;font-size:0.8rem">'
+                + sources.length + ' CUR sources registered</div>' : '');
+      }
+
+      function renderInv(st) {
+        const el = $('ds-inv-info');
+        const stale = $('ds-inv-staleness');
+        const btn = $('ds-inv-btn-label');
+        const removeBtn = $('ds-inv-remove');
+        const inv = st.inventory;
+
+        if (!inv) {
+          stale.classList.add('hidden');
+          removeBtn.classList.add('hidden');
+          if (btn) btn.textContent = 'Upload inventory (.xlsx)';
+          el.innerHTML = '<span style="color:#64748b">No inventory loaded. Upload a resource '
+            + 'inventory workbook (.xlsx) to enrich cost rows with Customer, Application, '
+            + 'Budget&nbsp;Code, Environment and ownership attributes — joined on '
+            + '(account, resource id).</span>'
+            + (st.enabled === false
+                ? '<div class="banner-blue" style="margin-top:0.5rem">Inventory enrichment is '
+                  + 'currently <strong>disabled</strong> (set <code>ENABLE_INVENTORY_ENRICHMENT=true</code> '
+                  + 'to activate). You can still upload inventory now.</div>' : '');
+          return;
+        }
+
+        if (btn) btn.textContent = 'Replace inventory (.xlsx)';
+        removeBtn.classList.remove('hidden');
+
+        const extra = inv.extra || {};
+        const perSheet = extra.per_sheet_counts || {};
+        const sheetBits = Object.keys(perSheet).map(k =>
+          escapeHtml(k) + ': ' + perSheet[k]).join(' · ') || '—';
+
+        if (st.inventory_stale) {
+          stale.classList.remove('hidden');
+          stale.innerHTML = '⚠️ Inventory is stale — last updated ' + fmtDatetime(inv.last_synced)
+            + ' (older than ' + (inv.stale_threshold_hours || 26) + ' hours). Consider re-uploading.';
+        } else {
+          stale.classList.add('hidden');
+        }
+
+        el.innerHTML =
+          '<div><strong>' + escapeHtml(inv.label) + '</strong> '
+          + '<span class="badge" style="background:' + (st.inventory_stale ? '#fee2e2' : '#dcfce7')
+          + ';color:' + (st.inventory_stale ? '#b91c1c' : '#15803d') + '">'
+          + (st.inventory_stale ? 'stale' : 'fresh') + '</span></div>'
+          + '<div style="margin-top:0.25rem;color:#64748b">'
+          + (inv.record_count != null ? Number(inv.record_count).toLocaleString() : '—')
+          + ' resources &nbsp;·&nbsp; ' + fmtBytes(extra.file_size)
+          + ' &nbsp;·&nbsp; uploaded ' + fmtDatetime(inv.last_synced) + '</div>'
+          + '<div style="margin-top:0.25rem;color:#94a3b8;font-size:0.8rem">Per service — '
+          + sheetBits + '</div>'
+          + (extra.unmatched_count
+              ? '<div style="margin-top:0.2rem;color:#94a3b8;font-size:0.8rem">'
+                + extra.unmatched_count + ' inventory row(s) skipped (missing account or id)</div>' : '');
+      }
+
+      async function loadCoverage(st) {
+        const el = $('ds-inv-coverage');
+        if (st.enabled === false) {
+          el.innerHTML = '';
+          return;
+        }
+        try {
+          const res = await fetch(`${PROXY}/data-sources/inventory/coverage`, { headers: authHeaders() });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const c = await res.json();
+          if (!c.active) { el.innerHTML = ''; return; }
+          if (!c.joinable) {
+            el.innerHTML = '<div class="banner-blue">' + escapeHtml(c.reason || 'No CUR data to match against yet.') + '</div>';
+            return;
+          }
+          el.innerHTML =
+            '<div class="card-section-title" style="margin-bottom:0.5rem">Match rate</div>'
+            + '<div style="font-size:0.875rem;color:#334155">'
+            + '<strong>' + c.match_rate_pct + '%</strong> of resources matched '
+            + '(' + Number(c.matched_count).toLocaleString() + ' of '
+            + Number(c.matched_count + c.unmatched_count).toLocaleString() + ') &nbsp;·&nbsp; '
+            + '<strong>' + c.spend_match_rate_pct + '%</strong> of spend matched</div>';
+        } catch (e) {
+          el.innerHTML = '';
+        }
+      }
+
+      async function uploadFile(path, file, msgEl) {
+        showMsg(msgEl, 'Uploading ' + file.name + '…', 'info', 120000);
+        const fd = new FormData();
+        fd.append('file', file);
+        const res = await fetch(`${PROXY}${path}`, {
+          method: 'POST', headers: authHeaders(), body: fd,
+        });
+        if (!res.ok) {
+          let detail = 'HTTP ' + res.status;
+          try { const j = await res.json(); if (j.detail) detail = j.detail; } catch (_) {}
+          throw new Error(detail);
+        }
+        return res.json();
+      }
+
+      $('ds-cur-file').addEventListener('change', async (ev) => {
+        const file = ev.target.files[0];
+        if (!file) return;
+        const msgEl = $('ds-cur-msg');
+        try {
+          const r = await uploadFile('/data-sources/cur/upload', file, msgEl);
+          showMsg(msgEl, 'CUR uploaded — ' + (r.source?.record_count ?? '?') + ' rows.', 'ok');
+          await loadDataSources();
+        } catch (e) {
+          showMsg(msgEl, 'Upload failed: ' + e.message, 'err');
+        } finally { ev.target.value = ''; }
+      });
+
+      $('ds-inv-file').addEventListener('change', async (ev) => {
+        const file = ev.target.files[0];
+        if (!file) return;
+        const msgEl = $('ds-inv-msg');
+        try {
+          const r = await uploadFile('/data-sources/inventory/upload', file, msgEl);
+          showMsg(msgEl, 'Inventory loaded — ' + (r.resource_count ?? '?') + ' resources.', 'ok');
+          await loadDataSources();
+        } catch (e) {
+          showMsg(msgEl, 'Upload failed: ' + e.message, 'err');
+        } finally { ev.target.value = ''; }
+      });
+
+      $('ds-inv-remove').addEventListener('click', async () => {
+        const msgEl = $('ds-inv-msg');
+        if (!confirm('Remove the loaded inventory? Enrichment will be skipped until a new one is uploaded.')) return;
+        try {
+          const res = await fetch(`${PROXY}/data-sources/inventory`, { method: 'DELETE', headers: authHeaders() });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          showMsg(msgEl, 'Inventory removed.', 'ok');
+          await loadDataSources();
+        } catch (e) {
+          showMsg(msgEl, 'Failed: ' + e.message, 'err');
+        }
+      });
+
+      loadDataSources();
+    })();
   </script>
   <script>
     // ── Fix nav links in standalone mode ──────────────────────────────────
