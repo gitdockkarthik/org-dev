@@ -14,6 +14,7 @@ upload route is left untouched.
 """
 from __future__ import annotations
 
+import csv
 import io
 import logging
 import zipfile
@@ -33,6 +34,42 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _select_inner_csv(zf: zipfile.ZipFile, csv_names: list[str]) -> str:
+    """Pick the richest inner CSV from a CUR ``.zip``.
+
+    AWS legacy DBR archives commonly bundle two CSVs: the plain
+    "detailed-line-items" report (no tags) and the
+    "-with-resources-and-tags" variant that carries the
+    ``resourceTags/user:*`` columns. Blindly taking ``csv_names[0]`` can grab
+    the tag-less one and silently drop every tag column.
+
+    Choose the CSV whose header has the most columns (the tags variant), with a
+    strong tie-break toward filenames that mention resources/tags. Falls back to
+    the first entry if headers can't be read.
+    """
+    if len(csv_names) == 1:
+        return csv_names[0]
+    best_name, best_score = csv_names[0], -1
+    for name in csv_names:
+        try:
+            with zf.open(name) as f:
+                header = io.TextIOWrapper(
+                    f, encoding="utf-8-sig", errors="replace"
+                ).readline()
+        except Exception:
+            continue
+        ncols = len(next(csv.reader([header]), []))
+        nl = name.lower()
+        # Header column count dominates; the tags variant has the most columns.
+        score = ncols + (1000 if ("resource" in nl and "tag" in nl) else 0)
+        if score > best_score:
+            best_name, best_score = name, score
+    logger.info(
+        "_select_inner_csv: chose %r from %d candidate CSV(s)", best_name, len(csv_names)
+    )
+    return best_name
+
+
 # ── CUR file upload ────────────────────────────────────────────────────────────
 
 
@@ -40,9 +77,9 @@ def cur_bytes_to_csv(filename: str, raw: bytes) -> tuple[str, str]:
     """Convert an uploaded CUR file to raw CSV text.
 
     Returns ``(csv_text, resolved_filename)``. Supports ``.csv``,
-    ``.zip`` (first inner CSV) and ``.parquet`` — matching the existing
-    ``/reports/upload`` behaviour. Raises ``ValueError`` on unsupported or
-    malformed input.
+    ``.zip`` (richest inner CSV — see ``_select_inner_csv``) and ``.parquet`` —
+    matching the existing ``/reports/upload`` behaviour. Raises ``ValueError``
+    on unsupported or malformed input.
     """
     fname_lower = (filename or "").lower()
 
@@ -58,9 +95,10 @@ def cur_bytes_to_csv(filename: str, raw: bytes) -> tuple[str, str]:
                 ]
                 if not csv_names:
                     raise ValueError("No CSV file found inside the ZIP archive")
-                with zf.open(csv_names[0]) as f:
+                chosen = _select_inner_csv(zf, csv_names)
+                with zf.open(chosen) as f:
                     csv_text = f.read().decode("utf-8-sig", errors="replace")
-                return csv_text, csv_names[0].split("/")[-1]
+                return csv_text, chosen.split("/")[-1]
         except zipfile.BadZipFile as exc:
             raise ValueError("Invalid ZIP file") from exc
 
@@ -144,8 +182,8 @@ def cur_file_to_csv(filename: str, path: str) -> tuple[str, str]:
     Reads an uploaded CUR file from ``path`` (instead of an in-memory ``bytes``
     blob) and returns ``(csv_text, resolved_filename)``. CSV is read in text
     mode so only the decoded string is held — never the raw bytes alongside it.
-    Supports ``.csv``, ``.zip`` (first inner CSV) and ``.parquet``; raises
-    ``ValueError`` on unsupported or malformed input.
+    Supports ``.csv``, ``.zip`` (richest inner CSV — see ``_select_inner_csv``)
+    and ``.parquet``; raises ``ValueError`` on unsupported or malformed input.
     """
     fname_lower = (filename or "").lower()
 
@@ -162,11 +200,12 @@ def cur_file_to_csv(filename: str, path: str) -> tuple[str, str]:
                 ]
                 if not csv_names:
                     raise ValueError("No CSV file found inside the ZIP archive")
-                with zf.open(csv_names[0]) as f:
+                chosen = _select_inner_csv(zf, csv_names)
+                with zf.open(chosen) as f:
                     csv_text = io.TextIOWrapper(
                         f, encoding="utf-8-sig", errors="replace"
                     ).read()
-                return csv_text, csv_names[0].split("/")[-1]
+                return csv_text, chosen.split("/")[-1]
         except zipfile.BadZipFile as exc:
             raise ValueError("Invalid ZIP file") from exc
 

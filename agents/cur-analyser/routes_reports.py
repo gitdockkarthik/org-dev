@@ -244,6 +244,7 @@ async def upload_report(file: UploadFile) -> dict:
 
     from tools.data_sources.file_providers import (
         UploadTooLarge,
+        _select_inner_csv,
         stream_upload_to_temp,
     )
 
@@ -280,12 +281,17 @@ async def upload_report(file: UploadFile) -> dict:
                     if not csv_names:
                         raise HTTPException(status_code=422,
                             detail="No CSV file found inside the ZIP archive")
-                    with zf.open(csv_names[0]) as f:
+                    # Pick the richest inner CSV — AWS legacy DBR zips bundle a
+                    # tag-less detailed-line-items CSV alongside the
+                    # "-with-resources-and-tags" variant; csv_names[0] can grab
+                    # the tag-less one and drop every resourceTags/user:* column.
+                    chosen = _select_inner_csv(zf, csv_names)
+                    with zf.open(chosen) as f:
                         csv_text = io.TextIOWrapper(
                             f, encoding="utf-8-sig", errors="replace"
                         ).read()
                     # Use the inner CSV filename
-                    filename = csv_names[0].split("/")[-1]
+                    filename = chosen.split("/")[-1]
             except zipfile.BadZipFile:
                 raise HTTPException(status_code=422,
                     detail="Invalid ZIP file")
