@@ -582,17 +582,14 @@
     function applyFilters(rows) {
       return rows.filter(r => {
         const f = _activeFilters;
-        const date = r.line_item_usage_start_date ||
-                     r.usagestartdate || '';
-        const acct = r.line_item_usage_account_name ||
-                     r.line_item_usage_account_id || '';
-        const env  = r.tag_Environment || r.tag_environment || '';
-        const svc  = r.line_item_product_code ||
-                     r.productname || '';
-        const reg  = r.product_region || r.region || '';
+        const date = fDate(r);
+        const acct = fAccount(r);
+        const env  = fEnv(r);
+        const svc  = fService(r);
+        const reg  = fRegion(r);
         const term = r.pricing_term || '';
-        const prod = r.tag_Product || r.tag_product || '';
-        const team = r.tag_Team || r.tag_team || '';
+        const prod = fProduct(r);
+        const team = fTeam(r);
         const invApp = r.inv_application || '';
         const invBudget = r.inv_budget_code || '';
         const invCust = r.inv_customer || '';
@@ -624,6 +621,44 @@
     }
 
     // ── Client-side aggregations ──────────────────────────────
+    // ── Cross-format CUR row field accessors ──────────────────
+    // Map legacy (LinkedAccountId, ProductName, AvailabilityZone, UnBlendedCost,
+    // resourceTags/user:*), CUR 2.0 and synthetic column names onto one logical
+    // field, so dropdowns and client-side aggregations work regardless of the
+    // CUR export format.
+    function _firstField(r, names) {
+      for (const n of names) {
+        const v = r[n];
+        if (v !== undefined && v !== null && v !== '') return v;
+      }
+      return '';
+    }
+    const COST_FIELDS       = ['line_item_unblended_cost','unblended_cost','UnBlendedCost','line_item_blended_cost','BlendedCost'];
+    const ACCOUNT_FIELDS    = ['line_item_usage_account_name','line_item_usage_account_id','LinkedAccountId','UsageAccountId','account_id','PayerAccountId'];
+    const SERVICE_FIELDS    = ['line_item_product_code','productname','ProductName','product_name'];
+    const REGION_FIELDS     = ['product_region','region','AvailabilityZone'];
+    const DATE_FIELDS       = ['line_item_usage_start_date','usage_start_date','UsageStartDate'];
+    const ENV_FIELDS        = ['tag_Environment','tag_environment','resourceTags/user:Environment'];
+    const PRODUCT_FIELDS    = ['tag_Product','tag_product','resourceTags/user:Project','resourceTags/user:Product'];
+    const TEAM_FIELDS       = ['tag_Team','tag_team','resourceTags/user:Team'];
+    const CUSTOMER_FIELDS   = ['tag_Customer','tag_customer','resourceTags/user:Customer'];
+    const COSTCENTRE_FIELDS = ['tag_CostCentre','tag_costcentre','resourceTags/user:CostCenter','resourceTags/user:CostCentre'];
+    function regionPrefix(v) {
+      const s = String(v || '');
+      const m = s.match(/^([a-z]{2}-[a-z]+-\d+)[a-z]$/);  // us-east-1a -> us-east-1
+      return m ? m[1] : s;
+    }
+    function fCost(r)       { return parseFloat(_firstField(r, COST_FIELDS)) || 0; }
+    function fAccount(r)    { return _firstField(r, ACCOUNT_FIELDS); }
+    function fService(r)    { return _firstField(r, SERVICE_FIELDS); }
+    function fRegion(r)     { return regionPrefix(_firstField(r, REGION_FIELDS)); }
+    function fDate(r)       { return String(_firstField(r, DATE_FIELDS) || ''); }
+    function fEnv(r)        { return String(_firstField(r, ENV_FIELDS) || ''); }
+    function fProduct(r)    { return _firstField(r, PRODUCT_FIELDS); }
+    function fTeam(r)       { return _firstField(r, TEAM_FIELDS); }
+    function fCustomer(r)   { return _firstField(r, CUSTOMER_FIELDS); }
+    function fCostCentre(r) { return _firstField(r, COSTCENTRE_FIELDS); }
+
     function getCostCol(row) {
       return parseFloat(
         row.line_item_unblended_cost ||
@@ -752,7 +787,7 @@
           v.inv_application || [], 'invApplications');
         buildMultiSelect('fInvBudgetWrap', 'Budget Code',
           v.inv_budget_code || [], 'invBudgetCodes');
-        buildMultiSelect('fInvCustomerWrap', 'Customer (Enriched)',
+        buildMultiSelect('fInvCustomerWrap', 'Customer',
           v.inv_customer || [], 'invCustomers');
       } catch (_) {}
     }
@@ -2694,32 +2729,25 @@ ${JSON.stringify(payload, null, 2)}
             }
             // Populate filter dropdowns from actual data
             buildMultiSelect('fAccountWrap', 'Account',
-              getDistinctValues(rows,
-                r => r.line_item_usage_account_name ||
-                     r.line_item_usage_account_id),
+              getDistinctValues(rows, fAccount),
               'accounts', true);
             buildMultiSelect('fEnvWrap', 'Environment',
-              getDistinctValues(rows,
-                r => r.tag_Environment || r.tag_environment),
+              getDistinctValues(rows, fEnv),
               'environments', true);
             buildMultiSelect('fServiceWrap', 'Service',
-              getDistinctValues(rows,
-                r => r.line_item_product_code || r.productname),
+              getDistinctValues(rows, fService),
               'services', true);
             buildMultiSelect('fRegionWrap', 'Region',
-              getDistinctValues(rows,
-                r => r.product_region || r.region),
+              getDistinctValues(rows, fRegion),
               'regions', true);
             buildMultiSelect('fPricingWrap', 'Pricing Term',
               getDistinctValues(rows, r => r.pricing_term),
               'pricingTerms', true);
             buildMultiSelect('fProductWrap', 'Product Tag',
-              getDistinctValues(rows,
-                r => r.tag_Product || r.tag_product),
+              getDistinctValues(rows, fProduct),
               'tagProducts', true);
             buildMultiSelect('fTeamWrap', 'Team Tag',
-              getDistinctValues(rows,
-                r => r.tag_Team || r.tag_team),
+              getDistinctValues(rows, fTeam),
               'tagTeams', true);
             // Inventory-enriched filters: populated from the lightweight
             // distinct-values endpoint (avoids scanning all streamed rows).
