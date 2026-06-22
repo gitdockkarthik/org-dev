@@ -399,7 +399,7 @@ async def ds_enriched_rows(report_id: int):
 
     from report_store import get_report_rows
     from tools.data_sources.registry import get_registry
-    from tools.duckdb_engine import _detect_account_col
+    from tools.duckdb_engine import _detect_account_col, _detect_resource_col
     from tools.inventory_enricher import build_enricher
 
     src_rows = get_report_rows(report_id)
@@ -413,7 +413,7 @@ async def ds_enriched_rows(report_id: int):
     if enricher.active and rows:
         cols = list(rows[0].keys())
         account_col = _detect_account_col(cols)
-        resource_col = "resource_id" if "resource_id" in cols else None
+        resource_col = _detect_resource_col(cols)
         if account_col and resource_col:
             enricher.enrich_query_result(rows, account_col, resource_col)
 
