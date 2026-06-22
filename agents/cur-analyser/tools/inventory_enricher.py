@@ -152,11 +152,24 @@ class InventoryEnricher:
         try:
             cols = list(df.columns)
             account_col = account_col or self._detect_account_col(cols)
-            resource_col = resource_col or ("resource_id" if "resource_id" in cols else None)
+            resource_col = resource_col or self._detect_resource_col(cols)
             service_col = service_col or self._detect_service_col(cols)
             if not account_col or not resource_col:
-                logger.info(
-                    "InventoryEnricher: missing account/resource column — skipping enrichment"
+                try:
+                    from tools.duckdb_engine import (
+                        ACCOUNT_COL_CANDIDATES,
+                        RESOURCE_COL_CANDIDATES,
+                    )
+                    acct_cands, res_cands = ACCOUNT_COL_CANDIDATES, RESOURCE_COL_CANDIDATES
+                except Exception:
+                    acct_cands, res_cands = [], []
+                logger.warning(
+                    "InventoryEnricher: cannot enrich — account_id column %s, "
+                    "resource_id column %s. Tried account candidates %s and "
+                    "resource candidates %s against CUR columns %s.",
+                    f"found ('{account_col}')" if account_col else "NOT FOUND",
+                    f"found ('{resource_col}')" if resource_col else "NOT FOUND",
+                    acct_cands, res_cands, cols,
                 )
                 return df
 
@@ -252,6 +265,14 @@ class InventoryEnricher:
         try:
             from tools.duckdb_engine import _detect_account_col
             return _detect_account_col(cols)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _detect_resource_col(cols: list[str]) -> Optional[str]:
+        try:
+            from tools.duckdb_engine import _detect_resource_col
+            return _detect_resource_col(cols)
         except Exception:
             return None
 

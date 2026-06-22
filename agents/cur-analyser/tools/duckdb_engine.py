@@ -72,10 +72,42 @@ def _detect_region_col(columns: list[str]) -> str | None:
     return None
 
 
+# Ordered column-name candidates for the inventory join keys. Real AWS CUR uses
+# the slash format (lineItem/...); normalised exports use underscores; synthetic
+# / test data uses the bare names. Tried in order, case-insensitively.
+ACCOUNT_COL_CANDIDATES = [
+    "lineItem/UsageAccountId",      # real AWS CUR
+    "line_item_usage_account_id",   # normalised format
+    "account_id",                   # synthetic / test data
+]
+RESOURCE_COL_CANDIDATES = [
+    "lineItem/ResourceId",          # real AWS CUR
+    "line_item_resource_id",        # normalised format
+    "resource_id",                  # synthetic / test data
+]
+
+
 def _detect_account_col(columns: list[str]) -> str | None:
+    """Detect the usage-account-id column across slash / underscore / bare
+    formats. Tries the explicit candidates in order, then falls back to any
+    column containing ``account``."""
+    lower = {c.lower(): c for c in columns}
+    for cand in ACCOUNT_COL_CANDIDATES:
+        if cand.lower() in lower:
+            return lower[cand.lower()]
     for col in columns:
         if "account" in col.lower():
             return col
+    return None
+
+
+def _detect_resource_col(columns: list[str]) -> str | None:
+    """Detect the resource-id column across slash / underscore / bare formats by
+    trying the explicit candidates in order, case-insensitively."""
+    lower = {c.lower(): c for c in columns}
+    for cand in RESOURCE_COL_CANDIDATES:
+        if cand.lower() in lower:
+            return lower[cand.lower()]
     return None
 
 
@@ -470,7 +502,8 @@ def get_top_resources(csv_text: str, limit: int = 10) -> list[dict]:
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
-        if not cost_col or "resource_id" not in cols:
+        res_col = _detect_resource_col(cols)
+        if not cost_col or not res_col:
             return []
         svc_col = _detect_service_col(cols)
         region_col = _detect_region_col(cols)
@@ -479,11 +512,11 @@ def get_top_resources(csv_text: str, limit: int = 10) -> list[dict]:
         env_sel = 'MAX("tag_Environment")' if "tag_Environment" in cols else "''"
         team_sel = 'MAX("tag_Team")' if "tag_Team" in cols else "''"
         rows = con.execute(
-            f'SELECT "resource_id", {svc_sel}, {region_sel}, {env_sel}, {team_sel}, '
+            f'SELECT "{res_col}", {svc_sel}, {region_sel}, {env_sel}, {team_sel}, '
             f'SUM("{cost_col}") AS cost '
             f'FROM cur_data '
-            f"WHERE \"resource_id\" IS NOT NULL AND CAST(\"resource_id\" AS VARCHAR) <> '' "
-            f'GROUP BY "resource_id" ORDER BY cost DESC LIMIT {limit}'
+            f"WHERE \"{res_col}\" IS NOT NULL AND CAST(\"{res_col}\" AS VARCHAR) <> '' "
+            f'GROUP BY "{res_col}" ORDER BY cost DESC LIMIT {limit}'
         ).fetchall()
         return [
             {
@@ -629,7 +662,7 @@ def get_enrichment_summary(csv_text: str, enricher) -> dict:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
         account_col = _detect_account_col(cols)
-        resource_col = "resource_id" if "resource_id" in cols else None
+        resource_col = _detect_resource_col(cols)
         if not account_col or not resource_col:
             return {
                 "active": True,
