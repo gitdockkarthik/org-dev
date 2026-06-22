@@ -81,9 +81,21 @@ def _detect_account_col(columns: list[str]) -> str | None:
 
 # ── Core query functions (migrated from engine.py) ────────────────────────────
 
-def _load_df(csv_text: str) -> tuple[pd.DataFrame, duckdb.DuckDBPyConnection]:
+def _load_df(
+    csv_text: str, enricher=None
+) -> tuple[pd.DataFrame, duckdb.DuckDBPyConnection]:
+    """Load CUR CSV into a DataFrame + DuckDB connection.
+
+    ``enricher`` is optional. When ``None`` (the default, and the path every
+    existing caller takes) behaviour is unchanged. When supplied, the inventory
+    enricher adds ``inv_*`` virtual columns *before* the frame is registered, so
+    downstream queries can group/filter on them. An inactive enricher (no
+    inventory loaded) is a safe no-op.
+    """
     con = duckdb.connect(database=":memory:")
     df = pd.read_csv(io.StringIO(csv_text))
+    if enricher is not None:
+        df = enricher.enrich_dataframe(df)
     con.register("cur_data", df)
     return df, con
 
@@ -599,6 +611,126 @@ def run_context_query(csv_text: str) -> dict:
         "top_services": services,
         "daily_trend": trend[-14:],
     }
+
+
+def get_enrichment_summary(csv_text: str, enricher) -> dict:
+    """Compute inventory-enrichment coverage for the CUR data.
+
+    Returns ``{"active": False}`` when no enricher / inventory is in play, so the
+    existing flow is never affected. When active, returns match counts/rates,
+    cost-weighted coverage, per-service match rates, the top unmatched resources
+    by cost (with a reason), and a before/after tag-coverage comparison.
+    """
+    if enricher is None or not getattr(enricher, "active", False):
+        return {"active": False}
+
+    df, con = _load_df(csv_text, enricher=enricher)
+    try:
+        cols = list(df.columns)
+        cost_col = _detect_cost_col(cols)
+        account_col = _detect_account_col(cols)
+        resource_col = "resource_id" if "resource_id" in cols else None
+        if not account_col or not resource_col:
+            return {
+                "active": True,
+                "joinable": False,
+                "reason": "CUR data lacks account_id and/or resource_id columns",
+            }
+
+        stats = enricher.get_match_stats()
+        matched_mask = getattr(enricher, "_last_matched", [])
+        reasons = getattr(enricher, "_last_reason", [])
+
+        # Cost-weighted coverage.
+        total_spend = 0.0
+        matched_spend = 0.0
+        if cost_col:
+            costs = pd.to_numeric(df[cost_col], errors="coerce").fillna(0.0).tolist()
+            total_spend = float(sum(costs))
+            for i, c in enumerate(costs):
+                if i < len(matched_mask) and matched_mask[i]:
+                    matched_spend += float(c)
+        spend_rate = round(matched_spend / total_spend * 100, 1) if total_spend else 0.0
+
+        # Top unmatched resources by cost.
+        unmatched_top: list[dict] = []
+        if cost_col and resource_col:
+            svc_col = _detect_service_col(cols)
+            tmp = df.copy()
+            tmp["__cost"] = pd.to_numeric(tmp[cost_col], errors="coerce").fillna(0.0)
+            tmp["__matched"] = (matched_mask + [False] * len(tmp))[: len(tmp)]
+            tmp["__reason"] = (reasons + [""] * len(tmp))[: len(tmp)]
+            un = tmp[~tmp["__matched"]]
+            grp = (
+                un.groupby(resource_col)
+                .agg(cost=("__cost", "sum"))
+                .reset_index()
+                .sort_values("cost", ascending=False)
+                .head(20)
+            )
+            reason_by_res = (
+                un.groupby(resource_col)["__reason"].first().to_dict()
+            )
+            svc_by_res = (
+                un.groupby(resource_col)[svc_col].first().to_dict() if svc_col else {}
+            )
+            for _, r in grp.iterrows():
+                rid = str(r[resource_col])
+                unmatched_top.append({
+                    "resource_id": rid,
+                    "service": str(svc_by_res.get(rid, "")) if svc_by_res else "",
+                    "cost": round(float(r["cost"]), 4),
+                    "reason": str(reason_by_res.get(rid, REASON_LABEL_DEFAULT)),
+                })
+
+        # Before/after tag coverage (native CUR tag vs inventory-filled).
+        total_rows = len(df)
+        before_after = {}
+        comparisons = [
+            ("Customer", "tag_Customer", "inv_customer"),
+            ("Application", "tag_Product", "inv_application"),
+            ("Budget_Code", "tag_CostCentre", "inv_budget_code"),
+        ]
+        for label, native_col, inv_col in comparisons:
+            before_pct = 0.0
+            after_pct = 0.0
+            if total_rows:
+                native_nonblank = pd.Series([False] * total_rows)
+                if native_col in df.columns:
+                    native_nonblank = df[native_col].astype(str).str.strip().ne("") & df[native_col].notna()
+                before_pct = round(float(native_nonblank.mean()) * 100, 1)
+                inv_nonblank = pd.Series([False] * total_rows)
+                if inv_col in df.columns:
+                    inv_nonblank = df[inv_col].astype(str).str.strip().ne("")
+                after_nonblank = native_nonblank | inv_nonblank
+                after_pct = round(float(after_nonblank.mean()) * 100, 1)
+            before_after[label] = {
+                "before_pct": before_pct,
+                "after_pct": after_pct,
+                "improvement_pct": round(after_pct - before_pct, 1),
+            }
+
+        return {
+            "active": True,
+            "joinable": True,
+            "matched_count": stats["matched_count"],
+            "unmatched_count": stats["unmatched_count"],
+            "match_rate_pct": stats["match_rate_pct"],
+            "total_spend": round(total_spend, 4),
+            "matched_spend": round(matched_spend, 4),
+            "spend_match_rate_pct": spend_rate,
+            "per_service": stats["per_service"],
+            "unmatched_top": unmatched_top,
+            "before_after": before_after,
+        }
+    except Exception:
+        return {"active": True, "joinable": False, "reason": "enrichment summary failed"}
+    finally:
+        con.close()
+
+
+# Default unmatched reason label (kept local to avoid importing enricher here).
+REASON_LABEL_DEFAULT = "Not in inventory"
 
 
 # ── ToolExecutor wrapper ──────────────────────────────────────────────────────

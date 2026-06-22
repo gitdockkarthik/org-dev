@@ -100,6 +100,10 @@ class InventoryEnricher:
         self._unmatched = 0
         # service -> {"in_cur", "matched", "unmatched"}
         self._per_service: dict[str, dict[str, int]] = {}
+        # Per-row diagnostics from the most recent enrich_dataframe pass,
+        # aligned to DataFrame row order (used by get_enrichment_summary).
+        self._last_matched: list[bool] = []
+        self._last_reason: list[str] = []
 
     # ── matching ─────────────────────────────────────────────────────────────
 
@@ -170,6 +174,8 @@ class InventoryEnricher:
                     svc, {"in_cur": 0, "matched": 0, "unmatched": 0}
                 )
                 svc_stats["in_cur"] += 1
+                self._last_matched.append(entry is not None)
+                self._last_reason.append(reason)
                 if entry is not None:
                     self._matched += 1
                     svc_stats["matched"] += 1
