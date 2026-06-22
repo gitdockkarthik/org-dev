@@ -501,16 +501,32 @@
       const t = (DASH.daily_trend || []).filter(d => d.date);
       if (!t.length) return null;
       const first = new Date(t[0].date + 'T00:00:00Z');
-      const cells = {}; let maxWeek = 0, maxCost = 0;
+      let cells = {}; let maxWeek = 0;
       t.forEach(d => {
         const dt = new Date(d.date + 'T00:00:00Z');
         const week = Math.floor((dt - first) / (7 * 86400000));
         let dow = dt.getUTCDay(); dow = dow === 0 ? 6 : dow - 1; // Mon=0 .. Sun=6
         cells[`${dow}:${week}`] = (cells[`${dow}:${week}`] || 0) + d.cost;
         if (week > maxWeek) maxWeek = week;
-        if (cells[`${dow}:${week}`] > maxCost) maxCost = cells[`${dow}:${week}`];
       });
-      return { cells, weeks: maxWeek + 1, maxCost };
+      // Cap to the most recent 13 weeks (W1..W13) regardless of data span, so
+      // the heatmap never grows an unbounded vertical/horizontal tail.
+      const MAX_WEEKS = 13;
+      let weeks = maxWeek + 1;
+      if (weeks > MAX_WEEKS) {
+        const shift = weeks - MAX_WEEKS;
+        const shifted = {};
+        Object.entries(cells).forEach(([k, v]) => {
+          const [dow, w] = k.split(':').map(Number);
+          const nw = w - shift;
+          if (nw >= 0) shifted[`${dow}:${nw}`] = v;
+        });
+        cells = shifted;
+        weeks = MAX_WEEKS;
+      }
+      let maxCost = 0;
+      Object.values(cells).forEach(v => { if (v > maxCost) maxCost = v; });
+      return { cells, weeks, maxCost };
     }
 
     // ── Chart builders ────────────────────────────────────────────────────────────
@@ -1170,6 +1186,16 @@
       const sav = DASH.savings_opportunities || {};
       const signals = sav.savings_signals || [];
 
+      // Sparse-data handling: a monthly area/line chart looks blank with only a
+      // day or two of data (single point, no line). Fall back to a daily bar
+      // chart (which reads well for sparse data) and label the span.
+      const dt = DASH.daily_trend || [];
+      const sparseTrend = dt.length > 0 && dt.length < 7;
+      const trendTitle = sparseTrend ? 'Daily Cost' : 'Monthly Cost Trend';
+      const trendNote = sparseTrend
+        ? `<span style="font-weight:400;color:var(--text-muted);font-size:.78rem"> · Showing ${dt.length} day${dt.length === 1 ? '' : 's'} of data</span>`
+        : '';
+
       const svcRows = svc.map(s => {
         const pct = total ? (s.cost / total) * 100 : 0;
         const barW = Math.min(100, total ? (s.cost / (svc[0].cost || 1)) * 100 : 0);
@@ -1212,7 +1238,7 @@
         <div class="chart-grid chart-grid--2">
           <div class="chart-card"><div class="chart-card__title">Top 10 Services by Cost</div>
             <div class="chart-wrap"><canvas id="ovSvcChart"></canvas></div></div>
-          <div class="chart-card"><div class="chart-card__title">Monthly Cost Trend</div>
+          <div class="chart-card"><div class="chart-card__title">${trendTitle}${trendNote}</div>
             <div class="chart-wrap"><canvas id="ovTrendChart"></canvas></div></div>
         </div>
 
@@ -1243,13 +1269,21 @@
       destroyChart('ovTrend');
       const tctx = document.getElementById('ovTrendChart');
       if (tctx) {
-        charts['ovTrend'] = new Chart(tctx.getContext('2d'), {
-          type: 'line',
-          data: { labels: mt.map(m => m.month), datasets: [{ label: 'Monthly Cost', data: mt.map(m => m.cost),
-            borderColor: '#FF6B35', backgroundColor: 'rgba(255,107,53,.12)', fill: true, tension: .35, pointRadius: 3 }] },
-          options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
-            scales: { y: { ticks: { callback: v => '$' + Number(v).toLocaleString() } } } },
-        });
+        charts['ovTrend'] = sparseTrend
+          ? new Chart(tctx.getContext('2d'), {
+              type: 'bar',
+              data: { labels: dt.map(d => d.date), datasets: [{ label: 'Daily Cost', data: dt.map(d => d.cost),
+                backgroundColor: '#FF6B35', borderRadius: 4 }] },
+              options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+                scales: { y: { ticks: { callback: v => '$' + Number(v).toLocaleString() } } } },
+            })
+          : new Chart(tctx.getContext('2d'), {
+              type: 'line',
+              data: { labels: mt.map(m => m.month), datasets: [{ label: 'Monthly Cost', data: mt.map(m => m.cost),
+                borderColor: '#FF6B35', backgroundColor: 'rgba(255,107,53,.12)', fill: true, tension: .35, pointRadius: 3 }] },
+              options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+                scales: { y: { ticks: { callback: v => '$' + Number(v).toLocaleString() } } } },
+            });
       }
     }
 
@@ -1737,8 +1771,8 @@
             <tbody>${momRows}</tbody></table></div>
         </div>
         <div class="panel-card">
-          <div class="section-title">Daily Spend Heatmap <span style="font-weight:400;color:var(--text-muted);font-size:.8rem">(day of week × week)</span></div>
-          ${heatHtml}
+          <div class="section-title">Daily Spend Heatmap <span style="font-weight:400;color:var(--text-muted);font-size:.8rem">(day of week × week, most recent 13 weeks)</span></div>
+          <div style="max-height:300px;overflow:hidden">${heatHtml}</div>
         </div>
         <div class="chart-grid chart-grid--2">
           <div class="panel-card">
