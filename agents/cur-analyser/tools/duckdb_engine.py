@@ -18,63 +18,36 @@ from tools.base import ToolExecutor
 QueryType = Literal["total_cost", "cost_by_service", "daily_trend", "cost_by_region"]
 
 
-def _detect_cost_col(columns: list[str]) -> str | None:
-    """Prefer line_item_unblended_cost; fall back to any cost column."""
-    for col in columns:
-        if "unblended" in col.lower() and "cost" in col.lower():
-            return col
-    for col in columns:
-        if "cost" in col.lower():
-            return col
-    return None
-
-
-def _detect_service_col(columns: list[str]) -> str | None:
-    """Prefer line_item_product_code; accept productname / servicename / service."""
-    for col in columns:
-        cl = col.lower()
-        if cl == "line_item_product_code":
-            return col
-    for col in columns:
-        cl = col.lower()
-        if any(k in cl for k in ("productname", "product_code", "servicename")) or cl == "service":
-            return col
-    return None
-
-
-def _detect_date_col(columns: list[str]) -> str | None:
-    """Detect usage start date column — supports both
-    slash format (lineItem/UsageStartDate) and
-    underscore format (line_item_usage_start_date)."""
-    # Priority 1 — exact underscore match
-    for col in columns:
-        if col.lower() == "line_item_usage_start_date":
-            return col
-    # Priority 2 — exact slash match (standard CUR export)
-    for col in columns:
-        if col.lower() == "lineitem/usagestartdate":
-            return col
-    # Priority 3 — partial match on usagestart
-    for col in columns:
-        if "usagestart" in col.lower():
-            return col
-    # Priority 4 — any usage date
-    for col in columns:
-        if "usagedate" in col.lower():
-            return col
-    return None
-
-
-def _detect_region_col(columns: list[str]) -> str | None:
-    for col in columns:
-        if "region" in col.lower():
-            return col
-    return None
-
-
-# Ordered column-name candidates for the inventory join keys. Real AWS CUR uses
-# the slash format (lineItem/...); normalised exports use underscores; synthetic
-# / test data uses the bare names. Tried in order, case-insensitively.
+# Ordered column-name candidates per logical column. Real AWS CUR 2.0 uses the
+# slash format (lineItem/..., product/...); normalised exports use underscores;
+# legacy CUR uses bare CamelCase names; synthetic/test data uses bare snake_case.
+# Tried in order, case-insensitively.
+COST_COL_CANDIDATES = [
+    "lineItem/UnblendedCost",   # real CUR 2.0
+    "line_item_unblended_cost", # normalised
+    "UnBlendedCost",            # legacy CUR
+    "BlendedCost",              # fallback
+    "unblended_cost",           # synthetic
+]
+SERVICE_COL_CANDIDATES = [
+    "lineItem/ProductCode",     # real CUR 2.0
+    "line_item_product_code",   # normalised
+    "ProductName",              # legacy CUR
+    "product/ProductName",      # real CUR 2.0 product name
+    "product_name",             # synthetic
+]
+DATE_COL_CANDIDATES = [
+    "lineItem/UsageStartDate",    # real CUR 2.0
+    "line_item_usage_start_date", # normalised
+    "UsageStartDate",             # legacy CUR
+    "usage_start_date",           # synthetic
+]
+REGION_COL_CANDIDATES = [
+    "product/region",   # real CUR 2.0
+    "product_region",   # normalised
+    "AvailabilityZone", # legacy CUR fallback (AZ not region but closest)
+    "region",           # synthetic
+]
 ACCOUNT_COL_CANDIDATES = [
     "lineItem/UsageAccountId",      # real AWS CUR (current format)
     "line_item_usage_account_id",   # normalised format
@@ -90,28 +63,103 @@ RESOURCE_COL_CANDIDATES = [
 ]
 
 
-def _detect_account_col(columns: list[str]) -> str | None:
-    """Detect the usage-account-id column across slash / underscore / bare
-    formats. Tries the explicit candidates in order, then falls back to any
-    column containing ``account``."""
+def _match_candidate(columns: list[str], candidates: list[str]) -> str | None:
+    """Return the actual column matching the first candidate present
+    (case-insensitive), or ``None`` when no candidate matches."""
     lower = {c.lower(): c for c in columns}
-    for cand in ACCOUNT_COL_CANDIDATES:
+    for cand in candidates:
         if cand.lower() in lower:
             return lower[cand.lower()]
-    for col in columns:
-        if "account" in col.lower():
-            return col
+    return None
+
+
+def resolve_col(df, candidates: list[str], required: bool = True) -> str | None:
+    """Central column resolver. Tries each candidate against ``df``'s columns
+    case-insensitively, in order.
+
+    When ``required`` is True and no candidate matches, raises ``ValueError``
+    naming what was tried versus the columns that actually exist (to make a
+    misconfigured / unexpected CUR format easy to diagnose). When ``required``
+    is False, returns ``None`` instead.
+    """
+    col = _match_candidate(list(df.columns), candidates)
+    if col is None and required:
+        raise ValueError(
+            f"Required column not found. Tried candidates {candidates}; "
+            f"available CUR columns: {list(df.columns)}"
+        )
+    return col
+
+
+def _detect_cost_col(columns: list[str]) -> str | None:
+    """Prefer the unblended-cost candidates; fall back to any cost column."""
+    col = _match_candidate(columns, COST_COL_CANDIDATES)
+    if col:
+        return col
+    for c in columns:
+        if "unblended" in c.lower() and "cost" in c.lower():
+            return c
+    for c in columns:
+        if "cost" in c.lower():
+            return c
+    return None
+
+
+def _detect_service_col(columns: list[str]) -> str | None:
+    """Prefer the product/service candidates; accept productname / servicename / service."""
+    col = _match_candidate(columns, SERVICE_COL_CANDIDATES)
+    if col:
+        return col
+    for c in columns:
+        cl = c.lower()
+        if any(k in cl for k in ("productname", "product_code", "servicename")) or cl == "service":
+            return c
+    return None
+
+
+def _detect_date_col(columns: list[str]) -> str | None:
+    """Detect the usage start-date column across slash / underscore / legacy /
+    bare formats, then fall back to any usage-date-like column."""
+    col = _match_candidate(columns, DATE_COL_CANDIDATES)
+    if col:
+        return col
+    for c in columns:
+        if "usagestart" in c.lower():
+            return c
+    for c in columns:
+        if "usagedate" in c.lower():
+            return c
+    return None
+
+
+def _detect_region_col(columns: list[str]) -> str | None:
+    """Detect the region column; legacy CUR has no region so AvailabilityZone is
+    used as the closest fallback (handled via the candidate list)."""
+    col = _match_candidate(columns, REGION_COL_CANDIDATES)
+    if col:
+        return col
+    for c in columns:
+        if "region" in c.lower():
+            return c
+    return None
+
+
+def _detect_account_col(columns: list[str]) -> str | None:
+    """Detect the usage-account-id column across formats. Tries the explicit
+    candidates in order, then falls back to any column containing ``account``."""
+    col = _match_candidate(columns, ACCOUNT_COL_CANDIDATES)
+    if col:
+        return col
+    for c in columns:
+        if "account" in c.lower():
+            return c
     return None
 
 
 def _detect_resource_col(columns: list[str]) -> str | None:
-    """Detect the resource-id column across slash / underscore / bare formats by
-    trying the explicit candidates in order, case-insensitively."""
-    lower = {c.lower(): c for c in columns}
-    for cand in RESOURCE_COL_CANDIDATES:
-        if cand.lower() in lower:
-            return lower[cand.lower()]
-    return None
+    """Detect the resource-id column across formats by trying the explicit
+    candidates in order, case-insensitively."""
+    return _match_candidate(columns, RESOURCE_COL_CANDIDATES)
 
 
 # ── Core query functions (migrated from engine.py) ────────────────────────────
@@ -204,13 +252,8 @@ def get_cost_by_account(csv_text: str) -> list[dict]:
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
-        if not cost_col:
-            return []
-        if "line_item_usage_account_id" in cols:
-            acct_col = "line_item_usage_account_id"
-        elif "bill_payer_account_id" in cols:
-            acct_col = "bill_payer_account_id"
-        else:
+        acct_col = _detect_account_col(cols)
+        if not cost_col or not acct_col:
             return []
         name_col = "line_item_usage_account_name" if "line_item_usage_account_name" in cols else None
         if name_col:
