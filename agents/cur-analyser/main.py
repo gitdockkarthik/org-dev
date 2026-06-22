@@ -145,6 +145,21 @@ async def _init_config() -> None:
     else:
         logger.info("_init_config: no reports found in DB")
 
+    # ── Data-source registry (pluggable CUR/inventory sources) ──────────────
+    try:
+        from storage import init_storage
+        from tools.data_sources.registry import init_registry
+
+        storage = init_storage(settings.agent_slug)
+        registry = await init_registry(storage)
+        logger.info(
+            "_init_config: data-source registry ready — %d CUR source(s), inventory=%s",
+            len(registry.list_cur()),
+            registry.get_inventory() is not None,
+        )
+    except Exception:
+        logger.exception("_init_config: data-source registry init failed (agent still starts)")
+
 
 async def _sync_loop() -> None:
     """Background task: placeholder for future scheduled CUR source sync."""
