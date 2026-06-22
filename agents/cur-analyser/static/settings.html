@@ -1002,6 +1002,10 @@
       }
 
       async function loadDataSources() {
+        // Wait for the portal API-key bootstrap before issuing authenticated
+        // proxy calls — otherwise the request races ahead of _authHeaders() and
+        // the proxy rejects it with 403 (same pattern loadSettings() uses).
+        await portalReady;
         try {
           const res = await fetch(`${PROXY}/data-sources/status`, { headers: authHeaders() });
           if (!res.ok) throw new Error('HTTP ' + res.status);
