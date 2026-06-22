@@ -702,11 +702,11 @@
       }
       return '';
     }
-    const COST_FIELDS       = ['line_item_unblended_cost','unblended_cost','UnBlendedCost','line_item_blended_cost','BlendedCost'];
-    const ACCOUNT_FIELDS    = ['line_item_usage_account_name','line_item_usage_account_id','LinkedAccountId','UsageAccountId','account_id','PayerAccountId'];
-    const SERVICE_FIELDS    = ['line_item_product_code','productname','ProductName','product_name'];
+    const COST_FIELDS       = ['line_item_unblended_cost','line_item_UnblendedCost','unblended_cost','UnBlendedCost','line_item_blended_cost','line_item_BlendedCost','BlendedCost'];
+    const ACCOUNT_FIELDS    = ['line_item_usage_account_name','line_item_usage_account_id','line_item_UsageAccountId','LinkedAccountId','UsageAccountId','account_id','PayerAccountId'];
+    const SERVICE_FIELDS    = ['line_item_product_code','line_item_ProductCode','product_ProductName','productname','ProductName','product_name'];
     const REGION_FIELDS     = ['product_region','region','AvailabilityZone'];
-    const DATE_FIELDS       = ['line_item_usage_start_date','usage_start_date','UsageStartDate'];
+    const DATE_FIELDS       = ['line_item_usage_start_date','line_item_UsageStartDate','usage_start_date','UsageStartDate'];
     // Field priority: the inventory enrichment columns (inv_*) are the source
     // of truth for ownership/context tags — CUR files routinely lack these
     // tags. When inventory is loaded the enriched rows carry inv_* values, so
