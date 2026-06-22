@@ -438,6 +438,11 @@
     // and spellings (Production, prod, Non-Production, Development, …).
     function envCanon(v) {
       const s = String(v || '').toLowerCase().replace(/[^a-z]/g, '');
+      // Inventory (inv_environment) value mappings — these don't share a prefix
+      // with the canonical bucket names, so map them explicitly.
+      if (s === 'customerfacing') return 'prod';
+      if (s === 'internal') return 'dev';
+      if (s === 'performance') return 'staging';
       if (s.startsWith('nonprod') || s.startsWith('nonproduction')) return 'nonprod';
       if (s.startsWith('prod')) return 'prod';
       if (s.startsWith('stag') || s === 'stg' || s === 'uat' || s === 'qa') return 'staging';
