@@ -28,6 +28,18 @@ _DEFAULTS: dict = {
     "min_cost_threshold": 1.00,
 }
 
+# Keys owned by the data-source registry (tools/data_sources/registry.py), stored
+# in the same agent_config table but NOT JSON settings config: `data_source_registry`
+# and `cur_files` are registry JSON, while `inventory_file` / `inventory_file_archive_*`
+# hold base64-encoded XLSX binary. The registry loads these itself; this settings
+# loader must skip them so it never tries to json.loads() the base64 blob.
+_REGISTRY_OWNED_KEYS: set = {"data_source_registry", "cur_files", "inventory_file"}
+
+
+def _is_registry_owned(key: str) -> bool:
+    return key in _REGISTRY_OWNED_KEYS or key.startswith("inventory_file_archive_")
+
+
 # Write-through in-memory cache; populated from DB on startup.
 _config: dict = dict(_DEFAULTS)
 
@@ -81,6 +93,9 @@ async def load_config_from_db() -> dict:
 
         db_cfg: dict = {}
         for r in rows:
+            # Skip registry-owned keys (binary/non-config) — see _is_registry_owned.
+            if _is_registry_owned(r.key):
+                continue
             secret = is_secret_key(r.key)
             try:
                 raw = decrypt(r.value) if secret else r.value
