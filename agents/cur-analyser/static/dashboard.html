@@ -1432,7 +1432,8 @@
           <div class="section-title" style="color:var(--accent)">🤖 AI Tagging Recommendations</div>
           <div style="font-size:.86rem;color:var(--text-muted);margin-bottom:8px">Based on tag coverage analysis, the following improvements are recommended:</div>
           <ul class="signal-list">${recs}</ul>
-        </div>`;
+        </div>
+        <div id="invEnrichPanel"></div>`;
 
       const bar = (id, data) => hbar(id, id, (data || []).map(t => t.tag_value), (data || []).map(t => t.cost),
         (data || []).map((_, i) => PALETTE[i % PALETTE.length]));
@@ -1440,6 +1441,91 @@
       bar('tagTeamChart', DASH.tag_team_breakdown);
       bar('tagCustChart', DASH.tag_customer_breakdown);
       bar('tagCCChart', DASH.tag_costcentre_breakdown);
+      renderInvEnrichment();
+    }
+
+    // ── Inventory Enrichment (renders only when inventory is loaded) ──────────
+    async function renderInvEnrichment() {
+      const el = document.getElementById('invEnrichPanel');
+      if (!el) return;
+      if (!_invActive) { el.innerHTML = ''; return; }
+      let c;
+      try { c = await api('/data-sources/inventory/coverage'); }
+      catch (e) { el.innerHTML = ''; return; }
+      if (!c || !c.active) { el.innerHTML = ''; return; }
+
+      if (!c.joinable) {
+        el.innerHTML = `<div class="panel-card" style="border-color:var(--accent)">
+          <div class="section-title" style="color:var(--accent)">🧩 Inventory Enrichment</div>
+          <div style="color:var(--text-muted);font-size:.86rem">${escapeHtml(c.reason || 'CUR data cannot be joined to inventory yet.')}</div>
+        </div>`;
+        return;
+      }
+
+      const spend = c.spend_match_rate_pct || 0;
+      const scol = covColor(spend);
+      const matchedN = c.matched_count || 0;
+      const totalN = matchedN + (c.unmatched_count || 0);
+
+      const ba = c.before_after || {};
+      const baRows = Object.keys(ba).map(k => {
+        const b = ba[k];
+        return `<tr><td style="font-weight:600">${escapeHtml(k.replace(/_/g, ' '))}</td>
+          <td>${fmtPct(b.before_pct)}</td>
+          <td>${fmtPct(b.after_pct)}</td>
+          <td style="color:var(--success);font-weight:600">+${fmtPct(b.improvement_pct)}</td></tr>`;
+      }).join('') || emptyTable(4, 'No comparison available');
+
+      const psRows = (c.per_service || []).map(s => `<tr>
+          <td style="font-weight:600">${escapeHtml(s.service)}</td>
+          <td style="text-align:right">${fmtNum(s.in_cur)}</td>
+          <td style="text-align:right">${fmtNum(s.matched)}</td>
+          <td style="text-align:right">${fmtNum(s.unmatched)}</td>
+          <td>${fmtPct(s.match_rate_pct)}</td></tr>`).join('') || emptyTable(5, 'No services');
+
+      const umRows = (c.unmatched_top || []).map(u => `<tr>
+          <td style="font-family:monospace;font-size:.78rem">${escapeHtml(u.resource_id)}</td>
+          <td>${escapeHtml(u.service || '—')}</td>
+          <td style="color:var(--accent);font-weight:600">${fmtUSD(u.cost)}</td>
+          <td style="color:var(--text-muted)">${escapeHtml(u.reason)}</td></tr>`).join('')
+          || emptyTable(4, 'All resources matched 🎉');
+
+      el.innerHTML = `
+        <div class="panel-card" style="border-color:var(--accent)">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+            <div class="section-title" style="margin:0;color:var(--accent)">🧩 Inventory Enrichment</div>
+            <div class="stat-badge" style="background:${scol}18;border-color:${scol}44">
+              <span class="stat-badge__v" style="color:${scol}">${fmtPct(spend)}</span>
+              <span class="stat-badge__l">of spend matched</span>
+            </div>
+          </div>
+          <div class="cov-row">
+            <div class="cov-row__name">Spend matched</div>
+            <div class="progress-bar"><div class="progress-bar__fill" style="width:${spend}%;background:${scol}"></div></div>
+            <div style="color:${scol};font-weight:700">${fmtPct(spend)}</div>
+            <div class="cov-row__cost" style="color:var(--text-muted);font-size:.8rem">${fmtNum(matchedN)} / ${fmtNum(totalN)} resources</div>
+          </div>
+          <div style="margin-top:16px">
+            <div class="chart-card__title">Tag coverage — with vs without inventory</div>
+            <div class="data-table-wrap" style="margin-top:8px"><table class="data-table">
+              <thead><tr><th>Attribute</th><th>Without inventory</th><th>With inventory</th><th>Improvement</th></tr></thead>
+              <tbody>${baRows}</tbody></table></div>
+          </div>
+        </div>
+        <div class="chart-grid chart-grid--2">
+          <div class="panel-card">
+            <div class="chart-card__title">Per-service match rate</div>
+            <div class="data-table-wrap" style="margin-top:8px"><table class="data-table">
+              <thead><tr><th>Service</th><th style="text-align:right">In CUR</th><th style="text-align:right">Matched</th><th style="text-align:right">Unmatched</th><th>Match %</th></tr></thead>
+              <tbody>${psRows}</tbody></table></div>
+          </div>
+          <div class="panel-card">
+            <div class="chart-card__title">Top unmatched resources by cost</div>
+            <div class="data-table-wrap" style="margin-top:8px"><table class="data-table">
+              <thead><tr><th>Resource ID</th><th>Service</th><th>Cost</th><th>Reason</th></tr></thead>
+              <tbody>${umRows}</tbody></table></div>
+          </div>
+        </div>`;
     }
 
     // ── TAB 6: Trends ─────────────────────────────────────────────────────────────
