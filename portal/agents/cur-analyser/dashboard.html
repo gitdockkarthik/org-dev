@@ -314,6 +314,12 @@
             <div id="fPricingWrap"></div>
             <div id="fProductWrap"></div>
             <div id="fTeamWrap"></div>
+            <div id="invFilters" style="display:none;align-items:center;gap:8px;flex-wrap:wrap">
+              <span style="font-size:.72rem;font-weight:600;color:var(--accent,#0891b2);text-transform:uppercase">Enriched</span>
+              <div id="fInvApplicationWrap"></div>
+              <div id="fInvBudgetWrap"></div>
+              <div id="fInvCustomerWrap"></div>
+            </div>
           </div>
 
           <!-- Active filter chips -->
@@ -514,6 +520,7 @@
     let _rawRowsMap = {};        // report_id → rows for compare mode
     let _loadProgress = 0;
     let _loadTotal = 0;
+    let _invActive = false;      // inventory enrichment loaded + enabled
     let _activeFilters = {
       dateFrom: null,
       dateTo: null,
@@ -524,14 +531,19 @@
       pricingTerms: [],
       tagProducts: [],
       tagTeams: [],
+      invApplications: [],
+      invBudgetCodes: [],
+      invCustomers: [],
     };
 
     // ── Stream loader ─────────────────────────────────────────
     async function streamReportRows(reportId, onProgress, onComplete) {
-      const res = await fetch(
-        `${PROXY}/reports/${reportId}/stream`,
-        { headers: _authHeaders(), cache: 'no-store' }
-      );
+      // When inventory enrichment is active, stream rows that already carry the
+      // inv_* columns (same NDJSON shape); otherwise use the plain report stream.
+      const rowsUrl = _invActive
+        ? `${PROXY}/data-sources/enriched-rows?report_id=${reportId}`
+        : `${PROXY}/reports/${reportId}/stream`;
+      const res = await fetch(rowsUrl, { headers: _authHeaders(), cache: 'no-store' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       const reader = res.body.getReader();
@@ -582,6 +594,9 @@
         const term = r.pricing_term || '';
         const prod = r.tag_Product || r.tag_product || '';
         const team = r.tag_Team || r.tag_team || '';
+        const invApp = r.inv_application || '';
+        const invBudget = r.inv_budget_code || '';
+        const invCust = r.inv_customer || '';
 
         if (f.dateFrom && date < f.dateFrom) return false;
         if (f.dateTo   && date > f.dateTo)   return false;
@@ -599,6 +614,12 @@
             !f.tagProducts.includes(prod)) return false;
         if (f.tagTeams.length &&
             !f.tagTeams.includes(team)) return false;
+        if (f.invApplications.length &&
+            !f.invApplications.includes(invApp)) return false;
+        if (f.invBudgetCodes.length &&
+            !f.invBudgetCodes.includes(invBudget)) return false;
+        if (f.invCustomers.length &&
+            !f.invCustomers.includes(invCust)) return false;
         return true;
       });
     }
@@ -870,6 +891,9 @@
         f.pricingTerms.length,
         f.tagProducts.length,
         f.tagTeams.length,
+        f.invApplications.length,
+        f.invBudgetCodes.length,
+        f.invCustomers.length,
       ].reduce((a,b)=>a+b,0);
 
       const badge = document.getElementById('filterBadge');
@@ -912,6 +936,9 @@
       addChips(f.pricingTerms, 'pricingTerms', 'Pricing');
       addChips(f.tagProducts,  'tagProducts',  'Product');
       addChips(f.tagTeams,     'tagTeams',     'Team');
+      addChips(f.invApplications, 'invApplications', 'Application');
+      addChips(f.invBudgetCodes,  'invBudgetCodes',  'Budget Code');
+      addChips(f.invCustomers,    'invCustomers',    'Customer');
 
       chips.innerHTML = items.map((item,i) => `
         <span class="filter-chip">
@@ -935,6 +962,7 @@
         dateFrom:null, dateTo:null,
         accounts:[], environments:[], services:[],
         regions:[], pricingTerms:[], tagProducts:[], tagTeams:[],
+        invApplications:[], invBudgetCodes:[], invCustomers:[],
       };
       document.getElementById('fDateFrom').value = '';
       document.getElementById('fDateTo').value = '';
@@ -2476,6 +2504,16 @@ ${JSON.stringify(payload, null, 2)}
     async function init() {
       await portalReady;
       REPORT_ID = getReportIdParam();
+      // Detect inventory enrichment state — reveals the enriched filter group and
+      // switches the row stream to the enriched endpoint. Inert by default.
+      try {
+        const _st = await api('/data-sources/status');
+        _invActive = !!(_st && _st.inventory_loaded && _st.enabled);
+        if (_invActive) {
+          const _invEl = document.getElementById('invFilters');
+          if (_invEl) _invEl.style.display = 'flex';
+        }
+      } catch (_) { _invActive = false; }
       try {
         REPORTS = await api('/reports').catch(() => []);
         const _dashHit = _dashCache[REPORT_ID];
@@ -2574,6 +2612,18 @@ ${JSON.stringify(payload, null, 2)}
               getDistinctValues(rows,
                 r => r.tag_Team || r.tag_team),
               'tagTeams');
+            // Inventory-enriched filters (only populated when inv_* present)
+            if (_invActive) {
+              buildMultiSelect('fInvApplicationWrap', 'Application',
+                getDistinctValues(rows, r => r.inv_application),
+                'invApplications');
+              buildMultiSelect('fInvBudgetWrap', 'Budget Code',
+                getDistinctValues(rows, r => r.inv_budget_code),
+                'invBudgetCodes');
+              buildMultiSelect('fInvCustomerWrap', 'Customer (Enriched)',
+                getDistinctValues(rows, r => r.inv_customer),
+                'invCustomers');
+            }
           }
         ).catch(() => { if (progEl) progEl.style.display = 'none'; });
       } catch (e) {

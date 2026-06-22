@@ -371,6 +371,47 @@ async def ds_inventory_coverage() -> dict:
     return summary
 
 
+@app.get("/data-sources/enriched-rows")
+async def ds_enriched_rows(report_id: int):
+    """Stream a report's rows with ``inv_*`` enrichment columns added, in the
+    same NDJSON format as ``/reports/{id}/stream`` so the dashboard can consume
+    it interchangeably. Falls back to plain rows when enrichment is inactive."""
+    import json as _json
+
+    from report_store import get_report_rows
+    from tools.data_sources.registry import get_registry
+    from tools.duckdb_engine import _detect_account_col
+    from tools.inventory_enricher import build_enricher
+
+    src_rows = get_report_rows(report_id)
+    if src_rows is None:
+        raise HTTPException(status_code=404, detail=f"Report {report_id} not found")
+
+    # Copy so we never mutate the shared report-store rows.
+    rows = [dict(r) for r in src_rows]
+
+    enricher = await build_enricher(get_registry())
+    if enricher.active and rows:
+        cols = list(rows[0].keys())
+        account_col = _detect_account_col(cols)
+        resource_col = "resource_id" if "resource_id" in cols else None
+        if account_col and resource_col:
+            enricher.enrich_query_result(rows, account_col, resource_col)
+
+    async def generate():
+        yield _json.dumps({"total": len(rows)}) + "\n"
+        for i in range(0, len(rows), 50):
+            chunk = rows[i:i + 50]
+            yield _json.dumps({"rows": chunk, "offset": i, "count": len(chunk)}) + "\n"
+            await asyncio.sleep(0)
+
+    return StreamingResponse(
+        generate(),
+        media_type="application/x-ndjson",
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
+    )
+
+
 @app.delete("/data-sources/cur/{source_id}")
 async def ds_delete_cur(source_id: str) -> dict:
     reg = _require_registry()
