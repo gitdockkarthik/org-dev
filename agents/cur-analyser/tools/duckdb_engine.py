@@ -76,13 +76,16 @@ def _detect_region_col(columns: list[str]) -> str | None:
 # the slash format (lineItem/...); normalised exports use underscores; synthetic
 # / test data uses the bare names. Tried in order, case-insensitively.
 ACCOUNT_COL_CANDIDATES = [
-    "lineItem/UsageAccountId",      # real AWS CUR
+    "lineItem/UsageAccountId",      # real AWS CUR (current format)
     "line_item_usage_account_id",   # normalised format
+    "LinkedAccountId",              # legacy CUR (per-resource / usage account)
     "account_id",                   # synthetic / test data
+    "PayerAccountId",               # legacy CUR payer (master) — lowest priority
 ]
 RESOURCE_COL_CANDIDATES = [
-    "lineItem/ResourceId",          # real AWS CUR
+    "lineItem/ResourceId",          # real AWS CUR (current format)
     "line_item_resource_id",        # normalised format
+    "ResourceId",                   # legacy CUR (no lineItem/ prefix)
     "resource_id",                  # synthetic / test data
 ]
 
@@ -663,12 +666,15 @@ def get_enrichment_summary(csv_text: str, enricher) -> dict:
         cost_col = _detect_cost_col(cols)
         account_col = _detect_account_col(cols)
         resource_col = _detect_resource_col(cols)
-        if not account_col or not resource_col:
+        if not account_col:
             return {
                 "active": True,
                 "joinable": False,
-                "reason": "CUR data lacks account_id and/or resource_id columns",
+                "reason": "CUR data lacks an account id column",
             }
+        # No resource column => account-level enrichment fallback. The match
+        # rate then reflects account-level coverage, not resource-level.
+        enrichment_level = "resource" if resource_col else "account"
 
         stats = enricher.get_match_stats()
         matched_mask = getattr(enricher, "_last_matched", [])
@@ -746,6 +752,7 @@ def get_enrichment_summary(csv_text: str, enricher) -> dict:
         return {
             "active": True,
             "joinable": True,
+            "enrichment_level": enrichment_level,
             "matched_count": stats["matched_count"],
             "unmatched_count": stats["unmatched_count"],
             "match_rate_pct": stats["match_rate_pct"],

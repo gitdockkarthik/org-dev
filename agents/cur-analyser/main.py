@@ -414,7 +414,9 @@ async def ds_enriched_rows(report_id: int):
         cols = list(rows[0].keys())
         account_col = _detect_account_col(cols)
         resource_col = _detect_resource_col(cols)
-        if account_col and resource_col:
+        # resource_col may be None (legacy CUR without a resource id) — the
+        # enricher then falls back to account-level enrichment.
+        if account_col:
             enricher.enrich_query_result(rows, account_col, resource_col)
 
     async def generate():

@@ -17,6 +17,7 @@ first, then used to classify *why* a row failed to match.
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -85,9 +86,23 @@ class InventoryEnricher:
         # resource_key -> set of accounts that contain it (for mismatch detection)
         self._by_resource: dict[str, set[str]] = {}
         self._accounts: set[str] = set()
-        for (acct, res), _entry in self._lookup.items():
+        # Per-account aggregated attributes for the account-level enrichment
+        # fallback (used when the CUR has no resource id column). For each
+        # account we keep the most common non-empty value of each inventory
+        # field across that account's resources.
+        _acct_field_counts: dict[str, dict[str, Counter]] = {}
+        for (acct, res), entry in self._lookup.items():
             self._by_resource.setdefault(res, set()).add(acct)
             self._accounts.add(acct)
+            field_counts = _acct_field_counts.setdefault(acct, {})
+            for field, val in entry.items():
+                if field.startswith("_") or val in (None, ""):
+                    continue
+                field_counts.setdefault(field, Counter())[str(val)] += 1
+        self._account_lookup: dict[str, dict[str, Any]] = {
+            acct: {field: counts.most_common(1)[0][0] for field, counts in fields.items()}
+            for acct, fields in _acct_field_counts.items()
+        }
         self._reset_stats()
 
     @property
@@ -136,6 +151,18 @@ class InventoryEnricher:
 
         return (None, REASON_NOT_IN_INVENTORY)
 
+    def match_account(self, account: str) -> tuple[Optional[dict[str, Any]], str]:
+        """Account-level match using only the account id — the fallback when the
+        CUR has no resource id column. Returns the account's aggregated
+        inventory attributes (e.g. Customer) or ``None``."""
+        if not self.active:
+            return (None, REASON_NOT_IN_INVENTORY)
+        account = str(account or "").strip()
+        entry = self._account_lookup.get(account)
+        if entry is not None:
+            return (entry, REASON_MATCHED)
+        return (None, REASON_NOT_IN_INVENTORY)
+
     # ── DataFrame enrichment ───────────────────────────────────────────────────
 
     def enrich_dataframe(self, df, *, account_col: Optional[str] = None,
@@ -154,7 +181,7 @@ class InventoryEnricher:
             account_col = account_col or self._detect_account_col(cols)
             resource_col = resource_col or self._detect_resource_col(cols)
             service_col = service_col or self._detect_service_col(cols)
-            if not account_col or not resource_col:
+            if not account_col:
                 try:
                     from tools.duckdb_engine import (
                         ACCOUNT_COL_CANDIDATES,
@@ -164,25 +191,39 @@ class InventoryEnricher:
                 except Exception:
                     acct_cands, res_cands = [], []
                 logger.warning(
-                    "InventoryEnricher: cannot enrich — account_id column %s, "
-                    "resource_id column %s. Tried account candidates %s and "
+                    "InventoryEnricher: cannot enrich — no account id column found "
+                    "(resource_id column %s). Tried account candidates %s and "
                     "resource candidates %s against CUR columns %s.",
-                    f"found ('{account_col}')" if account_col else "NOT FOUND",
                     f"found ('{resource_col}')" if resource_col else "NOT FOUND",
                     acct_cands, res_cands, cols,
                 )
                 return df
 
+            # When the CUR has no resource id column, fall back to account-level
+            # enrichment: match on account id alone and apply that account's
+            # inventory attributes (e.g. Customer) to every row from it.
+            account_only = resource_col is None
+            if account_only:
+                logger.warning(
+                    "InventoryEnricher: No resource column found — applying "
+                    "account-level enrichment only for %d accounts",
+                    df[account_col].astype(str).nunique(),
+                )
+
             self._reset_stats()
             # Build inv_* column values row-by-row.
             inv_values: dict[str, list] = {c: [] for c in INV_COLUMNS}
             accounts = df[account_col].astype(str).tolist()
-            resources = df[resource_col].astype(str).tolist()
+            resources = (
+                df[resource_col].astype(str).tolist() if resource_col else [""] * len(df)
+            )
             services = (
                 df[service_col].astype(str).tolist() if service_col else [""] * len(df)
             )
             for acct, res, svc in zip(accounts, resources, services):
-                entry, reason = self.match(acct, res)
+                entry, reason = (
+                    self.match_account(acct) if account_only else self.match(acct, res)
+                )
                 svc_stats = self._per_service.setdefault(
                     svc, {"in_cur": 0, "matched": 0, "unmatched": 0}
                 )
@@ -203,8 +244,9 @@ class InventoryEnricher:
             for col in INV_COLUMNS:
                 df[col] = inv_values[col]
             logger.info(
-                "InventoryEnricher: enriched %d rows (matched=%d, unmatched=%d)",
+                "InventoryEnricher: enriched %d rows (matched=%d, unmatched=%d, level=%s)",
                 len(df), self._matched, self._unmatched,
+                "account" if account_only else "resource",
             )
             return df
         except Exception:
@@ -214,15 +256,23 @@ class InventoryEnricher:
     # ── Query-result enrichment ────────────────────────────────────────────────
 
     def enrich_query_result(self, rows: list[dict], account_col: str,
-                            resource_col: str) -> list[dict]:
-        """Enrich a list of query-result dicts in place, adding ``inv_*`` keys."""
+                            resource_col: Optional[str] = None) -> list[dict]:
+        """Enrich a list of query-result dicts in place, adding ``inv_*`` keys.
+
+        When ``resource_col`` is ``None`` (the CUR has no resource id column),
+        falls back to account-level enrichment — matching on account id alone.
+        """
         if not self.active:
             return rows
+        account_only = resource_col is None
         self._reset_stats()
         for row in rows:
             acct = str(row.get(account_col, ""))
-            res = str(row.get(resource_col, ""))
-            entry, _reason = self.match(acct, res)
+            if account_only:
+                entry, _reason = self.match_account(acct)
+            else:
+                res = str(row.get(resource_col, ""))
+                entry, _reason = self.match(acct, res)
             if entry is not None:
                 self._matched += 1
                 for col, field in INV_FIELD_MAP.items():
