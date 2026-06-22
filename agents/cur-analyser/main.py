@@ -216,7 +216,7 @@ async def health() -> dict[str, str]:
 # ── Data-source abstraction endpoints ───────────────────────────────────────────
 # Additive only — none of these modify the existing /reports or /dashboard routes.
 
-_MAX_CUR_BYTES = 100 * 1024 * 1024       # 100 MB (matches /reports/upload)
+_MAX_CUR_BYTES = 2048 * 1024 * 1024      # 2 GB (large CUR exports; matches /reports/upload)
 _MAX_INVENTORY_BYTES = 12 * 1024 * 1024  # ~12 MB (10 MB inventory + headroom)
 
 
@@ -255,7 +255,7 @@ async def ds_cur_upload(file: UploadFile) -> dict:
     reg = _require_registry()
     raw = await file.read()
     if len(raw) > _MAX_CUR_BYTES:
-        raise HTTPException(status_code=413, detail="File too large (max 100 MB)")
+        raise HTTPException(status_code=413, detail="File too large (max 2 GB)")
 
     try:
         csv_text, resolved = cur_bytes_to_csv(file.filename or "", raw)

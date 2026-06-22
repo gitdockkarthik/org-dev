@@ -243,11 +243,11 @@ async def upload_report(file: UploadFile) -> dict:
     filename = file.filename or ""
     fname_lower = filename.lower()
 
-    # File size check — 100MB limit (increased from 50MB for parquet)
+    # File size check — 2GB limit (large CUR exports)
     raw = await file.read()
-    if len(raw) > 100 * 1024 * 1024:
+    if len(raw) > 2048 * 1024 * 1024:
         raise HTTPException(status_code=413,
-            detail="File too large (max 100 MB)")
+            detail="File too large (max 2 GB)")
 
     # ── CSV ──────────────────────────────────────────────────────
     if fname_lower.endswith(".csv"):
