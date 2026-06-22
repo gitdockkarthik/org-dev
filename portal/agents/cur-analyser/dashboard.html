@@ -738,6 +738,26 @@
       return [...new Set(rows.map(keyFn).filter(Boolean))].sort();
     }
 
+    // Populate inventory-enriched (inv_*) filter dropdowns from the lightweight
+    // distinct-values endpoint instead of scanning the full streamed row set.
+    async function populateEnrichedFilters(reportId) {
+      if (!_invActive || reportId == null) return;
+      try {
+        const res = await fetch(
+          `${PROXY}/data-sources/enriched-values?report_id=${reportId}`,
+          { headers: _authHeaders(), cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        const v = (data && data.values) || {};
+        buildMultiSelect('fInvApplicationWrap', 'Application',
+          v.inv_application || [], 'invApplications');
+        buildMultiSelect('fInvBudgetWrap', 'Budget Code',
+          v.inv_budget_code || [], 'invBudgetCodes');
+        buildMultiSelect('fInvCustomerWrap', 'Customer (Enriched)',
+          v.inv_customer || [], 'invCustomers');
+      } catch (_) {}
+    }
+
     // ── Filter bar UI + filtering ─────────────────────────────
     let _filterBarOpen = false;
     let _currentFilename = null;   // active report filename for the info bar
@@ -2698,17 +2718,10 @@ ${JSON.stringify(payload, null, 2)}
               getDistinctValues(rows,
                 r => r.tag_Team || r.tag_team),
               'tagTeams');
-            // Inventory-enriched filters (only populated when inv_* present)
+            // Inventory-enriched filters: populated from the lightweight
+            // distinct-values endpoint (avoids scanning all streamed rows).
             if (_invActive) {
-              buildMultiSelect('fInvApplicationWrap', 'Application',
-                getDistinctValues(rows, r => r.inv_application),
-                'invApplications');
-              buildMultiSelect('fInvBudgetWrap', 'Budget Code',
-                getDistinctValues(rows, r => r.inv_budget_code),
-                'invBudgetCodes');
-              buildMultiSelect('fInvCustomerWrap', 'Customer (Enriched)',
-                getDistinctValues(rows, r => r.inv_customer),
-                'invCustomers');
+              populateEnrichedFilters(currentReportId);
             }
           }
         ).catch(() => { if (progEl) progEl.style.display = 'none'; });

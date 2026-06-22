@@ -433,6 +433,44 @@ async def ds_enriched_rows(report_id: int):
     )
 
 
+@app.get("/data-sources/enriched-values")
+async def ds_enriched_values(report_id: int) -> dict:
+    """Distinct values for each ``inv_*`` enrichment field, computed in DuckDB.
+
+    Lets the dashboard populate enriched filter dropdowns without streaming the
+    full (potentially 200k+) row set. Returns ``{"report_id", "values"}`` where
+    ``values`` maps each present ``inv_*`` column to its sorted distinct values
+    (empty ``values`` when enrichment is inactive)."""
+    from report_store import get_report_csv
+    from tools.data_sources.registry import get_registry
+    from tools.duckdb_engine import _load_df
+    from tools.inventory_enricher import INV_COLUMNS, build_enricher
+
+    csv_text = get_report_csv(report_id)
+    if csv_text is None:
+        raise HTTPException(status_code=404, detail=f"Report {report_id} not found")
+
+    values: dict[str, list] = {}
+    enricher = await build_enricher(get_registry())
+    if enricher.active:
+        df, con = _load_df(csv_text, enricher=enricher)
+        try:
+            present = set(df.columns)
+            for inv_col in INV_COLUMNS:
+                if inv_col not in present:
+                    continue
+                rows = con.execute(
+                    f'SELECT DISTINCT "{inv_col}" FROM cur_data '
+                    f"WHERE \"{inv_col}\" IS NOT NULL "
+                    f"AND CAST(\"{inv_col}\" AS VARCHAR) <> '' ORDER BY 1"
+                ).fetchall()
+                values[inv_col] = [str(r[0]) for r in rows]
+        finally:
+            con.close()
+
+    return {"report_id": report_id, "values": values}
+
+
 @app.delete("/data-sources/cur/{source_id}")
 async def ds_delete_cur(source_id: str) -> dict:
     reg = _require_registry()
