@@ -702,15 +702,20 @@
     const SERVICE_FIELDS    = ['line_item_product_code','productname','ProductName','product_name'];
     const REGION_FIELDS     = ['product_region','region','AvailabilityZone'];
     const DATE_FIELDS       = ['line_item_usage_start_date','usage_start_date','UsageStartDate'];
-    // NOTE: streamed rows are normalised by report_store._normalise_key, which
-    // rewrites slash-format tag columns: resourceTags/user:Environment becomes
-    // resource_tags_user:Environment. Both raw and normalised forms are listed
-    // so the accessors work whether reading raw CSV columns or streamed rows.
-    const ENV_FIELDS        = ['tag_Environment','resourceTags/user:Environment','resource_tags_user_Environment'];
-    const PRODUCT_FIELDS    = ['tag_Product','resourceTags/user:Project','resourceTags/user:Product','resource_tags_user_Project','resource_tags_user_Product'];
-    const TEAM_FIELDS       = ['tag_Team','resourceTags/user:Team','resource_tags_user_Team'];
-    const CUSTOMER_FIELDS   = ['tag_Customer','resourceTags/user:Customer','resource_tags_user_Customer'];
-    const COSTCENTRE_FIELDS = ['tag_CostCentre','resourceTags/user:CostCenter','resourceTags/user:CostCentre','resource_tags_user_CostCenter','resource_tags_user_CostCentre'];
+    // Field priority: the inventory enrichment columns (inv_*) are the source
+    // of truth for ownership/context tags — CUR files routinely lack these
+    // tags. When inventory is loaded the enriched rows carry inv_* values, so
+    // those are listed FIRST and win; the raw/normalised CUR tag columns are
+    // the fallback (resourceTags/user:Environment, and its normalised
+    // resource_tags_user_Environment form). _firstField returns the first
+    // non-empty, so this gives per-row "inv_* primary, CUR fallback" semantics,
+    // and reduces to CUR-only when no inventory is loaded.
+    // EXCEPTION: Team keeps the CUR tag as primary with inv_managed_by fallback.
+    const ENV_FIELDS        = ['inv_environment','tag_Environment','resourceTags/user:Environment','resource_tags_user_Environment'];
+    const PRODUCT_FIELDS    = ['inv_application','tag_Product','resourceTags/user:Project','resourceTags/user:Product','resource_tags_user_Project','resource_tags_user_Product'];
+    const TEAM_FIELDS       = ['tag_Team','resourceTags/user:Team','resource_tags_user_Team','inv_managed_by'];
+    const CUSTOMER_FIELDS   = ['inv_customer','tag_Customer','resourceTags/user:Customer','resource_tags_user_Customer'];
+    const COSTCENTRE_FIELDS = ['inv_budget_code','tag_CostCentre','resourceTags/user:CostCenter','resourceTags/user:CostCentre','resource_tags_user_CostCenter','resource_tags_user_CostCentre'];
     function regionPrefix(v) {
       const s = String(v || '');
       const m = s.match(/^([a-z]{2}-[a-z]+-\d+)[a-z]$/);  // us-east-1a -> us-east-1
@@ -820,6 +825,46 @@
         pricing_term_breakdown: byPricing,
         daily_trend,
         monthly_trend,
+      };
+    }
+
+    // Inventory-attribute tag coverage — shown in place of CUR tag coverage
+    // when inventory is loaded. Per-attribute coverage comes from the inv_*
+    // columns (Customer, Application, Budget Code, Environment, Grade, Layer);
+    // overall coverage is the % of SPEND with inv_customer populated. Shape
+    // matches the backend untagged_resources payload so renderTags consumes it
+    // unchanged.
+    function computeInvTagCoverage(rows) {
+      const attrs = [
+        ['Customer', 'inv_customer'],
+        ['Application', 'inv_application'],
+        ['Budget Code', 'inv_budget_code'],
+        ['Environment', 'inv_environment'],
+        ['Grade', 'inv_grade'],
+        ['Layer', 'inv_layer'],
+      ];
+      const total = rows.length;
+      const totalCost = rows.reduce((s, r) => s + getCostCol(r), 0);
+      const nonblank = v => v !== undefined && v !== null && String(v).trim() !== '';
+      const tag_coverage = attrs.map(([label, col]) => {
+        let populated = 0, untaggedCost = 0;
+        for (const r of rows) {
+          if (nonblank(r[col])) populated++;
+          else untaggedCost += getCostCol(r);
+        }
+        return {
+          tag: label,
+          coverage_pct: total ? Math.round((populated / total) * 1000) / 10 : 0,
+          untagged_count: total - populated,
+          untagged_cost: Math.round(untaggedCost * 100) / 100,
+        };
+      });
+      let custSpend = 0;
+      for (const r of rows) if (nonblank(r.inv_customer)) custSpend += getCostCol(r);
+      return {
+        total_rows: total,
+        tag_coverage,
+        overall_coverage_pct: totalCost ? Math.round((custSpend / totalCost) * 1000) / 10 : 0,
       };
     }
 
@@ -1155,6 +1200,8 @@
         const computed = computeFromRows(filtered);
         if (computed) {
           DASH = { ...DASH, ...computed };
+          // Keep inventory tag coverage in sync with the filtered view.
+          if (_invActive) DASH.untagged_resources = computeInvTagCoverage(filtered);
           Object.keys(charts).forEach(k => destroyChart(k));
           document.querySelectorAll('.tab-panel').forEach(p => {
             if (!p.id.includes('insights')) p.innerHTML = '';
@@ -2869,6 +2916,22 @@ ${JSON.stringify(payload, null, 2)}
               console.log('[cur-analyser] streamed tag-like columns:', tagCols);
               console.log('[cur-analyser] streamed distinct env values:',
                 [...new Set(rows.map(fEnv).filter(Boolean))].slice(0, 50));
+            }
+            // Inventory enrichment is the source of truth for ownership/context
+            // tags. When active, recompute ONLY the environment + tag breakdowns
+            // and tag coverage from the enriched rows (inv_* primary, CUR tag
+            // fallback via the field-list ordering). Service / account / region /
+            // trends dims are left exactly as the backend computed them.
+            if (_invActive && rows.length) {
+              const _c = computeFromRows(rows);
+              if (_c) {
+                DASH.environment_breakdown    = _c.environment_breakdown;
+                DASH.tag_customer_breakdown   = _c.tag_customer_breakdown;
+                DASH.tag_team_breakdown       = _c.tag_team_breakdown;
+                DASH.tag_product_breakdown    = _c.tag_product_breakdown;
+                DASH.tag_costcentre_breakdown = _c.tag_costcentre_breakdown;
+              }
+              DASH.untagged_resources = computeInvTagCoverage(rows);
             }
             // Re-render active row-dependent tab if ROWS arrived after tab was clicked
             const _streamActiveTab = document.querySelector('.tab-btn--active')?.dataset.tab;
