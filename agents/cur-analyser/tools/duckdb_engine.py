@@ -6,6 +6,7 @@ the per-session CUR cache populated by main.py.
 """
 import io
 import json
+import logging
 import re
 from typing import Any, ClassVar, Literal
 
@@ -13,6 +14,8 @@ import duckdb
 import pandas as pd
 
 from tools.base import ToolExecutor
+
+logger = logging.getLogger(__name__)
 
 # ── Column detection helpers ──────────────────────────────────────────────────
 
@@ -169,10 +172,13 @@ def _detect_resource_col(columns: list[str]) -> str | None:
 TAG_COL_PREFIXES = ["tag_", "resourceTags/user:"]
 
 # Display-name aliases so a requested tag resolves across naming variants
-# (e.g. synthetic "CostCentre" vs real CUR "CostCenter").
+# (e.g. synthetic "CostCentre" vs real CUR "CostCenter", or synthetic
+# "Product" vs real CUR "Project" — same logical "application" dimension).
 _TAG_DISPLAY_ALIASES = {
     "costcentre": {"costcentre", "costcenter"},
     "costcenter": {"costcentre", "costcenter"},
+    "product": {"product", "project"},
+    "project": {"product", "project"},
 }
 
 
@@ -545,6 +551,7 @@ def get_cost_by_tag(csv_text: str, tag_col: str) -> list[dict]:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
         actual_tag = _resolve_tag_col(df, tag_col)
+        logger.info("get_cost_by_tag: requested %r -> resolved %r", tag_col, actual_tag)
         if not cost_col or not actual_tag:
             return []
         total = float(con.execute(f'SELECT SUM("{cost_col}") FROM cur_data').fetchone()[0] or 0)
@@ -576,8 +583,10 @@ def get_untagged_resources(csv_text: str) -> dict:
         cost_col = _detect_cost_col(cols)
         total_rows = len(df)
         # Detect tag columns across tag_ and resourceTags/user: prefixes.
+        tag_cols = detect_tag_columns(df)
+        logger.info("get_untagged_resources: detected tag columns %s", tag_cols)
         coverage = []
-        for tag in detect_tag_columns(df).values():
+        for tag in tag_cols.values():
             untagged_count = int(con.execute(
                 f"SELECT COUNT(*) FROM cur_data "
                 f"WHERE \"{tag}\" IS NULL OR CAST(\"{tag}\" AS VARCHAR) = ''"

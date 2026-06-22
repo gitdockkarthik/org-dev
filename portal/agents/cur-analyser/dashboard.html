@@ -433,6 +433,17 @@
     function escapeHtml(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
     function covColor(pct) { return pct > 80 ? 'var(--success)' : pct >= 50 ? '#d97706' : 'var(--danger)'; }
     function envColor(env) { return ENV_COLOR[env] || '#8b5cf6'; }
+    // Map a raw environment tag value onto one of the canonical buckets the
+    // KPI cards expect (prod/staging/nonprod/dev). Real CUR uses varied casing
+    // and spellings (Production, prod, Non-Production, Development, …).
+    function envCanon(v) {
+      const s = String(v || '').toLowerCase().replace(/[^a-z]/g, '');
+      if (s.startsWith('nonprod') || s.startsWith('nonproduction')) return 'nonprod';
+      if (s.startsWith('prod')) return 'prod';
+      if (s.startsWith('stag') || s === 'stg' || s === 'uat' || s === 'qa') return 'staging';
+      if (s.startsWith('dev')) return 'dev';
+      return s;
+    }
     function emptyTable(cols, msg) { return `<tr><td colspan="${cols}" class="data-table__empty">${msg}</td></tr>`; }
 
     function dateRange() {
@@ -657,11 +668,15 @@
     const SERVICE_FIELDS    = ['line_item_product_code','productname','ProductName','product_name'];
     const REGION_FIELDS     = ['product_region','region','AvailabilityZone'];
     const DATE_FIELDS       = ['line_item_usage_start_date','usage_start_date','UsageStartDate'];
-    const ENV_FIELDS        = ['tag_Environment','tag_environment','resourceTags/user:Environment'];
-    const PRODUCT_FIELDS    = ['tag_Product','tag_product','resourceTags/user:Project','resourceTags/user:Product'];
-    const TEAM_FIELDS       = ['tag_Team','tag_team','resourceTags/user:Team'];
-    const CUSTOMER_FIELDS   = ['tag_Customer','tag_customer','resourceTags/user:Customer'];
-    const COSTCENTRE_FIELDS = ['tag_CostCentre','tag_costcentre','resourceTags/user:CostCenter','resourceTags/user:CostCentre'];
+    // NOTE: streamed rows are normalised by report_store._normalise_key, which
+    // rewrites slash-format tag columns: resourceTags/user:Environment becomes
+    // resource_tags_user:Environment. Both raw and normalised forms are listed
+    // so the accessors work whether reading raw CSV columns or streamed rows.
+    const ENV_FIELDS        = ['tag_Environment','tag_environment','resourceTags/user:Environment','resource_tags_user:Environment'];
+    const PRODUCT_FIELDS    = ['tag_Product','tag_product','resourceTags/user:Project','resourceTags/user:Product','resource_tags_user:Project','resource_tags_user:Product'];
+    const TEAM_FIELDS       = ['tag_Team','tag_team','resourceTags/user:Team','resource_tags_user:Team'];
+    const CUSTOMER_FIELDS   = ['tag_Customer','tag_customer','resourceTags/user:Customer','resource_tags_user:Customer'];
+    const COSTCENTRE_FIELDS = ['tag_CostCentre','tag_costcentre','resourceTags/user:CostCenter','resourceTags/user:CostCentre','resource_tags_user:CostCenter','resource_tags_user:CostCentre'];
     function regionPrefix(v) {
       const s = String(v || '');
       const m = s.match(/^([a-z]{2}-[a-z]+-\d+)[a-z]$/);  // us-east-1a -> us-east-1
@@ -1307,9 +1322,21 @@
       const env = DASH.environment_breakdown || [];
       const total = DASH.total_cost || 0;
 
+      // DEBUG: surface the actual environment values so unexpected spellings
+      // (e.g. "Production" vs "prod") are visible while testing real CUR data.
+      console.log('[cur-analyser] By Environment — distinct values:',
+        env.map(e => ({ value: e.environment, canon: envCanon(e.environment), cost: e.cost })));
+
+      // Aggregate the raw environment values into canonical buckets so the KPI
+      // cards match regardless of casing/spelling in the source data.
+      const envAgg = {};
+      env.forEach(e => {
+        const k = envCanon(e.environment);
+        envAgg[k] = (envAgg[k] || 0) + (e.cost || 0);
+      });
       const kpis = ['prod', 'staging', 'nonprod', 'dev'].map(name => {
-        const e = env.find(x => (x.environment || '').toLowerCase() === name);
-        const cost = e ? e.cost : 0; const pct = e ? e.pct_of_total : 0;
+        const cost = envAgg[name] || 0;
+        const pct = total ? (cost / total) * 100 : 0;
         return `<div class="kpi"><div class="kpi__label"><span class="env-badge" style="background:${envColor(name)}22;color:${envColor(name)}">${name}</span></div>
           <div class="kpi__value" style="font-size:1.25rem">${fmtUSD0(cost)}</div>
           <div class="kpi__sub">${fmtPct(pct)} of total</div></div>`;
@@ -1633,6 +1660,11 @@
       const pricing = DASH.pricing_term_breakdown || [];
       const region = DASH.region_breakdown || [];
       const total = DASH.total_cost || 0;
+
+      // DEBUG: confirm region/pricing breakdowns are arriving from the backend
+      // (region is folded from AvailabilityZone -> region prefix for legacy CUR).
+      console.log('[cur-analyser] Trends — region rows:', region.length,
+        region.map(r => r.region), '| pricing rows:', pricing.length);
 
       // top service per month from mom_comparison (already ordered month, cost desc)
       const topByMonth = {};
@@ -2772,6 +2804,16 @@ ${JSON.stringify(payload, null, 2)}
             ROWS = rows;
             _filteredRows = rows;
             if (progEl) progEl.style.display = 'none';
+            // DEBUG: detected tag columns + distinct environment values in the
+            // actual streamed rows, to diagnose real-CUR column naming.
+            if (rows.length) {
+              const tagCols = Object.keys(rows[0]).filter(k =>
+                k.startsWith('tag_') || k.startsWith('resourceTags/user:') ||
+                k.startsWith('resource_tags_user:'));
+              console.log('[cur-analyser] streamed tag columns:', tagCols);
+              console.log('[cur-analyser] streamed distinct env values:',
+                [...new Set(rows.map(fEnv).filter(Boolean))].slice(0, 50));
+            }
             // Re-render active row-dependent tab if ROWS arrived after tab was clicked
             const _streamActiveTab = document.querySelector('.tab-btn--active')?.dataset.tab;
             const _rowTabs = ['environments','accounts','services','tags','trends'];
