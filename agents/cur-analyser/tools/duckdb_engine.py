@@ -6,6 +6,7 @@ the per-session CUR cache populated by main.py.
 """
 import io
 import json
+import re
 from typing import Any, ClassVar, Literal
 
 import duckdb
@@ -206,6 +207,78 @@ def _resolve_tag_col(df, requested: str) -> str | None:
     return None
 
 
+# ── Service categorisation & region helpers ───────────────────────────────────
+# Keyword rules for CUR formats without a precomputed service_category column
+# (e.g. legacy CUR). Matched case-insensitively against the service name; first
+# matching group wins. Handles both short ("Amazon EC2") and legacy long
+# ("Amazon Elastic Compute Cloud") names.
+_SERVICE_CATEGORY_RULES: list[tuple[tuple[str, ...], str]] = [
+    (("elastic compute", "ec2", "lambda", "elastic container", "ecs", "fargate",
+      "batch", "lightsail", "elastic kubernetes", "eks", "app runner"), "Compute"),
+    (("relational database", "rds", "aurora", "dynamodb", "elasticache",
+      "redshift", "neptune", "documentdb", "memorydb", "timestream"), "Database"),
+    (("simple storage", "s3", "elastic block", "ebs", "glacier", "elastic file",
+      "efs", "fsx", "storage gateway", "backup", "container registry", "ecr"), "Storage"),
+    (("cloudfront", "route 53", "route53", "virtual private cloud", "vpc",
+      "elastic load", "load balancing", "elb", "api gateway", "direct connect",
+      "global accelerator", "transit gateway", "simple notification", "sns",
+      "simple queue", "sqs"), "Network"),
+    (("waf", "secrets manager", "key management", "kms", "guardduty", "shield",
+      "identity and access", "cognito", "certificate manager", "acm", "inspector",
+      "security hub", "macie"), "Security"),
+    (("cloudwatch", "cloudtrail", "x-ray", "xray", "config", "systems manager",
+      "grafana", "prometheus"), "Observability"),
+    (("kinesis", "msk", "managed streaming", "kafka"), "Streaming"),
+    (("opensearch", "elasticsearch", "athena", "glue", "emr", "quicksight",
+      "lake formation", "data pipeline"), "Analytics"),
+]
+
+
+def _categorise_service(service: str) -> str:
+    """Map an AWS service name to a coarse category, tolerant of both short and
+    legacy long names. Returns ``"Other"`` when nothing matches."""
+    s = (service or "").lower()
+    for keywords, category in _SERVICE_CATEGORY_RULES:
+        if any(k in s for k in keywords):
+            return category
+    return "Other"
+
+
+def _region_from_az(value: str) -> str:
+    """Reduce an availability-zone id to its region prefix
+    (``us-east-1a`` -> ``us-east-1``); returns the value unchanged when it is
+    not an AZ (e.g. an actual region)."""
+    v = str(value or "")
+    m = re.match(r"^([a-z]{2}-[a-z]+-\d+)[a-z]$", v)
+    return m.group(1) if m else v
+
+
+def _service_category_from_names(con, cost_col: str, svc_col: str | None) -> list[dict]:
+    """Build the service-category breakdown by mapping service names to
+    categories — for CUR formats lacking a precomputed service_category column.
+    Shape matches get_cost_by_service_category (owner fields blank)."""
+    if not svc_col:
+        return []
+    total = float(con.execute(f'SELECT SUM("{cost_col}") FROM cur_data').fetchone()[0] or 0)
+    rows = con.execute(
+        f'SELECT "{svc_col}", SUM("{cost_col}") AS cost FROM cur_data GROUP BY "{svc_col}"'
+    ).fetchall()
+    cat_totals: dict[str, float] = {}
+    for r in rows:
+        cat = _categorise_service(str(r[0] or ""))
+        cat_totals[cat] = cat_totals.get(cat, 0.0) + float(r[1] or 0)
+    return [
+        {
+            "category": cat,
+            "owner_team": "",
+            "owner_email": "",
+            "cost": round(c, 4),
+            "pct_of_total": round(c / total * 100, 2) if total else 0.0,
+        }
+        for cat, c in sorted(cat_totals.items(), key=lambda kv: kv[1], reverse=True)
+    ]
+
+
 # ── Core query functions (migrated from engine.py) ────────────────────────────
 
 def _load_df(
@@ -284,9 +357,18 @@ def get_cost_by_region(csv_text: str) -> list[dict]:
             return []
         rows = con.execute(
             f'SELECT "{region_col}", SUM("{cost_col}") AS cost '
-            f'FROM cur_data GROUP BY "{region_col}" ORDER BY cost DESC'
+            f'FROM cur_data GROUP BY "{region_col}"'
         ).fetchall()
-        return [{"region": str(r[0]), "cost": round(float(r[1] or 0), 4)} for r in rows]
+        # Fold AZ ids to their region prefix (legacy CUR groups by
+        # AvailabilityZone, e.g. us-east-1a) and re-aggregate.
+        agg: dict[str, float] = {}
+        for r in rows:
+            region = _region_from_az(str(r[0]) if r[0] is not None else "")
+            agg[region] = agg.get(region, 0.0) + float(r[1] or 0)
+        return [
+            {"region": reg, "cost": round(c, 4)}
+            for reg, c in sorted(agg.items(), key=lambda kv: kv[1], reverse=True)
+        ]
     finally:
         con.close()
 
@@ -412,8 +494,11 @@ def get_cost_by_service_category(csv_text: str) -> list[dict]:
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
-        if not cost_col or "service_category" not in cols:
+        if not cost_col:
             return []
+        if "service_category" not in cols:
+            # Legacy CUR has no precomputed category column — derive from name.
+            return _service_category_from_names(con, cost_col, _detect_service_col(cols))
         has_team = "service_owner_team" in cols
         has_email = "service_owner_email" in cols
         group_cols = ['"service_category"']

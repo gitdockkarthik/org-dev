@@ -392,6 +392,25 @@
       'Amazon OpenSearch Service':'Analytics',
     };
 
+    // Keyword categoriser for service names absent from SERVICE_CAT (e.g. legacy
+    // CUR long names like "Amazon Elastic Compute Cloud"). Mirrors the backend
+    // _categorise_service rules.
+    function serviceCategory(name) {
+      const s = String(name || '').toLowerCase();
+      const rules = [
+        [['elastic compute','ec2','lambda','elastic container','ecs','fargate','batch','lightsail','elastic kubernetes','eks','app runner'],'Compute'],
+        [['relational database','rds','aurora','dynamodb','elasticache','redshift','neptune','documentdb','memorydb','timestream'],'Database'],
+        [['simple storage','s3','elastic block','ebs','glacier','elastic file','efs','fsx','storage gateway','backup','container registry','ecr'],'Storage'],
+        [['cloudfront','route 53','route53','virtual private cloud','vpc','elastic load','load balancing','elb','api gateway','direct connect','global accelerator','transit gateway','simple notification','sns','simple queue','sqs'],'Network'],
+        [['waf','secrets manager','key management','kms','guardduty','shield','identity and access','cognito','certificate manager','acm','inspector','security hub','macie'],'Security'],
+        [['cloudwatch','cloudtrail','x-ray','xray','config','systems manager','grafana','prometheus'],'Observability'],
+        [['kinesis','msk','managed streaming','kafka'],'Streaming'],
+        [['opensearch','elasticsearch','athena','glue','emr','quicksight','lake formation','data pipeline'],'Analytics'],
+      ];
+      for (const [keys, c] of rules) { if (keys.some(k => s.includes(k))) return c; }
+      return 'Other';
+    }
+
     const PALETTE = ['#6366f1','#FF6B35','#16a34a','#d97706','#3b82f6','#8b5cf6',
                      '#ec4899','#14b8a6','#f59e0b','#ef4444','#64748b','#0ea5e9'];
     const ENV_COLOR = { prod:'#dc2626', staging:'#d97706', nonprod:'#3b82f6', dev:'#16a34a', Untagged:'#64748b' };
@@ -458,7 +477,7 @@
       const cats = new Set(), envs = new Set(), m = {};
       _filteredRows.forEach(r => {
         const env = rowEnv(r);
-        const cat = (r.service_category || '').trim() || '—';
+        const cat = (r.service_category || serviceCategory(fService(r)) || '—');
         cats.add(cat); envs.add(env);
         m[env] = m[env] || {};
         m[env][cat] = (m[env][cat] || 0) + rowCost(r);
@@ -684,9 +703,7 @@
 
       const byService = aggByKey(rows, fService, 'service');
 
-      const byRegion = aggByKey(rows,
-        r => r.product_region || r.region,
-        'region');
+      const byRegion = aggByKey(rows, fRegion, 'region');
 
       const byAccount = aggByKey(rows, fAccount, 'account_name');
 
@@ -695,7 +712,7 @@
         'environment');
 
       const byCategory = aggByKey(rows,
-        r => r.service_category || '',
+        r => r.service_category || serviceCategory(fService(r)),
         'category').filter(x => x.category);
 
       const byPricing = aggByKey(rows,
@@ -1410,7 +1427,7 @@
     function renderSvcSortBody() {
       const total = DASH.total_cost || 0;
       const rows = (DASH.service_breakdown || []).map(s => ({
-        service: s.service, category: SERVICE_CAT[s.service] || '—', cost: s.cost,
+        service: s.service, category: SERVICE_CAT[s.service] || serviceCategory(s.service), cost: s.cost,
         pct: total ? (s.cost / total) * 100 : 0,
       }));
       const { col, dir } = _svcSort, mul = dir === 'asc' ? 1 : -1;
@@ -1606,6 +1623,15 @@
         <td>${fmtPct(p.pct_of_total)}</td><td style="text-align:right">${fmtNum(p.row_count)}</td></tr>`).join('')
         || emptyTable(4, 'No pricing data');
 
+      // Legacy CUR has no pricing/term column — show a clear note instead of an
+      // empty chart.
+      const pricingPanel = pricing.length
+        ? `<div class="chart-wrap" style="height:240px"><canvas id="priceChart"></canvas></div>
+            <div class="data-table-wrap" style="margin-top:12px"><table class="data-table">
+              <thead><tr><th>Term</th><th>Cost</th><th>% of Total</th><th style="text-align:right">Rows</th></tr></thead>
+              <tbody>${priceRows}</tbody></table></div>`
+        : `<div class="data-table__empty" style="padding:24px">Pricing term data not available in this CUR export format.</div>`;
+
       const regionRows = region.map(r => {
         const pct = total ? (r.cost / total) * 100 : 0;
         return `<tr><td style="font-weight:600">${escapeHtml(r.region)}</td>
@@ -1652,10 +1678,7 @@
         <div class="chart-grid chart-grid--2">
           <div class="panel-card">
             <div class="chart-card__title">Pricing Term Breakdown</div>
-            <div class="chart-wrap" style="height:240px"><canvas id="priceChart"></canvas></div>
-            <div class="data-table-wrap" style="margin-top:12px"><table class="data-table">
-              <thead><tr><th>Term</th><th>Cost</th><th>% of Total</th><th style="text-align:right">Rows</th></tr></thead>
-              <tbody>${priceRows}</tbody></table></div>
+            ${pricingPanel}
           </div>
           <div class="panel-card">
             <div class="chart-card__title">Region Breakdown</div>
@@ -1676,7 +1699,7 @@
           scales: { y: { ticks: { callback: v => '$' + Number(v).toLocaleString() } } } },
       });
 
-      donut('price', 'priceChart', pricing.map(p => p.pricing_term), pricing.map(p => p.cost));
+      if (pricing.length) donut('price', 'priceChart', pricing.map(p => p.pricing_term), pricing.map(p => p.cost));
       hbar('region', 'regionChart', region.map(r => r.region), region.map(r => r.cost),
            region.map((_, i) => PALETTE[i % PALETTE.length]));
     }
