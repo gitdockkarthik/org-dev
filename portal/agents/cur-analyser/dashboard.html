@@ -1094,7 +1094,7 @@
     // request resolving after a newer one and overwriting it).
     let _filterApplyTimer = null;
     let _filterApplySeq = 0;
-    function scheduleFilterApply(delay = 300) {
+    function scheduleFilterApply(delay = 150) {
       clearTimeout(_filterApplyTimer);
       _filterApplyTimer = setTimeout(() => { applyFiltersAndRender(); }, delay);
     }
@@ -1209,8 +1209,10 @@
       updateFilterBadge();
       updateFilterChips();
       // Reset reloads the UNfiltered dashboard immediately; cancel any pending
-      // debounced (filtered) apply so a stale filter can't fire after the reset.
+      // debounced (filtered) apply and reset the sequence guard so it starts
+      // clean (a stale in-flight filter can't fire after the reset).
       clearTimeout(_filterApplyTimer);
+      _filterApplySeq = 0;
       applyFiltersAndRender();
     }
 
@@ -1259,7 +1261,11 @@
       // Guard against out-of-order responses: only the latest request applies.
       const seq = ++_filterApplySeq;
       const progEl = document.getElementById('filterProgress');
+      // Subtle loading indicator on the active tab while the filtered dashboard
+      // loads (reuses the loading-UX tab spinner).
+      const activeBtn = document.querySelector('.tab-btn--active');
       if (progEl) { progEl.style.display = 'inline'; progEl.textContent = 'Applying filters…'; }
+      setTabLoading(activeBtn, true);
       try {
         const data = await api(path);
         if (seq !== _filterApplySeq) return;  // superseded by a newer filter change
@@ -1294,9 +1300,12 @@
       } catch (e) {
         console.warn('filtered dashboard fetch failed:', e);
       } finally {
-        // Only the latest request clears the progress indicator, so a superseded
-        // request can't hide it while a newer one is still loading.
-        if (progEl && seq === _filterApplySeq) progEl.style.display = 'none';
+        // Only the latest request clears the indicators, so a superseded request
+        // can't hide them while a newer one is still loading.
+        if (seq === _filterApplySeq) {
+          if (progEl) progEl.style.display = 'none';
+          setTabLoading(activeBtn, false);
+        }
       }
     }
 
