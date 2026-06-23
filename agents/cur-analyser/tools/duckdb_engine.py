@@ -425,29 +425,13 @@ def _get_cached_df(file_path: str) -> pd.DataFrame | None:
     if entry is not None:
         df, ts = entry
         if time.time() - ts < _DF_CACHE_TTL_SECS:
-            logger.info(
-                "[df-cache] HIT key=%r (cache size=%d, keys=%s)",
-                file_path, len(_df_cache), list(_df_cache.keys()),
-            )
             return df
         _df_cache.pop(file_path, None)
-        logger.info(
-            "[df-cache] EXPIRED key=%r (cache size=%d)", file_path, len(_df_cache),
-        )
-        return None
-    logger.info(
-        "[df-cache] MISS key=%r (cache size=%d, keys=%s)",
-        file_path, len(_df_cache), list(_df_cache.keys()),
-    )
     return None
 
 
 def _cache_df(file_path: str, df: pd.DataFrame) -> None:
     _df_cache[file_path] = (df, time.time())
-    logger.info(
-        "[df-cache] STORED key=%r shape=%s (cache size=%d)",
-        file_path, getattr(df, "shape", None), len(_df_cache),
-    )
 
 
 def invalidate_df_cache(file_path: str | None = None) -> None:
@@ -482,14 +466,6 @@ def _load_df(
     every aggregation that reads ``cur_data`` operates on the filtered subset.
     """
     con = duckdb.connect(database=":memory:")
-    logger.info(
-        "[df-cache] _load_df source=%s file_path=%r csv_text=%s enricher=%s filters=%s",
-        "file_path" if file_path is not None else "csv_text",
-        file_path,
-        (f"{len(csv_text)} chars" if csv_text is not None else None),
-        (enricher is not None),
-        (sorted(filters.keys()) if filters else None),
-    )
     if file_path is not None:
         df = _get_cached_df(file_path)
         if df is None:

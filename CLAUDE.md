@@ -276,7 +276,8 @@ What was built:
   per-side "Not available" instead of blocking everything,
   added Service, Account, Environment, Region, Tag
   Coverage, Pricing Term panels side by side
-- Removed debug df-cache logs (to be done next session)
+- Removed [df-cache] diagnostic logs from
+  duckdb_engine.py and routes_dashboard.py
 
 Performance notes:
 - Server compute: 0.74s (unfiltered), 0.33s (filtered)
@@ -286,7 +287,6 @@ Performance notes:
   serve from in-memory DataFrame
 
 Known gaps for next session:
-- Remove [df-cache] diagnostic logs from duckdb_engine.py
 - Comparison mode: resolve slash-format columns for
   rich-matched-cur-2026.csv left panel
 - Enriched filters (Application, Budget Code, Customer)

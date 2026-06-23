@@ -1,10 +1,7 @@
 """CUR Analyser — dashboard route."""
 from __future__ import annotations
-import logging
 import time
 from fastapi import APIRouter, Query
-
-logger = logging.getLogger(__name__)
 from report_store import (
     get_latest_csv,
     get_latest_meta,
@@ -101,11 +98,6 @@ async def get_dashboard(
             if csv_text is None:
                 return {"empty": True}
 
-    logger.info(
-        "[df-cache] get_dashboard report_id=%s filters=%s -> resolved file_path=%r csv_text=%s",
-        report_id, (sorted(filters.keys()) if filters else []), file_path,
-        (csv_text is not None),
-    )
     dashboard = await compute_dashboard_async(csv_text, file_path=file_path, filters=filters or None)
     report = get_latest_meta() if report_id is None else None
     dashboard["report"] = report
