@@ -588,11 +588,10 @@
 
     // ── Stream loader ─────────────────────────────────────────
     async function streamReportRows(reportId, onProgress, onComplete) {
-      // When inventory enrichment is active, stream rows that already carry the
-      // inv_* columns (same NDJSON shape); otherwise use the plain report stream.
-      const rowsUrl = _invActive
-        ? `${PROXY}/data-sources/enriched-rows?report_id=${reportId}`
-        : `${PROXY}/reports/${reportId}/stream`;
+      // Always stream the plain report rows. Enriched (inv_*) aggregations are
+      // computed server-side via /data-sources/enriched-summary, so the dashboard
+      // never pulls the heavy /data-sources/enriched-rows stream.
+      const rowsUrl = `${PROXY}/reports/${reportId}/stream`;
       const res = await fetch(rowsUrl, { headers: _authHeaders(), cache: 'no-store' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 

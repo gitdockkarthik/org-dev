@@ -473,10 +473,24 @@ async def get_reports() -> list[dict]:
 
 @router.delete("/{report_id}")
 async def delete_report_route(report_id: int) -> dict:
-    """Delete a saved report (in-memory + DB) and invalidate its dashboard cache."""
+    """Delete a saved report (in-memory + DB), drop its data-source registry
+    entry, and invalidate its dashboard cache."""
     removed = await delete_report(report_id)
     if not removed:
         raise HTTPException(status_code=404, detail=f"Report {report_id} not found")
+
+    # Keep the DataSourceRegistry (Settings → CUR Files) in sync — otherwise the
+    # deleted file lingers in the table. Match on extra.report_id rather than the
+    # cur-<id> source_id naming. delete_cur persists the registry on each removal.
+    from tools.data_sources.registry import get_registry
+
+    reg = get_registry()
+    if reg is not None:
+        for meta in reg.list_cur():
+            rid = meta.extra.get("report_id")
+            if rid is not None and int(rid) == report_id:
+                await reg.delete_cur(meta.source_id)
+
     invalidate_dashboard_cache(report_id)
     invalidate_dashboard_cache(None)
     return {"ok": True, "deleted": report_id}
