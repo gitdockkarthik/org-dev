@@ -2510,45 +2510,88 @@ ${JSON.stringify(payload, null, 2)}
           </div>`;
       }
 
-      // Render unavailability notice if any
-      const unavail = cd.unavailable_features.filter(u => !u.available);
-      const unavailHtml = unavail.length ? `
-        <div style="background:var(--amber-bg,#fffbeb);border:1px solid
-                    #fcd34d;border-radius:8px;padding:12px 16px;
-                    margin-bottom:16px;font-size:.82rem;color:#92400e">
-          <strong>⚠️ Partial comparison</strong> — some features are
-          unavailable because not all selected reports contain the
-          required columns:
-          <ul style="margin:6px 0 0 16px">
-            ${unavail.map(u => `
-              <li><strong>${u.feature}</strong> — not available in:
-              ${u.missing_in.join(', ')}</li>
-            `).join('')}
-          </ul>
+      // Advisory notice only — it never blocks panels. Each panel renders the
+      // data each report actually has, with "Not available" shown per side.
+      const unavail = (cd.unavailable_features || []).filter(u => !u.available);
+      const noticeHtml = unavail.length ? `
+        <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;
+                    padding:10px 14px;margin-bottom:16px;font-size:.82rem;color:#1e40af">
+          ℹ️ Some panels show partial data — see details below.
+          <span style="color:var(--text-muted)"> (${
+            unavail.map(u => escapeHtml(u.feature)).join(', ')} not in all reports)</span>
         </div>` : '';
 
-      // Render all comparison sections
+      // A panel renders when AT LEAST ONE report has the data; sides missing it
+      // show "Not available". The backend fills each report's arrays from its own
+      // capabilities, so an empty array means that report lacks the dimension.
+      const anyHave = (key) =>
+        reports.some(r => Array.isArray(r[key]) && r[key].length > 0);
+      const anyTags = reports.some(r =>
+        r.untagged_resources && (r.untagged_resources.tag_coverage || []).length);
+
       const content = document.getElementById('dash-content');
-      content.innerHTML = unavailHtml + `
+      content.innerHTML = noticeHtml + `
         ${renderCompareSummary(reports)}
-        ${compat.has_service ? renderCompareServices(reports) : ''}
-        ${compat.has_date ? renderCompareTrend(reports) : ''}
-        ${compat.has_account ? renderCompareAccounts(reports) : ''}
-        ${compat.has_environment ? renderCompareEnvironments(reports) : ''}
-        ${compat.has_service_category ? renderCompareCategories(reports) : ''}
-        ${compat.has_tags ? renderCompareTags(reports) : ''}
-        ${compat.has_pricing_term ? renderComparePricing(reports) : ''}
-        ${compat.has_region ? renderCompareRegions(reports) : ''}
+        ${anyHave('service_breakdown') ? renderCompareServices(reports) : ''}
+        ${anyHave('monthly_trend') ? renderCompareTrend(reports) : ''}
+        ${anyHave('account_breakdown') ? renderCompareAccounts(reports) : ''}
+        ${anyHave('environment_breakdown') ? renderCompareEnvironments(reports) : ''}
+        ${anyHave('service_category_breakdown') ? renderCompareCategories(reports) : ''}
+        ${anyTags ? renderCompareTags(reports) : ''}
+        ${anyHave('pricing_term_breakdown') ? renderComparePricing(reports) : ''}
+        ${anyHave('region_breakdown') ? renderCompareRegions(reports) : ''}
         ${renderCompareSavings(reports)}
       `;
 
-      // Init all charts
-      initCompareCharts(reports, compat);
+      // Init charts (overlaid trend + category)
+      initCompareCharts(reports);
     }
 
     function fmt$(n) {
       return '$' + Number(n).toLocaleString('en-US',
         {minimumFractionDigits:2,maximumFractionDigits:2});
+    }
+
+    // ── Side-by-side comparison layout helpers ──────────────────────────────
+    // Graceful placeholder for a report that lacks a given dimension.
+    const _naBox = '<div style="color:var(--text-muted);font-size:.82rem;'
+      + 'padding:14px 0;text-align:center">Not available in this report</div>';
+
+    // A panel with a centered title and one column per report (50/50 for two
+    // reports). Report 1 = COLORS[0] (blue), Report 2 = COLORS[1] (orange).
+    // bodyFn(report, index) returns that side's inner HTML.
+    function compareGrid(title, reports, bodyFn, footer) {
+      return `
+        <div class="card" style="margin-bottom:16px">
+          <div style="font-size:.95rem;font-weight:600;text-align:center;
+                      margin-bottom:12px">${title}</div>
+          <div style="display:grid;
+                      grid-template-columns:repeat(${reports.length},minmax(0,1fr));
+                      gap:16px">
+            ${reports.map((r,i) => `
+              <div style="border-top:3px solid ${COLORS[i]};padding-top:10px;
+                          min-width:0">
+                <div title="${escapeHtml(r.filename)}"
+                     style="font-size:.8rem;font-weight:600;color:${COLORS[i]};
+                            margin-bottom:8px;white-space:nowrap;overflow:hidden;
+                            text-overflow:ellipsis">${escapeHtml(r.filename)}</div>
+                ${bodyFn(r, i)}
+              </div>`).join('')}
+          </div>
+          ${footer || ''}
+        </div>`;
+    }
+
+    // rows = [{label, value, mark?}]; value rendered as USD.
+    function _miniTable(rows) {
+      if (!rows.length) return _naBox;
+      return `<table class="data-table" style="width:100%"><tbody>${
+        rows.map(x => `<tr>
+          <td style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+                     max-width:170px" title="${escapeHtml(x.label)}">${
+            escapeHtml(x.label)}${x.mark || ''}</td>
+          <td style="text-align:right;font-weight:600">${fmt$(x.value)}</td>
+        </tr>`).join('')}</tbody></table>`;
     }
 
     function renderCompareSummary(reports) {
@@ -2580,114 +2623,54 @@ ${JSON.stringify(payload, null, 2)}
     }
 
     function renderCompareServices(reports) {
-      // Build unified service list across all reports
-      const allServices = [...new Set(
-        reports.flatMap(r => r.service_breakdown.map(s => s.service))
-      )].slice(0, 15);
-
-      return `
-        <div class="card" style="margin-bottom:16px">
-          <div style="font-size:.95rem;font-weight:600;
-                      margin-bottom:12px">Cost by Service</div>
-          <canvas id="compareServiceChart" height="120"></canvas>
-          <div class="data-table-wrap" style="margin-top:16px">
-            <table class="data-table" style="width:100%">
-              <thead><tr>
-                <th>SERVICE</th>
-                ${reports.map((r,i) => `
-                  <th style="color:${COLORS[i]}">${r.filename}</th>
-                `).join('')}
-              </tr></thead>
-              <tbody>
-                ${allServices.map(svc => `
-                  <tr>
-                    <td>${svc}</td>
-                    ${reports.map(r => {
-                      const s = r.service_breakdown.find(
-                        x => x.service === svc);
-                      return `<td>${s ? fmt$(s.cost) : '—'}</td>`;
-                    }).join('')}
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </div>
-        </div>`;
+      // A service is "unique" when it isn't present in every report → highlight.
+      const sets = reports.map(r =>
+        new Set((r.service_breakdown || []).map(s => s.service)));
+      const isUnique = (svc) => !sets.every(set => set.has(svc));
+      return compareGrid('Cost by Service (Top 10)', reports, (r) => {
+        const items = (r.service_breakdown || []).slice(0, 10);
+        if (!items.length) return _naBox;
+        return _miniTable(items.map(s => ({
+          label: s.service,
+          value: s.cost,
+          mark: isUnique(s.service)
+            ? ' <span title="Not present in all reports" style="color:#f59e0b;font-weight:700">●</span>'
+            : '',
+        })));
+      }, `<div style="text-align:center;font-size:.72rem;color:var(--text-muted);
+            margin-top:8px"><span style="color:#f59e0b">●</span> service not present
+            in all reports</div>`);
     }
 
     function renderCompareTrend(reports) {
+      // Overlaid line chart — one line per report, distinct colour (see
+      // initCompareCharts). Title centred to match the side-by-side panels.
       return `
         <div class="card" style="margin-bottom:16px">
-          <div style="font-size:.95rem;font-weight:600;
+          <div style="font-size:.95rem;font-weight:600;text-align:center;
                       margin-bottom:12px">Monthly Cost Trend</div>
-          <canvas id="compareTrendChart" height="80"></canvas>
+          <canvas id="compareTrendChart" height="90"></canvas>
         </div>`;
     }
 
     function renderCompareAccounts(reports) {
-      const allAccounts = [...new Set(
-        reports.flatMap(r =>
-          r.account_breakdown.map(a => a.account_name || a.account_id))
-      )];
-      return `
-        <div class="card" style="margin-bottom:16px">
-          <div style="font-size:.95rem;font-weight:600;
-                      margin-bottom:12px">Cost by Account</div>
-          <canvas id="compareAccountChart" height="100"></canvas>
-          <div class="data-table-wrap" style="margin-top:16px">
-            <table class="data-table" style="width:100%">
-              <thead><tr>
-                <th>ACCOUNT</th>
-                ${reports.map((r,i) => `
-                  <th style="color:${COLORS[i]}">${r.filename}</th>
-                `).join('')}
-              </tr></thead>
-              <tbody>
-                ${allAccounts.map(acct => `<tr>
-                  <td>${acct}</td>
-                  ${reports.map(r => {
-                    const a = r.account_breakdown.find(
-                      x => (x.account_name||x.account_id) === acct);
-                    return `<td>${a ? fmt$(a.cost) : '—'}</td>`;
-                  }).join('')}
-                </tr>`).join('')}
-              </tbody>
-            </table>
-          </div>
-        </div>`;
+      return compareGrid('Cost by Account', reports, (r) => {
+        const items = (r.account_breakdown || []).slice(0, 10);
+        if (!items.length) return _naBox;
+        return _miniTable(items.map(a => ({
+          label: a.account_name || a.account_id, value: a.cost,
+        })));
+      });
     }
 
     function renderCompareEnvironments(reports) {
-      const allEnvs = [...new Set(
-        reports.flatMap(r =>
-          r.environment_breakdown.map(e => e.environment))
-      )];
-      return `
-        <div class="card" style="margin-bottom:16px">
-          <div style="font-size:.95rem;font-weight:600;
-                      margin-bottom:12px">Cost by Environment</div>
-          <canvas id="compareEnvChart" height="80"></canvas>
-          <div class="data-table-wrap" style="margin-top:16px">
-            <table class="data-table" style="width:100%">
-              <thead><tr>
-                <th>ENVIRONMENT</th>
-                ${reports.map((r,i) => `
-                  <th style="color:${COLORS[i]}">${r.filename}</th>
-                `).join('')}
-              </tr></thead>
-              <tbody>
-                ${allEnvs.map(env => `<tr>
-                  <td>${env}</td>
-                  ${reports.map(r => {
-                    const e = r.environment_breakdown.find(
-                      x => x.environment === env);
-                    return `<td>${e ? fmt$(e.cost) : '—'}</td>`;
-                  }).join('')}
-                </tr>`).join('')}
-              </tbody>
-            </table>
-          </div>
-        </div>`;
+      return compareGrid('Cost by Environment', reports, (r) => {
+        const items = (r.environment_breakdown || []);
+        if (!items.length) return _naBox;
+        return _miniTable(items.map(e => ({
+          label: e.environment, value: e.cost,
+        })));
+      });
     }
 
     function renderCompareCategories(reports) {
@@ -2798,34 +2781,13 @@ ${JSON.stringify(payload, null, 2)}
     }
 
     function renderCompareRegions(reports) {
-      const allRegions = [...new Set(
-        reports.flatMap(r => r.region_breakdown.map(x => x.region))
-      )];
-      return `
-        <div class="card" style="margin-bottom:16px">
-          <div style="font-size:.95rem;font-weight:600;
-                      margin-bottom:12px">Cost by Region</div>
-          <div class="data-table-wrap">
-            <table class="data-table" style="width:100%">
-              <thead><tr>
-                <th>REGION</th>
-                ${reports.map((r,i) => `
-                  <th style="color:${COLORS[i]}">${r.filename}</th>
-                `).join('')}
-              </tr></thead>
-              <tbody>
-                ${allRegions.map(reg => `<tr>
-                  <td>${reg}</td>
-                  ${reports.map(r => {
-                    const x = r.region_breakdown.find(
-                      y => y.region === reg);
-                    return `<td>${x ? fmt$(x.cost) : '—'}</td>`;
-                  }).join('')}
-                </tr>`).join('')}
-              </tbody>
-            </table>
-          </div>
-        </div>`;
+      return compareGrid('Cost by Region', reports, (r) => {
+        const items = (r.region_breakdown || []).slice(0, 10);
+        if (!items.length) return _naBox;
+        return _miniTable(items.map(x => ({
+          label: x.region, value: x.cost,
+        })));
+      });
     }
 
     function renderCompareSavings(reports) {
@@ -2855,38 +2817,15 @@ ${JSON.stringify(payload, null, 2)}
         </div>`;
     }
 
-    function initCompareCharts(reports, compat) {
-      // Service comparison chart
-      if (compat.has_service) {
-        const allSvcs = [...new Set(
-          reports.flatMap(r => r.service_breakdown.map(s => s.service))
-        )].slice(0, 10);
-        const ctx = document.getElementById('compareServiceChart');
-        if (ctx) new Chart(ctx, {
-          type: 'bar',
-          data: {
-            labels: allSvcs,
-            datasets: reports.map((r,i) => ({
-              label: r.filename,
-              data: allSvcs.map(s => {
-                const x = r.service_breakdown.find(y => y.service===s);
-                return x ? x.cost : 0;
-              }),
-              backgroundColor: COLORS[i] + 'cc',
-            })),
-          },
-          options: {
-            responsive: true,
-            plugins: { legend: { position: 'top' } },
-            scales: { x: { stacked: false }, y: { stacked: false } },
-          },
-        });
-      }
+    function initCompareCharts(reports) {
+      const anyHave = (key) =>
+        reports.some(r => Array.isArray(r[key]) && r[key].length > 0);
 
-      // Trend comparison chart
-      if (compat.has_date) {
+      // Overlaid monthly trend — one line per report, distinct colour. Reports
+      // without trend data contribute zeros (their side reads as flat/absent).
+      if (anyHave('monthly_trend')) {
         const allMonths = [...new Set(
-          reports.flatMap(r => r.monthly_trend.map(m => m.month))
+          reports.flatMap(r => (r.monthly_trend || []).map(m => m.month))
         )].sort();
         const ctx = document.getElementById('compareTrendChart');
         if (ctx) new Chart(ctx, {
@@ -2896,7 +2835,7 @@ ${JSON.stringify(payload, null, 2)}
             datasets: reports.map((r,i) => ({
               label: r.filename,
               data: allMonths.map(m => {
-                const x = r.monthly_trend.find(y => y.month===m);
+                const x = (r.monthly_trend || []).find(y => y.month===m);
                 return x ? x.cost : 0;
               }),
               borderColor: COLORS[i],
@@ -2910,63 +2849,11 @@ ${JSON.stringify(payload, null, 2)}
         });
       }
 
-      // Account chart
-      if (compat.has_account) {
-        const allAccts = [...new Set(
-          reports.flatMap(r =>
-            r.account_breakdown.map(a => a.account_name||a.account_id))
-        )];
-        const ctx = document.getElementById('compareAccountChart');
-        if (ctx) new Chart(ctx, {
-          type: 'bar',
-          data: {
-            labels: allAccts,
-            datasets: reports.map((r,i) => ({
-              label: r.filename,
-              data: allAccts.map(acct => {
-                const x = r.account_breakdown.find(
-                  a => (a.account_name||a.account_id)===acct);
-                return x ? x.cost : 0;
-              }),
-              backgroundColor: COLORS[i] + 'cc',
-            })),
-          },
-          options: { responsive: true,
-                     plugins: { legend: { position: 'top' } } },
-        });
-      }
-
-      // Environment chart
-      if (compat.has_environment) {
-        const allEnvs = [...new Set(
-          reports.flatMap(r =>
-            r.environment_breakdown.map(e => e.environment))
-        )];
-        const ctx = document.getElementById('compareEnvChart');
-        if (ctx) new Chart(ctx, {
-          type: 'bar',
-          data: {
-            labels: allEnvs,
-            datasets: reports.map((r,i) => ({
-              label: r.filename,
-              data: allEnvs.map(env => {
-                const x = r.environment_breakdown.find(
-                  e => e.environment===env);
-                return x ? x.cost : 0;
-              }),
-              backgroundColor: COLORS[i] + 'cc',
-            })),
-          },
-          options: { responsive: true,
-                     plugins: { legend: { position: 'top' } } },
-        });
-      }
-
-      // Category chart
-      if (compat.has_service_category) {
+      // Service-category overlaid bar (the panel also lists a table per report).
+      if (anyHave('service_category_breakdown')) {
         const allCats = [...new Set(
           reports.flatMap(r =>
-            r.service_category_breakdown.map(c => c.category))
+            (r.service_category_breakdown || []).map(c => c.category))
         )];
         const ctx = document.getElementById('compareCatChart');
         if (ctx) new Chart(ctx, {
@@ -2976,7 +2863,7 @@ ${JSON.stringify(payload, null, 2)}
             datasets: reports.map((r,i) => ({
               label: r.filename,
               data: allCats.map(cat => {
-                const x = r.service_category_breakdown.find(
+                const x = (r.service_category_breakdown || []).find(
                   c => c.category===cat);
                 return x ? x.cost : 0;
               }),
