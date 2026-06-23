@@ -231,3 +231,26 @@ Known gaps for next session:
 - Data Quality recommendations panel
 
 Commits: ~35 commits on main, all rollbackable
+
+### cur-analyser: Settings & Performance improvements (2026-06-23)
+
+What was built:
+- CUR files grid in Settings with per-file match rate,
+  resizable columns, copy filename, delete button
+- Honest match rate — resource-level only,
+  "Resource ID not in CUR" for legacy format
+- Reports tab repurposed — removed upload/synthetic,
+  added delete button, redirects to Settings
+- Large file handling — file-path pipeline, DuckDB reads
+  directly from disk, persistent Docker volume
+- Server-side pre-aggregation — eliminated 200k row
+  streaming to browser, loading bar gone
+- Registry/report_store sync — single source of truth,
+  startup reconciliation, symmetric delete
+- Loading UX — spinner with progressive messages,
+  per-tab skeleton screens, tab loading indicator
+
+Production notes added to backlog:
+- Storage: EBS volume for /app/data in production
+- Phase 2 S3: DuckDB httpfs for direct S3 reads
+- Rate limiting: max files, storage cap, upload queue
