@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException, UploadFile
+from fastapi import FastAPI, Header, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -362,9 +362,11 @@ async def ds_status() -> dict:
 
 
 @app.get("/data-sources/inventory/coverage")
-async def ds_inventory_coverage() -> dict:
-    """Per-service match rates and cost coverage after enriching the active CUR
-    with the loaded inventory."""
+async def ds_inventory_coverage(report_id: int = Query(default=None)) -> dict:
+    """Per-service match rates and cost coverage after enriching a CUR file with
+    the loaded inventory. Defaults to the active CUR; pass ``report_id`` to score
+    a specific uploaded file (used by the per-file match rate in the UI grid)."""
+    from report_store import get_report_csv
     from tools.duckdb_engine import get_enrichment_summary
     from tools.inventory_enricher import build_enricher
 
@@ -379,7 +381,7 @@ async def ds_inventory_coverage() -> dict:
         return {"active": False, "inventory_loaded": True,
                 "enabled": settings.enable_inventory_enrichment}
 
-    csv_text = await _active_cur_csv(reg)
+    csv_text = get_report_csv(report_id) if report_id is not None else await _active_cur_csv(reg)
     if not csv_text:
         return {"active": True, "joinable": False, "inventory_loaded": True,
                 "enabled": True, "reason": "No CUR data loaded yet"}
@@ -469,6 +471,17 @@ async def ds_enriched_values(report_id: int) -> dict:
             con.close()
 
     return {"report_id": report_id, "values": values}
+
+
+@app.post("/data-sources/cur/{source_id}/active")
+async def ds_set_active_cur(source_id: str) -> dict:
+    """Make a single CUR source the sole active one (used by the grid's
+    Set Active button)."""
+    reg = _require_registry()
+    if source_id not in {m.source_id for m in reg.list_cur()}:
+        raise HTTPException(status_code=404, detail=f"CUR source {source_id} not found")
+    await reg.set_active_cur([source_id])
+    return {"ok": True, "active": source_id}
 
 
 @app.delete("/data-sources/cur/{source_id}")

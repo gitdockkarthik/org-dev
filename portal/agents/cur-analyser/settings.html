@@ -200,6 +200,23 @@
     .checkbox-row label { font-size: 0.875rem; color: #334155; cursor: pointer; }
     .checkbox-row input[type="checkbox"] { accent-color: #6366f1; }
 
+    /* ── CUR files grid ── */
+    .cur-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 0.875rem; }
+    .cur-card {
+      border: 1px solid #e2e8f0; border-radius: 8px; padding: 0.875rem 1rem;
+      background: #f8fafc; display: flex; flex-direction: column; gap: 0.5rem;
+    }
+    .cur-card.active { border-color: #6366f1; background: #eef2ff; }
+    .cur-card__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; }
+    .cur-card__name { font-weight: 600; font-size: 0.9rem; color: #1e293b; word-break: break-all; line-height: 1.3; }
+    .cur-card__meta { font-size: 0.78rem; color: #64748b; line-height: 1.6; }
+    .cur-card__match { font-size: 0.8rem; color: #334155; }
+    .cur-card__actions { display: flex; gap: 0.5rem; margin-top: auto; padding-top: 0.25rem; flex-wrap: wrap; }
+    .btn-sm { padding: 0.35rem 0.85rem; font-size: 0.78rem; border-radius: 5px; }
+    .btn-danger { background: #fee2e2; color: #b91c1c; }
+    .btn-danger:hover { background: #fecaca; }
+    .btn-danger:active { background: #fca5a5; }
+
     @media (max-width: 500px) {
       .tab-btn { padding: 0.625rem 0.625rem; font-size: 0.8125rem; }
       .sync-row .field { flex: 1 1 100%; }
@@ -278,42 +295,6 @@
         <div id="api-key-msg" class="action-msg hidden"></div>
       </div>
 
-      <!-- CUR Reports -->
-      <div class="card">
-        <div class="card-title">CUR Reports</div>
-        <div class="card-subtitle">AWS Cost &amp; Usage Report files loaded for analysis.</div>
-        <div id="ds-cur-info" style="font-size:0.875rem;color:#475569">Loading…</div>
-        <div class="actions" style="margin-top:0.875rem">
-          <label class="btn btn-primary" style="cursor:pointer">
-            + Upload CUR file
-            <input type="file" id="ds-cur-file" accept=".csv,.zip,.parquet" multiple style="display:none" />
-          </label>
-        </div>
-        <p class="hint" style="margin-top:0.5rem">Upload multiple CUR files to enable comparison mode.</p>
-        <div id="ds-cur-msg" class="action-msg hidden"></div>
-        <div class="card-section">
-          <div class="card-section-title">Coming soon</div>
-          <div class="radio-cards">
-            <label class="radio-card coming">
-              <input type="radio" disabled />
-              <div class="radio-card-body">
-                <div class="radio-card-label">AWS Cost Explorer API
-                  <span class="phase-badge">Coming soon</span></div>
-                <div class="radio-card-desc">Fetch cost data directly from the Cost Explorer API on a schedule</div>
-              </div>
-            </label>
-            <label class="radio-card coming">
-              <input type="radio" disabled />
-              <div class="radio-card-body">
-                <div class="radio-card-label">S3 Sync
-                  <span class="phase-badge">Coming soon</span></div>
-                <div class="radio-card-desc">Auto-sync CUR exports directly from an S3 bucket / prefix</div>
-              </div>
-            </label>
-          </div>
-        </div>
-      </div>
-
       <!-- Inventory File -->
       <div class="card">
         <div class="card-title">Inventory File</div>
@@ -332,26 +313,61 @@
         </div>
         <div id="ds-inv-msg" class="action-msg hidden"></div>
         <div id="ds-inv-coverage" style="margin-top:0.875rem"></div>
-        <div class="card-section">
-          <div class="card-section-title">Coming soon</div>
-          <div class="radio-cards">
-            <label class="radio-card coming">
-              <input type="radio" disabled />
-              <div class="radio-card-body">
-                <div class="radio-card-label">S3 Watch
-                  <span class="phase-badge">Coming soon</span></div>
-                <div class="radio-card-desc">Watch an S3 location for updated inventory exports</div>
-              </div>
-            </label>
-            <label class="radio-card coming">
-              <input type="radio" disabled />
-              <div class="radio-card-body">
-                <div class="radio-card-label">Script Endpoint
-                  <span class="phase-badge">Coming soon</span></div>
-                <div class="radio-card-desc">Pull inventory from a custom script / HTTP endpoint on a schedule</div>
-              </div>
-            </label>
-          </div>
+      </div>
+
+      <!-- CUR Files -->
+      <div class="card">
+        <div class="card-title">CUR Files</div>
+        <div class="card-subtitle">AWS Cost &amp; Usage Report files loaded for analysis.
+          Match rate is measured against the currently loaded inventory.</div>
+        <div id="ds-cur-grid" style="font-size:0.875rem;color:#475569">Loading…</div>
+        <div class="actions" style="margin-top:1rem">
+          <label class="btn btn-primary" style="cursor:pointer">
+            + Upload CUR file
+            <input type="file" id="ds-cur-file" accept=".csv,.zip,.parquet" multiple style="display:none" />
+          </label>
+        </div>
+        <p class="hint" style="margin-top:0.5rem">Upload multiple CUR files to enable comparison mode.</p>
+        <div id="ds-cur-msg" class="action-msg hidden"></div>
+      </div>
+
+      <!-- Coming soon -->
+      <div class="card">
+        <div class="card-title">Coming soon</div>
+        <div class="card-subtitle">Additional data-source connectors planned for future phases.</div>
+        <div class="radio-cards">
+          <label class="radio-card coming">
+            <input type="radio" disabled />
+            <div class="radio-card-body">
+              <div class="radio-card-label">AWS Cost Explorer API
+                <span class="phase-badge">Coming soon</span></div>
+              <div class="radio-card-desc">Fetch cost data directly from the Cost Explorer API on a schedule</div>
+            </div>
+          </label>
+          <label class="radio-card coming">
+            <input type="radio" disabled />
+            <div class="radio-card-body">
+              <div class="radio-card-label">S3 Sync
+                <span class="phase-badge">Coming soon</span></div>
+              <div class="radio-card-desc">Auto-sync CUR exports directly from an S3 bucket / prefix</div>
+            </div>
+          </label>
+          <label class="radio-card coming">
+            <input type="radio" disabled />
+            <div class="radio-card-body">
+              <div class="radio-card-label">S3 Watch
+                <span class="phase-badge">Coming soon</span></div>
+              <div class="radio-card-desc">Watch an S3 location for updated inventory exports</div>
+            </div>
+          </label>
+          <label class="radio-card coming">
+            <input type="radio" disabled />
+            <div class="radio-card-body">
+              <div class="radio-card-label">Script Endpoint
+                <span class="phase-badge">Coming soon</span></div>
+              <div class="radio-card-desc">Pull inventory from a custom script / HTTP endpoint on a schedule</div>
+            </div>
+          </label>
         </div>
       </div>
 
@@ -797,35 +813,78 @@
           if (st.inventory_loaded) loadCoverage(st);
           else $('ds-inv-coverage').innerHTML = '';
         } catch (e) {
-          if ($('ds-cur-info')) $('ds-cur-info').textContent = 'Failed to load data sources: ' + e.message;
+          if ($('ds-cur-grid')) $('ds-cur-grid').textContent = 'Failed to load data sources: ' + e.message;
         }
       }
 
+      function curCardHtml(s) {
+        const sid = escapeHtml(s.source_id);
+        const reportId = (s.extra && s.extra.report_id != null) ? s.extra.report_id : null;
+        const rng = (s.date_range_start && s.date_range_end)
+          ? escapeHtml(s.date_range_start) + ' → ' + escapeHtml(s.date_range_end) : '—';
+        const rows = s.record_count != null ? Number(s.record_count).toLocaleString() : '—';
+        const matchSlot = (reportId != null)
+          ? '<div class="cur-card__match" data-match-for="' + escapeHtml(reportId) + '">'
+            + 'Match rate: <span style="color:#94a3b8">checking…</span></div>'
+          : '';
+        return '<div class="cur-card' + (s.active ? ' active' : '') + '" data-sid="' + sid + '">'
+          + '<div class="cur-card__head">'
+          +   '<span class="cur-card__name">' + escapeHtml(s.label) + '</span>'
+          +   (s.active ? '<span class="badge" style="background:#dcfce7;color:#15803d">active</span>' : '')
+          + '</div>'
+          + '<div class="cur-card__meta">'
+          +   'Date range: ' + rng + '<br>' + rows + ' rows<br>uploaded ' + fmtDatetime(s.last_synced)
+          + '</div>'
+          + matchSlot
+          + '<div class="cur-card__actions">'
+          +   (s.active ? '' : '<button class="btn btn-secondary btn-sm cur-set-active" data-sid="' + sid + '">Set Active</button>')
+          +   '<button class="btn btn-danger btn-sm cur-remove" data-sid="' + sid + '">Remove</button>'
+          + '</div>'
+          + '</div>';
+      }
+
       function renderCur(st) {
-        const el = $('ds-cur-info');
+        const el = $('ds-cur-grid');
         const sources = (st.cur_sources || []);
         if (!sources.length) {
           el.innerHTML = '<span style="color:#94a3b8">No CUR files loaded yet. '
             + 'Upload one to get started.</span>';
           return;
         }
-        const rowsHtml = sources.map(s => {
-          const rng = (s.date_range_start && s.date_range_end)
-            ? escapeHtml(s.date_range_start) + ' → ' + escapeHtml(s.date_range_end) : '—';
-          const rows = s.record_count != null ? Number(s.record_count).toLocaleString() : '—';
-          return '<div style="padding:0.5rem 0;border-top:1px solid #f1f5f9">'
-            + '<div><strong>' + escapeHtml(s.label) + '</strong>'
-            + (s.active ? ' <span class="badge" style="background:#dcfce7;color:#15803d">active</span>' : '')
-            + '</div>'
-            + '<div style="margin-top:0.2rem;color:#64748b;font-size:0.8rem">'
-            + 'Date range: ' + rng + ' &nbsp;·&nbsp; ' + rows + ' rows'
-            + ' &nbsp;·&nbsp; uploaded ' + fmtDatetime(s.last_synced) + '</div></div>';
-        }).join('');
         el.innerHTML =
-          '<div style="color:#64748b;margin-bottom:0.25rem">'
+          '<div style="color:#64748b;margin-bottom:0.625rem;font-size:0.85rem">'
           + sources.length + ' CUR file' + (sources.length === 1 ? '' : 's') + ' loaded'
           + (sources.length > 1 ? ' — comparison mode available' : '') + '</div>'
-          + rowsHtml;
+          + '<div class="cur-grid">' + sources.map(curCardHtml).join('') + '</div>';
+
+        // Per-file match rate against the current inventory.
+        const invReady = st.inventory_loaded && st.enabled !== false;
+        el.querySelectorAll('[data-match-for]').forEach(slot => {
+          if (!invReady) {
+            slot.innerHTML = 'Match rate: <span style="color:#94a3b8">no inventory loaded</span>';
+            return;
+          }
+          loadCurMatchRate(slot.getAttribute('data-match-for'), slot);
+        });
+      }
+
+      async function loadCurMatchRate(reportId, slot) {
+        try {
+          const res = await fetch(`${PROXY}/data-sources/inventory/coverage?report_id=`
+            + encodeURIComponent(reportId), { headers: authHeaders() });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const c = await res.json();
+          if (c.active === false) {
+            slot.innerHTML = 'Match rate: <span style="color:#94a3b8">enrichment disabled</span>';
+          } else if (c.joinable === false) {
+            slot.innerHTML = 'Match rate: <span style="color:#94a3b8">—</span>';
+          } else {
+            slot.innerHTML = 'Match rate: <strong>' + c.match_rate_pct + '%</strong> '
+              + '<span style="color:#94a3b8">(' + c.spend_match_rate_pct + '% of spend)</span>';
+          }
+        } catch (e) {
+          slot.innerHTML = 'Match rate: <span style="color:#94a3b8">—</span>';
+        }
       }
 
       function renderInv(st) {
@@ -940,6 +999,48 @@
           showMsg(msgEl, 'Upload failed after ' + ok + ' file(s): ' + e.message, 'err');
           await loadDataSources();
         } finally { ev.target.value = ''; }
+      });
+
+      // Set Active / Remove buttons inside the CUR grid (event delegation —
+      // the grid's innerHTML is rebuilt on every refresh).
+      $('ds-cur-grid').addEventListener('click', async (ev) => {
+        const setBtn = ev.target.closest('.cur-set-active');
+        const rmBtn = ev.target.closest('.cur-remove');
+        if (!setBtn && !rmBtn) return;
+        const msgEl = $('ds-cur-msg');
+
+        if (setBtn) {
+          const sid = setBtn.dataset.sid;
+          setBtn.disabled = true;
+          try {
+            const res = await fetch(`${PROXY}/data-sources/cur/` + encodeURIComponent(sid) + '/active',
+              { method: 'POST', headers: authHeaders() });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            showMsg(msgEl, 'Active CUR file updated.', 'ok');
+            await loadDataSources();
+          } catch (e) {
+            showMsg(msgEl, 'Failed: ' + e.message, 'err');
+            setBtn.disabled = false;
+          }
+          return;
+        }
+
+        const sid = rmBtn.dataset.sid;
+        const card = rmBtn.closest('.cur-card');
+        const label = (card && card.querySelector('.cur-card__name'))
+          ? card.querySelector('.cur-card__name').textContent : 'this file';
+        if (!confirm('Remove "' + label + '"? This deletes the loaded CUR file.')) return;
+        rmBtn.disabled = true;
+        try {
+          const res = await fetch(`${PROXY}/data-sources/cur/` + encodeURIComponent(sid),
+            { method: 'DELETE', headers: authHeaders() });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          showMsg(msgEl, 'CUR file removed.', 'ok');
+          await loadDataSources();
+        } catch (e) {
+          showMsg(msgEl, 'Failed: ' + e.message, 'err');
+          rmBtn.disabled = false;
+        }
       });
 
       $('ds-inv-file').addEventListener('change', async (ev) => {

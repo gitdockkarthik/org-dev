@@ -165,9 +165,14 @@ class DataSourceRegistry:
 
     async def delete_cur(self, source_id: str) -> bool:
         before = len(self._cur_meta)
+        was_active = source_id in self._active_cur_ids
         self._cur_meta = [m for m in self._cur_meta if m.source_id != source_id]
         self._active_cur_ids = [i for i in self._active_cur_ids if i != source_id]
         removed = len(self._cur_meta) != before
+        # If we deleted the (only) active source, promote the next available file
+        # so the dashboard always has an active CUR to work with.
+        if removed and was_active and not self._active_cur_ids and self._cur_meta:
+            self._active_cur_ids = [self._cur_meta[0].source_id]
         if removed:
             await self.save()
         return removed
