@@ -1136,6 +1136,16 @@
       }
     }
 
+    // Recompute a filter dropdown's button label "(N)" badge from the boxes that
+    // are currently checked (base label = current text minus any "(N)" suffix).
+    function syncFilterButtonLabel(key) {
+      const labelEl = document.getElementById('btn_' + key + '_label');
+      if (!labelEl) return;
+      const base = labelEl.textContent.replace(/\s*\(\d+\)\s*$/, '');
+      const n = document.querySelectorAll(`input[data-filter="${key}"]:checked`).length;
+      labelEl.textContent = n ? `${base} (${n})` : base;
+    }
+
     function updateFilterChips() {
       const chips = document.getElementById('filterChips');
       const f = _activeFilters;
@@ -1154,10 +1164,12 @@
                     clear:()=>{
                       _activeFilters[key] =
                         _activeFilters[key].filter(x=>x!==v);
-                      // deselect in select element
-                      document.querySelectorAll(
-                        `.filter-select option[value="${v}"]`
-                      ).forEach(o => o.selected = false);
+                      // Uncheck the matching dropdown checkbox (compare in JS so
+                      // any value content is handled), then refresh its button
+                      // "(N)" badge to match the remaining checked boxes.
+                      document.querySelectorAll(`input[data-filter="${key}"]`)
+                        .forEach(cb => { if (cb.value === v) cb.checked = false; });
+                      syncFilterButtonLabel(key);
                     }}));
 
       addChips(f.accounts,     'accounts',     'Account');
