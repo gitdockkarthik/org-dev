@@ -12,7 +12,7 @@ from report_store import (
     get_report_csv,
     get_report_path,
 )
-from tools.dashboard_builder import compute_dashboard
+from tools.dashboard_builder import compute_dashboard_async
 
 router = APIRouter(tags=["dashboard"])
 
@@ -106,7 +106,7 @@ async def get_dashboard(
         report_id, (sorted(filters.keys()) if filters else []), file_path,
         (csv_text is not None),
     )
-    dashboard = compute_dashboard(csv_text, file_path=file_path, filters=filters or None)
+    dashboard = await compute_dashboard_async(csv_text, file_path=file_path, filters=filters or None)
     report = get_latest_meta() if report_id is None else None
     dashboard["report"] = report
     if not filters:

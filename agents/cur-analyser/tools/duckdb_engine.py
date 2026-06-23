@@ -10,6 +10,7 @@ import io
 import json
 import logging
 import re
+import threading
 import time
 from typing import Any, ClassVar, Literal
 
@@ -402,6 +403,22 @@ def _apply_filters(df: pd.DataFrame, filters: dict | None) -> pd.DataFrame:
 _df_cache: dict[str, tuple[pd.DataFrame, float]] = {}
 _DF_CACHE_TTL_SECS = 600  # 10 minutes
 
+# Per-file load lock. When the dashboard runs its queries in parallel and the
+# cache is cold, every worker would otherwise read the same (multi-GB) file at
+# once — N concurrent reads = N× peak memory. The lock makes the first worker
+# read+cache while the rest wait and then hit the cache.
+_df_load_locks: dict[str, threading.Lock] = {}
+_df_load_locks_guard = threading.Lock()
+
+
+def _df_load_lock(file_path: str) -> threading.Lock:
+    with _df_load_locks_guard:
+        lock = _df_load_locks.get(file_path)
+        if lock is None:
+            lock = threading.Lock()
+            _df_load_locks[file_path] = lock
+        return lock
+
 
 def _get_cached_df(file_path: str) -> pd.DataFrame | None:
     entry = _df_cache.get(file_path)
@@ -476,11 +493,16 @@ def _load_df(
     if file_path is not None:
         df = _get_cached_df(file_path)
         if df is None:
-            if str(file_path).lower().endswith(".parquet"):
-                df = con.execute("SELECT * FROM read_parquet(?)", [file_path]).df()
-            else:
-                df = pd.read_csv(file_path)
-            _cache_df(file_path, df)
+            # Serialise the disk read per file so parallel queries on a cold
+            # cache don't all read the (potentially multi-GB) file at once.
+            with _df_load_lock(file_path):
+                df = _get_cached_df(file_path)  # re-check: another worker may have loaded it
+                if df is None:
+                    if str(file_path).lower().endswith(".parquet"):
+                        df = con.execute("SELECT * FROM read_parquet(?)", [file_path]).df()
+                    else:
+                        df = pd.read_csv(file_path)
+                    _cache_df(file_path, df)
         # ``df`` may be the shared cached frame. The enricher mutates in place
         # (adds inv_* columns), so copy first to keep the cache pristine. Filters
         # and registration below never mutate, so they're safe on the shared frame.
