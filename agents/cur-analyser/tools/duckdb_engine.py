@@ -954,6 +954,7 @@ def get_enrichment_summary(csv_text: str, enricher) -> dict:
             "active": True,
             "joinable": True,
             "enrichment_level": enrichment_level,
+            "has_resource_column": resource_col is not None,
             "matched_count": stats["matched_count"],
             "unmatched_count": stats["unmatched_count"],
             "match_rate_pct": stats["match_rate_pct"],

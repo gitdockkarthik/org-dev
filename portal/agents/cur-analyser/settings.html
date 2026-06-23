@@ -200,19 +200,40 @@
     .checkbox-row label { font-size: 0.875rem; color: #334155; cursor: pointer; }
     .checkbox-row input[type="checkbox"] { accent-color: #6366f1; }
 
-    /* ── CUR files grid ── */
-    .cur-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 0.875rem; }
-    .cur-card {
-      border: 1px solid #e2e8f0; border-radius: 8px; padding: 0.875rem 1rem;
-      background: #f8fafc; display: flex; flex-direction: column; gap: 0.5rem;
+    /* ── CUR files table ── */
+    .cur-table-wrap {
+      max-height: 17rem; overflow: auto;
+      border: 1px solid #e2e8f0; border-radius: 8px;
     }
-    .cur-card.active { border-color: #6366f1; background: #eef2ff; }
-    .cur-card__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; }
-    .cur-card__name { font-weight: 600; font-size: 0.9rem; color: #1e293b; word-break: break-all; line-height: 1.3; }
-    .cur-card__meta { font-size: 0.78rem; color: #64748b; line-height: 1.6; }
-    .cur-card__match { font-size: 0.8rem; color: #334155; }
-    .cur-card__actions { display: flex; gap: 0.5rem; margin-top: auto; padding-top: 0.25rem; flex-wrap: wrap; }
-    .btn-sm { padding: 0.35rem 0.85rem; font-size: 0.78rem; border-radius: 5px; }
+    .cur-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 0.82rem; }
+    .cur-table th, .cur-table td {
+      text-align: left; padding: 0.5rem 0.65rem;
+      border-bottom: 1px solid #f1f5f9;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .cur-table thead th {
+      position: sticky; top: 0; z-index: 1; background: #f8fafc;
+      font-weight: 600; color: #475569; border-bottom: 1px solid #e2e8f0;
+      user-select: none;
+    }
+    .cur-table tbody tr:last-child td { border-bottom: none; }
+    .cur-table tbody tr.active { background: #eef2ff; }
+    .cur-table td { color: #475569; }
+    .col-resizer {
+      position: absolute; top: 0; right: 0; width: 6px; height: 100%;
+      cursor: col-resize; user-select: none;
+    }
+    .col-resizer:hover { background: #c7d2fe; }
+    .cur-cell-name { display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
+    .cur-fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; min-width: 0; color: #1e293b; font-weight: 600; }
+    .cur-copy {
+      flex: 0 0 auto; border: none; background: none; cursor: pointer;
+      font-size: 0.85rem; line-height: 1; padding: 0.1rem 0.2rem; border-radius: 4px;
+      opacity: 0.6; transition: opacity 0.15s, background 0.15s;
+    }
+    .cur-copy:hover { opacity: 1; background: #e2e8f0; }
+    .cur-cell-actions { display: flex; gap: 0.4rem; align-items: center; flex-wrap: nowrap; white-space: nowrap; }
+    .btn-sm { padding: 0.3rem 0.7rem; font-size: 0.75rem; border-radius: 5px; }
     .btn-danger { background: #fee2e2; color: #b91c1c; }
     .btn-danger:hover { background: #fecaca; }
     .btn-danger:active { background: #fca5a5; }
@@ -312,7 +333,6 @@
           <button class="btn btn-secondary hidden" id="ds-inv-remove">Remove inventory</button>
         </div>
         <div id="ds-inv-msg" class="action-msg hidden"></div>
-        <div id="ds-inv-coverage" style="margin-top:0.875rem"></div>
       </div>
 
       <!-- CUR Files -->
@@ -810,37 +830,40 @@
           const st = await res.json();
           renderCur(st);
           renderInv(st);
-          if (st.inventory_loaded) loadCoverage(st);
-          else $('ds-inv-coverage').innerHTML = '';
         } catch (e) {
           if ($('ds-cur-grid')) $('ds-cur-grid').textContent = 'Failed to load data sources: ' + e.message;
         }
       }
 
-      function curCardHtml(s) {
+      const muted = t => '<span style="color:#94a3b8">' + escapeHtml(t) + '</span>';
+      const attrEsc = s => escapeHtml(s).replace(/"/g, '&quot;');
+
+      function curRowHtml(s) {
         const sid = escapeHtml(s.source_id);
         const reportId = (s.extra && s.extra.report_id != null) ? s.extra.report_id : null;
         const rng = (s.date_range_start && s.date_range_end)
           ? escapeHtml(s.date_range_start) + ' → ' + escapeHtml(s.date_range_end) : '—';
         const rows = s.record_count != null ? Number(s.record_count).toLocaleString() : '—';
-        const matchSlot = (reportId != null)
-          ? '<div class="cur-card__match" data-match-for="' + escapeHtml(reportId) + '">'
-            + 'Match rate: <span style="color:#94a3b8">checking…</span></div>'
-          : '';
-        return '<div class="cur-card' + (s.active ? ' active' : '') + '" data-sid="' + sid + '">'
-          + '<div class="cur-card__head">'
-          +   '<span class="cur-card__name">' + escapeHtml(s.label) + '</span>'
-          +   (s.active ? '<span class="badge" style="background:#dcfce7;color:#15803d">active</span>' : '')
-          + '</div>'
-          + '<div class="cur-card__meta">'
-          +   'Date range: ' + rng + '<br>' + rows + ' rows<br>uploaded ' + fmtDatetime(s.last_synced)
-          + '</div>'
-          + matchSlot
-          + '<div class="cur-card__actions">'
-          +   (s.active ? '' : '<button class="btn btn-secondary btn-sm cur-set-active" data-sid="' + sid + '">Set Active</button>')
-          +   '<button class="btn btn-danger btn-sm cur-remove" data-sid="' + sid + '">Remove</button>'
-          + '</div>'
-          + '</div>';
+        const name = escapeHtml(s.label);
+        const nameAttr = attrEsc(s.label);
+        const matchCell = (reportId != null)
+          ? '<td class="cur-cell-match" data-match-for="' + escapeHtml(reportId) + '">' + muted('checking…') + '</td>'
+          : '<td class="cur-cell-match">' + muted('—') + '</td>';
+        const actions =
+          (s.active
+            ? '<span class="badge" style="background:#dcfce7;color:#15803d">Active</span>'
+            : '<button class="btn btn-secondary btn-sm cur-set-active" data-sid="' + sid + '">Set Active</button>')
+          + '<button class="btn btn-danger btn-sm cur-remove" data-sid="' + sid + '">Remove</button>';
+        return '<tr class="cur-row' + (s.active ? ' active' : '') + '" data-sid="' + sid + '">'
+          + '<td><div class="cur-cell-name" title="' + nameAttr + '">'
+          +   '<span class="cur-fname">' + name + '</span>'
+          +   '<button class="cur-copy" title="Copy filename">📋</button>'
+          + '</div></td>'
+          + '<td title="' + rng + '">' + rng + '</td>'
+          + '<td>' + rows + '</td>'
+          + matchCell
+          + '<td><div class="cur-cell-actions">' + actions + '</div></td>'
+          + '</tr>';
       }
 
       function renderCur(st) {
@@ -852,39 +875,91 @@
           return;
         }
         el.innerHTML =
-          '<div style="color:#64748b;margin-bottom:0.625rem;font-size:0.85rem">'
+          '<div style="color:#64748b;margin-bottom:0.5rem;font-size:0.85rem">'
           + sources.length + ' CUR file' + (sources.length === 1 ? '' : 's') + ' loaded'
           + (sources.length > 1 ? ' — comparison mode available' : '') + '</div>'
-          + '<div class="cur-grid">' + sources.map(curCardHtml).join('') + '</div>';
+          + '<div class="cur-table-wrap"><table class="cur-table">'
+          +   '<thead><tr>'
+          +     '<th data-col="name">Filename</th>'
+          +     '<th data-col="range">Date Range</th>'
+          +     '<th data-col="rows">Rows</th>'
+          +     '<th data-col="match">Match Rate</th>'
+          +     '<th data-col="actions">Actions</th>'
+          +   '</tr></thead>'
+          +   '<tbody>' + sources.map(curRowHtml).join('') + '</tbody>'
+          + '</table></div>';
+
+        makeTableResizable(el.querySelector('.cur-table'));
 
         // Per-file match rate against the current inventory.
         const invReady = st.inventory_loaded && st.enabled !== false;
-        el.querySelectorAll('[data-match-for]').forEach(slot => {
-          if (!invReady) {
-            slot.innerHTML = 'Match rate: <span style="color:#94a3b8">no inventory loaded</span>';
-            return;
-          }
-          loadCurMatchRate(slot.getAttribute('data-match-for'), slot);
+        el.querySelectorAll('.cur-cell-match[data-match-for]').forEach(cell => {
+          if (!invReady) { cell.innerHTML = muted('No inventory'); return; }
+          loadCurMatchRate(cell.getAttribute('data-match-for'), cell);
         });
       }
 
-      async function loadCurMatchRate(reportId, slot) {
+      // Honest per-file match rate — never reports a misleading 100% that comes
+      // purely from the account-level enrichment fallback.
+      async function loadCurMatchRate(reportId, cell) {
         try {
           const res = await fetch(`${PROXY}/data-sources/inventory/coverage?report_id=`
             + encodeURIComponent(reportId), { headers: authHeaders() });
           if (!res.ok) throw new Error('HTTP ' + res.status);
           const c = await res.json();
           if (c.active === false) {
-            slot.innerHTML = 'Match rate: <span style="color:#94a3b8">enrichment disabled</span>';
+            cell.innerHTML = muted('Enrichment off');
           } else if (c.joinable === false) {
-            slot.innerHTML = 'Match rate: <span style="color:#94a3b8">—</span>';
+            cell.innerHTML = muted('—');
+          } else if (c.has_resource_column === false) {
+            cell.innerHTML = muted('Resource ID not in CUR');
+          } else if (c.enrichment_level === 'account') {
+            cell.innerHTML = muted('Account-level only');
           } else {
-            slot.innerHTML = 'Match rate: <strong>' + c.match_rate_pct + '%</strong> '
-              + '<span style="color:#94a3b8">(' + c.spend_match_rate_pct + '% of spend)</span>';
+            cell.innerHTML = '<strong>' + c.match_rate_pct + '%</strong> '
+              + '<span style="color:#94a3b8">(' + c.spend_match_rate_pct + '% spend)</span>';
           }
         } catch (e) {
-          slot.innerHTML = 'Match rate: <span style="color:#94a3b8">—</span>';
+          cell.innerHTML = muted('—');
         }
+      }
+
+      // Drag a column's right border to resize it (table-layout: fixed).
+      function makeTableResizable(table) {
+        if (!table) return;
+        table.querySelectorAll('thead th').forEach(th => {
+          const handle = document.createElement('span');
+          handle.className = 'col-resizer';
+          th.appendChild(handle);
+          let startX = 0, startW = 0;
+          const onMove = e => { th.style.width = Math.max(48, startW + (e.pageX - startX)) + 'px'; };
+          const onUp = () => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            document.body.style.cursor = '';
+          };
+          handle.addEventListener('mousedown', e => {
+            startX = e.pageX; startW = th.offsetWidth;
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+            document.body.style.cursor = 'col-resize';
+            e.preventDefault(); e.stopPropagation();
+          });
+        });
+      }
+
+      function copyToClipboard(text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          return navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+        }
+        fallbackCopy(text);
+      }
+      function fallbackCopy(text) {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.focus(); ta.select();
+        try { document.execCommand('copy'); } catch (_) {}
+        document.body.removeChild(ta);
       }
 
       function renderInv(st) {
@@ -941,33 +1016,6 @@
                 + extra.unmatched_count + ' inventory row(s) skipped (missing account or id)</div>' : '');
       }
 
-      async function loadCoverage(st) {
-        const el = $('ds-inv-coverage');
-        if (st.enabled === false) {
-          el.innerHTML = '';
-          return;
-        }
-        try {
-          const res = await fetch(`${PROXY}/data-sources/inventory/coverage`, { headers: authHeaders() });
-          if (!res.ok) throw new Error('HTTP ' + res.status);
-          const c = await res.json();
-          if (!c.active) { el.innerHTML = ''; return; }
-          if (!c.joinable) {
-            el.innerHTML = '<div class="banner-blue">' + escapeHtml(c.reason || 'No CUR data to match against yet.') + '</div>';
-            return;
-          }
-          el.innerHTML =
-            '<div class="card-section-title" style="margin-bottom:0.5rem">Match rate</div>'
-            + '<div style="font-size:0.875rem;color:#334155">'
-            + '<strong>' + c.match_rate_pct + '%</strong> of resources matched '
-            + '(' + Number(c.matched_count).toLocaleString() + ' of '
-            + Number(c.matched_count + c.unmatched_count).toLocaleString() + ') &nbsp;·&nbsp; '
-            + '<strong>' + c.spend_match_rate_pct + '%</strong> of spend matched</div>';
-        } catch (e) {
-          el.innerHTML = '';
-        }
-      }
-
       async function uploadFile(path, file, msgEl) {
         showMsg(msgEl, 'Uploading ' + file.name + '…', 'info', 120000);
         const fd = new FormData();
@@ -1004,10 +1052,22 @@
       // Set Active / Remove buttons inside the CUR grid (event delegation —
       // the grid's innerHTML is rebuilt on every refresh).
       $('ds-cur-grid').addEventListener('click', async (ev) => {
+        const copyBtn = ev.target.closest('.cur-copy');
         const setBtn = ev.target.closest('.cur-set-active');
         const rmBtn = ev.target.closest('.cur-remove');
-        if (!setBtn && !rmBtn) return;
+        if (!copyBtn && !setBtn && !rmBtn) return;
         const msgEl = $('ds-cur-msg');
+
+        if (copyBtn) {
+          const row = copyBtn.closest('.cur-row');
+          const fnameEl = row && row.querySelector('.cur-fname');
+          const fname = fnameEl ? fnameEl.textContent : '';
+          await copyToClipboard(fname);
+          copyBtn.textContent = '✓';
+          setTimeout(() => { copyBtn.textContent = '📋'; }, 1200);
+          showMsg(msgEl, 'Filename copied to clipboard.', 'ok', 2000);
+          return;
+        }
 
         if (setBtn) {
           const sid = setBtn.dataset.sid;
@@ -1026,9 +1086,9 @@
         }
 
         const sid = rmBtn.dataset.sid;
-        const card = rmBtn.closest('.cur-card');
-        const label = (card && card.querySelector('.cur-card__name'))
-          ? card.querySelector('.cur-card__name').textContent : 'this file';
+        const row = rmBtn.closest('.cur-row');
+        const label = (row && row.querySelector('.cur-fname'))
+          ? row.querySelector('.cur-fname').textContent : 'this file';
         if (!confirm('Remove "' + label + '"? This deletes the loaded CUR file.')) return;
         rmBtn.disabled = true;
         try {
