@@ -1088,6 +1088,17 @@
       onFilterChange();
     }
 
+    // Debounce filter application so selecting several options in quick
+    // succession results in ONE server request, not N. ``_filterApplySeq`` guards
+    // applyFiltersAndRender against out-of-order responses (a slow earlier
+    // request resolving after a newer one and overwriting it).
+    let _filterApplyTimer = null;
+    let _filterApplySeq = 0;
+    function scheduleFilterApply(delay = 300) {
+      clearTimeout(_filterApplyTimer);
+      _filterApplyTimer = setTimeout(() => { applyFiltersAndRender(); }, delay);
+    }
+
     function onFilterChange() {
       _activeFilters.dateFrom =
         document.getElementById('fDateFrom').value || null;
@@ -1096,7 +1107,8 @@
 
       updateFilterBadge();
       updateFilterChips();
-      applyFiltersAndRender();
+      // Selection / date change → apply (debounced).
+      scheduleFilterApply();
     }
 
     function updateFilterBadge() {
@@ -1185,10 +1197,20 @@
       };
       document.getElementById('fDateFrom').value = '';
       document.getElementById('fDateTo').value = '';
+      // Uncheck the multi-select dropdown checkboxes and restore their button
+      // labels (the legacy `.filter-select` selector no longer matches the
+      // checkbox-based dropdowns, so it left them visually checked on reset).
+      document.querySelectorAll('input[type="checkbox"][data-filter]')
+        .forEach(el => { el.checked = false; });
+      document.querySelectorAll('[id^="btn_"][id$="_label"]')
+        .forEach(s => { s.textContent = s.textContent.replace(/\s*\(\d+\)\s*$/, ''); });
       document.querySelectorAll('.filter-select option')
         .forEach(o => o.selected = false);
       updateFilterBadge();
       updateFilterChips();
+      // Reset reloads the UNfiltered dashboard immediately; cancel any pending
+      // debounced (filtered) apply so a stale filter can't fire after the reset.
+      clearTimeout(_filterApplyTimer);
       applyFiltersAndRender();
     }
 
@@ -1234,10 +1256,13 @@
       if (qs) parts.push(qs);
       const path = '/dashboard' + (parts.length ? '?' + parts.join('&') : '');
 
+      // Guard against out-of-order responses: only the latest request applies.
+      const seq = ++_filterApplySeq;
       const progEl = document.getElementById('filterProgress');
       if (progEl) { progEl.style.display = 'inline'; progEl.textContent = 'Applying filters…'; }
       try {
         const data = await api(path);
+        if (seq !== _filterApplySeq) return;  // superseded by a newer filter change
         if (!data || data.empty || data.row_count === 0) {
           Object.keys(charts).forEach(k => destroyChart(k));
           const activePanel = document.querySelector('.tab-panel--active');
@@ -1264,11 +1289,14 @@
         // Inventory env/tag/coverage panels stay server-computed via
         // enriched-summary — restore them after the (native) dashboard refresh.
         if (_invActive) { try { await loadEnrichedSummary(currentReportId); } catch (_) {} }
+        if (seq !== _filterApplySeq) return;  // superseded while awaiting
         renderDashboard();
       } catch (e) {
         console.warn('filtered dashboard fetch failed:', e);
       } finally {
-        if (progEl) progEl.style.display = 'none';
+        // Only the latest request clears the progress indicator, so a superseded
+        // request can't hide it while a newer one is still loading.
+        if (progEl && seq === _filterApplySeq) progEl.style.display = 'none';
       }
     }
 
