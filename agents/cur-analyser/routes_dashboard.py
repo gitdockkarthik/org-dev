@@ -36,11 +36,48 @@ def invalidate_dashboard_cache(report_id: int):
     _dashboard_cache.pop(report_id, None)
 
 
+def _csv_list(value: str | None) -> list[str]:
+    """Parse a comma-separated query param into a list of non-empty values."""
+    if not value:
+        return []
+    return [v for v in (s.strip() for s in value.split(",")) if v]
+
+
 @router.get("/dashboard")
-async def get_dashboard(report_id: int = Query(default=None)) -> dict:
-    cached = _get_cached_dashboard(report_id)
-    if cached:
-        return cached
+async def get_dashboard(
+    report_id: int = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    accounts: str | None = Query(default=None),
+    environments: str | None = Query(default=None),
+    services: str | None = Query(default=None),
+    regions: str | None = Query(default=None),
+    pricing_terms: str | None = Query(default=None),
+    tag_products: str | None = Query(default=None),
+    tag_teams: str | None = Query(default=None),
+) -> dict:
+    # Build the server-side filter set from the optional query params.
+    filters: dict = {}
+    if date_from:
+        filters["date_from"] = date_from
+    if date_to:
+        filters["date_to"] = date_to
+    for key, raw in (
+        ("accounts", accounts), ("environments", environments),
+        ("services", services), ("regions", regions),
+        ("pricing_terms", pricing_terms), ("tag_products", tag_products),
+        ("tag_teams", tag_teams),
+    ):
+        vals = _csv_list(raw)
+        if vals:
+            filters[key] = vals
+
+    # The cache holds the *unfiltered* dashboard per report; never serve or store
+    # a filtered result against that key.
+    if not filters:
+        cached = _get_cached_dashboard(report_id)
+        if cached:
+            return cached
 
     # Prefer the on-disk file (file-path pipeline — avoids materialising a
     # multi-GB CSV string); fall back to stored csv_text for legacy reports.
@@ -61,8 +98,9 @@ async def get_dashboard(report_id: int = Query(default=None)) -> dict:
             if csv_text is None:
                 return {"empty": True}
 
-    dashboard = compute_dashboard(csv_text, file_path=file_path)
+    dashboard = compute_dashboard(csv_text, file_path=file_path, filters=filters or None)
     report = get_latest_meta() if report_id is None else None
     dashboard["report"] = report
-    _set_cached_dashboard(report_id, dashboard)
+    if not filters:
+        _set_cached_dashboard(report_id, dashboard)
     return dashboard

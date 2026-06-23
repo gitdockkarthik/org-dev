@@ -301,8 +301,96 @@ def _service_category_from_names(con, cost_col: str, svc_col: str | None) -> lis
 
 # ── Core query functions (migrated from engine.py) ────────────────────────────
 
+def _apply_filters(df: pd.DataFrame, filters: dict | None) -> pd.DataFrame:
+    """Apply dashboard filters to the loaded frame *before* any aggregation, so
+    every downstream query (which reads the registered ``cur_data``) sees the
+    filtered subset. Columns are resolved per-format via the same detectors used
+    everywhere else, so filtering works across CUR 2.0 / legacy / normalised /
+    synthetic exports. Unknown / missing columns are skipped (never error).
+
+    Supported keys: ``date_from``, ``date_to`` (ISO dates), and the list filters
+    ``accounts``, ``environments``, ``services``, ``regions``, ``pricing_terms``,
+    ``tag_products``, ``tag_teams`` — matching the dashboard filter dropdowns.
+    """
+    if not filters:
+        return df
+    cols = list(df.columns)
+    mask = pd.Series(True, index=df.index)
+
+    def _isin(col: str, values, include_untagged: bool = False):
+        s = df[col].astype(str)
+        m = s.isin(set(values))
+        if include_untagged:
+            blank = df[col].isna() | s.str.strip().isin(["", "nan", "NaN", "None"])
+            m = m | blank
+        return m
+
+    # ── Date range (server-side; replaces the client-side fDate filter) ──
+    date_col = _detect_date_col(cols)
+    if date_col and (filters.get("date_from") or filters.get("date_to")):
+        dates = pd.to_datetime(df[date_col], errors="coerce")
+        if filters.get("date_from"):
+            mask &= dates >= pd.to_datetime(filters["date_from"])
+        if filters.get("date_to"):
+            # Inclusive end date — cover the whole day.
+            mask &= dates < pd.to_datetime(filters["date_to"]) + pd.Timedelta(days=1)
+
+    # ── Accounts (dropdown value is the account NAME when present, else the id) ──
+    if filters.get("accounts"):
+        vals = set(filters["accounts"])
+        acct_id = _detect_account_col(cols)
+        name_col = "line_item_usage_account_name" if "line_item_usage_account_name" in cols else None
+        am = pd.Series(False, index=df.index)
+        if acct_id:
+            am = am | df[acct_id].astype(str).isin(vals)
+        if name_col:
+            am = am | df[name_col].astype(str).isin(vals)
+        if acct_id or name_col:
+            mask &= am
+
+    # ── Services ──
+    if filters.get("services"):
+        svc = _detect_service_col(cols)
+        if svc:
+            mask &= df[svc].astype(str).isin(set(filters["services"]))
+
+    # ── Environments (native tag_Environment; "Untagged" → blank/NULL) ──
+    if filters.get("environments"):
+        env = _resolve_tag_col(df, "tag_Environment")
+        if env:
+            vals = set(filters["environments"])
+            mask &= _isin(env, vals, include_untagged=("Untagged" in vals))
+
+    # ── Regions (fold AZ → region prefix to match the breakdown values) ──
+    if filters.get("regions"):
+        reg = _detect_region_col(cols)
+        if reg:
+            folded = df[reg].astype(str).map(_region_from_az)
+            mask &= folded.isin(set(filters["regions"]))
+
+    # ── Pricing terms ──
+    if filters.get("pricing_terms"):
+        if "pricing_term" in cols:
+            mask &= df["pricing_term"].astype(str).isin(set(filters["pricing_terms"]))
+
+    # ── Tag: Product / Team ("Untagged" → blank/NULL) ──
+    if filters.get("tag_products"):
+        col = _resolve_tag_col(df, "tag_Product")
+        if col:
+            vals = set(filters["tag_products"])
+            mask &= _isin(col, vals, include_untagged=("Untagged" in vals))
+    if filters.get("tag_teams"):
+        col = _resolve_tag_col(df, "tag_Team")
+        if col:
+            vals = set(filters["tag_teams"])
+            mask &= _isin(col, vals, include_untagged=("Untagged" in vals))
+
+    return df[mask]
+
+
 def _load_df(
-    csv_text: str | None = None, enricher=None, file_path: str | None = None
+    csv_text: str | None = None, enricher=None, file_path: str | None = None,
+    filters: dict | None = None,
 ) -> tuple[pd.DataFrame, duckdb.DuckDBPyConnection]:
     """Load CUR data into a DataFrame + DuckDB connection.
 
@@ -315,6 +403,9 @@ def _load_df(
     ``enricher`` is optional. When supplied, the inventory enricher adds
     ``inv_*`` virtual columns *before* the frame is registered. An inactive
     enricher (no inventory loaded) is a safe no-op.
+
+    ``filters`` (optional) is applied to the frame before it is registered, so
+    every aggregation that reads ``cur_data`` operates on the filtered subset.
     """
     con = duckdb.connect(database=":memory:")
     if file_path is not None:
@@ -326,12 +417,14 @@ def _load_df(
         df = pd.read_csv(io.StringIO(csv_text))
     if enricher is not None:
         df = enricher.enrich_dataframe(df)
+    if filters:
+        df = _apply_filters(df, filters)
     con.register("cur_data", df)
     return df, con
 
 
-def get_total_cost(csv_text: str | None = None, file_path: str | None = None) -> dict:
-    df, con = _load_df(csv_text, file_path=file_path)
+def get_total_cost(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None) -> dict:
+    df, con = _load_df(csv_text, file_path=file_path, filters=filters)
     try:
         # DEBUG: log the raw CUR column names once per dashboard build so the
         # actual header format (and any unexpected tag-column naming) is visible.
@@ -349,8 +442,8 @@ def get_total_cost(csv_text: str | None = None, file_path: str | None = None) ->
         con.close()
 
 
-def get_cost_by_service(csv_text: str | None = None, limit: int = 15, file_path: str | None = None) -> list[dict]:
-    df, con = _load_df(csv_text, file_path=file_path)
+def get_cost_by_service(csv_text: str | None = None, limit: int = 15, file_path: str | None = None, filters: dict | None = None) -> list[dict]:
+    df, con = _load_df(csv_text, file_path=file_path, filters=filters)
     try:
         cost_col = _detect_cost_col(list(df.columns))
         svc_col = _detect_service_col(list(df.columns))
@@ -365,8 +458,8 @@ def get_cost_by_service(csv_text: str | None = None, limit: int = 15, file_path:
         con.close()
 
 
-def get_daily_trend(csv_text: str | None = None, file_path: str | None = None) -> list[dict]:
-    df, con = _load_df(csv_text, file_path=file_path)
+def get_daily_trend(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None) -> list[dict]:
+    df, con = _load_df(csv_text, file_path=file_path, filters=filters)
     try:
         cost_col = _detect_cost_col(list(df.columns))
         date_col = _detect_date_col(list(df.columns))
@@ -381,8 +474,8 @@ def get_daily_trend(csv_text: str | None = None, file_path: str | None = None) -
         con.close()
 
 
-def get_cost_by_region(csv_text: str | None = None, file_path: str | None = None) -> list[dict]:
-    df, con = _load_df(csv_text, file_path=file_path)
+def get_cost_by_region(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None) -> list[dict]:
+    df, con = _load_df(csv_text, file_path=file_path, filters=filters)
     try:
         cost_col = _detect_cost_col(list(df.columns))
         region_col = _detect_region_col(list(df.columns))
@@ -410,8 +503,8 @@ def get_cost_by_region(csv_text: str | None = None, file_path: str | None = None
         con.close()
 
 
-def get_cost_by_account(csv_text: str | None = None, file_path: str | None = None) -> list[dict]:
-    df, con = _load_df(csv_text, file_path=file_path)
+def get_cost_by_account(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None) -> list[dict]:
+    df, con = _load_df(csv_text, file_path=file_path, filters=filters)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
@@ -452,8 +545,8 @@ def get_cost_by_account(csv_text: str | None = None, file_path: str | None = Non
         con.close()
 
 
-def get_cost_by_org_unit(csv_text: str | None = None, file_path: str | None = None) -> list[dict]:
-    df, con = _load_df(csv_text, file_path=file_path)
+def get_cost_by_org_unit(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None) -> list[dict]:
+    df, con = _load_df(csv_text, file_path=file_path, filters=filters)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
@@ -478,8 +571,8 @@ def get_cost_by_org_unit(csv_text: str | None = None, file_path: str | None = No
         con.close()
 
 
-def get_cost_by_environment(csv_text: str | None = None, file_path: str | None = None) -> list[dict]:
-    df, con = _load_df(csv_text, file_path=file_path)
+def get_cost_by_environment(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None) -> list[dict]:
+    df, con = _load_df(csv_text, file_path=file_path, filters=filters)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
@@ -526,8 +619,8 @@ def get_cost_by_environment(csv_text: str | None = None, file_path: str | None =
         con.close()
 
 
-def get_cost_by_service_category(csv_text: str | None = None, file_path: str | None = None) -> list[dict]:
-    df, con = _load_df(csv_text, file_path=file_path)
+def get_cost_by_service_category(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None) -> list[dict]:
+    df, con = _load_df(csv_text, file_path=file_path, filters=filters)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
@@ -576,8 +669,8 @@ def get_cost_by_service_category(csv_text: str | None = None, file_path: str | N
         con.close()
 
 
-def get_cost_by_tag(csv_text: str | None = None, tag_col: str = "", file_path: str | None = None) -> list[dict]:
-    df, con = _load_df(csv_text, file_path=file_path)
+def get_cost_by_tag(csv_text: str | None = None, tag_col: str = "", file_path: str | None = None, filters: dict | None = None) -> list[dict]:
+    df, con = _load_df(csv_text, file_path=file_path, filters=filters)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
@@ -607,8 +700,8 @@ def get_cost_by_tag(csv_text: str | None = None, tag_col: str = "", file_path: s
         con.close()
 
 
-def get_untagged_resources(csv_text: str | None = None, file_path: str | None = None) -> dict:
-    df, con = _load_df(csv_text, file_path=file_path)
+def get_untagged_resources(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None) -> dict:
+    df, con = _load_df(csv_text, file_path=file_path, filters=filters)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
@@ -654,8 +747,8 @@ def get_untagged_resources(csv_text: str | None = None, file_path: str | None = 
         con.close()
 
 
-def get_cost_by_pricing_term(csv_text: str | None = None, file_path: str | None = None) -> list[dict]:
-    df, con = _load_df(csv_text, file_path=file_path)
+def get_cost_by_pricing_term(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None) -> list[dict]:
+    df, con = _load_df(csv_text, file_path=file_path, filters=filters)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
@@ -681,8 +774,8 @@ def get_cost_by_pricing_term(csv_text: str | None = None, file_path: str | None 
         con.close()
 
 
-def get_mom_comparison(csv_text: str | None = None, file_path: str | None = None) -> list[dict]:
-    df, con = _load_df(csv_text, file_path=file_path)
+def get_mom_comparison(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None) -> list[dict]:
+    df, con = _load_df(csv_text, file_path=file_path, filters=filters)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
@@ -709,8 +802,8 @@ def get_mom_comparison(csv_text: str | None = None, file_path: str | None = None
         con.close()
 
 
-def get_top_resources(csv_text: str | None = None, limit: int = 10, file_path: str | None = None) -> list[dict]:
-    df, con = _load_df(csv_text, file_path=file_path)
+def get_top_resources(csv_text: str | None = None, limit: int = 10, file_path: str | None = None, filters: dict | None = None) -> list[dict]:
+    df, con = _load_df(csv_text, file_path=file_path, filters=filters)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
@@ -749,8 +842,8 @@ def get_top_resources(csv_text: str | None = None, limit: int = 10, file_path: s
         con.close()
 
 
-def get_savings_opportunities(csv_text: str | None = None, file_path: str | None = None) -> dict:
-    df, con = _load_df(csv_text, file_path=file_path)
+def get_savings_opportunities(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None) -> dict:
+    df, con = _load_df(csv_text, file_path=file_path, filters=filters)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
@@ -861,7 +954,7 @@ def run_context_query(csv_text: str) -> dict:
     }
 
 
-def get_enrichment_summary(csv_text: str | None = None, enricher=None, file_path: str | None = None) -> dict:
+def get_enrichment_summary(csv_text: str | None = None, enricher=None, file_path: str | None = None, filters: dict | None = None) -> dict:
     """Compute inventory-enrichment coverage for the CUR data.
 
     Returns ``{"active": False}`` when no enricher / inventory is in play, so the

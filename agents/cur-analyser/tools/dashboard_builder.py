@@ -28,18 +28,24 @@ from tools.duckdb_engine import (
 
 # ── Core aggregation ──────────────────────────────────────────────────────────
 
-def compute_dashboard(csv_text: str | None = None, *, file_path: str | None = None) -> dict:
+def compute_dashboard(
+    csv_text: str | None = None, *, file_path: str | None = None,
+    filters: dict | None = None,
+) -> dict:
     """Return a unified dashboard payload from CUR data.
 
     The source is either ``csv_text`` (legacy in-memory pipeline) or
     ``file_path`` (file-path pipeline for large CUR files). ``file_path`` is
     forwarded to every query so the underlying frame is read straight from disk
     instead of from a multi-GB CSV string.
+
+    ``filters`` (optional) is forwarded to every query so the whole dashboard is
+    computed over the filtered subset server-side (no client-side row filtering).
     """
-    summary = get_total_cost(csv_text, file_path=file_path)
-    service_breakdown = get_cost_by_service(csv_text, limit=15, file_path=file_path)
-    daily_trend = get_daily_trend(csv_text, file_path=file_path)
-    region_breakdown = get_cost_by_region(csv_text, file_path=file_path)
+    summary = get_total_cost(csv_text, file_path=file_path, filters=filters)
+    service_breakdown = get_cost_by_service(csv_text, limit=15, file_path=file_path, filters=filters)
+    daily_trend = get_daily_trend(csv_text, file_path=file_path, filters=filters)
+    region_breakdown = get_cost_by_region(csv_text, file_path=file_path, filters=filters)
 
     top_service = service_breakdown[0] if service_breakdown else None
 
@@ -50,19 +56,19 @@ def compute_dashboard(csv_text: str | None = None, *, file_path: str | None = No
         monthly[month] = round(monthly.get(month, 0.0) + row["cost"], 4)
     monthly_trend = [{"month": m, "cost": c} for m, c in sorted(monthly.items())]
 
-    account_breakdown          = get_cost_by_account(csv_text, file_path=file_path)
-    org_unit_breakdown         = get_cost_by_org_unit(csv_text, file_path=file_path)
-    environment_breakdown      = get_cost_by_environment(csv_text, file_path=file_path)
-    service_category_breakdown = get_cost_by_service_category(csv_text, file_path=file_path)
-    tag_product_breakdown      = get_cost_by_tag(csv_text, "tag_Product", file_path=file_path)
-    tag_team_breakdown         = get_cost_by_tag(csv_text, "tag_Team", file_path=file_path)
-    tag_customer_breakdown     = get_cost_by_tag(csv_text, "tag_Customer", file_path=file_path)
-    tag_costcentre_breakdown   = get_cost_by_tag(csv_text, "tag_CostCentre", file_path=file_path)
-    untagged_resources         = get_untagged_resources(csv_text, file_path=file_path)
-    pricing_term_breakdown     = get_cost_by_pricing_term(csv_text, file_path=file_path)
-    mom_comparison             = get_mom_comparison(csv_text, file_path=file_path)
-    top_resources              = get_top_resources(csv_text, limit=10, file_path=file_path)
-    savings_opportunities      = get_savings_opportunities(csv_text, file_path=file_path)
+    account_breakdown          = get_cost_by_account(csv_text, file_path=file_path, filters=filters)
+    org_unit_breakdown         = get_cost_by_org_unit(csv_text, file_path=file_path, filters=filters)
+    environment_breakdown      = get_cost_by_environment(csv_text, file_path=file_path, filters=filters)
+    service_category_breakdown = get_cost_by_service_category(csv_text, file_path=file_path, filters=filters)
+    tag_product_breakdown      = get_cost_by_tag(csv_text, "tag_Product", file_path=file_path, filters=filters)
+    tag_team_breakdown         = get_cost_by_tag(csv_text, "tag_Team", file_path=file_path, filters=filters)
+    tag_customer_breakdown     = get_cost_by_tag(csv_text, "tag_Customer", file_path=file_path, filters=filters)
+    tag_costcentre_breakdown   = get_cost_by_tag(csv_text, "tag_CostCentre", file_path=file_path, filters=filters)
+    untagged_resources         = get_untagged_resources(csv_text, file_path=file_path, filters=filters)
+    pricing_term_breakdown     = get_cost_by_pricing_term(csv_text, file_path=file_path, filters=filters)
+    mom_comparison             = get_mom_comparison(csv_text, file_path=file_path, filters=filters)
+    top_resources              = get_top_resources(csv_text, limit=10, file_path=file_path, filters=filters)
+    savings_opportunities      = get_savings_opportunities(csv_text, file_path=file_path, filters=filters)
 
     return {
         "total_cost": summary.get("total_cost", 0),

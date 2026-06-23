@@ -1192,13 +1192,27 @@
       applyFiltersAndRender();
     }
 
-    function applyFiltersAndRender() {
-      // Client-side row filtering needs the streamed rows, which are NOT loaded
-      // when inventory enrichment is active (env/tag panels are server-computed
-      // via /data-sources/enriched-summary). Leave the server full-dataset values
-      // in place in that mode.
-      if (_invActive && !_isCompareMode) return;
+    // Build URL query params for server-side dashboard filtering from the active
+    // base filters (date + the original 7 dimensions). Enriched (inv_*) filters
+    // are handled separately via enriched-summary and are not sent here.
+    function buildFilterParams() {
+      const f = _activeFilters;
+      const p = new URLSearchParams();
+      if (f.dateFrom) p.set('date_from', f.dateFrom);
+      if (f.dateTo)   p.set('date_to', f.dateTo);
+      if (f.accounts.length)     p.set('accounts', f.accounts.join(','));
+      if (f.environments.length) p.set('environments', f.environments.join(','));
+      if (f.services.length)     p.set('services', f.services.join(','));
+      if (f.regions.length)      p.set('regions', f.regions.join(','));
+      if (f.pricingTerms.length) p.set('pricing_terms', f.pricingTerms.join(','));
+      if (f.tagProducts.length)  p.set('tag_products', f.tagProducts.join(','));
+      if (f.tagTeams.length)     p.set('tag_teams', f.tagTeams.join(','));
+      return p;
+    }
+
+    async function applyFiltersAndRender() {
       if (_isCompareMode) {
+        // Compare mode keeps client-side row filtering (per-report raw rows).
         const filtered = _compareData.reports.map(r => {
           const rows = _rawRowsMap[r.id] || [];
           const filteredRows = applyFilters(rows);
@@ -1207,17 +1221,29 @@
         });
         _compareData = { ..._compareData, reports: filtered };
         renderCompareMode();
-      } else {
-        const filtered = applyFilters(_rawRows);
-        _filteredRows = filtered;
-        if (filtered.length === 0) {
-          // Show no-data state on active tab
+        return;
+      }
+
+      // Single-report mode: fetch a server-filtered dashboard payload instead of
+      // filtering rows client-side. Works regardless of dataset size and with
+      // inventory enrichment active (no row stream needed).
+      const params = buildFilterParams();
+      const qs = params.toString();
+      const parts = [];
+      if (currentReportId != null) parts.push('report_id=' + currentReportId);
+      if (qs) parts.push(qs);
+      const path = '/dashboard' + (parts.length ? '?' + parts.join('&') : '');
+
+      const progEl = document.getElementById('filterProgress');
+      if (progEl) { progEl.style.display = 'inline'; progEl.textContent = 'Applying filters…'; }
+      try {
+        const data = await api(path);
+        if (!data || data.empty || data.row_count === 0) {
+          Object.keys(charts).forEach(k => destroyChart(k));
           const activePanel = document.querySelector('.tab-panel--active');
           if (activePanel) {
-            Object.keys(charts).forEach(k => destroyChart(k));
             activePanel.innerHTML = `
-              <div style="text-align:center;padding:60px;
-                          color:var(--text-muted)">
+              <div style="text-align:center;padding:60px;color:var(--text-muted)">
                 <div style="font-size:2rem;margin-bottom:12px">🔍</div>
                 <div style="font-weight:600;margin-bottom:6px">
                   No data matches the selected filters
@@ -1229,21 +1255,20 @@
           }
           return;
         }
-        const computed = computeFromRows(filtered);
-        if (computed) {
-          DASH = { ...DASH, ...computed };
-          Object.keys(charts).forEach(k => destroyChart(k));
-          document.querySelectorAll('.tab-panel').forEach(p => {
-            if (!p.id.includes('insights')) p.innerHTML = '';
-          });
-          _loaded.clear();
-          const activePanel = document.querySelector('.tab-panel--active');
-          if (activePanel) {
-            const tabName = activePanel.id.replace('tab-','');
-            _loaded.add(tabName);
-            renderTab(tabName);
-          }
-        }
+        DASH = data;
+        // The Environment tab's env×month / env×category panels derive from raw
+        // rows; under server-side filtering there is no filtered row set, so clear
+        // it (those panels then show "line-level data unavailable" rather than
+        // stale, unfiltered numbers). With no filters active, keep the full rows.
+        _filteredRows = qs ? [] : (_rawRows || []);
+        // Inventory env/tag/coverage panels stay server-computed via
+        // enriched-summary — restore them after the (native) dashboard refresh.
+        if (_invActive) { try { await loadEnrichedSummary(currentReportId); } catch (_) {} }
+        renderDashboard();
+      } catch (e) {
+        console.warn('filtered dashboard fetch failed:', e);
+      } finally {
+        if (progEl) progEl.style.display = 'none';
       }
     }
 
