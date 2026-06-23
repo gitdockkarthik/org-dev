@@ -494,6 +494,35 @@ async def ds_enriched_values(report_id: int) -> dict:
     return {"report_id": report_id, "values": values}
 
 
+@app.get("/data-sources/enriched-summary")
+async def ds_enriched_summary(report_id: int) -> dict:
+    """Server-side enriched aggregations for the dashboard.
+
+    Computes the Environment / Customer / Application / Budget-Code spend
+    breakdowns, per-attribute tag coverage and a native-vs-enriched before/after
+    using ``inv_*`` columns (inventory primary, native CUR tag fallback), all via
+    DuckDB GROUP BY over the enriched frame. Returns a single small JSON payload
+    so the dashboard never has to stream 200k+ rows to the browser to aggregate
+    them client-side."""
+    from report_store import get_report_csv, get_report_path
+    from tools.data_sources.registry import get_registry
+    from tools.duckdb_engine import get_enriched_summary
+    from tools.inventory_enricher import build_enricher
+
+    # Prefer the on-disk file (file-path pipeline); fall back to stored csv_text.
+    file_path = get_report_path(report_id)
+    csv_text = None
+    if file_path is None:
+        csv_text = get_report_csv(report_id)
+        if csv_text is None:
+            raise HTTPException(status_code=404, detail=f"Report {report_id} not found")
+
+    enricher = await build_enricher(get_registry())
+    summary = get_enriched_summary(csv_text, enricher=enricher, file_path=file_path)
+    summary["report_id"] = report_id
+    return summary
+
+
 @app.post("/data-sources/cur/{source_id}/active")
 async def ds_set_active_cur(source_id: str) -> dict:
     """Make a single CUR source the sole active one (used by the grid's

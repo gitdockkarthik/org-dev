@@ -629,6 +629,45 @@
       return allRows;
     }
 
+    // ── Server-side enriched aggregations ─────────────────────
+    // When inventory enrichment is active, fetch pre-computed env / customer /
+    // application / budget-code breakdowns + tag coverage in ONE call instead of
+    // streaming every row to aggregate client-side. Maps the payload into the
+    // shapes the existing renderers already consume.
+    async function loadEnrichedSummary(reportId) {
+      if (!_invActive || reportId == null) return;
+      try {
+        const res = await fetch(
+          `${PROXY}/data-sources/enriched-summary?report_id=${reportId}`,
+          { headers: _authHeaders(), cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const s = await res.json();
+        DASH.environment_breakdown = (s.env_breakdown || [])
+          .map(e => ({ environment: e.environment, cost: e.cost, pct_of_total: e.pct }));
+        DASH.tag_customer_breakdown = (s.customer_breakdown || [])
+          .map(t => ({ tag_value: t.customer, cost: t.cost, pct_of_total: t.pct }));
+        DASH.tag_product_breakdown = (s.application_breakdown || [])
+          .map(t => ({ tag_value: t.application, cost: t.cost, pct_of_total: t.pct }));
+        DASH.tag_costcentre_breakdown = (s.budget_code_breakdown || [])
+          .map(t => ({ tag_value: t.budget_code, cost: t.cost, pct_of_total: t.pct }));
+        // tag_team has no inventory equivalent — keep the server (native) value.
+        // Tag Coverage panel (untagged_resources shape).
+        const tc = s.tag_coverage || {};
+        DASH.untagged_resources = {
+          total_rows: 0,
+          tag_coverage: Object.keys(tc).map(k => ({
+            tag: k.replace(/_/g, ' '),
+            coverage_pct: tc[k].covered_pct,
+            untagged_count: 0,
+            untagged_cost: tc[k].untagged_cost,
+          })),
+          overall_coverage_pct: tc.Customer ? tc.Customer.covered_pct : 0,
+        };
+      } catch (e) {
+        console.warn('enriched-summary failed:', e);
+      }
+    }
+
     // ── Filter helpers ────────────────────────────────────────
     function applyFilters(rows) {
       return rows.filter(r => {
@@ -830,46 +869,6 @@
         pricing_term_breakdown: byPricing,
         daily_trend,
         monthly_trend,
-      };
-    }
-
-    // Inventory-attribute tag coverage — shown in place of CUR tag coverage
-    // when inventory is loaded. Per-attribute coverage comes from the inv_*
-    // columns (Customer, Application, Budget Code, Environment, Grade, Layer);
-    // overall coverage is the % of SPEND with inv_customer populated. Shape
-    // matches the backend untagged_resources payload so renderTags consumes it
-    // unchanged.
-    function computeInvTagCoverage(rows) {
-      const attrs = [
-        ['Customer', 'inv_customer'],
-        ['Application', 'inv_application'],
-        ['Budget Code', 'inv_budget_code'],
-        ['Environment', 'inv_environment'],
-        ['Grade', 'inv_grade'],
-        ['Layer', 'inv_layer'],
-      ];
-      const total = rows.length;
-      const totalCost = rows.reduce((s, r) => s + getCostCol(r), 0);
-      const nonblank = v => v !== undefined && v !== null && String(v).trim() !== '';
-      const tag_coverage = attrs.map(([label, col]) => {
-        let populated = 0, untaggedCost = 0;
-        for (const r of rows) {
-          if (nonblank(r[col])) populated++;
-          else untaggedCost += getCostCol(r);
-        }
-        return {
-          tag: label,
-          coverage_pct: total ? Math.round((populated / total) * 1000) / 10 : 0,
-          untagged_count: total - populated,
-          untagged_cost: Math.round(untaggedCost * 100) / 100,
-        };
-      });
-      let custSpend = 0;
-      for (const r of rows) if (nonblank(r.inv_customer)) custSpend += getCostCol(r);
-      return {
-        total_rows: total,
-        tag_coverage,
-        overall_coverage_pct: totalCost ? Math.round((custSpend / totalCost) * 1000) / 10 : 0,
       };
     }
 
@@ -1171,6 +1170,11 @@
     }
 
     function applyFiltersAndRender() {
+      // Client-side row filtering needs the streamed rows, which are NOT loaded
+      // when inventory enrichment is active (env/tag panels are server-computed
+      // via /data-sources/enriched-summary). Leave the server full-dataset values
+      // in place in that mode.
+      if (_invActive && !_isCompareMode) return;
       if (_isCompareMode) {
         const filtered = _compareData.reports.map(r => {
           const rows = _rawRowsMap[r.id] || [];
@@ -1205,8 +1209,6 @@
         const computed = computeFromRows(filtered);
         if (computed) {
           DASH = { ...DASH, ...computed };
-          // Keep inventory tag coverage in sync with the filtered view.
-          if (_invActive) DASH.untagged_resources = computeInvTagCoverage(filtered);
           Object.keys(charts).forEach(k => destroyChart(k));
           document.querySelectorAll('.tab-panel').forEach(p => {
             if (!p.id.includes('insights')) p.innerHTML = '';
@@ -2878,84 +2880,75 @@ ${JSON.stringify(payload, null, 2)}
         populateBaseFilters();
         if (_invActive) populateEnrichedFilters(currentReportId);
 
-        // Stream raw rows for filtering
+        // Environment + tag breakdowns + coverage: server-computed in ONE call
+        // when inventory enrichment is active (no 200k-row stream). Otherwise
+        // stream raw rows so the interactive client-side filters keep working.
         const progEl = document.getElementById('filterProgress');
-        if (progEl) {
-          progEl.style.display = 'inline';
-          progEl.textContent = 'Loading data...';
-        }
-        streamReportRows(
-          currentReportId,
-          (loaded, total) => {
-            if (progEl)
-              progEl.textContent = `Loading ${loaded}/${total} rows...`;
-          },
-          (rows) => {
-            _rawRows = rows;
-            ROWS = rows;
-            _filteredRows = rows;
-            if (progEl) progEl.style.display = 'none';
-            // Inventory enrichment is the source of truth for ownership/context
-            // tags. When active, recompute ONLY the environment + tag breakdowns
-            // and tag coverage from the enriched rows (inv_* primary, CUR tag
-            // fallback via the field-list ordering). Service / account / region /
-            // trends dims are left exactly as the backend computed them.
-            if (_invActive && rows.length) {
-              const _c = computeFromRows(rows);
-              if (_c) {
-                DASH.environment_breakdown    = _c.environment_breakdown;
-                DASH.tag_customer_breakdown   = _c.tag_customer_breakdown;
-                DASH.tag_team_breakdown       = _c.tag_team_breakdown;
-                DASH.tag_product_breakdown    = _c.tag_product_breakdown;
-                DASH.tag_costcentre_breakdown = _c.tag_costcentre_breakdown;
-              }
-              DASH.untagged_resources = computeInvTagCoverage(rows);
-            }
-            // Re-render active row-dependent tab if ROWS arrived after tab was clicked
-            const _streamActiveTab = document.querySelector('.tab-btn--active')?.dataset.tab;
-            const _rowTabs = ['environments','accounts','services','tags','trends'];
-            if (_streamActiveTab && _rowTabs.includes(_streamActiveTab)) {
-              _loaded.delete(_streamActiveTab);
-              renderTab(_streamActiveTab);
-            }
-            // The environment panels (KPI cards, per-month chart, ownership
-            // table, env×category matrix) derive their costs from the
-            // fully-streamed rows. If that tab was rendered before the stream
-            // finished it shows $0 — re-render it now (after computeFromRows has
-            // populated the breakdowns above) so it never stays stuck at $0,
-            // even when it isn't the active tab.
-            if (_streamActiveTab !== 'environments' && _loaded.has('environments')) {
-              renderEnvironments();
-            }
-            // Populate filter dropdowns from actual data
-            buildMultiSelect('fAccountWrap', 'Account',
-              getDistinctValues(rows, fAccount),
-              'accounts', true);
-            buildMultiSelect('fEnvWrap', 'Environment',
-              getDistinctValues(rows, fEnv),
-              'environments', true);
-            buildMultiSelect('fServiceWrap', 'Service',
-              getDistinctValues(rows, fService),
-              'services', true);
-            buildMultiSelect('fRegionWrap', 'Region',
-              getDistinctValues(rows, fRegion),
-              'regions', true);
-            buildMultiSelect('fPricingWrap', 'Pricing Term',
-              getDistinctValues(rows, r => r.pricing_term),
-              'pricingTerms', true);
-            buildMultiSelect('fProductWrap', 'Product Tag',
-              getDistinctValues(rows, fProduct),
-              'tagProducts', true);
-            buildMultiSelect('fTeamWrap', 'Team Tag',
-              getDistinctValues(rows, fTeam),
-              'tagTeams', true);
-            // Inventory-enriched filters: populated from the lightweight
-            // distinct-values endpoint (avoids scanning all streamed rows).
-            if (_invActive) {
-              populateEnrichedFilters(currentReportId);
-            }
+        if (_invActive) {
+          if (progEl) progEl.style.display = 'none';
+          await loadEnrichedSummary(currentReportId);
+          populateEnrichedFilters(currentReportId);
+          // Re-render the active (or already-rendered Environment) tab now that
+          // the enriched breakdowns are populated.
+          const _at = document.querySelector('.tab-btn--active')?.dataset.tab;
+          const _rowTabs = ['environments','accounts','services','tags','trends'];
+          if (_at && _rowTabs.includes(_at)) {
+            _loaded.delete(_at);
+            renderTab(_at);
+          } else if (_loaded.has('environments')) {
+            renderEnvironments();
           }
-        ).catch(() => { if (progEl) progEl.style.display = 'none'; });
+        } else {
+          if (progEl) {
+            progEl.style.display = 'inline';
+            progEl.textContent = 'Loading data...';
+          }
+          streamReportRows(
+            currentReportId,
+            (loaded, total) => {
+              if (progEl)
+                progEl.textContent = `Loading ${loaded}/${total} rows...`;
+            },
+            (rows) => {
+              _rawRows = rows;
+              ROWS = rows;
+              _filteredRows = rows;
+              if (progEl) progEl.style.display = 'none';
+              // Re-render active row-dependent tab if ROWS arrived after tab was clicked
+              const _streamActiveTab = document.querySelector('.tab-btn--active')?.dataset.tab;
+              const _rowTabs = ['environments','accounts','services','tags','trends'];
+              if (_streamActiveTab && _rowTabs.includes(_streamActiveTab)) {
+                _loaded.delete(_streamActiveTab);
+                renderTab(_streamActiveTab);
+              }
+              if (_streamActiveTab !== 'environments' && _loaded.has('environments')) {
+                renderEnvironments();
+              }
+              // Populate filter dropdowns from actual data
+              buildMultiSelect('fAccountWrap', 'Account',
+                getDistinctValues(rows, fAccount),
+                'accounts', true);
+              buildMultiSelect('fEnvWrap', 'Environment',
+                getDistinctValues(rows, fEnv),
+                'environments', true);
+              buildMultiSelect('fServiceWrap', 'Service',
+                getDistinctValues(rows, fService),
+                'services', true);
+              buildMultiSelect('fRegionWrap', 'Region',
+                getDistinctValues(rows, fRegion),
+                'regions', true);
+              buildMultiSelect('fPricingWrap', 'Pricing Term',
+                getDistinctValues(rows, r => r.pricing_term),
+                'pricingTerms', true);
+              buildMultiSelect('fProductWrap', 'Product Tag',
+                getDistinctValues(rows, fProduct),
+                'tagProducts', true);
+              buildMultiSelect('fTeamWrap', 'Team Tag',
+                getDistinctValues(rows, fTeam),
+                'tagTeams', true);
+            }
+          ).catch(() => { if (progEl) progEl.style.display = 'none'; });
+        }
       } catch (e) {
         document.getElementById('loadingState').innerHTML = `
           <div class="empty-state" style="margin-top:60px">

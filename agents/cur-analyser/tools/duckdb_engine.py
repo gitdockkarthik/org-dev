@@ -987,6 +987,130 @@ def get_enrichment_summary(csv_text: str | None = None, enricher=None, file_path
 REASON_LABEL_DEFAULT = "Not in inventory"
 
 
+def get_enriched_summary(csv_text=None, enricher=None, file_path=None) -> dict:
+    """Pre-computed enriched aggregations for the dashboard.
+
+    Returns Environment / Customer / Application / Budget-Code spend breakdowns,
+    per-attribute tag coverage and a native-vs-enriched before/after — all via
+    DuckDB GROUP BY over the (optionally inventory-enriched) frame, using
+    ``inv_*`` columns as primary with the native CUR tag as fallback. Lets the
+    dashboard render the Environment tab and tag panels from one small payload
+    instead of streaming every row to the browser.
+    """
+    df, con = _load_df(csv_text, enricher=enricher, file_path=file_path)
+    try:
+        cols = list(df.columns)
+        present = set(cols)
+        cost_col = _detect_cost_col(cols)
+        cost_sql = f'TRY_CAST("{cost_col}" AS DOUBLE)' if cost_col else "0"
+        total_cost = float(
+            con.execute(f"SELECT COALESCE(SUM({cost_sql}), 0) FROM cur_data").fetchone()[0] or 0
+        )
+        total_rows = int(con.execute("SELECT COUNT(*) FROM cur_data").fetchone()[0] or 0)
+
+        if not getattr(enricher, "active", False):
+            level = "none"
+        else:
+            level = "resource" if _detect_resource_col(cols) else "account"
+
+        def _nz(colname: str) -> str:
+            # Non-blank-or-NULL: trims and maps '' to NULL so coverage is honest.
+            return f"NULLIF(TRIM(CAST(\"{colname}\" AS VARCHAR)), '')"
+
+        def _exprs(inv_col: str, native_tag: str):
+            """(effective, native) SQL exprs — inv_* primary, native CUR tag
+            fallback. Either element may be None when its column is absent."""
+            native = _resolve_tag_col(df, native_tag)
+            native_expr = _nz(native) if native else None
+            parts = []
+            if inv_col in present:
+                parts.append(_nz(inv_col))
+            if native_expr:
+                parts.append(native_expr)
+            if not parts:
+                return None, native_expr
+            eff = parts[0] if len(parts) == 1 else "COALESCE(" + ", ".join(parts) + ")"
+            return eff, native_expr
+
+        def _breakdown(eff_expr, key: str) -> list[dict]:
+            if eff_expr is None:
+                return []
+            rows = con.execute(
+                f"SELECT COALESCE({eff_expr}, 'Untagged') AS label, "
+                f"COALESCE(SUM({cost_sql}), 0) AS cost "
+                f"FROM cur_data GROUP BY 1 ORDER BY cost DESC"
+            ).fetchall()
+            out = []
+            for label, cost in rows:
+                cost = float(cost or 0)
+                out.append({
+                    key: str(label),
+                    "cost": round(cost, 2),
+                    "pct": round(cost / total_cost * 100, 1) if total_cost else 0.0,
+                })
+            return out
+
+        def _coverage(eff_expr, native_expr) -> dict:
+            covered = 0
+            untagged_cost = 0.0
+            before_pct = 0.0
+            after_pct = 0.0
+            if eff_expr is not None and total_rows:
+                covered = int(con.execute(
+                    f"SELECT COUNT(*) FROM cur_data WHERE {eff_expr} IS NOT NULL"
+                ).fetchone()[0] or 0)
+                untagged_cost = float(con.execute(
+                    f"SELECT COALESCE(SUM({cost_sql}), 0) FROM cur_data WHERE {eff_expr} IS NULL"
+                ).fetchone()[0] or 0)
+                after_pct = round(covered / total_rows * 100, 1)
+            if native_expr is not None and total_rows:
+                native_cov = int(con.execute(
+                    f"SELECT COUNT(*) FROM cur_data WHERE {native_expr} IS NOT NULL"
+                ).fetchone()[0] or 0)
+                before_pct = round(native_cov / total_rows * 100, 1)
+            return {
+                "covered_pct": round(covered / total_rows * 100, 1) if total_rows else 0.0,
+                "untagged_cost": round(untagged_cost, 2),
+                "before_pct": before_pct,
+                "after_pct": after_pct,
+            }
+
+        # inv_* output column, native CUR tag fallback.
+        specs = {
+            "Environment": ("inv_environment", "tag_Environment"),
+            "Customer": ("inv_customer", "tag_Customer"),
+            "Application": ("inv_application", "tag_Product"),
+            "Budget_Code": ("inv_budget_code", "tag_CostCentre"),
+        }
+        eff = {label: _exprs(inv, nat) for label, (inv, nat) in specs.items()}
+
+        tag_coverage: dict = {}
+        before_after: dict = {}
+        for label, (eff_expr, native_expr) in eff.items():
+            cov = _coverage(eff_expr, native_expr)
+            tag_coverage[label] = {
+                "covered_pct": cov["covered_pct"],
+                "untagged_cost": cov["untagged_cost"],
+            }
+            if label != "Environment":
+                before_after[label] = {
+                    "before_pct": cov["before_pct"],
+                    "after_pct": cov["after_pct"],
+                }
+
+        return {
+            "enrichment_level": level,
+            "env_breakdown": _breakdown(eff["Environment"][0], "environment"),
+            "customer_breakdown": _breakdown(eff["Customer"][0], "customer"),
+            "application_breakdown": _breakdown(eff["Application"][0], "application"),
+            "budget_code_breakdown": _breakdown(eff["Budget_Code"][0], "budget_code"),
+            "tag_coverage": tag_coverage,
+            "before_after": before_after,
+        }
+    finally:
+        con.close()
+
+
 # ── ToolExecutor wrapper ──────────────────────────────────────────────────────
 
 class CurQueryTool(ToolExecutor):
