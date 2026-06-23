@@ -175,6 +175,40 @@ async def persist_report(report_id: int) -> None:
         logger.exception("persist_report: failed to save report %d to DB", report_id)
 
 
+async def delete_report(report_id: int) -> bool:
+    """Remove a report from the in-memory store and the database.
+
+    Returns True if a report with ``report_id`` was found and removed.
+    """
+    from config import settings
+    from database import SessionLocal
+    from models import CurReport
+    from sqlalchemy import delete as sa_delete
+
+    with _lock:
+        before = len(_reports)
+        _reports[:] = [r for r in _reports if r["id"] != report_id]
+        removed = len(_reports) != before
+
+    if not removed:
+        return False
+
+    if SessionLocal is not None:
+        try:
+            async with SessionLocal() as session:
+                await session.execute(
+                    sa_delete(CurReport).where(
+                        CurReport.id == report_id,
+                        CurReport.agent_slug == settings.agent_slug,
+                    )
+                )
+                await session.commit()
+        except Exception:
+            logger.exception("delete_report: failed to delete report %d from DB", report_id)
+
+    return removed
+
+
 async def load_from_db() -> int:
     """Populate the in-memory store from the database on startup. Returns count restored."""
     global _counter

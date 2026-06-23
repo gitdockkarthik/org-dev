@@ -59,31 +59,14 @@
 
   <div class="content">
     <div class="page-heading">
-      <div class="page-heading__title">CUR Reports</div>
-      <div class="page-heading__sub">Upload AWS Cost and Usage Reports or generate sample data</div>
+      <div class="page-heading__title">Reports</div>
+      <div class="page-heading__sub">Saved CUR reports loaded for analysis</div>
     </div>
 
-    <!-- Upload zone -->
-    <div class="section-card">
-      <div class="section-card__header">Upload CUR Export</div>
-      <div style="padding:16px">
-        <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
-          <div class="upload-zone__icon">📤</div>
-          <div class="upload-zone__title">Upload CUR CSV</div>
-          <div class="upload-zone__sub">Click or drag &amp; drop a CSV file exported from AWS Cost &amp; Usage Reports</div>
-          <input type="file" id="fileInput" accept=".csv" style="display:none" onchange="uploadFile(this.files[0])">
-        </div>
-      </div>
-    </div>
-
-    <!-- Generate sample -->
-    <div class="action-card">
-      <div class="action-card__info">
-        <div class="action-card__title">Synthetic Data</div>
-        <div class="action-card__sub">Generate 300 realistic CUR line items across 10 AWS services for demonstration</div>
-      </div>
-      <button class="btn btn--primary" id="genBtn" onclick="generateSample()" style="display:none">⚡ Generate Sample Data</button>
-    </div>
+    <!-- Note -->
+    <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:16px">
+      CUR files are managed in <strong>Settings → Data Source</strong>. Use Dashboard or Chat to analyse each report.
+    </p>
 
     <!-- Reports table -->
     <div class="section-card">
@@ -135,60 +118,27 @@
       return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
     }
 
-    // Drag-and-drop
-    const zone = document.getElementById('uploadZone');
-    zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('upload-zone--drag'); });
-    zone.addEventListener('dragleave', () => zone.classList.remove('upload-zone--drag'));
-    zone.addEventListener('drop', e => {
-      e.preventDefault(); zone.classList.remove('upload-zone--drag');
-      const f = e.dataTransfer.files[0]; if (f) uploadFile(f);
-    });
-
-    async function generateSample() {
-      const btn = document.getElementById('genBtn');
-      btn.disabled = true;
-      btn.textContent = '⏳ Generating…';
+    async function deleteReport(id, btn) {
+      if (!confirm('Delete this report? This removes it from the analysis store.')) return;
+      if (btn) btn.disabled = true;
       try {
-        const data = await api('/reports/generate-sample', { method: 'POST' });
-        showToast(`Generated: ${data.row_count} line items — ${formatUSD(data.total_cost)} total`, 'success');
+        await api('/reports/' + id, { method: 'DELETE' });
+        showToast('Report deleted', 'success');
         loadReports();
       } catch (e) {
-        showToast('Generation failed: ' + e.message, 'error');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = '⚡ Generate Sample Data';
-      }
-    }
-
-    async function uploadFile(file) {
-      if (!file) return;
-      const fd = new FormData();
-      fd.append('file', file);
-      showToast('Uploading…');
-      try {
-        const data = await api('/reports/upload', { method: 'POST', body: fd });
-        showToast(`Uploaded: ${data.row_count} line items — ${formatUSD(data.total_cost)} total`, 'success');
-        loadReports();
-      } catch (e) {
-        showToast('Upload failed: ' + e.message, 'error');
+        showToast('Delete failed: ' + e.message, 'error');
+        if (btn) btn.disabled = false;
       }
     }
 
     async function loadReports() {
       await portalReady;
-
-      // Hide generate button if source is not synthetic
-      try {
-        const cfg = await api('/settings').catch(() => ({}));
-        const genBtn = document.getElementById('genBtn');
-        if (genBtn) genBtn.style.display = (cfg.source_type || 'synthetic') === 'synthetic' ? '' : 'none';
-      } catch (_) {}
       const el = document.getElementById('reportsBody');
       el.innerHTML = '<div class="empty-state"><div class="empty-state__icon">⏳</div><div class="empty-state__title">Loading…</div></div>';
       try {
         const reports = await api('/reports');
         if (!reports.length) {
-          el.innerHTML = '<div class="empty-state"><div class="empty-state__icon">📁</div><div class="empty-state__title">No reports yet</div><div class="empty-state__sub">Upload a CUR CSV or generate sample data.</div></div>';
+          el.innerHTML = '<div class="empty-state"><div class="empty-state__icon">📁</div><div class="empty-state__title">No reports yet</div><div class="empty-state__sub">CUR files are managed in Settings → Data Source.</div></div>';
           return;
         }
         const rows = reports.map(r => `<tr>
@@ -201,6 +151,7 @@
           <td style="display:flex;gap:6px">
     <a href="/agents/cur-analyser/dashboard" data-standalone-href="dashboard.html" class="btn btn--ghost btn--sm">📊 Dashboard</a>
     <a href="/chat?agent=cur-analyser" data-standalone-href="chat.html" class="btn btn--ghost btn--sm">💬 Chat</a>
+    <button class="btn btn--ghost btn--sm" onclick="deleteReport(${r.id}, this)">🗑 Delete</button>
           </td>
         </tr>`).join('');
         el.innerHTML = `<div style="overflow-x:auto"><table class="data-table">

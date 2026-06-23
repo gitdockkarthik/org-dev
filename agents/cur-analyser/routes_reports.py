@@ -12,7 +12,7 @@ from uuid import uuid4
 from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi import Query as FastAPIQuery
 
-from report_store import add_report, list_reports, get_report_rows, get_report_csv, persist_report
+from report_store import add_report, list_reports, get_report_rows, get_report_csv, persist_report, delete_report
 from routes_dashboard import invalidate_dashboard_cache
 from tools.duckdb_engine import (
     get_total_cost, get_cost_by_service, get_daily_trend,
@@ -502,6 +502,17 @@ async def compare_reports(
 @router.get("")
 async def get_reports() -> list[dict]:
     return list_reports()
+
+
+@router.delete("/{report_id}")
+async def delete_report_route(report_id: int) -> dict:
+    """Delete a saved report (in-memory + DB) and invalidate its dashboard cache."""
+    removed = await delete_report(report_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"Report {report_id} not found")
+    invalidate_dashboard_cache(report_id)
+    invalidate_dashboard_cache(None)
+    return {"ok": True, "deleted": report_id}
 
 
 @router.get("/{report_id}/data")
