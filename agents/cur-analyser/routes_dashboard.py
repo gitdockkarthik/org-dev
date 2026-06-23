@@ -2,7 +2,13 @@
 from __future__ import annotations
 import time
 from fastapi import APIRouter, Query
-from report_store import get_latest_csv, get_latest_meta, get_report_csv
+from report_store import (
+    get_latest_csv,
+    get_latest_meta,
+    get_latest_path,
+    get_report_csv,
+    get_report_path,
+)
 from tools.dashboard_builder import compute_dashboard
 
 router = APIRouter(tags=["dashboard"])
@@ -36,16 +42,26 @@ async def get_dashboard(report_id: int = Query(default=None)) -> dict:
     if cached:
         return cached
 
+    # Prefer the on-disk file (file-path pipeline — avoids materialising a
+    # multi-GB CSV string); fall back to stored csv_text for legacy reports.
     if report_id is not None:
-        csv_text = get_report_csv(report_id)
-        if csv_text is None:
-            return {"empty": True, "reason": f"Report {report_id} not found"}
+        file_path = get_report_path(report_id)
+        if file_path:
+            csv_text = None
+        else:
+            csv_text = get_report_csv(report_id)
+            if csv_text is None:
+                return {"empty": True, "reason": f"Report {report_id} not found"}
     else:
-        csv_text = get_latest_csv()
-        if csv_text is None:
-            return {"empty": True}
+        file_path = get_latest_path()
+        if file_path:
+            csv_text = None
+        else:
+            csv_text = get_latest_csv()
+            if csv_text is None:
+                return {"empty": True}
 
-    dashboard = compute_dashboard(csv_text)
+    dashboard = compute_dashboard(csv_text, file_path=file_path)
     report = get_latest_meta() if report_id is None else None
     dashboard["report"] = report
     _set_cached_dashboard(report_id, dashboard)

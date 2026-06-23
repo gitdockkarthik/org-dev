@@ -184,29 +184,35 @@ class DataSourceRegistry:
         """
         if meta.source_type == "file_cur":
             report_id = meta.extra.get("report_id")
+            file_path: Optional[str] = None
             csv_text: Optional[str] = None
             if report_id is not None:
                 try:
-                    from report_store import get_report_csv
-                    csv_text = get_report_csv(int(report_id))
+                    from report_store import get_report_csv, get_report_path
+                    # Prefer the on-disk file (file-path pipeline); only fall back
+                    # to materialising csv_text for legacy reports with no file.
+                    file_path = get_report_path(int(report_id))
+                    if file_path is None:
+                        csv_text = get_report_csv(int(report_id))
                 except Exception:
                     logger.exception("registry: failed to read report %s", report_id)
-            if csv_text is None:
+            if file_path is None and csv_text is None:
                 logger.warning(
-                    "registry: CUR source %s has no recoverable CSV (report_id=%s)",
+                    "registry: CUR source %s has no recoverable data (report_id=%s)",
                     meta.source_id, report_id,
                 )
                 return None
             return FileUploadCURProvider(
                 source_id=meta.source_id,
                 filename=meta.label,
-                csv_text=csv_text,
+                csv_text=csv_text or "",
                 record_count=meta.record_count,
                 total_cost=meta.extra.get("total_cost", 0.0),
                 file_size=meta.extra.get("file_size", 0),
                 report_id=report_id,
                 uploaded_at=meta.last_synced,
                 date_range=(meta.date_range_start, meta.date_range_end),
+                file_path=file_path,
             )
         logger.warning("registry: unknown CUR source_type %r — cannot rehydrate", meta.source_type)
         return None

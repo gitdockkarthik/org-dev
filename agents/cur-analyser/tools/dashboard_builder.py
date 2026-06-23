@@ -2,6 +2,8 @@
 
 Computes: total_cost, top_service, service_breakdown, daily_trend, region_breakdown.
 """
+from __future__ import annotations
+
 import json
 from typing import Any, ClassVar
 
@@ -26,12 +28,18 @@ from tools.duckdb_engine import (
 
 # ── Core aggregation ──────────────────────────────────────────────────────────
 
-def compute_dashboard(csv_text: str) -> dict:
-    """Return a unified dashboard payload from a CUR CSV string."""
-    summary = get_total_cost(csv_text)
-    service_breakdown = get_cost_by_service(csv_text, limit=15)
-    daily_trend = get_daily_trend(csv_text)
-    region_breakdown = get_cost_by_region(csv_text)
+def compute_dashboard(csv_text: str | None = None, *, file_path: str | None = None) -> dict:
+    """Return a unified dashboard payload from CUR data.
+
+    The source is either ``csv_text`` (legacy in-memory pipeline) or
+    ``file_path`` (file-path pipeline for large CUR files). ``file_path`` is
+    forwarded to every query so the underlying frame is read straight from disk
+    instead of from a multi-GB CSV string.
+    """
+    summary = get_total_cost(csv_text, file_path=file_path)
+    service_breakdown = get_cost_by_service(csv_text, limit=15, file_path=file_path)
+    daily_trend = get_daily_trend(csv_text, file_path=file_path)
+    region_breakdown = get_cost_by_region(csv_text, file_path=file_path)
 
     top_service = service_breakdown[0] if service_breakdown else None
 
@@ -42,19 +50,19 @@ def compute_dashboard(csv_text: str) -> dict:
         monthly[month] = round(monthly.get(month, 0.0) + row["cost"], 4)
     monthly_trend = [{"month": m, "cost": c} for m, c in sorted(monthly.items())]
 
-    account_breakdown          = get_cost_by_account(csv_text)
-    org_unit_breakdown         = get_cost_by_org_unit(csv_text)
-    environment_breakdown      = get_cost_by_environment(csv_text)
-    service_category_breakdown = get_cost_by_service_category(csv_text)
-    tag_product_breakdown      = get_cost_by_tag(csv_text, "tag_Product")
-    tag_team_breakdown         = get_cost_by_tag(csv_text, "tag_Team")
-    tag_customer_breakdown     = get_cost_by_tag(csv_text, "tag_Customer")
-    tag_costcentre_breakdown   = get_cost_by_tag(csv_text, "tag_CostCentre")
-    untagged_resources         = get_untagged_resources(csv_text)
-    pricing_term_breakdown     = get_cost_by_pricing_term(csv_text)
-    mom_comparison             = get_mom_comparison(csv_text)
-    top_resources              = get_top_resources(csv_text, limit=10)
-    savings_opportunities      = get_savings_opportunities(csv_text)
+    account_breakdown          = get_cost_by_account(csv_text, file_path=file_path)
+    org_unit_breakdown         = get_cost_by_org_unit(csv_text, file_path=file_path)
+    environment_breakdown      = get_cost_by_environment(csv_text, file_path=file_path)
+    service_category_breakdown = get_cost_by_service_category(csv_text, file_path=file_path)
+    tag_product_breakdown      = get_cost_by_tag(csv_text, "tag_Product", file_path=file_path)
+    tag_team_breakdown         = get_cost_by_tag(csv_text, "tag_Team", file_path=file_path)
+    tag_customer_breakdown     = get_cost_by_tag(csv_text, "tag_Customer", file_path=file_path)
+    tag_costcentre_breakdown   = get_cost_by_tag(csv_text, "tag_CostCentre", file_path=file_path)
+    untagged_resources         = get_untagged_resources(csv_text, file_path=file_path)
+    pricing_term_breakdown     = get_cost_by_pricing_term(csv_text, file_path=file_path)
+    mom_comparison             = get_mom_comparison(csv_text, file_path=file_path)
+    top_resources              = get_top_resources(csv_text, limit=10, file_path=file_path)
+    savings_opportunities      = get_savings_opportunities(csv_text, file_path=file_path)
 
     return {
         "total_cost": summary.get("total_cost", 0),

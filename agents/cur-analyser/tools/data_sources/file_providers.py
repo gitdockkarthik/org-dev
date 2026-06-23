@@ -227,6 +227,54 @@ def cur_file_to_csv(filename: str, path: str) -> tuple[str, str]:
     )
 
 
+def materialize_cur(filename: str, src_path: str) -> tuple[str, str, str]:
+    """Prepare an uploaded CUR file on disk for the file-path pipeline.
+
+    Given the uploaded temp ``src_path``, returns
+    ``(materialized_path, resolved_filename, ext)`` where ``materialized_path``
+    points at a plain ``.csv`` / ``.parquet`` file on disk ready to be moved to
+    permanent storage — no full-file content is held in memory:
+
+    * ``.csv``     → the temp file is used as-is.
+    * ``.zip``     → the richest inner CSV is *streamed* out to a new temp file.
+    * ``.parquet`` → the temp file is used as-is.
+
+    Raises ``ValueError`` on unsupported or malformed input.
+    """
+    import os
+    import shutil
+    import tempfile
+
+    fname_lower = (filename or "").lower()
+
+    if fname_lower.endswith(".csv"):
+        return src_path, filename, ".csv"
+
+    if fname_lower.endswith(".parquet"):
+        return src_path, filename, ".parquet"
+
+    if fname_lower.endswith(".zip"):
+        try:
+            with zipfile.ZipFile(src_path) as zf:
+                csv_names = [
+                    n for n in zf.namelist()
+                    if n.lower().endswith(".csv") and not n.startswith("__MACOSX")
+                ]
+                if not csv_names:
+                    raise ValueError("No CSV file found inside the ZIP archive")
+                chosen = _select_inner_csv(zf, csv_names)
+                fd, out_path = tempfile.mkstemp(suffix=".csv")
+                with os.fdopen(fd, "wb") as out, zf.open(chosen) as src:
+                    shutil.copyfileobj(src, out, length=8 * 1024 * 1024)
+                return out_path, chosen.split("/")[-1], ".csv"
+        except zipfile.BadZipFile as exc:
+            raise ValueError("Invalid ZIP file") from exc
+
+    raise ValueError(
+        "Unsupported file format. Supported: .csv, .zip (containing CSV), .parquet"
+    )
+
+
 class FileUploadCURProvider(CURDataProvider):
     """CUR data sourced from an uploaded file (CSV / CSV.zip / Parquet)."""
 
@@ -237,13 +285,14 @@ class FileUploadCURProvider(CURDataProvider):
         *,
         source_id: str,
         filename: str,
-        csv_text: str,
+        csv_text: str = "",
         record_count: int = 0,
         total_cost: float = 0.0,
         file_size: int = 0,
         report_id: Optional[int] = None,
         uploaded_at: Optional[str] = None,
         date_range: Optional[tuple[Optional[str], Optional[str]]] = None,
+        file_path: Optional[str] = None,
     ) -> None:
         self.source_id = source_id
         self.filename = filename
@@ -254,6 +303,7 @@ class FileUploadCURProvider(CURDataProvider):
         self.report_id = report_id
         self.uploaded_at = uploaded_at or _now_iso()
         self._date_range = date_range
+        self.file_path = file_path
 
     # -- construction ---------------------------------------------------------
 
@@ -271,6 +321,12 @@ class FileUploadCURProvider(CURDataProvider):
     # -- interface ------------------------------------------------------------
 
     async def fetch(self) -> str:
+        if self._csv_text:
+            return self._csv_text
+        if self.file_path:
+            from report_store import _file_to_csv_text
+
+            return _file_to_csv_text(self.file_path)
         return self._csv_text
 
     def get_date_ranges(self) -> tuple[Optional[str], Optional[str]]:
@@ -312,7 +368,16 @@ class FileUploadCURProvider(CURDataProvider):
 
             from tools.duckdb_engine import _detect_date_col
 
-            df = pd.read_csv(io.StringIO(self._csv_text))
+            if self._csv_text:
+                df = pd.read_csv(io.StringIO(self._csv_text))
+            elif self.file_path and self.file_path.lower().endswith(".parquet"):
+                df = duckdb.connect().execute(
+                    "SELECT * FROM read_parquet(?)", [self.file_path]
+                ).df()
+            elif self.file_path:
+                df = pd.read_csv(self.file_path)
+            else:
+                return (None, None)
             date_col = _detect_date_col(list(df.columns))
             if not date_col:
                 return (None, None)

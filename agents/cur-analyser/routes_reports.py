@@ -241,15 +241,16 @@ async def generate_sample() -> dict:
 @router.post("/upload")
 async def upload_report(file: UploadFile) -> dict:
     import os
+    import shutil
 
+    from report_store import _ensure_data_dir, report_file_path, set_report_path
     from tools.data_sources.file_providers import (
         UploadTooLarge,
-        _select_inner_csv,
+        materialize_cur,
         stream_upload_to_temp,
     )
 
     filename = file.filename or ""
-    fname_lower = filename.lower()
 
     # Stream the upload to a temp file on disk (bounded memory) instead of
     # loading the whole CUR into memory via ``await file.read()``.
@@ -262,76 +263,42 @@ async def upload_report(file: UploadFile) -> dict:
         raise HTTPException(status_code=413,
             detail="File too large (max 2 GB)")
 
+    mat_path: str | None = None
     try:
-        # ── CSV ──────────────────────────────────────────────────────
-        if fname_lower.endswith(".csv"):
-            # Read in text mode so only the decoded string is held — never the
-            # raw bytes alongside it.
-            with open(tmp_path, encoding="utf-8-sig", errors="replace") as f:
-                csv_text = f.read()
-
-        # ── ZIP containing CSV ───────────────────────────────────────
-        elif fname_lower.endswith(".zip"):
-            try:
-                with zipfile.ZipFile(tmp_path) as zf:
-                    # Find first CSV file inside the zip
-                    csv_names = [n for n in zf.namelist()
-                                 if n.lower().endswith(".csv")
-                                 and not n.startswith("__MACOSX")]
-                    if not csv_names:
-                        raise HTTPException(status_code=422,
-                            detail="No CSV file found inside the ZIP archive")
-                    # Pick the richest inner CSV — AWS legacy DBR zips bundle a
-                    # tag-less detailed-line-items CSV alongside the
-                    # "-with-resources-and-tags" variant; csv_names[0] can grab
-                    # the tag-less one and drop every resourceTags/user:* column.
-                    chosen = _select_inner_csv(zf, csv_names)
-                    with zf.open(chosen) as f:
-                        csv_text = io.TextIOWrapper(
-                            f, encoding="utf-8-sig", errors="replace"
-                        ).read()
-                    # Use the inner CSV filename
-                    filename = chosen.split("/")[-1]
-            except zipfile.BadZipFile:
-                raise HTTPException(status_code=422,
-                    detail="Invalid ZIP file")
-
-        # ── PARQUET ──────────────────────────────────────────────────
-        elif fname_lower.endswith(".parquet"):
-            try:
-                import duckdb
-                con = duckdb.connect()
-                # Read parquet from the temp file path and convert to CSV string
-                csv_text = con.execute(
-                    f"SELECT * FROM read_parquet('{tmp_path}')"
-                ).df().to_csv(index=False)
-                con.close()
-            except Exception as e:
-                raise HTTPException(status_code=422,
-                    detail=f"Failed to read Parquet file: {str(e)}")
-
-        else:
-            raise HTTPException(status_code=400,
-                detail="Unsupported file format. "
-                       "Supported: .csv, .zip (containing CSV), .parquet")
-    finally:
         try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+            mat_path, filename, ext = materialize_cur(filename, tmp_path)
+        except ValueError as exc:
+            code = 400 if "Unsupported" in str(exc) else 422
+            raise HTTPException(status_code=code, detail=str(exc))
 
-    # ── Common processing ─────────────────────────────────────────
-    summary = get_total_cost(csv_text)
-    if "error" in summary:
-        raise HTTPException(status_code=422, detail=summary["error"])
+        # Summarise straight from the file on disk — never materialise a
+        # multi-GB CSV string.
+        summary = get_total_cost(file_path=mat_path)
+        if "error" in summary:
+            raise HTTPException(status_code=422, detail=summary["error"])
 
-    report = add_report(
-        filename=filename,
-        csv_text=csv_text,
-        row_count=summary.get("row_count", 0),
-        total_cost=summary.get("total_cost", 0.0),
-        file_size=file_size,
-    )
+        report = add_report(
+            filename=filename,
+            csv_text="",
+            row_count=summary.get("row_count", 0),
+            total_cost=summary.get("total_cost", 0.0),
+            file_size=file_size,
+            file_path=mat_path,
+        )
+        # Move the materialised file into permanent per-report storage.
+        _ensure_data_dir()
+        perm_path = report_file_path(report["id"], ext)
+        shutil.move(mat_path, perm_path)
+        mat_path = None  # moved — nothing left to clean up
+        set_report_path(report["id"], perm_path)
+    finally:
+        for p in (tmp_path, mat_path):
+            if p and os.path.exists(p):
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
+
     await persist_report(report["id"])
     invalidate_dashboard_cache(report["id"])
     invalidate_dashboard_cache(None)

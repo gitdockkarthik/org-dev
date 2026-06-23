@@ -9,6 +9,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import os
 import re
 import threading
 from datetime import datetime, timezone
@@ -19,6 +20,51 @@ logger = logging.getLogger(__name__)
 _lock = threading.Lock()
 _reports: list[dict[str, Any]] = []
 _counter = 0
+
+# ── Permanent CUR file storage ────────────────────────────────────────────────
+# Large CUR files (1.8 GB+) are stored on disk and read directly by DuckDB /
+# pandas via their path, instead of being held as a giant ``csv_text`` string in
+# memory and in the database. Override the location with ``CUR_DATA_DIR``.
+# NOTE: for files to survive a container rebuild this directory must be backed by
+# a persistent volume (see docker-compose.yml → cur_analyser_data).
+CUR_DATA_DIR = os.environ.get("CUR_DATA_DIR", "/app/data/cur")
+
+
+def _ensure_data_dir() -> str:
+    os.makedirs(CUR_DATA_DIR, exist_ok=True)
+    return CUR_DATA_DIR
+
+
+def report_file_path(report_id: int, ext: str = ".csv") -> str:
+    """Conventional permanent path for a report's CUR file."""
+    return os.path.join(CUR_DATA_DIR, f"{report_id}{ext}")
+
+
+def _discover_file_path(report_id: int) -> str | None:
+    """Recover a report's on-disk CUR file by convention (used on startup, since
+    the path itself is not persisted in the DB)."""
+    for ext in (".csv", ".parquet"):
+        p = report_file_path(report_id, ext)
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def _file_to_csv_text(path: str) -> str:
+    """Read an on-disk CUR file into raw CSV text. Parquet is converted via
+    DuckDB; everything else is read as UTF-8 text."""
+    if path.lower().endswith(".parquet"):
+        import duckdb
+
+        con = duckdb.connect()
+        try:
+            return con.execute(
+                "SELECT * FROM read_parquet(?)", [path]
+            ).df().to_csv(index=False)
+        finally:
+            con.close()
+    with open(path, encoding="utf-8-sig", errors="replace") as f:
+        return f.read()
 
 
 def _needs_normalisation(columns: list[str]) -> bool:
@@ -60,16 +106,31 @@ def _parse_rows(csv_text: str) -> list[dict[str, str]]:
 
 # ── In-memory (sync) ──────────────────────────────────────────────────────────
 
-def add_report(filename: str, csv_text: str, row_count: int, total_cost: float, file_size: int) -> dict[str, Any]:
+def add_report(
+    filename: str,
+    csv_text: str,
+    row_count: int,
+    total_cost: float,
+    file_size: int,
+    file_path: str | None = None,
+) -> dict[str, Any]:
+    """Register a report.
+
+    Pass ``csv_text`` for the legacy in-memory pipeline, or ``file_path`` (with
+    ``csv_text=""``) for the file-path pipeline used by large CUR files. When a
+    file path is used, rows are parsed lazily from disk on demand rather than
+    held in memory.
+    """
     global _counter
-    rows = _parse_rows(csv_text)
+    rows = _parse_rows(csv_text) if csv_text else None
     with _lock:
         _counter += 1
         report: dict[str, Any] = {
             "id": _counter,
             "filename": filename,
-            "_csv": csv_text,
+            "_csv": csv_text or "",
             "_rows": rows,
+            "_file_path": file_path,
             "row_count": row_count,
             "total_cost": round(total_cost, 4),
             "file_size": file_size,
@@ -80,6 +141,30 @@ def add_report(filename: str, csv_text: str, row_count: int, total_cost: float, 
     return _public(report)
 
 
+def set_report_path(report_id: int, file_path: str) -> bool:
+    """Attach a permanent on-disk CUR file path to an existing report."""
+    with _lock:
+        for r in _reports:
+            if r["id"] == report_id:
+                r["_file_path"] = file_path
+                return True
+    return False
+
+
+def get_report_path(report_id: int) -> str | None:
+    """Return the on-disk CUR file path for a report, if one exists."""
+    with _lock:
+        path = next((r.get("_file_path") for r in _reports if r["id"] == report_id), None)
+    return path if path and os.path.exists(path) else None
+
+
+def get_latest_path() -> str | None:
+    """Return the on-disk CUR file path for the most recent report, if any."""
+    with _lock:
+        path = _reports[0].get("_file_path") if _reports else None
+    return path if path and os.path.exists(path) else None
+
+
 def list_reports() -> list[dict[str, Any]]:
     with _lock:
         return [_public(r) for r in _reports]
@@ -87,23 +172,58 @@ def list_reports() -> list[dict[str, Any]]:
 
 def get_report_rows(report_id: int) -> list[dict[str, str]] | None:
     with _lock:
-        for r in _reports:
-            if r["id"] == report_id:
-                return r["_rows"]
-        return None
+        match = next((r for r in _reports if r["id"] == report_id), None)
+        if match is None:
+            return None
+        cached = match.get("_rows")
+        path = match.get("_file_path")
+        csv_text = match.get("_csv")
+    if cached is not None:
+        return cached
+    # File-path report: parse rows lazily from disk (not cached, to keep large
+    # files out of memory).
+    if path and os.path.exists(path):
+        try:
+            return _parse_rows(_file_to_csv_text(path))
+        except Exception:
+            logger.exception("get_report_rows: failed to read %s", path)
+            return None
+    return _parse_rows(csv_text) if csv_text else None
 
 
 def get_latest_csv() -> str | None:
     with _lock:
-        return _reports[0]["_csv"] if _reports else None
+        match = _reports[0] if _reports else None
+        path = match.get("_file_path") if match else None
+        csv_text = match.get("_csv") if match else None
+    if match is None:
+        return None
+    if path and os.path.exists(path):
+        try:
+            return _file_to_csv_text(path)
+        except Exception:
+            logger.exception("get_latest_csv: failed to read %s", path)
+    return csv_text or None
 
 
 def get_report_csv(report_id: int) -> str | None:
-    """Return the raw CSV text for a specific report_id, or None if not found."""
-    for r in _reports:
-        if r["id"] == report_id:
-            return r.get("_csv")
-    return None
+    """Return the raw CSV text for a specific report_id, or None if not found.
+
+    Reads from the on-disk file when one exists; otherwise falls back to the
+    stored ``csv_text`` (legacy reports persisted before the file-path pipeline).
+    """
+    with _lock:
+        match = next((r for r in _reports if r["id"] == report_id), None)
+        path = match.get("_file_path") if match else None
+        csv_text = match.get("_csv") if match else None
+    if match is None:
+        return None
+    if path and os.path.exists(path):
+        try:
+            return _file_to_csv_text(path)
+        except Exception:
+            logger.exception("get_report_csv: failed to read %s", path)
+    return csv_text or None
 
 
 def get_latest_meta() -> dict[str, Any] | None:
@@ -187,11 +307,20 @@ async def delete_report(report_id: int) -> bool:
 
     with _lock:
         before = len(_reports)
+        doomed = next((r for r in _reports if r["id"] == report_id), None)
+        file_path = doomed.get("_file_path") if doomed else None
         _reports[:] = [r for r in _reports if r["id"] != report_id]
         removed = len(_reports) != before
 
     if not removed:
         return False
+
+    # Remove the on-disk CUR file, if any.
+    if file_path and os.path.exists(file_path):
+        try:
+            os.unlink(file_path)
+        except OSError:
+            logger.exception("delete_report: failed to remove file %s", file_path)
 
     if SessionLocal is not None:
         try:
@@ -235,15 +364,23 @@ async def load_from_db() -> int:
 
         loaded: list[dict[str, Any]] = []
         for r in rows:
-            try:
-                parsed_rows = _parse_rows(r.csv_data)
-            except Exception:
-                parsed_rows = []
+            # File-path reports persist an empty csv_data blob; recover their
+            # on-disk file by convention and parse rows lazily. Legacy reports
+            # keep their csv_data and parse rows eagerly as before.
+            disk_path = _discover_file_path(r.id)
+            if r.csv_data:
+                try:
+                    parsed_rows: list[dict[str, str]] | None = _parse_rows(r.csv_data)
+                except Exception:
+                    parsed_rows = []
+            else:
+                parsed_rows = None
             loaded.append({
                 "id": r.id,
                 "filename": r.filename,
-                "_csv": r.csv_data,
+                "_csv": r.csv_data or "",
                 "_rows": parsed_rows,
+                "_file_path": disk_path,
                 "row_count": r.row_count,
                 "total_cost": r.total_cost,
                 "file_size": r.file_size,

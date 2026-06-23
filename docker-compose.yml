@@ -90,6 +90,13 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       # Inventory enrichment is opt-in; disabled by default (zero impact when off).
       ENABLE_INVENTORY_ENRICHMENT: ${ENABLE_INVENTORY_ENRICHMENT:-false}
+      # Permanent on-disk CUR file storage (file-path pipeline for large files).
+      CUR_DATA_DIR: /app/data/cur
+    volumes:
+      # Persist uploaded CUR files across container rebuilds. The DB only keeps
+      # report metadata (csv_data is empty for file-path reports), so the files
+      # themselves must live on a durable volume.
+      - cur_analyser_data:/app/data
     depends_on:
       - backend
 
@@ -150,3 +157,4 @@ services:
 
 volumes:
   pgdata:
+  cur_analyser_data:

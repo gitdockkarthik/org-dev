@@ -248,13 +248,20 @@ async def ds_cur_upload(file: UploadFile) -> dict:
     """Upload a new CUR file (CSV / CSV.zip / Parquet) and register it as a
     data source. Reuses the existing report store so the dashboard picks it up."""
     import os
+    import shutil
 
-    from report_store import add_report, persist_report
+    from report_store import (
+        _ensure_data_dir,
+        add_report,
+        persist_report,
+        report_file_path,
+        set_report_path,
+    )
     from routes_dashboard import invalidate_dashboard_cache
     from tools.data_sources.file_providers import (
         FileUploadCURProvider,
         UploadTooLarge,
-        cur_file_to_csv,
+        materialize_cur,
         stream_upload_to_temp,
     )
     from tools.duckdb_engine import get_total_cost
@@ -270,29 +277,42 @@ async def ds_cur_upload(file: UploadFile) -> dict:
     except UploadTooLarge:
         raise HTTPException(status_code=413, detail="File too large (max 2 GB)")
 
+    mat_path: str | None = None
     try:
         try:
-            csv_text, resolved = cur_file_to_csv(file.filename or "", tmp_path)
+            mat_path, resolved, ext = materialize_cur(file.filename or "", tmp_path)
         except ValueError as exc:
             code = 400 if "Unsupported" in str(exc) else 422
             raise HTTPException(status_code=code, detail=str(exc))
+
+        # Summarise straight from the file on disk — never materialise a
+        # multi-GB CSV string.
+        summary = get_total_cost(file_path=mat_path)
+        if "error" in summary:
+            raise HTTPException(status_code=422, detail=summary["error"])
+
+        report = add_report(
+            filename=resolved,
+            csv_text="",
+            row_count=summary.get("row_count", 0),
+            total_cost=summary.get("total_cost", 0.0),
+            file_size=file_size,
+            file_path=mat_path,
+        )
+        # Move the materialised file into permanent per-report storage.
+        _ensure_data_dir()
+        perm_path = report_file_path(report["id"], ext)
+        shutil.move(mat_path, perm_path)
+        mat_path = None  # moved — nothing left to clean up
+        set_report_path(report["id"], perm_path)
     finally:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+        for p in (tmp_path, mat_path):
+            if p and os.path.exists(p):
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
 
-    summary = get_total_cost(csv_text)
-    if "error" in summary:
-        raise HTTPException(status_code=422, detail=summary["error"])
-
-    report = add_report(
-        filename=resolved,
-        csv_text=csv_text,
-        row_count=summary.get("row_count", 0),
-        total_cost=summary.get("total_cost", 0.0),
-        file_size=file_size,
-    )
     await persist_report(report["id"])
     invalidate_dashboard_cache(report["id"])
     invalidate_dashboard_cache(None)
@@ -300,11 +320,12 @@ async def ds_cur_upload(file: UploadFile) -> dict:
     provider = FileUploadCURProvider(
         source_id=f"cur-{report['id']}",
         filename=resolved,
-        csv_text=csv_text,
+        csv_text="",
         record_count=summary.get("row_count", 0),
         total_cost=summary.get("total_cost", 0.0),
         file_size=file_size,
         report_id=report["id"],
+        file_path=perm_path,
     )
     meta = await reg.register_cur(provider)
     return {"ok": True, "report": report, "source": meta.to_dict()}

@@ -4,6 +4,8 @@ All public query functions accept raw CSV text and return plain Python structure
 The CurQueryTool wraps them as an Anthropic-callable ToolExecutor that reads from
 the per-session CUR cache populated by main.py.
 """
+from __future__ import annotations
+
 import io
 import json
 import logging
@@ -300,26 +302,36 @@ def _service_category_from_names(con, cost_col: str, svc_col: str | None) -> lis
 # ── Core query functions (migrated from engine.py) ────────────────────────────
 
 def _load_df(
-    csv_text: str, enricher=None
+    csv_text: str | None = None, enricher=None, file_path: str | None = None
 ) -> tuple[pd.DataFrame, duckdb.DuckDBPyConnection]:
-    """Load CUR CSV into a DataFrame + DuckDB connection.
+    """Load CUR data into a DataFrame + DuckDB connection.
 
-    ``enricher`` is optional. When ``None`` (the default, and the path every
-    existing caller takes) behaviour is unchanged. When supplied, the inventory
-    enricher adds ``inv_*`` virtual columns *before* the frame is registered, so
-    downstream queries can group/filter on them. An inactive enricher (no
-    inventory loaded) is a safe no-op.
+    The source is either ``csv_text`` (the legacy in-memory pipeline) or
+    ``file_path`` (the file-path pipeline used for large CUR files, which reads
+    straight from disk instead of materialising a multi-GB CSV string). A
+    ``.parquet`` path is read via DuckDB; any other path is read with
+    ``pd.read_csv`` directly — no ``StringIO`` intermediate.
+
+    ``enricher`` is optional. When supplied, the inventory enricher adds
+    ``inv_*`` virtual columns *before* the frame is registered. An inactive
+    enricher (no inventory loaded) is a safe no-op.
     """
     con = duckdb.connect(database=":memory:")
-    df = pd.read_csv(io.StringIO(csv_text))
+    if file_path is not None:
+        if str(file_path).lower().endswith(".parquet"):
+            df = con.execute("SELECT * FROM read_parquet(?)", [file_path]).df()
+        else:
+            df = pd.read_csv(file_path)
+    else:
+        df = pd.read_csv(io.StringIO(csv_text))
     if enricher is not None:
         df = enricher.enrich_dataframe(df)
     con.register("cur_data", df)
     return df, con
 
 
-def get_total_cost(csv_text: str) -> dict:
-    df, con = _load_df(csv_text)
+def get_total_cost(csv_text: str | None = None, file_path: str | None = None) -> dict:
+    df, con = _load_df(csv_text, file_path=file_path)
     try:
         # DEBUG: log the raw CUR column names once per dashboard build so the
         # actual header format (and any unexpected tag-column naming) is visible.
@@ -337,8 +349,8 @@ def get_total_cost(csv_text: str) -> dict:
         con.close()
 
 
-def get_cost_by_service(csv_text: str, limit: int = 15) -> list[dict]:
-    df, con = _load_df(csv_text)
+def get_cost_by_service(csv_text: str | None = None, limit: int = 15, file_path: str | None = None) -> list[dict]:
+    df, con = _load_df(csv_text, file_path=file_path)
     try:
         cost_col = _detect_cost_col(list(df.columns))
         svc_col = _detect_service_col(list(df.columns))
@@ -353,8 +365,8 @@ def get_cost_by_service(csv_text: str, limit: int = 15) -> list[dict]:
         con.close()
 
 
-def get_daily_trend(csv_text: str) -> list[dict]:
-    df, con = _load_df(csv_text)
+def get_daily_trend(csv_text: str | None = None, file_path: str | None = None) -> list[dict]:
+    df, con = _load_df(csv_text, file_path=file_path)
     try:
         cost_col = _detect_cost_col(list(df.columns))
         date_col = _detect_date_col(list(df.columns))
@@ -369,8 +381,8 @@ def get_daily_trend(csv_text: str) -> list[dict]:
         con.close()
 
 
-def get_cost_by_region(csv_text: str) -> list[dict]:
-    df, con = _load_df(csv_text)
+def get_cost_by_region(csv_text: str | None = None, file_path: str | None = None) -> list[dict]:
+    df, con = _load_df(csv_text, file_path=file_path)
     try:
         cost_col = _detect_cost_col(list(df.columns))
         region_col = _detect_region_col(list(df.columns))
@@ -398,8 +410,8 @@ def get_cost_by_region(csv_text: str) -> list[dict]:
         con.close()
 
 
-def get_cost_by_account(csv_text: str) -> list[dict]:
-    df, con = _load_df(csv_text)
+def get_cost_by_account(csv_text: str | None = None, file_path: str | None = None) -> list[dict]:
+    df, con = _load_df(csv_text, file_path=file_path)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
@@ -440,8 +452,8 @@ def get_cost_by_account(csv_text: str) -> list[dict]:
         con.close()
 
 
-def get_cost_by_org_unit(csv_text: str) -> list[dict]:
-    df, con = _load_df(csv_text)
+def get_cost_by_org_unit(csv_text: str | None = None, file_path: str | None = None) -> list[dict]:
+    df, con = _load_df(csv_text, file_path=file_path)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
@@ -466,8 +478,8 @@ def get_cost_by_org_unit(csv_text: str) -> list[dict]:
         con.close()
 
 
-def get_cost_by_environment(csv_text: str) -> list[dict]:
-    df, con = _load_df(csv_text)
+def get_cost_by_environment(csv_text: str | None = None, file_path: str | None = None) -> list[dict]:
+    df, con = _load_df(csv_text, file_path=file_path)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
@@ -514,8 +526,8 @@ def get_cost_by_environment(csv_text: str) -> list[dict]:
         con.close()
 
 
-def get_cost_by_service_category(csv_text: str) -> list[dict]:
-    df, con = _load_df(csv_text)
+def get_cost_by_service_category(csv_text: str | None = None, file_path: str | None = None) -> list[dict]:
+    df, con = _load_df(csv_text, file_path=file_path)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
@@ -564,8 +576,8 @@ def get_cost_by_service_category(csv_text: str) -> list[dict]:
         con.close()
 
 
-def get_cost_by_tag(csv_text: str, tag_col: str) -> list[dict]:
-    df, con = _load_df(csv_text)
+def get_cost_by_tag(csv_text: str | None = None, tag_col: str = "", file_path: str | None = None) -> list[dict]:
+    df, con = _load_df(csv_text, file_path=file_path)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
@@ -595,8 +607,8 @@ def get_cost_by_tag(csv_text: str, tag_col: str) -> list[dict]:
         con.close()
 
 
-def get_untagged_resources(csv_text: str) -> dict:
-    df, con = _load_df(csv_text)
+def get_untagged_resources(csv_text: str | None = None, file_path: str | None = None) -> dict:
+    df, con = _load_df(csv_text, file_path=file_path)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
@@ -642,8 +654,8 @@ def get_untagged_resources(csv_text: str) -> dict:
         con.close()
 
 
-def get_cost_by_pricing_term(csv_text: str) -> list[dict]:
-    df, con = _load_df(csv_text)
+def get_cost_by_pricing_term(csv_text: str | None = None, file_path: str | None = None) -> list[dict]:
+    df, con = _load_df(csv_text, file_path=file_path)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
@@ -669,8 +681,8 @@ def get_cost_by_pricing_term(csv_text: str) -> list[dict]:
         con.close()
 
 
-def get_mom_comparison(csv_text: str) -> list[dict]:
-    df, con = _load_df(csv_text)
+def get_mom_comparison(csv_text: str | None = None, file_path: str | None = None) -> list[dict]:
+    df, con = _load_df(csv_text, file_path=file_path)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
@@ -697,8 +709,8 @@ def get_mom_comparison(csv_text: str) -> list[dict]:
         con.close()
 
 
-def get_top_resources(csv_text: str, limit: int = 10) -> list[dict]:
-    df, con = _load_df(csv_text)
+def get_top_resources(csv_text: str | None = None, limit: int = 10, file_path: str | None = None) -> list[dict]:
+    df, con = _load_df(csv_text, file_path=file_path)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
@@ -737,8 +749,8 @@ def get_top_resources(csv_text: str, limit: int = 10) -> list[dict]:
         con.close()
 
 
-def get_savings_opportunities(csv_text: str) -> dict:
-    df, con = _load_df(csv_text)
+def get_savings_opportunities(csv_text: str | None = None, file_path: str | None = None) -> dict:
+    df, con = _load_df(csv_text, file_path=file_path)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
@@ -849,7 +861,7 @@ def run_context_query(csv_text: str) -> dict:
     }
 
 
-def get_enrichment_summary(csv_text: str, enricher) -> dict:
+def get_enrichment_summary(csv_text: str | None = None, enricher=None, file_path: str | None = None) -> dict:
     """Compute inventory-enrichment coverage for the CUR data.
 
     Returns ``{"active": False}`` when no enricher / inventory is in play, so the
@@ -860,7 +872,7 @@ def get_enrichment_summary(csv_text: str, enricher) -> dict:
     if enricher is None or not getattr(enricher, "active", False):
         return {"active": False}
 
-    df, con = _load_df(csv_text, enricher=enricher)
+    df, con = _load_df(csv_text, enricher=enricher, file_path=file_path)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
