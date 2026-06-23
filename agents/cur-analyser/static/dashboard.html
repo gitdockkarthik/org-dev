@@ -93,6 +93,30 @@
     .cov-row__name { font-weight:600; }
     .ai-spinner { width:18px; height:18px; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; display:inline-block; animation:spin .7s linear infinite; vertical-align:middle; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    /* Skeleton loading (per-tab placeholders) */
+    .skeleton {
+      background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+      background-size: 200% 100%;
+      animation: skeleton-pulse 1.5s infinite;
+      border-radius: 4px;
+    }
+    @keyframes skeleton-pulse {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+    .skel-wrap { padding:8px 0; }
+    .skel-kpis { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:14px; }
+    .skel-kpi { height:72px; }
+    .skel-chart { height:240px; margin-bottom:16px; }
+    .skel-line { height:16px; margin-bottom:10px; }
+    .skel-line--80 { width:80%; } .skel-line--60 { width:60%; } .skel-line--40 { width:40%; }
+    .skel-computing { text-align:center; color:var(--text-muted); font-size:.85rem; margin-top:12px; }
+    /* Per-tab loading dot on the active tab button */
+    .tab-spinner {
+      display:inline-block; width:9px; height:9px; margin-left:6px;
+      border:2px solid rgba(255,107,53,.35); border-top-color:#FF6B35;
+      border-radius:50%; animation:spin .7s linear infinite; vertical-align:middle;
+    }
     .ai-section { margin-bottom:16px; }
     .ai-content { font-size:.9rem; line-height:1.65; color:var(--text); }
     .ai-content h1, .ai-content h2, .ai-content h3 { font-size:.95rem; margin:14px 0 6px; color:var(--accent); }
@@ -220,8 +244,8 @@
     <!-- Loading -->
     <div id="loadingState">
       <div class="empty-state" style="margin-top:60px">
-        <div class="empty-state__icon">⏳</div>
-        <div class="empty-state__title">Loading dashboard…</div>
+        <div class="ai-spinner" style="width:36px;height:36px;border-width:3px;margin:0 auto 16px;display:block"></div>
+        <div class="empty-state__title" id="loadingMsg">Loading cost data…</div>
       </div>
     </div>
 
@@ -1223,13 +1247,87 @@
       }
     }
 
+    // ── Loading UX helpers ──────────────────────────────────────────────────────
+    // Full-page loading: cycle progressive messages while the dashboard loads.
+    const _LOADING_MESSAGES = [
+      'Loading cost data…',
+      'Computing service breakdown…',
+      'Applying inventory enrichment…',
+      'Almost ready…',
+    ];
+    let _loadingMsgTimer = null;
+    function startLoadingMessages() {
+      const el = document.getElementById('loadingMsg');
+      if (!el) return;
+      let i = 0;
+      el.textContent = _LOADING_MESSAGES[0];
+      clearInterval(_loadingMsgTimer);
+      _loadingMsgTimer = setInterval(() => {
+        const e = document.getElementById('loadingMsg');
+        const ls = document.getElementById('loadingState');
+        // Self-stop once the loading state is hidden/replaced.
+        if (!e || !ls || ls.style.display === 'none') { stopLoadingMessages(); return; }
+        i = (i + 1) % _LOADING_MESSAGES.length;
+        e.textContent = _LOADING_MESSAGES[i];
+      }, 800);
+    }
+    function stopLoadingMessages() {
+      clearInterval(_loadingMsgTimer);
+      _loadingMsgTimer = null;
+    }
+
+    // Per-tab skeleton placeholder shown before a tab's first render.
+    function tabSkeletonHtml() {
+      return `<div class="skel-wrap">
+        <div class="skel-kpis">
+          <div class="skeleton skel-kpi"></div>
+          <div class="skeleton skel-kpi"></div>
+          <div class="skeleton skel-kpi"></div>
+        </div>
+        <div class="skeleton skel-chart"></div>
+        <div class="skeleton skel-line"></div>
+        <div class="skeleton skel-line skel-line--80"></div>
+        <div class="skeleton skel-line skel-line--60"></div>
+        <div class="skeleton skel-line skel-line--40"></div>
+        <div class="skel-computing">Computing…</div>
+      </div>`;
+    }
+    function showTabSkeleton(panel) {
+      if (panel) panel.innerHTML = tabSkeletonHtml();
+    }
+
+    // Subtle spinning dot on the active tab button while its data renders.
+    function setTabLoading(btn, on) {
+      if (!btn) return;
+      let dot = btn.querySelector('.tab-spinner');
+      if (on) {
+        if (!dot) {
+          dot = document.createElement('span');
+          dot.className = 'tab-spinner';
+          btn.appendChild(dot);
+        }
+      } else if (dot) {
+        dot.remove();
+      }
+    }
+
     // ── Tab switching ───────────────────────────────────────────────────────────
     function switchTab(name, btn) {
       document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('tab-panel--active'));
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('tab-btn--active'));
       document.getElementById('tab-' + name).classList.add('tab-panel--active');
       btn.classList.add('tab-btn--active');
-      if (!_loaded.has(name)) { _loaded.add(name); renderTab(name); }
+      if (!_loaded.has(name)) {
+        _loaded.add(name);
+        // Show a skeleton + tab spinner, then render on the next frame so the
+        // placeholder actually paints (no blank white flash between tabs).
+        showTabSkeleton(document.getElementById('tab-' + name));
+        setTabLoading(btn, true);
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          renderTab(name);
+          setTabLoading(btn, false);
+        }));
+      }
     }
     function renderTab(name) {
       try {
@@ -2818,6 +2916,7 @@ ${JSON.stringify(payload, null, 2)}
     // ── Init ───────────────────────────────────────────────────────────────────────
     async function init() {
       await portalReady;
+      startLoadingMessages();
       REPORT_ID = getReportIdParam();
       // Detect inventory enrichment state — reveals the enriched filter group and
       // switches the row stream to the enriched endpoint. Inert by default.
