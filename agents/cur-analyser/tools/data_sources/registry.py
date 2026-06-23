@@ -177,6 +177,70 @@ class DataSourceRegistry:
             await self.save()
         return removed
 
+    async def sync_registry_from_reports(self) -> None:
+        """Reconcile CUR sources with ``report_store`` — the single source of
+        truth for *which* CUR files exist.
+
+        * Ensures a CUR source (``cur-<report_id>``) exists for every report.
+        * Drops any CUR source whose report no longer exists.
+        * Preserves the existing meta (date ranges etc.) for reports that are
+          already registered, refreshing volatile fields (label / counts).
+        * Keeps still-valid ``active_cur_ids``; if none remain valid, activates
+          the most recently uploaded report.
+
+        Called on startup (after ``load_from_db``) and after any add/delete so
+        the registry never drifts from the reports it describes.
+        """
+        from report_store import list_reports
+
+        reports = list_reports()  # newest-first
+        existing_by_rid: dict[int, DataSourceMeta] = {}
+        for m in self._cur_meta:
+            rid = m.extra.get("report_id")
+            if rid is not None:
+                try:
+                    existing_by_rid[int(rid)] = m
+                except (TypeError, ValueError):
+                    continue
+
+        new_meta: list[DataSourceMeta] = []
+        for rep in reports:  # preserve newest-first ordering
+            rid = rep["id"]
+            m = existing_by_rid.get(rid)
+            if m is not None:
+                # Keep the existing meta (carries date ranges); refresh volatile
+                # fields from the report so the registry stays accurate.
+                m.label = rep.get("filename", m.label)
+                m.record_count = rep.get("row_count", m.record_count)
+                m.extra["filename"] = rep.get("filename", m.extra.get("filename"))
+                m.extra["total_cost"] = rep.get("total_cost", m.extra.get("total_cost"))
+                m.extra["file_size"] = rep.get("file_size", m.extra.get("file_size"))
+                new_meta.append(m)
+            else:
+                new_meta.append(DataSourceMeta(
+                    source_id=f"cur-{rid}",
+                    source_type="file_cur",
+                    label=rep.get("filename", f"report-{rid}"),
+                    last_synced=rep.get("created_at"),
+                    sync_mode="manual",
+                    record_count=rep.get("row_count", 0),
+                    status="active",
+                    extra={
+                        "filename": rep.get("filename"),
+                        "total_cost": rep.get("total_cost", 0.0),
+                        "file_size": rep.get("file_size", 0),
+                        "report_id": rid,
+                    },
+                ))
+
+        self._cur_meta = new_meta
+        valid_ids = {m.source_id for m in self._cur_meta}
+        self._active_cur_ids = [i for i in self._active_cur_ids if i in valid_ids]
+        # If nothing valid is active, activate the most recently uploaded report.
+        if not self._active_cur_ids and self._cur_meta:
+            self._active_cur_ids = [self._cur_meta[0].source_id]
+        await self.save()
+
     def _rehydrate_cur(self, meta: DataSourceMeta) -> Optional[CURDataProvider]:
         """Rebuild a CUR provider from persisted metadata.
 
@@ -353,13 +417,58 @@ class DataSourceRegistry:
     # ── Status snapshot ────────────────────────────────────────────────────────
 
     def status(self) -> dict[str, Any]:
-        """A JSON-serialisable snapshot for the ``/data-sources/status`` endpoint."""
-        active_ids = {m.source_id for m in self.get_active_cur()}
+        """A JSON-serialisable snapshot for the ``/data-sources/status`` endpoint.
+
+        The CUR file list is derived from ``report_store`` (the source of truth
+        for which files exist) so the Settings CUR Files table always reflects
+        reality, even if the registry has momentarily drifted. Registry meta is
+        merged in for fields report_store doesn't carry (date ranges); the
+        active flag comes from the registry (source of truth for selection).
+        """
+        from report_store import list_reports
+
+        reports = list_reports()  # newest-first
+        meta_by_rid: dict[int, DataSourceMeta] = {}
+        for m in self._cur_meta:
+            rid = m.extra.get("report_id")
+            if rid is not None:
+                try:
+                    meta_by_rid[int(rid)] = m
+                except (TypeError, ValueError):
+                    continue
+
+        active_set = set(self._active_cur_ids)
+        if not active_set and reports:
+            # Mirror get_active_cur()'s fallback: most recent report is active.
+            active_set = {f"cur-{reports[0]['id']}"}
+
+        cur_sources = []
+        for rep in reports:
+            rid = rep["id"]
+            sid = f"cur-{rid}"
+            m = meta_by_rid.get(rid)
+            cur_sources.append({
+                "source_id": sid,
+                "source_type": "file_cur",
+                "label": rep.get("filename"),
+                "last_synced": (m.last_synced if m else None) or rep.get("created_at"),
+                "sync_mode": "manual",
+                "date_range_start": m.date_range_start if m else None,
+                "date_range_end": m.date_range_end if m else None,
+                "record_count": rep.get("row_count", 0),
+                "status": rep.get("status", "active"),
+                "stale_threshold_hours": m.stale_threshold_hours if m else 26,
+                "extra": {
+                    "filename": rep.get("filename"),
+                    "total_cost": rep.get("total_cost", 0.0),
+                    "file_size": rep.get("file_size", 0),
+                    "report_id": rid,
+                },
+                "active": sid in active_set,
+            })
+
         return {
-            "cur_sources": [
-                {**m.to_dict(), "active": m.source_id in active_ids}
-                for m in self._cur_meta
-            ],
+            "cur_sources": cur_sources,
             "active_cur_ids": self._active_cur_ids,
             "inventory": self._inventory_meta.to_dict() if self._inventory_meta else None,
             "inventory_loaded": self._inventory_meta is not None,

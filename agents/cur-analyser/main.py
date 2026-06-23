@@ -152,6 +152,9 @@ async def _init_config() -> None:
 
         storage = init_storage(settings.agent_slug)
         registry = await init_registry(storage)
+        # report_store is the source of truth for which CUR files exist — make the
+        # registry's CUR sources exactly match the reports restored from the DB.
+        await registry.sync_registry_from_reports()
         logger.info(
             "_init_config: data-source registry ready — %d CUR source(s), inventory=%s",
             len(registry.list_cur()),
@@ -536,10 +539,31 @@ async def ds_set_active_cur(source_id: str) -> dict:
 
 @app.delete("/data-sources/cur/{source_id}")
 async def ds_delete_cur(source_id: str) -> dict:
+    from report_store import delete_report
+    from routes_dashboard import invalidate_dashboard_cache
+
     reg = _require_registry()
-    removed = await reg.delete_cur(source_id)
-    if not removed:
+    # Resolve the underlying report_id from the source meta.
+    report_id: int | None = None
+    found = False
+    for m in reg.list_cur():
+        if m.source_id == source_id:
+            found = True
+            rid = m.extra.get("report_id")
+            report_id = int(rid) if rid is not None else None
+            break
+    if not found:
         raise HTTPException(status_code=404, detail=f"CUR source {source_id} not found")
+
+    # report_store is the source of truth — delete the report there, then
+    # reconcile the registry so its CUR sources match the remaining reports.
+    if report_id is not None:
+        await delete_report(report_id)
+    await reg.sync_registry_from_reports()
+
+    if report_id is not None:
+        invalidate_dashboard_cache(report_id)
+    invalidate_dashboard_cache(None)
     return {"ok": True, "deleted": source_id}
 
 
