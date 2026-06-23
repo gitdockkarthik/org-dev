@@ -254,3 +254,42 @@ Production notes added to backlog:
 - Storage: EBS volume for /app/data in production
 - Phase 2 S3: DuckDB httpfs for direct S3 reads
 - Rate limiting: max files, storage cap, upload queue
+
+### cur-analyser: Filters, Performance & Comparison Mode (2026-06-23 afternoon)
+
+What was built:
+- Server-side dashboard filtering — all 7 base filters
+  (Account, Environment, Service, Region, Pricing Term,
+  Product Tag, Team Tag) now send filter params to
+  GET /dashboard endpoint, DuckDB applies WHERE clause
+- Filter UX fixes: 150ms debounce, sequence guard to
+  prevent race conditions, chip removal syncs checkbox
+  state and badge count, Reset clears all state cleanly
+- DataFrame cache in duckdb_engine — 10min TTL keyed
+  by file_path, per-file load lock prevents OOM on
+  parallel cold-cache requests
+- Parallel dashboard queries — compute_dashboard_async()
+  runs all 17 queries concurrently via asyncio.gather +
+  ThreadPoolExecutor(max_workers=8), server compute
+  time reduced to ~0.74s
+- Enhanced comparison mode — all panels now show with
+  per-side "Not available" instead of blocking everything,
+  added Service, Account, Environment, Region, Tag
+  Coverage, Pricing Term panels side by side
+- Removed debug df-cache logs (to be done next session)
+
+Performance notes:
+- Server compute: 0.74s (unfiltered), 0.33s (filtered)
+- Perceived 10s over VPN is network latency (~350ms RTT)
+  not server performance — will be faster on LAN
+- Cache hits confirmed — all subsequent requests
+  serve from in-memory DataFrame
+
+Known gaps for next session:
+- Remove [df-cache] diagnostic logs from duckdb_engine.py
+- Comparison mode: resolve slash-format columns for
+  rich-matched-cur-2026.csv left panel
+- Enriched filters (Application, Budget Code, Customer)
+  not yet wired to server-side filtering
+- Combine multiple dashboard requests into single
+  request to reduce VPN round trips
