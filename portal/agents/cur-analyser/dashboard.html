@@ -1197,11 +1197,13 @@
       };
       document.getElementById('fDateFrom').value = '';
       document.getElementById('fDateTo').value = '';
-      // Uncheck the multi-select dropdown checkboxes and restore their button
-      // labels (the legacy `.filter-select` selector no longer matches the
-      // checkbox-based dropdowns, so it left them visually checked on reset).
-      document.querySelectorAll('input[type="checkbox"][data-filter]')
-        .forEach(el => { el.checked = false; });
+      // Uncheck every filter-dropdown checkbox and strip the "(N)" count from the
+      // dropdown button labels. buildMultiSelect tags each checkbox with
+      // data-filter, so the broad `input[data-filter]` selector matches them all
+      // (the older `input[type="checkbox"][data-filter]` form left them checked).
+      const _filterChecks = document.querySelectorAll('input[data-filter]');
+      console.log('resetFilters: clearing', _filterChecks.length, 'filter checkbox(es)');
+      _filterChecks.forEach(el => { el.checked = false; });
       document.querySelectorAll('[id^="btn_"][id$="_label"]')
         .forEach(s => { s.textContent = s.textContent.replace(/\s*\(\d+\)\s*$/, ''); });
       document.querySelectorAll('.filter-select option')

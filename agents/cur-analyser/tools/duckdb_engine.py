@@ -10,6 +10,7 @@ import io
 import json
 import logging
 import re
+import time
 from typing import Any, ClassVar, Literal
 
 import duckdb
@@ -388,6 +389,42 @@ def _apply_filters(df: pd.DataFrame, filters: dict | None) -> pd.DataFrame:
     return df[mask]
 
 
+# ── Loaded-DataFrame cache ─────────────────────────────────────────────────────
+# A dashboard build calls ~14 query functions, each of which loads the CUR via
+# _load_df. Without a cache that re-reads (and re-parses) the file ~14× per
+# request — ~10s+ for a large CUR — and every filter change pays it again. We
+# cache the raw loaded DataFrame keyed by file_path so the disk read happens once
+# (first request), then all queries — filtered or not — operate in memory.
+#
+# Sharing the cached frame by reference is safe because the only in-place mutator
+# is the inventory enricher (it adds inv_* columns); filtering (``df[mask]``) and
+# DuckDB registration are non-mutating. So we copy only on the enricher path.
+_df_cache: dict[str, tuple[pd.DataFrame, float]] = {}
+_DF_CACHE_TTL_SECS = 600  # 10 minutes
+
+
+def _get_cached_df(file_path: str) -> pd.DataFrame | None:
+    entry = _df_cache.get(file_path)
+    if entry is not None:
+        df, ts = entry
+        if time.time() - ts < _DF_CACHE_TTL_SECS:
+            return df
+        _df_cache.pop(file_path, None)
+    return None
+
+
+def _cache_df(file_path: str, df: pd.DataFrame) -> None:
+    _df_cache[file_path] = (df, time.time())
+
+
+def invalidate_df_cache(file_path: str | None = None) -> None:
+    """Drop a cached DataFrame (or all of them when ``file_path`` is None)."""
+    if file_path is None:
+        _df_cache.clear()
+    else:
+        _df_cache.pop(file_path, None)
+
+
 def _load_df(
     csv_text: str | None = None, enricher=None, file_path: str | None = None,
     filters: dict | None = None,
@@ -400,6 +437,10 @@ def _load_df(
     ``.parquet`` path is read via DuckDB; any other path is read with
     ``pd.read_csv`` directly — no ``StringIO`` intermediate.
 
+    File-path reads are cached (see ``_df_cache``): the first request reads from
+    disk and caches the frame; subsequent requests (filtered or not) reuse it in
+    memory and just apply filters, which is what makes filtered dashboards fast.
+
     ``enricher`` is optional. When supplied, the inventory enricher adds
     ``inv_*`` virtual columns *before* the frame is registered. An inactive
     enricher (no inventory loaded) is a safe no-op.
@@ -409,10 +450,18 @@ def _load_df(
     """
     con = duckdb.connect(database=":memory:")
     if file_path is not None:
-        if str(file_path).lower().endswith(".parquet"):
-            df = con.execute("SELECT * FROM read_parquet(?)", [file_path]).df()
-        else:
-            df = pd.read_csv(file_path)
+        df = _get_cached_df(file_path)
+        if df is None:
+            if str(file_path).lower().endswith(".parquet"):
+                df = con.execute("SELECT * FROM read_parquet(?)", [file_path]).df()
+            else:
+                df = pd.read_csv(file_path)
+            _cache_df(file_path, df)
+        # ``df`` may be the shared cached frame. The enricher mutates in place
+        # (adds inv_* columns), so copy first to keep the cache pristine. Filters
+        # and registration below never mutate, so they're safe on the shared frame.
+        if enricher is not None:
+            df = df.copy()
     else:
         df = pd.read_csv(io.StringIO(csv_text))
     if enricher is not None:
