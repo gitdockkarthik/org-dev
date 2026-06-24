@@ -26,6 +26,57 @@ def _ensure_dedup_fields(stats: dict) -> dict:
     return stats
 
 
+def _filter_alerts_by_date(
+    classified: list, from_date: str | None, to_date: str | None
+) -> list:
+    """Filter classified alerts by their OpsGenie ``createdAt`` timestamp.
+
+    Shared by /dashboard and /dashboard/period-summary so every date-scoped view
+    counts the same alerts (by when the alert was created, not when it was synced).
+    Alerts with a missing or unparseable ``createdAt`` are kept (fail-open),
+    matching the original /dashboard behaviour.
+    """
+    from datetime import datetime, timezone
+
+    dt_from = dt_to = None
+    if from_date:
+        try:
+            dt_from = datetime.strptime(
+                from_date, '%Y-%m-%d %H:%M'
+            ).replace(tzinfo=timezone.utc)
+        except ValueError:
+            dt_from = datetime.strptime(
+                from_date, '%Y-%m-%d'
+            ).replace(tzinfo=timezone.utc)
+    if to_date:
+        try:
+            dt_to = datetime.strptime(
+                to_date, '%Y-%m-%d %H:%M'
+            ).replace(tzinfo=timezone.utc)
+        except ValueError:
+            dt_to = datetime.strptime(
+                to_date + ' 23:59:59', '%Y-%m-%d %H:%M:%S'
+            ).replace(tzinfo=timezone.utc)
+
+    filtered = []
+    for alert in classified:
+        created = alert.get('createdAt', '')
+        if not created:
+            filtered.append(alert)
+            continue
+        try:
+            # Parse ISO timestamp from OpsGenie
+            alert_dt = datetime.fromisoformat(created.replace('Z', '+00:00'))
+            if dt_from and alert_dt < dt_from:
+                continue
+            if dt_to and alert_dt > dt_to:
+                continue
+            filtered.append(alert)
+        except Exception:
+            filtered.append(alert)
+    return filtered
+
+
 @router.get("/dashboard")
 async def get_dashboard(
     from_date: str | None = None,
@@ -76,25 +127,9 @@ async def get_dashboard(
                         if latest.report_data else []
 
                     # Filter alerts by createdAt within the selected period
-                    filtered = []
-                    for alert in raw_classified:
-                        created = alert.get('createdAt', '')
-                        if not created:
-                            filtered.append(alert)
-                            continue
-                        try:
-                            # Parse ISO timestamp from OpsGenie
-                            from datetime import datetime, timezone
-                            alert_dt = datetime.fromisoformat(
-                                created.replace('Z', '+00:00')
-                            )
-                            if from_date and alert_dt < dt_from:
-                                continue
-                            if to_date and alert_dt > dt_to:
-                                continue
-                            filtered.append(alert)
-                        except Exception:
-                            filtered.append(alert)
+                    filtered = _filter_alerts_by_date(
+                        raw_classified, from_date, to_date
+                    )
 
                     # Recompute stats from filtered alerts
                     if filtered:
@@ -216,6 +251,71 @@ async def get_period_summary(
     _log = logging.getLogger(__name__)
     if SessionLocal is None:
         return {"empty": True}
+
+    # When an explicit date range is given, derive Row 2 from the alerts'
+    # createdAt — exactly as /dashboard does — so the period KPIs match the
+    # Genuine tab for the same range instead of filtering syncs by synced_at.
+    if from_date and to_date:
+        from models import AlertReport
+        from sqlalchemy import select
+        from tools.dashboard_builder import compute_dashboard_stats
+        import json as _json
+        try:
+            try:
+                dt_from = datetime.strptime(
+                    from_date, '%Y-%m-%d %H:%M'
+                ).replace(tzinfo=timezone.utc)
+            except ValueError:
+                dt_from = datetime.strptime(
+                    from_date, '%Y-%m-%d'
+                ).replace(tzinfo=timezone.utc)
+            try:
+                dt_to = datetime.strptime(
+                    to_date, '%Y-%m-%d %H:%M'
+                ).replace(tzinfo=timezone.utc)
+            except ValueError:
+                dt_to = datetime.strptime(
+                    to_date + ' 23:59:59', '%Y-%m-%d %H:%M:%S'
+                ).replace(tzinfo=timezone.utc)
+
+            async with SessionLocal() as sess:
+                # Same report selection as /dashboard: most recent report
+                # ingested within the range.
+                q = select(AlertReport).where(
+                    AlertReport.agent_slug == 'alert-analyser'
+                ).where(
+                    AlertReport.created_at >= dt_from
+                ).where(
+                    AlertReport.created_at <= dt_to
+                ).order_by(AlertReport.created_at.desc())
+                result = await sess.execute(q)
+                reports = result.scalars().all()
+
+            if reports:
+                latest = reports[0]
+                raw_classified = _json.loads(latest.report_data) \
+                    if latest.report_data else []
+                filtered = _filter_alerts_by_date(
+                    raw_classified, from_date, to_date
+                )
+                stats = compute_dashboard_stats(filtered)
+                return {
+                    "empty": False,
+                    "new_alerts": stats["total"],
+                    "new_genuine": stats["genuine_count"],
+                    "new_noise": stats["noise_count"],
+                    "new_suspect": stats["suspect_count"],
+                    "noise_rate": stats["noise_ratio"],
+                    "period_from": from_date,
+                    "period_to": to_date,
+                    "sync_count": 0,
+                    "duplicate_count": stats.get("duplicate_count", 0),
+                    "genuine_duplicates": stats.get("genuine_duplicates", 0),
+                }
+            # No report ingested in range — fall through to the synced_at path.
+        except Exception as _e:
+            _log.error(f"period_summary createdAt filter error: {_e}")
+
     try:
         async with SessionLocal() as sess:
             # Get oldest sync date for Row 1 label
