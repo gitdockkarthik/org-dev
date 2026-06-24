@@ -37,10 +37,26 @@ def _clean_team_name(team) -> str:
 
 def compute_dashboard_stats(classified: list[dict]) -> dict:
     """Compute full dashboard stats from a classified alert list."""
-    total = len(classified)
-    noise_list = [a for a in classified if a["classification"] == "noise"]
-    suspect_list = [a for a in classified if a["classification"] == "noise-suspect"]
-    genuine_list = [a for a in classified if a["classification"] == "genuine"]
+    # Deduplicate by alias — keep most recent per alias
+    # Same incident can appear multiple times (open + close events)
+    seen: dict[str, dict] = {}
+    for a in classified:
+        alias = a.get("alias") or a.get("id", "")
+        if not alias:
+            continue
+        existing = seen.get(alias)
+        if existing is None:
+            seen[alias] = a
+        else:
+            # Keep most recent
+            if a.get("createdAt", "") > existing.get("createdAt", ""):
+                seen[alias] = a
+    deduplicated = list(seen.values())
+
+    total = len(deduplicated)
+    noise_list = [a for a in deduplicated if a["classification"] == "noise"]
+    suspect_list = [a for a in deduplicated if a["classification"] == "noise-suspect"]
+    genuine_list = [a for a in deduplicated if a["classification"] == "genuine"]
     noise_count = len(noise_list)
     suspect_count = len(suspect_list)
     genuine_count = len(genuine_list)
@@ -118,6 +134,8 @@ def compute_dashboard_stats(classified: list[dict]) -> dict:
 
     return {
         "total": total,
+        "total_raw": len(classified),
+        "duplicate_count": len(classified) - len(deduplicated),
         "noise_count": noise_count,
         "suspect_count": suspect_count,
         "genuine_count": genuine_count,
