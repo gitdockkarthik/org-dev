@@ -324,9 +324,9 @@
       document.getElementById('tab-overview').innerHTML = `
         <div class="kpi-grid">
           <div class="kpi kpi--accent"><div class="kpi__label">Total Alerts</div><div class="kpi__value">${s.total.toLocaleString()}</div><div class="kpi__sub">in dataset</div></div>
-          <div class="kpi kpi--danger"><div class="kpi__label">Noise</div><div class="kpi__value">${s.noise_count}</div><div class="kpi__sub">${noisePct}% noise + ${suspectPct}% suspect = ${totalNoisePct}% total</div></div>
+          <div class="kpi kpi--danger"><div class="kpi__label">Noise</div><div class="kpi__value">${s.noise_count}</div><div class="kpi__sub">${s.noise_duplicates > 0 ? `(${s.noise_count_raw} total · ${s.noise_duplicates} dupes removed)` : `${noisePct}% noise + ${suspectPct}% suspect = ${totalNoisePct}% total`}</div></div>
           <div class="kpi kpi--warn"><div class="kpi__label">Noise Suspect</div><div class="kpi__value" id="kpiSuspect">${suspectCount.toLocaleString()}</div><div class="kpi__sub">needs human review</div></div>
-          <div class="kpi kpi--success"><div class="kpi__label">Genuine</div><div class="kpi__value">${s.genuine_count}</div><div class="kpi__sub">require attention</div></div>
+          <div class="kpi kpi--success"><div class="kpi__label">Genuine</div><div class="kpi__value">${s.genuine_count}</div><div class="kpi__sub">${s.genuine_duplicates > 0 ? `(${s.genuine_count_raw} total · ${s.genuine_duplicates} dupes removed)` : 'require attention'}</div></div>
           <div class="kpi kpi--warn"><div class="kpi__label">MTTR</div><div class="kpi__value">${s.mttr_minutes}m</div><div class="kpi__sub">mean time to resolve</div></div>
         </div>
         <div class="chart-grid">
@@ -382,7 +382,7 @@
       const s = stats;
       document.getElementById('tab-genuine').innerHTML = `
         <div class="kpi-grid">
-          <div class="kpi kpi--success"><div class="kpi__label">Total Genuine</div><div class="kpi__value">${s.genuine_count}</div><div class="kpi__sub">real incidents</div></div>
+          <div class="kpi kpi--success"><div class="kpi__label">Total Genuine</div><div class="kpi__value">${s.genuine_count}</div><div class="kpi__sub">${s.genuine_duplicates > 0 ? `(${s.genuine_count_raw} total · ${s.genuine_duplicates} dupes removed)` : 'real incidents'}</div></div>
           <div class="kpi kpi--danger"><div class="kpi__label">Open Alerts</div><div class="kpi__value">${s.unresolved_count || s.unresolved_genuine.length}</div><div class="kpi__sub">showing top 50 of ${s.unresolved_count || s.unresolved_genuine.length} total${(s.unresolved_count || 0) > 500 ? ' · ⚠️ High open alert count — review OpsGenie closure policy' : ''}</div></div>
           <div class="kpi kpi--warn"><div class="kpi__label">P1/P2</div><div class="kpi__value">${s.high_severity_count ?? s.high_severity_genuine.length}</div><div class="kpi__sub">showing top 50 of ${s.high_severity_count ?? s.high_severity_genuine.length} total · high severity</div></div>
         </div>

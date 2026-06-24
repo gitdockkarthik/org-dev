@@ -61,6 +61,12 @@ def compute_dashboard_stats(classified: list[dict]) -> dict:
     suspect_count = len(suspect_list)
     genuine_count = len(genuine_list)
 
+    # Raw (pre-deduplication) counts — surfaced in the UI so the team can see
+    # how many duplicate open/close records were collapsed per classification.
+    genuine_count_raw = len([a for a in classified if a["classification"] == "genuine"])
+    noise_count_raw = len([a for a in classified if a["classification"] == "noise"])
+    suspect_count_raw = len([a for a in classified if a["classification"] == "noise-suspect"])
+
     # MTTR — mean close time for genuine closed alerts
     genuine_closed = [a for a in genuine_list if a.get("status") == "closed"]
     mttr = 0.0
@@ -139,6 +145,11 @@ def compute_dashboard_stats(classified: list[dict]) -> dict:
         "noise_count": noise_count,
         "suspect_count": suspect_count,
         "genuine_count": genuine_count,
+        "genuine_count_raw": genuine_count_raw,
+        "genuine_duplicates": genuine_count_raw - genuine_count,
+        "noise_count_raw": noise_count_raw,
+        "noise_duplicates": noise_count_raw - noise_count,
+        "suspect_count_raw": suspect_count_raw,
         "noise_ratio": noise_ratio,
         "genuine_ratio": genuine_ratio,
         "mttr_seconds": round(mttr),

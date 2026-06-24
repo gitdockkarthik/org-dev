@@ -691,7 +691,7 @@
         <div class="kpi kpi--danger">
           <div class="kpi__label">NOISE</div>
           <div class="kpi__value">${sAllTime.noise_count.toLocaleString()}</div>
-          <div class="kpi__sub">${sAllTime.noise_ratio}% noise + ${sAllTime.suspect_ratio?.toFixed(1) || 0}% suspect = ${((sAllTime.noise_count + sAllTime.suspect_count) / sAllTime.total * 100).toFixed(1)}% total</div>
+          <div class="kpi__sub">${sAllTime.noise_duplicates > 0 ? `(${sAllTime.noise_count_raw} total · ${sAllTime.noise_duplicates} dupes removed)` : `${sAllTime.noise_ratio}% noise + ${sAllTime.suspect_ratio?.toFixed(1) || 0}% suspect = ${((sAllTime.noise_count + sAllTime.suspect_count) / sAllTime.total * 100).toFixed(1)}% total`}</div>
         </div>
         <div class="kpi kpi--warn">
           <div class="kpi__label">NOISE SUSPECT</div>
@@ -701,7 +701,7 @@
         <div class="kpi kpi--success">
           <div class="kpi__label">GENUINE</div>
           <div class="kpi__value">${sAllTime.genuine_count.toLocaleString()}</div>
-          <div class="kpi__sub">require attention</div>
+          <div class="kpi__sub">${sAllTime.genuine_duplicates > 0 ? `(${sAllTime.genuine_count_raw} total · ${sAllTime.genuine_duplicates} dupes removed)` : 'require attention'}</div>
         </div>
         <div class="kpi kpi--warn">
           <div class="kpi__label">MTTR</div>
@@ -928,7 +928,7 @@
               ? `+${(cmpSumA.new_genuine||0)} → +${(cmpSumB.new_genuine||0)} ${_cmpArrow(cmpSumA.new_genuine||0, cmpSumB.new_genuine||0)}`
               : sA.genuine_count.toLocaleString()
             }</div>
-            <div class="kpi__sub">real incidents</div>
+            <div class="kpi__sub">${sA.genuine_duplicates > 0 ? `(${sA.genuine_count_raw} total · ${sA.genuine_duplicates} dupes removed)` : 'real incidents'}</div>
           </div>
           <div class="kpi kpi--danger">
             <div class="kpi__label">Open Alerts</div>
