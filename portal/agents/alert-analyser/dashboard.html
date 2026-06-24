@@ -686,7 +686,7 @@
         <div class="kpi kpi--accent">
           <div class="kpi__label">TOTAL ALERTS</div>
           <div class="kpi__value">${sAllTime.total.toLocaleString()}</div>
-          <div class="kpi__sub">in dataset</div>
+          <div class="kpi__sub">${sAllTime.duplicate_count > 0 ? `(${sAllTime.total_raw} total · ${sAllTime.duplicate_count} dupes removed)` : 'in dataset'}</div>
         </div>
         <div class="kpi kpi--danger">
           <div class="kpi__label">NOISE</div>
@@ -696,7 +696,7 @@
         <div class="kpi kpi--warn">
           <div class="kpi__label">NOISE SUSPECT</div>
           <div class="kpi__value">${sAllTime.suspect_count.toLocaleString()}</div>
-          <div class="kpi__sub">needs human review</div>
+          <div class="kpi__sub">${sAllTime.suspect_duplicates > 0 ? `(${sAllTime.suspect_count_raw} total · ${sAllTime.suspect_duplicates} dupes removed)` : 'needs human review'}</div>
         </div>
         <div class="kpi kpi--success">
           <div class="kpi__label">GENUINE</div>
@@ -754,7 +754,7 @@
             ? `+${(cmpA.new_suspect||0).toLocaleString()} → +${(cmpB.new_suspect||0).toLocaleString()} ${_cmpArrow(cmpA.new_suspect, cmpB.new_suspect)}`
             : (noData ? '—' : '+' + (pd.new_suspect||0).toLocaleString())
           }</div>
-          <div class="kpi__sub">${isCompare ? 'A → B' : 'needs review'}</div>
+          <div class="kpi__sub">${isCompare ? 'A → B' : (pd.suspect_duplicates > 0 ? `(${pd.new_suspect + pd.suspect_duplicates} total · ${pd.suspect_duplicates} dupes removed)` : 'needs review')}</div>
         </div>
         <div class="kpi kpi--success" style="border-top:3px solid #16a34a">
           <div class="kpi__label">NEW GENUINE</div>

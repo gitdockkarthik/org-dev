@@ -150,6 +150,7 @@ def compute_dashboard_stats(classified: list[dict]) -> dict:
         "noise_count_raw": noise_count_raw,
         "noise_duplicates": noise_count_raw - noise_count,
         "suspect_count_raw": suspect_count_raw,
+        "suspect_duplicates": suspect_count_raw - suspect_count,
         "noise_ratio": noise_ratio,
         "genuine_ratio": genuine_ratio,
         "mttr_seconds": round(mttr),
