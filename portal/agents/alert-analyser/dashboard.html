@@ -711,7 +711,7 @@
       </div>`;
 
       // Row 2 — Selected period deltas
-      const noData = pd.empty || !pd.sync_count;
+      const noData = pd.empty || (pd.new_alerts === undefined || pd.new_alerts === null);
       const cmpA = window._compareSummaryA || {};
       const cmpB = window._compareSummaryB || {};
       const isCompare = window._compareActive;
