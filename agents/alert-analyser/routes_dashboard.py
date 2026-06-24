@@ -38,6 +38,11 @@ def _filter_alerts_by_date(
     """
     from datetime import datetime, timezone
 
+    # Normalise datetime-local 'T' separator (e.g. "2026-06-24T06:46") so the
+    # space-based strptime formats below parse it.
+    from_date = from_date.replace('T', ' ') if from_date else from_date
+    to_date = to_date.replace('T', ' ') if to_date else to_date
+
     dt_from = dt_to = None
     if from_date:
         try:
