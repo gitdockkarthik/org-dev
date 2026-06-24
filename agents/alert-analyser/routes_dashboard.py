@@ -92,34 +92,18 @@ async def get_dashboard(
         from database import SessionLocal
         from models import AlertReport
         from sqlalchemy import select
-        from datetime import datetime, timezone
         import json as _json
         if SessionLocal is not None:
             try:
                 async with SessionLocal() as sess:
+                    # Always use the latest report regardless of when it was
+                    # synced, then filter its alerts by createdAt. Filtering
+                    # reports by report.created_at (sync time) wrongly dropped
+                    # the report when the sync fell outside the selected window,
+                    # falling back to all-time unfiltered stats.
                     q = select(AlertReport).where(
                         AlertReport.agent_slug == 'alert-analyser'
                     ).order_by(AlertReport.created_at.desc())
-                    if from_date:
-                        try:
-                            dt_from = datetime.strptime(
-                                from_date, '%Y-%m-%d %H:%M'
-                            ).replace(tzinfo=timezone.utc)
-                        except ValueError:
-                            dt_from = datetime.strptime(
-                                from_date, '%Y-%m-%d'
-                            ).replace(tzinfo=timezone.utc)
-                        q = q.where(AlertReport.created_at >= dt_from)
-                    if to_date:
-                        try:
-                            dt_to = datetime.strptime(
-                                to_date, '%Y-%m-%d %H:%M'
-                            ).replace(tzinfo=timezone.utc)
-                        except ValueError:
-                            dt_to = datetime.strptime(
-                                to_date + ' 23:59:59', '%Y-%m-%d %H:%M:%S'
-                            ).replace(tzinfo=timezone.utc)
-                        q = q.where(AlertReport.created_at <= dt_to)
                     result = await sess.execute(q)
                     reports = result.scalars().all()
                 if reports:
