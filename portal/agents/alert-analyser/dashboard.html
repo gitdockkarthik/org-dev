@@ -762,7 +762,7 @@
             ? `+${(cmpA.new_genuine||0).toLocaleString()} → +${(cmpB.new_genuine||0).toLocaleString()} ${_cmpArrow(cmpA.new_genuine, cmpB.new_genuine)}`
             : (noData ? '—' : '+' + (pd.new_genuine||0).toLocaleString())
           }</div>
-          <div class="kpi__sub">${isCompare ? 'A → B' : (noData ? '—' : (pd.new_alerts ? Math.round(pd.new_genuine/pd.new_alerts*100)+'% of new' : '0% of new'))}</div>
+          <div class="kpi__sub">${isCompare ? 'A → B' : (noData ? '—' : (pd.genuine_duplicates > 0 ? `(${pd.new_genuine + pd.genuine_duplicates} total · ${pd.genuine_duplicates} dupes removed)` : (pd.new_alerts ? Math.round(pd.new_genuine/pd.new_alerts*100)+'% of new' : '0% of new')))}</div>
         </div>
         <div class="kpi ${isCompare ? 'kpi--accent' : (noData ? 'kpi--accent' : (pd.new_alerts && pd.new_noise/pd.new_alerts > 0.5 ? 'kpi--danger' : 'kpi--success'))}"
           style="border-top:3px solid var(--accent)">
