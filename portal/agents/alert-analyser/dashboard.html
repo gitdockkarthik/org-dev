@@ -722,7 +722,9 @@
           ? `<span style="color:var(--accent)">${window._compareLabelA}</span>
              vs
              <span style="color:var(--warn)">${window._compareLabelB}</span>`
-          : periodLabel + ' — New Alerts (' + syncNote + ')'
+          : (pd.sync_count
+              ? periodLabel + ' — New Alerts (' + syncNote + ')'
+              : periodLabel + ' — Alerts in period')
         }
       </div>
       <div class="kpi-grid" style="margin-bottom:24px">
