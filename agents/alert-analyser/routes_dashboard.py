@@ -261,32 +261,14 @@ async def get_period_summary(
         from tools.dashboard_builder import compute_dashboard_stats
         import json as _json
         try:
-            try:
-                dt_from = datetime.strptime(
-                    from_date, '%Y-%m-%d %H:%M'
-                ).replace(tzinfo=timezone.utc)
-            except ValueError:
-                dt_from = datetime.strptime(
-                    from_date, '%Y-%m-%d'
-                ).replace(tzinfo=timezone.utc)
-            try:
-                dt_to = datetime.strptime(
-                    to_date, '%Y-%m-%d %H:%M'
-                ).replace(tzinfo=timezone.utc)
-            except ValueError:
-                dt_to = datetime.strptime(
-                    to_date + ' 23:59:59', '%Y-%m-%d %H:%M:%S'
-                ).replace(tzinfo=timezone.utc)
-
             async with SessionLocal() as sess:
-                # Same report selection as /dashboard: most recent report
-                # ingested within the range.
+                # Always use the latest report (same as /dashboard's reports[0]),
+                # regardless of when it was synced, then filter its alerts by
+                # createdAt. Filtering reports by report.created_at (sync time)
+                # wrongly dropped the report when the sync fell outside the
+                # selected window — which showed Row 2 as "NO SYNCS".
                 q = select(AlertReport).where(
                     AlertReport.agent_slug == 'alert-analyser'
-                ).where(
-                    AlertReport.created_at >= dt_from
-                ).where(
-                    AlertReport.created_at <= dt_to
                 ).order_by(AlertReport.created_at.desc())
                 result = await sess.execute(q)
                 reports = result.scalars().all()
