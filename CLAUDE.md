@@ -293,3 +293,39 @@ Known gaps for next session:
   not yet wired to server-side filtering
 - Combine multiple dashboard requests into single
   request to reduce VPN round trips
+
+### alert-analyser: Deduplication & Period Filter Fix (2026-06-24)
+
+What was built:
+- Alert deduplication by alias — same incident appearing 
+  multiple times (open + close events) now counted once.
+  genuine_count dropped from 25,639 to 19,932 (5,707 dupes removed)
+- Dedup info shown on all KPI cards — each card shows
+  "(X total · Y dupes removed)" when duplicates exist:
+  Total Alerts, Noise, Noise Suspect, Genuine (Row 1)
+  New Alerts, New Noise, New Suspect, New Genuine (Row 2)
+- Period filter consistency fix — Row 2 KPI cards now 
+  use the same date range and dataset as all other tabs.
+  Previously Row 2 used synced_at from alert_report_summary
+  while other tabs used createdAt from alert list.
+- get_dashboard() and get_period_summary() both now:
+  - Use latest report regardless of sync time
+  - Filter alerts by createdAt using shared helper
+  - Return consistent counts across all tabs
+- Row 2 label changed from "New Alerts (No syncs)" to 
+  "Alerts in period" when date filter is active
+- Comparison mode tested and working correctly
+
+Key fixes:
+- _filter_alerts_by_date() shared helper handles T-separator
+  in date params (2026-06-24T06:46 format)
+- noData check uses new_alerts presence not sync_count
+  (sync_count=0 is valid for createdAt filter path)
+- Stats cache backfill ensures new dedup fields available
+  without waiting for next sync
+
+Pending (requires team adoption):
+- Lifecycle notification filtering (e.g. [Closed], [Resolved])
+  pending team adopting [Tool] [State] [Severity] Message pattern
+- Maintenance window filtering ([Maintenance] prefix)
+  same dependency on pattern adoption
