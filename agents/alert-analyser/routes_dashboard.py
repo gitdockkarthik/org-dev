@@ -282,6 +282,7 @@ async def get_period_summary(
                     "sync_count": 0,
                     "duplicate_count": stats.get("duplicate_count", 0),
                     "genuine_duplicates": stats.get("genuine_duplicates", 0),
+                    "noise_duplicates": stats.get("noise_duplicates", 0),
                 }
             # No report ingested in range — fall through to the synced_at path.
         except Exception as _e:

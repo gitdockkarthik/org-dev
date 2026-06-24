@@ -745,7 +745,7 @@
           }</div>
           <div class="kpi__sub">${isCompare
             ? _cmpArrow(cmpA.new_noise, cmpB.new_noise)
-            : (noData ? '—' : (pd.new_alerts ? Math.round(pd.new_noise/pd.new_alerts*100)+'% of new' : '0% of new'))
+            : (noData ? '—' : (pd.noise_duplicates > 0 ? `(${pd.new_noise + pd.noise_duplicates} total · ${pd.noise_duplicates} dupes removed)` : (pd.new_alerts ? Math.round(pd.new_noise/pd.new_alerts*100)+'% of new' : '0% of new')))
           }</div>
         </div>
         <div class="kpi kpi--warn" style="border-top:3px solid #f59e0b">
