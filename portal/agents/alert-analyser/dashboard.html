@@ -735,7 +735,7 @@
             )}`
             : (noData ? '—' : '+' + ((pd.new_genuine||0) + (pd.new_noise||0) + (pd.new_suspect||0)).toLocaleString())
           }</div>
-          <div class="kpi__sub">${isCompare ? 'A → B' : 'received in period'}</div>
+          <div class="kpi__sub">${isCompare ? 'A → B' : (pd.duplicate_count > 0 ? `(${pd.new_alerts + pd.duplicate_count} total · ${pd.duplicate_count} dupes removed)` : 'received in period')}</div>
         </div>
         <div class="kpi kpi--danger" style="border-top:3px solid #dc2626">
           <div class="kpi__label">NEW NOISE</div>

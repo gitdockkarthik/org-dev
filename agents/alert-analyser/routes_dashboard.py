@@ -23,6 +23,12 @@ def _ensure_dedup_fields(stats: dict) -> dict:
             "noise_duplicates": 0,
             "suspect_count_raw": stats.get("suspect_count", 0),
         }
+    if stats:
+        stats.setdefault(
+            "suspect_duplicates",
+            stats.get("suspect_count_raw", stats.get("suspect_count", 0))
+            - stats.get("suspect_count", 0),
+        )
     return stats
 
 
