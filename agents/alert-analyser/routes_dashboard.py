@@ -5,6 +5,27 @@ from report_store import get_latest_stats, get_latest_meta
 router = APIRouter(tags=["dashboard"])
 
 
+def _ensure_dedup_fields(stats: dict) -> dict:
+    """Guarantee the dedup fields are present in a stats dict.
+
+    get_latest_stats() recomputes from classified alerts when it can; this is a
+    final safety net for any stats that still predate the dedup fix (e.g. a stale
+    DB stats_data blob used as a filtered-period fallback). Missing fields are
+    backfilled treating the cached counts as already-deduplicated (zero dupes), so
+    the dashboard always receives the keys it expects.
+    """
+    if stats and "genuine_count_raw" not in stats:
+        stats = {
+            **stats,
+            "genuine_count_raw": stats.get("genuine_count", 0),
+            "genuine_duplicates": 0,
+            "noise_count_raw": stats.get("noise_count", 0),
+            "noise_duplicates": 0,
+            "suspect_count_raw": stats.get("suspect_count", 0),
+        }
+    return stats
+
+
 @router.get("/dashboard")
 async def get_dashboard(
     from_date: str | None = None,
@@ -82,7 +103,7 @@ async def get_dashboard(
                         stats = _json.loads(latest.stats_data) \
                             if latest.stats_data else {}
                     return {
-                        "stats": stats,
+                        "stats": _ensure_dedup_fields(stats),
                         "report": {
                             "total_alerts": stats.get("total", latest.total_alerts),
                             "genuine_count": stats.get("genuine_count", latest.genuine_count),
@@ -103,7 +124,7 @@ async def get_dashboard(
     if stats is None:
         return {"empty": True}
     return {
-        "stats": stats,
+        "stats": _ensure_dedup_fields(stats),
         "report": get_latest_meta(),
     }
 

@@ -95,8 +95,22 @@ def get_latest_classified() -> list[dict] | None:
 def get_latest_stats() -> dict[str, Any] | None:
     with _lock:
         if _reports:
-            return _reports[0]["_stats"]
-    return _stats_cache
+            stats = _reports[0]["_stats"]
+            classified = _reports[0].get("_classified")
+        else:
+            stats = _stats_cache
+            classified = None
+
+    # Cached stats may predate the dedup fix and lack the raw/duplicate fields
+    # (genuine_count_raw etc.). Recompute from the stored classified alerts so the
+    # new fields are always present without waiting for the next sync, and write
+    # the result back so we only pay for the recompute once.
+    if stats and "genuine_count_raw" not in stats and classified:
+        stats = compute_dashboard_stats(classified)
+        with _lock:
+            if _reports and _reports[0].get("_classified") is classified:
+                _reports[0]["_stats"] = stats
+    return stats
 
 
 def get_latest_meta() -> dict[str, Any] | None:
