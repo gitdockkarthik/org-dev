@@ -158,3 +158,31 @@ print('services:', len(s.get('service_breakdown', [])))
 
 ### Watch memory during tests
 watch -n 1 'free -h | grep Mem'
+
+## Updated State (2026-06-25 evening)
+
+### What the previous chat added (committed as wip)
+- `_register_account_lookup()` in duckdb_engine.py — creates tiny DuckDB table
+  `inv_account_lookup` with inv_* columns from enricher._account_lookup
+- Called from `_load_df()` when enricher is active
+- Table has 24 rows (one per inventory account), ~1KB memory
+
+### What is MISSING — why panels are empty
+The `inv_account_lookup` table exists in each DuckDB connection but NO query
+function uses it yet. Need LEFT JOIN in:
+- get_cost_by_environment() — join on account col, GROUP BY inv_environment
+- get_cost_by_tag() — join on account col, use inv_customer/inv_application etc.
+- get_cost_by_account() — join to get account names from inv_*
+- get_cost_by_service_category() — join to get environment for cross-tab
+
+### Next session — Step C completion
+Read these functions fully before touching anything:
+- get_cost_by_environment() 
+- get_cost_by_tag()
+- get_cost_by_account()
+- _register_account_lookup() — already implemented, understand it first
+
+Then add LEFT JOIN to each function:
+  LEFT JOIN inv_account_lookup i ON CAST("{acct_col}" AS VARCHAR) = i.account_id
+
+Validate each function one at a time with report 19 (DBR file).
