@@ -265,6 +265,13 @@ def _is_large_file(report_id: int) -> bool:
     return os.path.getsize(path) > _LARGE_FILE_BYTES
 
 
+def _quote_ident(name: str) -> str:
+    """Quote a SQL identifier (column name) for safe interpolation, escaping any
+    embedded double quotes per SQL rules. Column names here come from a
+    user-uploaded CUR header, so they must never be trusted raw in a query."""
+    return '"' + str(name).replace('"', '""') + '"'
+
+
 @app.post("/data-sources/cur/upload")
 async def ds_cur_upload(file: UploadFile) -> dict:
     """Upload a new CUR file (CSV / CSV.zip / Parquet) and register it as a
@@ -448,9 +455,10 @@ async def ds_inventory_coverage(report_id: int = Query(default=None)) -> dict:
                         "inventory_loaded": True, "enabled": True,
                         "enrichment_level": "none", "has_resource_column": False,
                         "reason": "No account id column found in CUR data"}
+            qcol = _quote_ident(acct_col)
             cur_accounts = {
                 str(r[0]) for r in
-                con.execute(f'SELECT DISTINCT "{acct_col}" FROM f').fetchall()
+                con.execute(f'SELECT DISTINCT {qcol} FROM f').fetchall()
                 if r[0] is not None and str(r[0]).strip() != ""
             }
         finally:
@@ -568,9 +576,10 @@ async def ds_enriched_values(report_id: int) -> dict:
             cols = [r[0] for r in con.execute("DESCRIBE f").fetchall()]
             acct_col = _detect_account_col(cols)
             if acct_col:
+                qcol = _quote_ident(acct_col)
                 rows = con.execute(
-                    f'SELECT DISTINCT CAST("{acct_col}" AS VARCHAR) AS a FROM f '
-                    f'WHERE "{acct_col}" IS NOT NULL AND CAST("{acct_col}" AS VARCHAR) <> \'\' '
+                    f'SELECT DISTINCT CAST({qcol} AS VARCHAR) AS a FROM f '
+                    f'WHERE {qcol} IS NOT NULL AND CAST({qcol} AS VARCHAR) <> \'\' '
                     f"ORDER BY a"
                 ).fetchall()
                 values["accounts"] = [r[0] for r in rows]
