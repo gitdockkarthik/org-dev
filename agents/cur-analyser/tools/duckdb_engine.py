@@ -907,6 +907,12 @@ def get_cost_by_environment(csv_text: str | None = None, file_path: str | None =
 
         if has_inv and acct_col and not env_col:
             # No native environment tag — derive from inventory JOIN.
+            import logging as _l3
+            _l3.getLogger(__name__).warning(
+                "DEBUG env JOIN: acct_col=%s has_inv=%s sample_accounts=%s",
+                acct_col, has_inv,
+                con.execute(f'SELECT DISTINCT CAST("{acct_col}" AS VARCHAR) FROM cur_data LIMIT 3').fetchall()
+            )
             rows = con.execute(
                 f'SELECT COALESCE(NULLIF(i.inv_environment, \'\'), \'Untagged\') AS env, '
                 f'SUM(c."{cost_col}") AS cost '
@@ -914,6 +920,7 @@ def get_cost_by_environment(csv_text: str | None = None, file_path: str | None =
                 f'LEFT JOIN inv_account_lookup i ON CAST(c."{acct_col}" AS VARCHAR) = i.account_id '
                 f'GROUP BY env ORDER BY cost DESC'
             ).fetchall()
+            _l3.getLogger(__name__).warning("DEBUG env JOIN result: %s rows", len(rows))
             return [
                 {
                     "environment": str(r[0]),
