@@ -58,6 +58,7 @@ REGION_COL_CANDIDATES = [
 ]
 ACCOUNT_COL_CANDIDATES = [
     "lineItem/UsageAccountId",      # real AWS CUR (current format)
+    "line_item_UsageAccountId",     # normalised CUR 2.0 slash format
     "line_item_usage_account_id",   # normalised format
     "LinkedAccountId",              # legacy CUR (per-resource / usage account)
     "account_id",                   # synthetic / test data
@@ -65,6 +66,7 @@ ACCOUNT_COL_CANDIDATES = [
 ]
 RESOURCE_COL_CANDIDATES = [
     "lineItem/ResourceId",          # real AWS CUR (current format)
+    "line_item_ResourceId",         # normalised CUR 2.0 slash format
     "line_item_resource_id",        # normalised format
     "ResourceId",                   # legacy CUR (no lineItem/ prefix)
     "resource_id",                  # synthetic / test data
