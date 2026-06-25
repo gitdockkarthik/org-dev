@@ -37,3 +37,5 @@ htmlcov/
 *.log
 config/kafka-sasl-jaas.conf
 .claude/
+images/
+operative-bitbucket/
