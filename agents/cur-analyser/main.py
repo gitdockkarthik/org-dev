@@ -246,6 +246,25 @@ async def _active_cur_csv(reg) -> str | None:
     return get_latest_csv()
 
 
+# Files above this size are never materialised into memory by the enrichment
+# endpoints (a 5.4M-row CUR is ~14 GB once parsed). They fall back to DuckDB
+# account-level sampling / server-side aggregation instead. Matches the
+# file-path pipeline threshold used by the dashboard.
+_LARGE_FILE_BYTES = 200 * 1024 * 1024  # 200 MB
+
+
+def _is_large_file(report_id: int) -> bool:
+    """True when the report's on-disk CUR exceeds the large-file threshold."""
+    import os
+
+    from report_store import get_report_path
+
+    path = get_report_path(report_id)
+    if not path or not os.path.exists(path):
+        return False
+    return os.path.getsize(path) > _LARGE_FILE_BYTES
+
+
 @app.post("/data-sources/cur/upload")
 async def ds_cur_upload(file: UploadFile) -> dict:
     """Upload a new CUR file (CSV / CSV.zip / Parquet) and register it as a
@@ -405,6 +424,55 @@ async def ds_inventory_coverage(report_id: int = Query(default=None)) -> dict:
         return {"active": False, "inventory_loaded": True,
                 "enabled": settings.enable_inventory_enrichment}
 
+    # Large-file guard: never load a multi-GB CUR into memory just to score
+    # coverage. Sample the distinct account ids via DuckDB and do account-level
+    # matching against the inventory (large/DBR exports have no resource id
+    # column, so resource-level enrichment isn't possible anyway).
+    if report_id is not None and _is_large_file(report_id):
+        import duckdb
+
+        from report_store import get_report_path
+        from tools.duckdb_engine import _detect_account_col
+
+        path = get_report_path(report_id)
+        con = duckdb.connect(":memory:")
+        try:
+            safe_path = str(path).replace("'", "''")
+            con.execute(
+                f"CREATE VIEW f AS SELECT * FROM read_csv_auto('{safe_path}', ignore_errors=true)"
+            )
+            cols = [r[0] for r in con.execute("DESCRIBE f").fetchall()]
+            acct_col = _detect_account_col(cols)
+            if not acct_col:
+                return {"report_id": report_id, "active": True, "joinable": False,
+                        "inventory_loaded": True, "enabled": True,
+                        "enrichment_level": "none", "has_resource_column": False,
+                        "reason": "No account id column found in CUR data"}
+            cur_accounts = {
+                str(r[0]) for r in
+                con.execute(f'SELECT DISTINCT "{acct_col}" FROM f').fetchall()
+                if r[0] is not None and str(r[0]).strip() != ""
+            }
+        finally:
+            con.close()
+        # Account-level inventory accounts == those the enricher can resolve
+        # via match_account (its per-account aggregated lookup).
+        inv_accounts = set(enricher._account_lookup.keys())
+        matched = cur_accounts & inv_accounts
+        match_rate = len(matched) / len(cur_accounts) if cur_accounts else 0.0
+        return {
+            "report_id": report_id,
+            "active": True,
+            "joinable": True,
+            "inventory_loaded": True,
+            "enabled": True,
+            "enrichment_level": "account",
+            "has_resource_column": False,
+            "matched_accounts": len(matched),
+            "total_accounts": len(cur_accounts),
+            "account_match_rate": round(match_rate * 100, 1),
+        }
+
     csv_text = get_report_csv(report_id) if report_id is not None else await _active_cur_csv(reg)
     if not csv_text:
         return {"active": True, "joinable": False, "inventory_loaded": True,
@@ -422,6 +490,19 @@ async def ds_enriched_rows(report_id: int):
     same NDJSON format as ``/reports/{id}/stream`` so the dashboard can consume
     it interchangeably. Falls back to plain rows when enrichment is inactive."""
     import json as _json
+
+    # Large-file guard: streaming millions of enriched rows would materialise the
+    # whole CUR. The dashboard's enriched panels use server-side aggregation
+    # (/data-sources/enriched-summary) for these, so emit an explicit skip.
+    if _is_large_file(report_id):
+        async def empty_stream():
+            yield _json.dumps({
+                "total": 0,
+                "skipped": True,
+                "reason": "Large file — enriched panels use server-side aggregation",
+            }) + "\n"
+
+        return StreamingResponse(empty_stream(), media_type="application/x-ndjson")
 
     from report_store import get_report_rows
     from tools.data_sources.registry import get_registry
@@ -507,6 +588,19 @@ async def ds_enriched_summary(report_id: int) -> dict:
     DuckDB GROUP BY over the enriched frame. Returns a single small JSON payload
     so the dashboard never has to stream 200k+ rows to the browser to aggregate
     them client-side."""
+    # Large-file guard: skip the full enriched aggregation. These exports are
+    # account-level only (no resource id column), so report that honestly
+    # instead of attempting a resource-level enrichment over a multi-GB file.
+    if _is_large_file(report_id):
+        return {
+            "report_id": report_id,
+            "active": True,
+            "joinable": True,
+            "enrichment_level": "account",
+            "has_resource_column": False,
+            "reason": "Account-level enrichment — resource IDs not in this CUR format",
+        }
+
     from report_store import get_report_csv, get_report_path
     from tools.data_sources.registry import get_registry
     from tools.duckdb_engine import get_enriched_summary
