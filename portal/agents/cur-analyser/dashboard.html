@@ -669,12 +669,18 @@
           DASH.environment_breakdown = (s.environment_breakdown || s.env_breakdown || [])
             .map(e => ({ environment: e.environment, cost: e.cost, pct_of_total: e.pct }));
         }
-        DASH.tag_customer_breakdown = (s.customer_breakdown || [])
-          .map(t => ({ tag_value: t.customer, cost: t.cost, pct_of_total: t.pct }));
-        DASH.tag_product_breakdown = (s.application_breakdown || [])
-          .map(t => ({ tag_value: t.application, cost: t.cost, pct_of_total: t.pct }));
-        DASH.tag_costcentre_breakdown = (s.budget_code_breakdown || [])
-          .map(t => ({ tag_value: t.budget_code, cost: t.cost, pct_of_total: t.pct }));
+        if (s.customer_breakdown?.length) {
+          DASH.tag_customer_breakdown = (s.customer_breakdown || [])
+            .map(t => ({ tag_value: t.customer, cost: t.cost, pct_of_total: t.pct }));
+        }
+        if (s.application_breakdown?.length) {
+          DASH.tag_product_breakdown = (s.application_breakdown || [])
+            .map(t => ({ tag_value: t.application, cost: t.cost, pct_of_total: t.pct }));
+        }
+        if (s.budget_code_breakdown?.length) {
+          DASH.tag_costcentre_breakdown = (s.budget_code_breakdown || [])
+            .map(t => ({ tag_value: t.budget_code, cost: t.cost, pct_of_total: t.pct }));
+        }
         // tag_team has no inventory equivalent — keep the server (native) value.
         // Tag Coverage panel (untagged_resources shape).
         const tc = s.tag_coverage || {};
