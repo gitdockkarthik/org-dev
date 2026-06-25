@@ -12,6 +12,7 @@ import logging
 import re
 import threading
 import time
+from types import SimpleNamespace
 from typing import Any, ClassVar, Literal
 
 import duckdb
@@ -392,6 +393,130 @@ def _apply_filters(df: pd.DataFrame, filters: dict | None) -> pd.DataFrame:
     return df[mask]
 
 
+def _sql_lit(value) -> str:
+    """Single-quote a Python value as a SQL string literal, escaping quotes."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _build_filter_sql(filters: dict | None, con: duckdb.DuckDBPyConnection) -> str:
+    """Translate the dashboard ``filters`` dict into a SQL WHERE-clause body
+    (no leading ``WHERE``) for the native ``cur_data`` view used by the
+    file-path pipeline. It mirrors :func:`_apply_filters` exactly, but emits SQL
+    so DuckDB filters while streaming the file instead of us materialising a
+    DataFrame first.
+
+    Column names are resolved with the same detectors used everywhere else
+    (via the view's column list), so it works across CUR 2.0 / legacy /
+    normalised / synthetic exports. Missing columns are skipped (never error);
+    returns ``""`` when nothing applies.
+
+    Supported keys match the dropdowns: ``date_from``, ``date_to``, ``accounts``,
+    ``environments``, ``services``, ``regions``, ``pricing_terms``,
+    ``tag_products``, ``tag_teams``.
+    """
+    if not filters:
+        return ""
+    cols = [row[0] for row in con.execute("DESCRIBE cur_data").fetchall()]
+    shim = SimpleNamespace(columns=cols)  # lets us reuse resolve_col / tag detectors
+    clauses: list[str] = []
+
+    def _in_clause(col: str, values, include_untagged: bool = False) -> str | None:
+        listed = [v for v in values if v != "Untagged"]
+        parts: list[str] = []
+        if listed:
+            inlist = ", ".join(_sql_lit(v) for v in listed)
+            parts.append(f'CAST("{col}" AS VARCHAR) IN ({inlist})')
+        if include_untagged:
+            parts.append(
+                f'("{col}" IS NULL OR '
+                f"TRIM(CAST(\"{col}\" AS VARCHAR)) IN ('', 'nan', 'NaN', 'None'))"
+            )
+        return "(" + " OR ".join(parts) + ")" if parts else None
+
+    # ── Date range (mirrors the pd.to_datetime coerce + inclusive end day) ──
+    date_col = _detect_date_col(cols)
+    if date_col and (filters.get("date_from") or filters.get("date_to")):
+        if filters.get("date_from"):
+            clauses.append(
+                f'TRY_CAST("{date_col}" AS TIMESTAMP) >= {_sql_lit(filters["date_from"])}'
+            )
+        if filters.get("date_to"):
+            clauses.append(
+                f'TRY_CAST("{date_col}" AS TIMESTAMP) < '
+                f"CAST({_sql_lit(filters['date_to'])} AS TIMESTAMP) + INTERVAL 1 DAY"
+            )
+
+    # ── Accounts (match the account id OR the account name) ──
+    if filters.get("accounts"):
+        inlist = ", ".join(_sql_lit(v) for v in filters["accounts"])
+        acct_id = _detect_account_col(cols)
+        name_col = (
+            "line_item_usage_account_name"
+            if "line_item_usage_account_name" in cols else None
+        )
+        ors: list[str] = []
+        if acct_id:
+            ors.append(f'CAST("{acct_id}" AS VARCHAR) IN ({inlist})')
+        if name_col:
+            ors.append(f'CAST("{name_col}" AS VARCHAR) IN ({inlist})')
+        if ors:
+            clauses.append("(" + " OR ".join(ors) + ")")
+
+    # ── Services ──
+    if filters.get("services"):
+        svc = _detect_service_col(cols)
+        if svc:
+            c = _in_clause(svc, filters["services"])
+            if c:
+                clauses.append(c)
+
+    # ── Environments (native tag_Environment; "Untagged" → blank/NULL) ──
+    if filters.get("environments"):
+        env = _resolve_tag_col(shim, "tag_Environment")
+        if env:
+            vals = filters["environments"]
+            c = _in_clause(env, vals, include_untagged=("Untagged" in vals))
+            if c:
+                clauses.append(c)
+
+    # ── Regions (fold AZ → region prefix to match the breakdown values) ──
+    if filters.get("regions"):
+        reg = _detect_region_col(cols)
+        if reg:
+            # Same fold as _region_from_az: strip the trailing AZ letter.
+            folded = (
+                f'regexp_replace(CAST("{reg}" AS VARCHAR), '
+                f"'^([a-z]{{2}}-[a-z]+-[0-9]+)[a-z]$', '\\1')"
+            )
+            inlist = ", ".join(_sql_lit(v) for v in filters["regions"])
+            clauses.append(f"{folded} IN ({inlist})")
+
+    # ── Pricing terms ──
+    if filters.get("pricing_terms"):
+        if "pricing_term" in cols:
+            c = _in_clause("pricing_term", filters["pricing_terms"])
+            if c:
+                clauses.append(c)
+
+    # ── Tag: Product / Team ("Untagged" → blank/NULL) ──
+    if filters.get("tag_products"):
+        col = _resolve_tag_col(shim, "tag_Product")
+        if col:
+            vals = filters["tag_products"]
+            c = _in_clause(col, vals, include_untagged=("Untagged" in vals))
+            if c:
+                clauses.append(c)
+    if filters.get("tag_teams"):
+        col = _resolve_tag_col(shim, "tag_Team")
+        if col:
+            vals = filters["tag_teams"]
+            c = _in_clause(col, vals, include_untagged=("Untagged" in vals))
+            if c:
+                clauses.append(c)
+
+    return " AND ".join(clauses)
+
+
 # ── Loaded-DataFrame cache ─────────────────────────────────────────────────────
 # A dashboard build calls ~14 query functions, each of which loads the CUR via
 # _load_df. Without a cache that re-reads (and re-parses) the file ~14× per
@@ -451,43 +576,50 @@ def _load_df(
     """Load CUR data into a DataFrame + DuckDB connection.
 
     The source is either ``csv_text`` (the legacy in-memory pipeline) or
-    ``file_path`` (the file-path pipeline used for large CUR files, which reads
-    straight from disk instead of materialising a multi-GB CSV string). A
-    ``.parquet`` path is read via DuckDB; any other path is read with
-    ``pd.read_csv`` directly — no ``StringIO`` intermediate.
+    ``file_path`` (the file-path pipeline used for large CUR files).
 
-    File-path reads are cached (see ``_df_cache``): the first request reads from
-    disk and caches the frame; subsequent requests (filtered or not) reuse it in
-    memory and just apply filters, which is what makes filtered dashboards fast.
+    **File-path mode (Step 1):** DuckDB reads the CUR straight from disk through
+    a native ``cur_data`` view (``read_csv_auto`` / ``read_parquet``) — nothing
+    is materialised in Python, so aggregations stream over the file instead of
+    parsing a multi-GB DataFrame. Filters are pushed down as a SQL ``WHERE`` via
+    :func:`_build_filter_sql`. The returned ``df`` is a header-only (0-row)
+    frame: query functions still call ``df.columns`` for column detection, but
+    every aggregation runs against the view, not the frame. (The pandas
+    ``_df_cache`` is intentionally bypassed in this mode now; inventory
+    enrichment for file-path mode lands in Step 3 — it is silently skipped here.)
 
-    ``enricher`` is optional. When supplied, the inventory enricher adds
-    ``inv_*`` virtual columns *before* the frame is registered. An inactive
-    enricher (no inventory loaded) is a safe no-op.
+    **csv_text mode (unchanged):** parsed with ``pd.read_csv``, optionally
+    enriched and filtered in pandas, then registered as ``cur_data``.
 
-    ``filters`` (optional) is applied to the frame before it is registered, so
-    every aggregation that reads ``cur_data`` operates on the filtered subset.
+    ``enricher`` is optional. In csv_text mode, when supplied, the inventory
+    enricher adds ``inv_*`` virtual columns *before* the frame is registered;
+    an inactive enricher (no inventory loaded) is a safe no-op.
+
+    ``filters`` (optional) restricts ``cur_data`` so every aggregation operates
+    on the filtered subset.
     """
     con = duckdb.connect(database=":memory:")
     if file_path is not None:
-        df = _get_cached_df(file_path)
-        if df is None:
-            # Serialise the disk read per file so parallel queries on a cold
-            # cache don't all read the (potentially multi-GB) file at once.
-            with _df_load_lock(file_path):
-                df = _get_cached_df(file_path)  # re-check: another worker may have loaded it
-                if df is None:
-                    if str(file_path).lower().endswith(".parquet"):
-                        df = con.execute("SELECT * FROM read_parquet(?)", [file_path]).df()
-                    else:
-                        df = pd.read_csv(file_path)
-                    _cache_df(file_path, df)
-        # ``df`` may be the shared cached frame. The enricher mutates in place
-        # (adds inv_* columns), so copy first to keep the cache pristine. Filters
-        # and registration below never mutate, so they're safe on the shared frame.
-        if enricher is not None:
-            df = df.copy()
-    else:
-        df = pd.read_csv(io.StringIO(csv_text))
+        # ── File-path pipeline: DuckDB native view straight off disk ──
+        path_sql = str(file_path).replace("'", "''")
+        if str(file_path).lower().endswith(".parquet"):
+            reader = f"read_parquet('{path_sql}')"
+        else:
+            reader = f"read_csv_auto('{path_sql}', ignore_errors=true)"
+        con.execute(f"CREATE VIEW cur_data AS SELECT * FROM {reader}")
+        if filters:
+            filter_sql = _build_filter_sql(filters, con)
+            if filter_sql:
+                con.execute(
+                    f"CREATE OR REPLACE VIEW cur_data AS "
+                    f"SELECT * FROM {reader} WHERE {filter_sql}"
+                )
+        # Enrichment is deferred to Step 3 for file-path mode — skip silently.
+        # Return a header-only frame so the unchanged query functions can still
+        # detect columns via ``df.columns``; all aggregation hits the view.
+        header_df = con.execute("SELECT * FROM cur_data LIMIT 0").df()
+        return header_df, con
+    df = pd.read_csv(io.StringIO(csv_text))
     if enricher is not None:
         df = enricher.enrich_dataframe(df)
     if filters:
