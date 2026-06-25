@@ -630,7 +630,13 @@ async def ds_enriched_summary(report_id: int) -> dict:
     # Large-file guard: skip the full enriched aggregation. These exports are
     # account-level only (no resource id column), so report that honestly
     # instead of attempting a resource-level enrichment over a multi-GB file.
-    if _is_large_file(report_id):
+    # Guard against large files — check both file size (on-disk path) and row
+    # count (in-memory fallback). Either exceeding the threshold blocks the
+    # full enriched aggregation which would materialise a multi-GB CSV.
+    from report_store import get_latest_meta
+    _meta = next((r for r in __import__('report_store').list_reports() if r["id"] == report_id), None)
+    _row_count_large = (_meta["row_count"] > 500_000) if _meta else False
+    if _is_large_file(report_id) or _row_count_large:
         return {
             "report_id": report_id,
             "active": True,

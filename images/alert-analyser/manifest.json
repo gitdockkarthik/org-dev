@@ -1,0 +1,17 @@
+{
+  "name": "Alert Analyser",
+  "slug": "alert-analyser",
+  "description": "Analyses OpsGenie alert data. Classifies alerts as noise or genuine, computes dashboard statistics, and generates suppression recommendations.",
+  "version": "0.2.0",
+  "invoke_url": "http://alert-analyser:8001",
+  "capabilities": ["alert-triage", "noise-classification", "suppression-recommendations", "trend-analysis"],
+  "env": [
+    "ANTHROPIC_API_KEY",
+    "MODEL",
+    "AGENT_ID",
+    "AGENT_SLUG",
+    "DATABASE_URL",
+    "NOISE_THRESHOLD_REPEAT",
+    "NOISE_THRESHOLD_CLOSE_SECS"
+  ]
+}

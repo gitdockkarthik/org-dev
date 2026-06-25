@@ -128,21 +128,34 @@ class MCPClient:
         """Background task: keep SSE stream open and resolve futures."""
         try:
             async with self._sse_http.stream("GET", f"{MCP_SERVER_URL}/sse") as resp:
+                _buf = ""
                 async for line in resp.aiter_lines():
-                    if line.startswith("data:"):
-                        raw = line[len("data: "):]
-                        if not self._session_url and raw.startswith("/"):
-                            self._session_url = raw.strip()
-                            self._session_event.set()
-                            continue
-                        if "jsonrpc" in raw:
-                            try:
-                                data = json.loads(raw.strip())
-                                msg_id = data.get("id")
-                                if msg_id and msg_id in self._results:
-                                    self._results[msg_id].set_result(data)
-                            except json.JSONDecodeError:
-                                pass
+                    if not line.startswith("data:"):
+                        # Empty line = end of SSE event — try to parse accumulated buffer
+                        if _buf:
+                            raw = _buf.strip()
+                            _buf = ""
+                            if not self._session_url and raw.startswith("/"):
+                                self._session_url = raw.strip()
+                                self._session_event.set()
+                                continue
+                            if "jsonrpc" in raw:
+                                try:
+                                    data = json.loads(raw)
+                                    msg_id = data.get("id")
+                                    if msg_id and msg_id in self._results:
+                                        self._results[msg_id].set_result(data)
+                                except json.JSONDecodeError:
+                                    pass
+                        continue
+                    raw = line[len("data: "):]
+                    # Session URL handshake — single-line, handle immediately
+                    if not self._session_url and raw.startswith("/"):
+                        self._session_url = raw.strip()
+                        self._session_event.set()
+                        continue
+                    # Accumulate data lines — large JSON payloads span multiple lines
+                    _buf += raw
         except Exception as exc:
             logger.warning("MCP SSE listener error: %s", exc)
             self._connected = False

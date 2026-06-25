@@ -665,14 +665,28 @@
           { headers: _authHeaders(), cache: 'no-store' });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const s = await res.json();
-        DASH.environment_breakdown = (s.env_breakdown || [])
-          .map(e => ({ environment: e.environment, cost: e.cost, pct_of_total: e.pct }));
-        DASH.tag_customer_breakdown = (s.customer_breakdown || [])
-          .map(t => ({ tag_value: t.customer, cost: t.cost, pct_of_total: t.pct }));
-        DASH.tag_product_breakdown = (s.application_breakdown || [])
-          .map(t => ({ tag_value: t.application, cost: t.cost, pct_of_total: t.pct }));
-        DASH.tag_costcentre_breakdown = (s.budget_code_breakdown || [])
-          .map(t => ({ tag_value: t.budget_code, cost: t.cost, pct_of_total: t.pct }));
+        // For large files (enrichment_level === 'account') the enriched-summary
+        // returns a stub with no row-level breakdowns. The dashboard API already
+        // populates environment/tag breakdowns via the DuckDB JOIN, so skip
+        // overwriting them entirely — just handle tag coverage below.
+        if (s.enrichment_level !== 'account') {
+          if (s.env_breakdown && s.env_breakdown.length > 0) {
+            DASH.environment_breakdown = s.env_breakdown
+              .map(e => ({ environment: e.environment, cost: e.cost, pct_of_total: e.pct }));
+          }
+          if (s.customer_breakdown && s.customer_breakdown.length > 0) {
+            DASH.tag_customer_breakdown = s.customer_breakdown
+              .map(t => ({ tag_value: t.customer, cost: t.cost, pct_of_total: t.pct }));
+          }
+          if (s.application_breakdown && s.application_breakdown.length > 0) {
+            DASH.tag_product_breakdown = s.application_breakdown
+              .map(t => ({ tag_value: t.application, cost: t.cost, pct_of_total: t.pct }));
+          }
+          if (s.budget_code_breakdown && s.budget_code_breakdown.length > 0) {
+            DASH.tag_costcentre_breakdown = s.budget_code_breakdown
+              .map(t => ({ tag_value: t.budget_code, cost: t.cost, pct_of_total: t.pct }));
+          }
+        }
         // tag_team has no inventory equivalent — keep the server (native) value.
         // Tag Coverage panel (untagged_resources shape).
         const tc = s.tag_coverage || {};
@@ -1598,6 +1612,7 @@
 
     // ── TAB 3: By Environment ───────────────────────────────────────────────────────
     function renderEnvironments() {
+      console.log('DEBUG renderEnvironments: DASH.environment_breakdown=', JSON.stringify(DASH.environment_breakdown));
       const env = DASH.environment_breakdown || [];
       const total = DASH.total_cost || 0;
 

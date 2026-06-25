@@ -89,7 +89,7 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       # Inventory enrichment is opt-in; disabled by default (zero impact when off).
-      ENABLE_INVENTORY_ENRICHMENT: ${ENABLE_INVENTORY_ENRICHMENT:-false}
+      ENABLE_INVENTORY_ENRICHMENT: ${ENABLE_INVENTORY_ENRICHMENT:-true}
       # Permanent on-disk CUR file storage (file-path pipeline for large files).
       CUR_DATA_DIR: /app/data/cur
     volumes:

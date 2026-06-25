@@ -619,4 +619,8 @@ def _cell(row: tuple, idx: Optional[int]) -> str:
     val = row[idx]
     if val is None:
         return ""
+    # Excel stores numeric cells as floats. Strip the redundant .0 suffix so
+    # account IDs like 741119431024.0 match the CUR's "741119431024" string.
+    if isinstance(val, float) and val.is_integer():
+        return str(int(val)).strip()
     return str(val).strip()

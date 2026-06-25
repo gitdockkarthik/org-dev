@@ -26,6 +26,8 @@ from tools.duckdb_engine import (
     get_total_cost,
     get_untagged_resources,
 )
+from tools.data_sources.registry import get_registry
+from tools.inventory_enricher import build_enricher
 
 # Thread pool for running the (blocking, DuckDB-backed) query functions
 # concurrently. Each query opens and closes its OWN DuckDB connection inside
@@ -79,21 +81,21 @@ def _assemble_dashboard(results: list) -> dict:
     }
 
 
-def _run_all_queries(csv_text, file_path, filters) -> list:
+def _run_all_queries(csv_text, file_path, filters, enricher=None) -> list:
     """Run every dashboard query sequentially (in the caller's thread)."""
     return [
         get_total_cost(csv_text, file_path=file_path, filters=filters),
         get_cost_by_service(csv_text, limit=15, file_path=file_path, filters=filters),
         get_daily_trend(csv_text, file_path=file_path, filters=filters),
         get_cost_by_region(csv_text, file_path=file_path, filters=filters),
-        get_cost_by_account(csv_text, file_path=file_path, filters=filters),
+        get_cost_by_account(csv_text, file_path=file_path, filters=filters, enricher=enricher),
         get_cost_by_org_unit(csv_text, file_path=file_path, filters=filters),
-        get_cost_by_environment(csv_text, file_path=file_path, filters=filters),
+        get_cost_by_environment(csv_text, file_path=file_path, filters=filters, enricher=enricher),
         get_cost_by_service_category(csv_text, file_path=file_path, filters=filters),
-        get_cost_by_tag(csv_text, "tag_Product", file_path=file_path, filters=filters),
-        get_cost_by_tag(csv_text, "tag_Team", file_path=file_path, filters=filters),
-        get_cost_by_tag(csv_text, "tag_Customer", file_path=file_path, filters=filters),
-        get_cost_by_tag(csv_text, "tag_CostCentre", file_path=file_path, filters=filters),
+        get_cost_by_tag(csv_text, "tag_Product", file_path=file_path, filters=filters, enricher=enricher),
+        get_cost_by_tag(csv_text, "tag_Team", file_path=file_path, filters=filters, enricher=enricher),
+        get_cost_by_tag(csv_text, "tag_Customer", file_path=file_path, filters=filters, enricher=enricher),
+        get_cost_by_tag(csv_text, "tag_CostCentre", file_path=file_path, filters=filters, enricher=enricher),
         get_untagged_resources(csv_text, file_path=file_path, filters=filters),
         get_cost_by_pricing_term(csv_text, file_path=file_path, filters=filters),
         get_mom_comparison(csv_text, file_path=file_path, filters=filters),
@@ -105,31 +107,22 @@ def _run_all_queries(csv_text, file_path, filters) -> list:
 def compute_dashboard(
     csv_text: str | None = None, *, file_path: str | None = None,
     filters: dict | None = None,
+    enricher=None,
 ) -> dict:
     """Synchronous dashboard build (queries run sequentially).
 
     Kept for the Anthropic tool (``DashboardBuilderTool``) and any non-async
     caller. The HTTP route uses :func:`compute_dashboard_async` for parallelism.
-
-    The source is either ``csv_text`` (legacy in-memory pipeline) or
-    ``file_path`` (file-path pipeline for large CUR files). ``filters`` is
-    forwarded to every query so the whole dashboard is computed over the
-    filtered subset server-side.
     """
-    return _assemble_dashboard(_run_all_queries(csv_text, file_path, filters))
+    return _assemble_dashboard(_run_all_queries(csv_text, file_path, filters, enricher=enricher))
 
 
 async def compute_dashboard_async(
     csv_text: str | None = None, *, file_path: str | None = None,
     filters: dict | None = None,
+    enricher=None,
 ) -> dict:
-    """Parallel dashboard build: run all queries concurrently in a thread pool.
-
-    Identical output to :func:`compute_dashboard`. Each query opens its own
-    DuckDB connection (see ``_load_df``) and the cached DataFrame is shared
-    read-only, so concurrent execution is safe. This collapses ~17 × ~700ms
-    sequential queries into a few concurrent waves.
-    """
+    """Parallel dashboard build: run all queries concurrently in a thread pool."""
     loop = asyncio.get_running_loop()
 
     def run(fn, *args, **kwargs):
@@ -140,14 +133,14 @@ async def compute_dashboard_async(
         run(get_cost_by_service, csv_text, limit=15, file_path=file_path, filters=filters),
         run(get_daily_trend, csv_text, file_path=file_path, filters=filters),
         run(get_cost_by_region, csv_text, file_path=file_path, filters=filters),
-        run(get_cost_by_account, csv_text, file_path=file_path, filters=filters),
+        run(get_cost_by_account, csv_text, file_path=file_path, filters=filters, enricher=enricher),
         run(get_cost_by_org_unit, csv_text, file_path=file_path, filters=filters),
-        run(get_cost_by_environment, csv_text, file_path=file_path, filters=filters),
+        run(get_cost_by_environment, csv_text, file_path=file_path, filters=filters, enricher=enricher),
         run(get_cost_by_service_category, csv_text, file_path=file_path, filters=filters),
-        run(get_cost_by_tag, csv_text, "tag_Product", file_path=file_path, filters=filters),
-        run(get_cost_by_tag, csv_text, "tag_Team", file_path=file_path, filters=filters),
-        run(get_cost_by_tag, csv_text, "tag_Customer", file_path=file_path, filters=filters),
-        run(get_cost_by_tag, csv_text, "tag_CostCentre", file_path=file_path, filters=filters),
+        run(get_cost_by_tag, csv_text, "tag_Product", file_path=file_path, filters=filters, enricher=enricher),
+        run(get_cost_by_tag, csv_text, "tag_Team", file_path=file_path, filters=filters, enricher=enricher),
+        run(get_cost_by_tag, csv_text, "tag_Customer", file_path=file_path, filters=filters, enricher=enricher),
+        run(get_cost_by_tag, csv_text, "tag_CostCentre", file_path=file_path, filters=filters, enricher=enricher),
         run(get_untagged_resources, csv_text, file_path=file_path, filters=filters),
         run(get_cost_by_pricing_term, csv_text, file_path=file_path, filters=filters),
         run(get_mom_comparison, csv_text, file_path=file_path, filters=filters),

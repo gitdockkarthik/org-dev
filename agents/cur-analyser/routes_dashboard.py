@@ -10,6 +10,8 @@ from report_store import (
     get_report_path,
 )
 from tools.dashboard_builder import compute_dashboard_async
+from tools.data_sources.registry import get_registry
+from tools.inventory_enricher import build_enricher
 
 router = APIRouter(tags=["dashboard"])
 
@@ -98,7 +100,13 @@ async def get_dashboard(
             if csv_text is None:
                 return {"empty": True}
 
-    dashboard = await compute_dashboard_async(csv_text, file_path=file_path, filters=filters or None)
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+    _reg = get_registry()
+    _log.warning("DEBUG registry=%s", _reg)
+    enricher = await build_enricher(_reg)
+    _log.warning("DEBUG enricher.active=%s account_lookup_size=%s", getattr(enricher, 'active', None), len(getattr(enricher, '_account_lookup', {})))
+    dashboard = await compute_dashboard_async(csv_text, file_path=file_path, filters=filters or None, enricher=enricher)
     report = get_latest_meta() if report_id is None else None
     dashboard["report"] = report
     if not filters:
