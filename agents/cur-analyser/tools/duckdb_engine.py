@@ -398,6 +398,15 @@ def _sql_lit(value) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
+def _row_count(df, con: duckdb.DuckDBPyConnection) -> int:
+    """Number of rows in ``cur_data``. ``len(df)`` in csv_text mode (df is a real
+    DataFrame); ``COUNT(*)`` over the view in file-path mode (df is the
+    columns-carrier returned by :func:`_load_df`, which holds no rows)."""
+    if isinstance(df, pd.DataFrame):
+        return len(df)
+    return int(con.execute("SELECT COUNT(*) FROM cur_data").fetchone()[0] or 0)
+
+
 def _build_filter_sql(filters: dict | None, con: duckdb.DuckDBPyConnection) -> str:
     """Translate the dashboard ``filters`` dict into a SQL WHERE-clause body
     (no leading ``WHERE``) for the native ``cur_data`` view used by the
@@ -582,11 +591,14 @@ def _load_df(
     a native ``cur_data`` view (``read_csv_auto`` / ``read_parquet``) — nothing
     is materialised in Python, so aggregations stream over the file instead of
     parsing a multi-GB DataFrame. Filters are pushed down as a SQL ``WHERE`` via
-    :func:`_build_filter_sql`. The returned ``df`` is a header-only (0-row)
-    frame: query functions still call ``df.columns`` for column detection, but
-    every aggregation runs against the view, not the frame. (The pandas
-    ``_df_cache`` is intentionally bypassed in this mode now; inventory
-    enrichment for file-path mode lands in Step 3 — it is silently skipped here.)
+    :func:`_build_filter_sql`. The returned ``df`` is **not** a DataFrame: it is
+    a lightweight columns-carrier (``types.SimpleNamespace`` exposing only
+    ``.columns``) so query functions can keep detecting columns via
+    ``df.columns`` while every aggregation runs against the view. Row counts come
+    from the view via :func:`_row_count`; the two enrichment summaries that need
+    real row data are handled separately. (The pandas ``_df_cache`` is
+    intentionally bypassed in this mode now; inventory enrichment for file-path
+    mode lands in Step 3 — it is silently skipped here.)
 
     **csv_text mode (unchanged):** parsed with ``pd.read_csv``, optionally
     enriched and filtered in pandas, then registered as ``cur_data``.
@@ -615,10 +627,12 @@ def _load_df(
                     f"SELECT * FROM {reader} WHERE {filter_sql}"
                 )
         # Enrichment is deferred to Step 3 for file-path mode — skip silently.
-        # Return a header-only frame so the unchanged query functions can still
-        # detect columns via ``df.columns``; all aggregation hits the view.
-        header_df = con.execute("SELECT * FROM cur_data LIMIT 0").df()
-        return header_df, con
+        # Return a columns-carrier (NOT a DataFrame): query functions detect
+        # columns via ``df.columns`` while all aggregation hits the view, so no
+        # CUR data is materialised in Python.
+        cols = [row[0] for row in con.execute("DESCRIBE cur_data").fetchall()]
+        df_meta = SimpleNamespace(columns=cols)
+        return df_meta, con
     df = pd.read_csv(io.StringIO(csv_text))
     if enricher is not None:
         df = enricher.enrich_dataframe(df)
@@ -640,7 +654,7 @@ def get_total_cost(csv_text: str | None = None, file_path: str | None = None, fi
         total = float(con.execute(f'SELECT SUM("{cost_col}") FROM cur_data').fetchone()[0] or 0)
         return {
             "total_cost": round(total, 4),
-            "row_count": len(df),
+            "row_count": _row_count(df, con),
             "cost_column": cost_col,
         }
     finally:
@@ -910,7 +924,7 @@ def get_untagged_resources(csv_text: str | None = None, file_path: str | None = 
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
-        total_rows = len(df)
+        total_rows = _row_count(df, con)
         # Detect tag columns across tag_ and resourceTags/user: prefixes.
         tag_cols = detect_tag_columns(df)
         logger.info("get_untagged_resources: detected tag columns %s", tag_cols)
@@ -1172,6 +1186,17 @@ def get_enrichment_summary(csv_text: str | None = None, enricher=None, file_path
 
     df, con = _load_df(csv_text, enricher=enricher, file_path=file_path)
     try:
+        # File-path mode returns a columns-carrier, not a DataFrame, and
+        # enrichment is not applied there yet (Step 3). The cost-weighted and
+        # unmatched-resource computations below need the real enriched rows, so
+        # report enrichment as not-yet-available rather than operating on a
+        # carrier that has no data.
+        if not isinstance(df, pd.DataFrame):
+            return {
+                "active": True,
+                "joinable": False,
+                "reason": "enrichment summary not available in file-path mode yet",
+            }
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
         account_col = _detect_account_col(cols)
