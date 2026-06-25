@@ -548,6 +548,36 @@ async def ds_enriched_values(report_id: int) -> dict:
     full (potentially 200k+) row set. Returns ``{"report_id", "values"}`` where
     ``values`` maps each present ``inv_*`` column to its sorted distinct values
     (empty ``values`` when enrichment is inactive)."""
+    # Large-file guard: never read the whole CUR into memory as csv_text. Read
+    # distinct account ids straight off disk via a DuckDB native view (large/DBR
+    # exports carry no inv_* columns, so accounts is the only usable dropdown).
+    if _is_large_file(report_id):
+        import duckdb
+
+        from report_store import get_report_path
+        from tools.duckdb_engine import _detect_account_col
+
+        path = get_report_path(report_id)
+        con = duckdb.connect(":memory:")
+        values: dict[str, list] = {}
+        try:
+            safe_path = str(path).replace("'", "''")
+            con.execute(
+                f"CREATE VIEW f AS SELECT * FROM read_csv_auto('{safe_path}', ignore_errors=true)"
+            )
+            cols = [r[0] for r in con.execute("DESCRIBE f").fetchall()]
+            acct_col = _detect_account_col(cols)
+            if acct_col:
+                rows = con.execute(
+                    f'SELECT DISTINCT CAST("{acct_col}" AS VARCHAR) AS a FROM f '
+                    f'WHERE "{acct_col}" IS NOT NULL AND CAST("{acct_col}" AS VARCHAR) <> \'\' '
+                    f"ORDER BY a"
+                ).fetchall()
+                values["accounts"] = [r[0] for r in rows]
+        finally:
+            con.close()
+        return {"report_id": report_id, "values": values}
+
     from report_store import get_report_csv
     from tools.data_sources.registry import get_registry
     from tools.duckdb_engine import _load_df
@@ -691,12 +721,19 @@ async def invoke(
             writer.writeheader()
             writer.writerows(rows)
             _cur_cache[body.session_id] = buf.getvalue()
-    # Load from DB by report_id if session cache is still empty
+    # Load from DB by report_id if session cache is still empty. Skip large
+    # files: loading a multi-GB CUR as csv_text would OOM, and the chat tools
+    # are csv_text-only. has_data stays False so the agent tells the user to use
+    # the dashboard (file-path pipeline) for large reports.
     if not _cur_cache.get(body.session_id) and ctx.get("report_id"):
-        from report_store import get_report_csv
-        csv_text = get_report_csv(int(ctx["report_id"]))
-        if csv_text:
-            _cur_cache[body.session_id] = csv_text
+        _rid = int(ctx["report_id"])
+        if _is_large_file(_rid):
+            logger.info("invoke: skipping chat cache load for large report %s", _rid)
+        else:
+            from report_store import get_report_csv
+            csv_text = get_report_csv(_rid)
+            if csv_text:
+                _cur_cache[body.session_id] = csv_text
 
     has_data = bool(_cur_cache.get(body.session_id))
 
@@ -801,12 +838,19 @@ async def invoke_stream(
             writer.writeheader()
             writer.writerows(rows)
             _cur_cache[body.session_id] = buf.getvalue()
-    # Load from DB by report_id if session cache is still empty
+    # Load from DB by report_id if session cache is still empty. Skip large
+    # files: loading a multi-GB CUR as csv_text would OOM, and the chat tools
+    # are csv_text-only. has_data stays False so the agent tells the user to use
+    # the dashboard (file-path pipeline) for large reports.
     if not _cur_cache.get(body.session_id) and ctx.get("report_id"):
-        from report_store import get_report_csv
-        csv_text = get_report_csv(int(ctx["report_id"]))
-        if csv_text:
-            _cur_cache[body.session_id] = csv_text
+        _rid = int(ctx["report_id"])
+        if _is_large_file(_rid):
+            logger.info("invoke: skipping chat cache load for large report %s", _rid)
+        else:
+            from report_store import get_report_csv
+            csv_text = get_report_csv(_rid)
+            if csv_text:
+                _cur_cache[body.session_id] = csv_text
     has_data = bool(_cur_cache.get(body.session_id))
     resolved_key = x_anthropic_key or _settings.anthropic_api_key
     system = _runner._build_system({"session_id": body.session_id, "has_data": has_data})
