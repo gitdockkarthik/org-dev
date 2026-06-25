@@ -284,21 +284,33 @@ def _service_category_from_names(con, cost_col: str, svc_col: str | None) -> lis
     Shape matches get_cost_by_service_category (owner fields blank)."""
     if not svc_col:
         return []
+    gross_total = float(con.execute(
+        f'SELECT SUM("{cost_col}") FROM cur_data WHERE TRY_CAST("{cost_col}" AS DOUBLE) > 0'
+    ).fetchone()[0] or 0)
     total = float(con.execute(f'SELECT SUM("{cost_col}") FROM cur_data').fetchone()[0] or 0)
     rows = con.execute(
-        f'SELECT "{svc_col}", SUM("{cost_col}") AS cost FROM cur_data GROUP BY "{svc_col}"'
+        f"SELECT COALESCE(NULLIF(TRIM(CAST(\"{svc_col}\" AS VARCHAR)), ''), 'Unallocated') AS svc, "
+        f'SUM("{cost_col}") AS cost FROM cur_data GROUP BY svc'
     ).fetchall()
     cat_totals: dict[str, float] = {}
     for r in rows:
-        cat = _categorise_service(str(r[0] or ""))
-        cat_totals[cat] = cat_totals.get(cat, 0.0) + float(r[1] or 0)
+        svc_name = str(r[0] or "")
+        cost = float(r[1] or 0)
+        if svc_name == "Unallocated":
+            cat = "Unallocated"
+        elif cost < 0:
+            cat = "Credits / Refunds"
+        else:
+            cat = _categorise_service(svc_name)
+        cat_totals[cat] = cat_totals.get(cat, 0.0) + cost
+    denom = gross_total if gross_total else total
     return [
         {
             "category": cat,
             "owner_team": "",
             "owner_email": "",
             "cost": round(c, 4),
-            "pct_of_total": round(c / total * 100, 2) if total else 0.0,
+            "pct_of_total": round(c / denom * 100, 2) if denom else 0.0,
         }
         for cat, c in sorted(cat_totals.items(), key=lambda kv: kv[1], reverse=True)
     ]
@@ -578,6 +590,47 @@ def invalidate_df_cache(file_path: str | None = None) -> None:
         _df_cache.pop(file_path, None)
 
 
+def _register_account_lookup(con: duckdb.DuckDBPyConnection, enricher) -> bool:
+    """Register the enricher's account-level inventory lookup as a tiny DuckDB
+    in-memory table ``inv_account_lookup`` on the given connection.
+
+    Columns are named with the ``inv_*`` prefix (matching INV_FIELD_MAP) so
+    query functions can reference them as ``i.inv_customer``, ``i.inv_environment``
+    etc. in LEFT JOIN clauses.
+
+    Returns True when the table was created, False when enricher is inactive or
+    the lookup is empty.
+    """
+    if enricher is None or not getattr(enricher, "active", False):
+        return False
+    lookup: dict = getattr(enricher, "_account_lookup", {})
+    if not lookup:
+        return False
+    # INV_FIELD_MAP: {inv_col_name -> raw_field_name} — invert to raw -> inv_col.
+    from tools.inventory_enricher import INV_FIELD_MAP
+    raw_to_inv: dict[str, str] = {v: k for k, v in INV_FIELD_MAP.items()}
+    # Collect only the inv_* columns that have data in the lookup.
+    inv_fields: list[str] = []
+    for entry in lookup.values():
+        for raw_field in entry:
+            inv_col = raw_to_inv.get(raw_field)
+            if inv_col and inv_col not in inv_fields:
+                inv_fields.append(inv_col)
+    if not inv_fields:
+        return False
+    col_defs = ", ".join(f'"{f}" VARCHAR' for f in inv_fields)
+    con.execute(f'CREATE TABLE inv_account_lookup (account_id VARCHAR, {col_defs})')
+    import logging as _l
+    _l.getLogger(__name__).warning("DEBUG _register_account_lookup: created table with fields=%s rows=%d", inv_fields, len(lookup))
+    placeholders = ", ".join("?" * (1 + len(inv_fields)))
+    for acct_id, entry in lookup.items():
+        vals = [str(acct_id)] + [
+            str(entry.get(INV_FIELD_MAP[f], "") or "") for f in inv_fields
+        ]
+        con.execute(f"INSERT INTO inv_account_lookup VALUES ({placeholders})", vals)
+    return True
+
+
 def _load_df(
     csv_text: str | None = None, enricher=None, file_path: str | None = None,
     filters: dict | None = None,
@@ -626,12 +679,21 @@ def _load_df(
                     f"CREATE OR REPLACE VIEW cur_data AS "
                     f"SELECT * FROM {reader} WHERE {filter_sql}"
                 )
-        # Enrichment is deferred to Step 3 for file-path mode — skip silently.
+        # Register the inventory account lookup as a tiny in-memory table so
+        # query functions can LEFT JOIN inv_account_lookup without materialising
+        # any CUR rows. The table holds at most one row per inventory account
+        # (~24 rows, ~1KB) — zero impact on the file-path memory profile.
+        _register_account_lookup(con, enricher)
         # Return a columns-carrier (NOT a DataFrame): query functions detect
         # columns via ``df.columns`` while all aggregation hits the view, so no
-        # CUR data is materialised in Python.
+        # CUR data is materialised in Python. Append inv_* columns to the carrier
+        # so downstream detectors see them alongside native CUR columns.
         cols = [row[0] for row in con.execute("DESCRIBE cur_data").fetchall()]
-        df_meta = SimpleNamespace(columns=cols)
+        inv_cols = [row[0] for row in con.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'inv_account_lookup' AND column_name <> 'account_id'"
+        ).fetchall()] if getattr(enricher, "active", False) else []
+        df_meta = SimpleNamespace(columns=cols + inv_cols)
         return df_meta, con
     df = pd.read_csv(io.StringIO(csv_text))
     if enricher is not None:
@@ -669,8 +731,9 @@ def get_cost_by_service(csv_text: str | None = None, limit: int = 15, file_path:
         if not cost_col or not svc_col:
             return []
         rows = con.execute(
-            f'SELECT "{svc_col}", SUM("{cost_col}") AS cost '
-            f'FROM cur_data GROUP BY "{svc_col}" ORDER BY cost DESC LIMIT {limit}'
+            f"SELECT COALESCE(NULLIF(TRIM(CAST(\"{svc_col}\" AS VARCHAR)), ''), 'Unallocated') AS svc, "
+            f'SUM("{cost_col}") AS cost '
+            f'FROM cur_data GROUP BY svc ORDER BY cost DESC LIMIT {limit}'
         ).fetchall()
         return [{"service": r[0], "cost": round(float(r[1] or 0), 4)} for r in rows]
     finally:
@@ -686,7 +749,9 @@ def get_daily_trend(csv_text: str | None = None, file_path: str | None = None, f
             return []
         rows = con.execute(
             f'SELECT CAST("{date_col}" AS DATE) AS day, SUM("{cost_col}") AS cost '
-            f'FROM cur_data GROUP BY day ORDER BY day'
+            f'FROM cur_data '
+            f"WHERE \"{date_col}\" IS NOT NULL AND TRIM(CAST(\"{date_col}\" AS VARCHAR)) <> '' "
+            f'GROUP BY day ORDER BY day'
         ).fetchall()
         return [{"date": str(r[0]), "cost": round(float(r[1] or 0), 4)} for r in rows]
     finally:
@@ -722,15 +787,48 @@ def get_cost_by_region(csv_text: str | None = None, file_path: str | None = None
         con.close()
 
 
-def get_cost_by_account(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None) -> list[dict]:
-    df, con = _load_df(csv_text, file_path=file_path, filters=filters)
+def _has_inv_lookup(con: duckdb.DuckDBPyConnection) -> bool:
+    """Return True when inv_account_lookup was registered on this connection."""
+    try:
+        con.execute("SELECT 1 FROM inv_account_lookup LIMIT 1")
+        return True
+    except Exception:
+        return False
+
+
+def get_cost_by_account(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None, enricher=None) -> list[dict]:
+    df, con = _load_df(csv_text, enricher=enricher, file_path=file_path, filters=filters)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
         acct_col = _detect_account_col(cols)
         if not cost_col or not acct_col:
             return []
+        # Check whether the inv_account_lookup table was registered (file-path
+        # pipeline with an active enricher). If so, LEFT JOIN to pull inv_customer
+        # as the account name and inv_environment as context.
+        has_inv = _has_inv_lookup(con)
         name_col = "line_item_usage_account_name" if "line_item_usage_account_name" in cols else None
+        if has_inv:
+            rows = con.execute(
+                f'SELECT c."{acct_col}", '
+                f'COALESCE(i.inv_customer, \'\') AS account_name, '
+                f'COALESCE(i.inv_environment, \'\') AS environment, '
+                f'SUM(c."{cost_col}") AS cost, COUNT(*) AS rc '
+                f'FROM cur_data c '
+                f'LEFT JOIN inv_account_lookup i ON CAST(c."{acct_col}" AS VARCHAR) = i.account_id '
+                f'GROUP BY c."{acct_col}", i.inv_customer, i.inv_environment ORDER BY cost DESC'
+            ).fetchall()
+            return [
+                {
+                    "account_id": str(r[0]) if r[0] is not None else "",
+                    "account_name": str(r[1]) if r[1] else "",
+                    "environment": str(r[2]) if r[2] else "",
+                    "cost": round(float(r[3] or 0), 4),
+                    "row_count": int(r[4] or 0),
+                }
+                for r in rows
+            ]
         if name_col:
             rows = con.execute(
                 f'SELECT "{acct_col}", "{name_col}", SUM("{cost_col}") AS cost, COUNT(*) AS rc '
@@ -759,6 +857,7 @@ def get_cost_by_account(csv_text: str | None = None, file_path: str | None = Non
             for r in rows
         ]
     except Exception:
+        logger.exception("get_cost_by_account failed")
         return []
     finally:
         con.close()
@@ -790,26 +889,55 @@ def get_cost_by_org_unit(csv_text: str | None = None, file_path: str | None = No
         con.close()
 
 
-def get_cost_by_environment(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None) -> list[dict]:
-    df, con = _load_df(csv_text, file_path=file_path, filters=filters)
+def get_cost_by_environment(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None, enricher=None) -> list[dict]:
+    import logging as _l
+    _l.getLogger(__name__).warning("DEBUG get_cost_by_environment: enricher=%s active=%s", enricher, getattr(enricher, 'active', None))
+    df, con = _load_df(csv_text, enricher=enricher, file_path=file_path, filters=filters)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
-        env_col = _resolve_tag_col(df, "tag_Environment")
-        if not cost_col or not env_col:
+        import logging as _l2
+        _l2.getLogger(__name__).warning("DEBUG get_cost_by_environment: cols=%s cost_col=%s", cols[:5], cost_col)
+        if not cost_col:
             return []
         total = float(con.execute(f'SELECT SUM("{cost_col}") FROM cur_data').fetchone()[0] or 0)
+        env_col = _resolve_tag_col(df, "tag_Environment")
+        has_inv = _has_inv_lookup(con)
+        acct_col = _detect_account_col(cols)
+
+        if has_inv and acct_col and not env_col:
+            # No native environment tag — derive from inventory JOIN.
+            rows = con.execute(
+                f'SELECT COALESCE(NULLIF(i.inv_environment, \'\'), \'Untagged\') AS env, '
+                f'SUM(c."{cost_col}") AS cost '
+                f'FROM cur_data c '
+                f'LEFT JOIN inv_account_lookup i ON CAST(c."{acct_col}" AS VARCHAR) = i.account_id '
+                f'GROUP BY env ORDER BY cost DESC'
+            ).fetchall()
+            return [
+                {
+                    "environment": str(r[0]),
+                    "cost": round(float(r[1] or 0), 4),
+                    "pct_of_total": round(float(r[1] or 0) / total * 100, 2) if total else 0.0,
+                    "env_owner_team": "",
+                    "env_owner_email": "",
+                }
+                for r in rows
+            ]
+
+        if not env_col:
+            return []
+
         has_team = "env_owner_team" in cols
         has_email = "env_owner_email" in cols
         select_extra = ""
-        group_extra = ""
         if has_team:
             select_extra += ', MAX("env_owner_team")'
         if has_email:
             select_extra += ', MAX("env_owner_email")'
         rows = con.execute(
             f'SELECT "{env_col}", SUM("{cost_col}") AS cost{select_extra} '
-            f'FROM cur_data GROUP BY "{env_col}" ORDER BY cost DESC{group_extra}'
+            f'FROM cur_data GROUP BY "{env_col}" ORDER BY cost DESC'
         ).fetchall()
         result = []
         for r in rows:
@@ -832,7 +960,8 @@ def get_cost_by_environment(csv_text: str | None = None, file_path: str | None =
                 "env_owner_email": email,
             })
         return result
-    except Exception:
+    except Exception as _e:
+        logger.exception("get_cost_by_environment EXCEPTION: %s", _e)
         return []
     finally:
         con.close()
@@ -888,16 +1017,51 @@ def get_cost_by_service_category(csv_text: str | None = None, file_path: str | N
         con.close()
 
 
-def get_cost_by_tag(csv_text: str | None = None, tag_col: str = "", file_path: str | None = None, filters: dict | None = None) -> list[dict]:
-    df, con = _load_df(csv_text, file_path=file_path, filters=filters)
+def get_cost_by_tag(csv_text: str | None = None, tag_col: str = "", file_path: str | None = None, filters: dict | None = None, enricher=None) -> list[dict]:
+    df, con = _load_df(csv_text, enricher=enricher, file_path=file_path, filters=filters)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
         actual_tag = _resolve_tag_col(df, tag_col)
         logger.info("get_cost_by_tag: requested %r -> resolved %r", tag_col, actual_tag)
-        if not cost_col or not actual_tag:
+        has_inv = _has_inv_lookup(con)
+        acct_col = _detect_account_col(cols)
+
+        # Mapping from requested tag names to inventory fallback columns.
+        _TAG_TO_INV = {
+            "tag_Customer":    "inv_customer",
+            "tag_Product":     "inv_application",
+            "tag_CostCentre":  "inv_budget_code",
+            "tag_Team":        None,  # no inventory equivalent
+        }
+        inv_fallback = _TAG_TO_INV.get(tag_col)
+
+        if not cost_col:
             return []
+
         total = float(con.execute(f'SELECT SUM("{cost_col}") FROM cur_data').fetchone()[0] or 0)
+
+        if has_inv and acct_col and not actual_tag and inv_fallback:
+            # No native tag column — derive from inventory JOIN.
+            rows = con.execute(
+                f'SELECT COALESCE(NULLIF(i.{inv_fallback}, \'\'), \'Untagged\') AS tag_val, '
+                f'SUM(c."{cost_col}") AS cost '
+                f'FROM cur_data c '
+                f'LEFT JOIN inv_account_lookup i ON CAST(c."{acct_col}" AS VARCHAR) = i.account_id '
+                f'GROUP BY tag_val ORDER BY cost DESC'
+            ).fetchall()
+            return [
+                {
+                    "tag_value": str(r[0]),
+                    "cost": round(float(r[1] or 0), 4),
+                    "pct_of_total": round(float(r[1] or 0) / total * 100, 2) if total else 0.0,
+                }
+                for r in rows
+            ]
+
+        if not actual_tag:
+            return []
+
         rows = con.execute(
             f'SELECT "{actual_tag}", SUM("{cost_col}") AS cost '
             f'FROM cur_data GROUP BY "{actual_tag}" ORDER BY cost DESC'
@@ -914,6 +1078,7 @@ def get_cost_by_tag(csv_text: str | None = None, tag_col: str = "", file_path: s
             })
         return result
     except Exception:
+        logger.exception("get_cost_by_tag failed")
         return []
     finally:
         con.close()
@@ -1005,7 +1170,9 @@ def get_mom_comparison(csv_text: str | None = None, file_path: str | None = None
         rows = con.execute(
             f'SELECT strftime(CAST("{date_col}" AS DATE), \'%Y-%m\') AS month, '
             f'"{svc_col}" AS service, SUM("{cost_col}") AS cost '
-            f'FROM cur_data GROUP BY month, service ORDER BY month, cost DESC'
+            f'FROM cur_data '
+            f"WHERE \"{date_col}\" IS NOT NULL AND TRIM(CAST(\"{date_col}\" AS VARCHAR)) <> '' "
+            f'GROUP BY month, service ORDER BY month, cost DESC'
         ).fetchall()
         return [
             {
