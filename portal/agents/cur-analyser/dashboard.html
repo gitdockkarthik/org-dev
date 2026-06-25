@@ -665,8 +665,10 @@
           { headers: _authHeaders(), cache: 'no-store' });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const s = await res.json();
-        DASH.environment_breakdown = (s.environment_breakdown || s.env_breakdown || [])
-          .map(e => ({ environment: e.environment, cost: e.cost, pct_of_total: e.pct }));
+        if (s.environment_breakdown?.length || s.env_breakdown?.length) {
+          DASH.environment_breakdown = (s.environment_breakdown || s.env_breakdown || [])
+            .map(e => ({ environment: e.environment, cost: e.cost, pct_of_total: e.pct }));
+        }
         DASH.tag_customer_breakdown = (s.customer_breakdown || [])
           .map(t => ({ tag_value: t.customer, cost: t.cost, pct_of_total: t.pct }));
         DASH.tag_product_breakdown = (s.application_breakdown || [])
