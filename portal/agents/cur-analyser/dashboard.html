@@ -1609,20 +1609,19 @@
       const env = DASH.environment_breakdown || [];
       const total = DASH.total_cost || 0;
 
-      // Aggregate the raw environment values into canonical buckets so the KPI
-      // cards match regardless of casing/spelling in the source data.
       const envAgg = {};
       env.forEach(e => {
-        const k = envCanon(e.environment);
+        const k = e.environment || 'Untagged';
         envAgg[k] = (envAgg[k] || 0) + (e.cost || 0);
       });
-      const kpis = ['prod', 'staging', 'nonprod', 'dev'].map(name => {
-        const cost = envAgg[name] || 0;
-        const pct = total ? (cost / total) * 100 : 0;
-        return `<div class="kpi"><div class="kpi__label"><span class="env-badge" style="background:${envColor(name)}22;color:${envColor(name)}">${name}</span></div>
-          <div class="kpi__value" style="font-size:1.25rem">${fmtUSD0(cost)}</div>
-          <div class="kpi__sub">${fmtPct(pct)} of total</div></div>`;
-      }).join('');
+      const kpis = Object.entries(envAgg)
+        .sort((a, b) => b[1] - a[1])
+        .map(([name, cost]) => {
+          const pct = total ? (cost / total) * 100 : 0;
+          return `<div class="kpi"><div class="kpi__label"><span class="env-badge" style="background:${envColor(name)}22;color:${envColor(name)}">${name}</span></div>
+            <div class="kpi__value" style="font-size:1.25rem">${fmtUSD0(cost)}</div>
+            <div class="kpi__sub">${fmtPct(pct)} of total</div></div>`;
+        }).join('');
 
       const rows = env.map(e => {
         const c = envColor((e.environment || '').toLowerCase());
@@ -1636,15 +1635,18 @@
       }).join('') || emptyTable(5, 'No environment data');
 
       // env × category matrix (computed from raw rows)
-      const ec = _filteredRows.length ? envByCategory() : (() => {
-        const env = DASH.environment_breakdown || [];
-        const cat = DASH.service_category_breakdown || [];
-        if (!env.length || !cat.length) return null;
-        return {
-          envs: env.map(e => e.environment).filter(Boolean),
-          cats: cat.map(c => c.category),
-          matrix: {}
-        };
+      const ec = (() => {
+        if (_filteredRows.length) return envByCategory();
+        const rows = DASH.env_category_breakdown || [];
+        if (!rows.length) return null;
+        const envs = [...new Set(rows.map(r => r.environment).filter(Boolean))];
+        const cats = [...new Set(rows.map(r => r.category).filter(Boolean))];
+        const matrix = {};
+        rows.forEach(r => {
+          matrix[r.environment] = matrix[r.environment] || {};
+          matrix[r.environment][r.category] = (matrix[r.environment][r.category] || 0) + r.cost;
+        });
+        return { envs, cats, matrix };
       })();
       let matrixHtml;
       if (ec && ec.envs.length) {
@@ -1675,25 +1677,33 @@
         ${matrixHtml}`;
 
       // stacked bar: env per month
-      if (_filteredRows.length) {
-        const em = envByMonth();
-        destroyChart('envMonth');
-        const ctx = document.getElementById('envMonthChart');
-        if (ctx) {
-          charts['envMonth'] = new Chart(ctx.getContext('2d'), {
-            type: 'bar',
-            data: { labels: em.months, datasets: em.envs.map(en => ({
-              label: en, backgroundColor: envColor(en.toLowerCase()),
-              data: em.months.map(mo => Math.round((em.matrix[en] && em.matrix[en][mo]) || 0)) })) },
-            options: { responsive: true, maintainAspectRatio: false,
-              plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
-                         tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmtUSD(c.parsed.y)}` } } },
-              scales: { x: { stacked: true }, y: { stacked: true, ticks: { callback: v => '$' + Number(v).toLocaleString() } } } },
-          });
-        }
-      } else {
-        const el = document.getElementById('envMonthChart');
-        if (el) el.parentElement.innerHTML = '<div class="data-table__empty">Line-level data unavailable for monthly split.</div>';
+      const emRows = _filteredRows.length ? null : (DASH.env_month_breakdown || []);
+      const em = _filteredRows.length ? envByMonth() : (() => {
+        if (!emRows || !emRows.length) return null;
+        const months = [...new Set(emRows.map(r => r.month))].sort();
+        const envs = [...new Set(emRows.map(r => r.environment).filter(Boolean))];
+        const matrix = {};
+        emRows.forEach(r => {
+          matrix[r.environment] = matrix[r.environment] || {};
+          matrix[r.environment][r.month] = (matrix[r.environment][r.month] || 0) + r.cost;
+        });
+        return { months, envs, matrix };
+      })();
+      destroyChart('envMonth');
+      const ctx = document.getElementById('envMonthChart');
+      if (em && em.months && em.months.length && ctx) {
+        charts['envMonth'] = new Chart(ctx.getContext('2d'), {
+          type: 'bar',
+          data: { labels: em.months, datasets: em.envs.map(en => ({
+            label: en, backgroundColor: envColor(en.toLowerCase()),
+            data: em.months.map(mo => Math.round((em.matrix[en] && em.matrix[en][mo]) || 0)) })) },
+          options: { responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+                       tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmtUSD(c.parsed.y)}` } } },
+            scales: { x: { stacked: true }, y: { stacked: true, ticks: { callback: v => '$' + Number(v).toLocaleString() } } } },
+        });
+      } else if (ctx) {
+        ctx.parentElement.innerHTML = '<div class="data-table__empty">No monthly environment data available.</div>';
       }
     }
 

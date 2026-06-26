@@ -12,6 +12,8 @@ from typing import Any, ClassVar
 from tools.base import ToolExecutor
 from tools.duckdb_engine import (
     get_cost_by_account,
+    get_cost_by_env_category,
+    get_cost_by_env_month,
     get_cost_by_environment,
     get_cost_by_org_unit,
     get_cost_by_pricing_term,
@@ -39,10 +41,11 @@ _executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="dash-query")
 # ── Core aggregation ──────────────────────────────────────────────────────────
 
 def _assemble_dashboard(results: list) -> dict:
-    """Build the dashboard payload from the 17 query results (same order whether
+    """Build the dashboard payload from the 19 query results (same order whether
     they were produced sequentially or concurrently)."""
     (summary, service_breakdown, daily_trend, region_breakdown,
      account_breakdown, org_unit_breakdown, environment_breakdown,
+     env_month_breakdown, env_category_breakdown,
      service_category_breakdown, tag_product_breakdown, tag_team_breakdown,
      tag_customer_breakdown, tag_costcentre_breakdown, untagged_resources,
      pricing_term_breakdown, mom_comparison, top_resources,
@@ -68,6 +71,8 @@ def _assemble_dashboard(results: list) -> dict:
         "account_breakdown": account_breakdown,
         "org_unit_breakdown": org_unit_breakdown,
         "environment_breakdown": environment_breakdown,
+        "env_month_breakdown": env_month_breakdown,
+        "env_category_breakdown": env_category_breakdown,
         "service_category_breakdown": service_category_breakdown,
         "tag_product_breakdown": tag_product_breakdown,
         "tag_team_breakdown": tag_team_breakdown,
@@ -91,6 +96,8 @@ def _run_all_queries(csv_text, file_path, filters, enricher=None) -> list:
         get_cost_by_account(csv_text, file_path=file_path, filters=filters, enricher=enricher),
         get_cost_by_org_unit(csv_text, file_path=file_path, filters=filters),
         get_cost_by_environment(csv_text, file_path=file_path, filters=filters, enricher=enricher),
+        get_cost_by_env_month(csv_text, file_path=file_path, filters=filters, enricher=enricher),
+        get_cost_by_env_category(csv_text, file_path=file_path, filters=filters, enricher=enricher),
         get_cost_by_service_category(csv_text, file_path=file_path, filters=filters, enricher=enricher),
         get_cost_by_tag(csv_text, "tag_Product", file_path=file_path, filters=filters, enricher=enricher),
         get_cost_by_tag(csv_text, "tag_Team", file_path=file_path, filters=filters, enricher=enricher),
@@ -136,6 +143,8 @@ async def compute_dashboard_async(
         run(get_cost_by_account, csv_text, file_path=file_path, filters=filters, enricher=enricher),
         run(get_cost_by_org_unit, csv_text, file_path=file_path, filters=filters),
         run(get_cost_by_environment, csv_text, file_path=file_path, filters=filters, enricher=enricher),
+        run(get_cost_by_env_month, csv_text, file_path=file_path, filters=filters, enricher=enricher),
+        run(get_cost_by_env_category, csv_text, file_path=file_path, filters=filters, enricher=enricher),
         run(get_cost_by_service_category, csv_text, file_path=file_path, filters=filters, enricher=enricher),
         run(get_cost_by_tag, csv_text, "tag_Product", file_path=file_path, filters=filters, enricher=enricher),
         run(get_cost_by_tag, csv_text, "tag_Team", file_path=file_path, filters=filters, enricher=enricher),
