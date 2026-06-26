@@ -1870,7 +1870,7 @@
       if (!el) return;
       if (!_invActive) { el.innerHTML = ''; return; }
       let c;
-      try { c = await api('/data-sources/inventory/coverage'); }
+      try { c = await api(`/data-sources/inventory/coverage${currentReportId ? '?report_id=' + currentReportId : ''}`); }
       catch (e) { el.innerHTML = ''; return; }
       if (!c || !c.active) { el.innerHTML = ''; return; }
 
@@ -1882,6 +1882,7 @@
         return;
       }
 
+      const isAccountLevelOnly = c.spend_match_rate_pct === null || c.spend_match_rate_pct === undefined;
       const spend = c.spend_match_rate_pct || 0;
       const scol = covColor(spend);
       const matchedN = c.matched_count || 0;
@@ -1925,6 +1926,7 @@
             <div style="color:${scol};font-weight:700">${fmtPct(spend)}</div>
             <div class="cov-row__cost" style="color:var(--text-muted);font-size:.8rem">${fmtNum(matchedN)} / ${fmtNum(totalN)} resources</div>
           </div>
+          ${isAccountLevelOnly ? `<div style="margin:12px 0;padding:10px 14px;background:var(--navy-2);border-left:3px solid var(--accent);border-radius:4px;font-size:.84rem;color:var(--text-muted)">ℹ️ This report uses DBR format which does not include resource IDs. Match rates show 0% as matching is resource-level. Cost attribution by environment, customer, and cost centre is working via account-level inventory enrichment.</div>` : ''}
           <div style="margin-top:16px">
             <div class="chart-card__title">Tag coverage — with vs without inventory</div>
             <div class="data-table-wrap" style="margin-top:8px"><table class="data-table">
