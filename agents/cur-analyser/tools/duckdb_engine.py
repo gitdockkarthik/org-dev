@@ -958,8 +958,8 @@ def get_cost_by_environment(csv_text: str | None = None, file_path: str | None =
         con.close()
 
 
-def get_cost_by_service_category(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None) -> list[dict]:
-    df, con = _load_df(csv_text, file_path=file_path, filters=filters)
+def get_cost_by_service_category(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None, enricher=None) -> list[dict]:
+    df, con = _load_df(csv_text, enricher=enricher, file_path=file_path, filters=filters)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
