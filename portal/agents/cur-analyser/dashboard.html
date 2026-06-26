@@ -1813,9 +1813,11 @@
 
       // recommendations from coverage gaps
       const gaps = cov.filter(c => c.coverage_pct < 80).sort((a, b) => b.untagged_cost - a.untagged_cost);
-      const recs = gaps.length
-        ? gaps.map(c => `<li><span class="signal-icon">→</span><span>Improve <strong>${escapeHtml(c.tag.replace(/^tag_/, ''))}</strong> coverage (currently ${fmtPct(c.coverage_pct)}) — ${fmtUSD0(c.untagged_cost)} of spend is untagged.</span></li>`).join('')
-        : '<li><span style="color:var(--success)">✅</span><span>All tags above 80% coverage — tagging hygiene is healthy.</span></li>';
+      const recs = ut.has_tag_columns === false
+        ? '<li><span style="color:var(--text-muted)">Tag columns not available in this CUR format. Cost attribution is via inventory enrichment.</span></li>'
+        : gaps.length
+          ? gaps.map(c => `<li><span class="signal-icon">→</span><span>Improve <strong>${escapeHtml(c.tag.replace(/^tag_/, ''))}</strong> coverage (currently ${fmtPct(c.coverage_pct)}) — ${fmtUSD0(c.untagged_cost)} of spend is untagged.</span></li>`).join('')
+          : '<li><span style="color:var(--success)">✅</span><span>All tags above 80% coverage — tagging hygiene is healthy.</span></li>';
 
       const tagSection = (title, breakdown, chartId) => {
         const rows = (breakdown || []).map(t => `<tr><td style="font-weight:600">${escapeHtml(t.tag_value)}</td>
