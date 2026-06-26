@@ -693,6 +693,7 @@
             untagged_cost: tc[k].untagged_cost,
           })),
           overall_coverage_pct: tc.Customer ? tc.Customer.covered_pct : 0,
+          has_tag_columns: Object.keys(tc).length > 0,
         };
       } catch (e) {
         console.warn('enriched-summary failed:', e);
@@ -1805,7 +1806,7 @@
           <div style="color:${col};font-weight:700">${fmtPct(c.coverage_pct)}</div>
           <div class="cov-row__cost" style="color:var(--text-muted);font-size:.8rem">${fmtUSD0(c.untagged_cost)} untagged</div>
         </div>`;
-      }).join('') || '<div class="data-table__empty">No tag columns found.</div>';
+      }).join('') || `<div class="data-table__empty">${ut.has_tag_columns === false ? 'Tag columns not available in this CUR format. Cost attribution is provided via inventory enrichment.' : 'No tag columns found.'}</div>`;
 
       const overall = ut.overall_coverage_pct || 0;
       const ocol = covColor(overall);
