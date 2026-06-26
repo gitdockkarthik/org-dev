@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CUR Dashboard — UAP</title>
-  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="stylesheet" href="/css/style.css?v=3">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
   <style>
@@ -168,7 +168,6 @@
   </header>
 
   <nav class="subnav">
-    <span id="agent-label" style="display:none;position:absolute;right:1.5rem;font-size:.8rem;font-weight:600;color:var(--accent,#0891b2)">CUR Analyser</span>
     <a href="/chat?agent=cur-analyser" data-standalone-href="chat.html" class="subnav__link">💬 Chat</a>
     <a href="/agents/cur-analyser/dashboard" data-standalone-href="dashboard.html" class="subnav__link subnav__link--active">📊 Dashboard</a>
     <a href="/agents/cur-analyser/reports" data-standalone-href="reports.html" class="subnav__link">📁 Reports</a>
@@ -368,18 +367,17 @@
     </div>
   </div>
 
+  <script src="/js/config.js?v=3"></script>
+  <script src="/js/portal.js?v=3"></script>
   <script>
-    // ── Standalone mode: stub portal dependencies ─────────────────────────
-    if (typeof window._authHeaders !== 'function') {
+    // ── Dual-mode detection: works inside Operative portal AND standalone ──
+    const _isPortalMode = (typeof window._isPortalEnv !== 'undefined' && window._isPortalEnv === true);
+    if (!_isPortalMode) {
       window.BACKEND_URL = '';
       window._authHeaders = () => ({});
       window.portalReady = Promise.resolve();
       window.showToast = (msg, type) => console.log('[toast]', type || 'info', msg);
     }
-  </script>
-  <script>
-    // ── Dual-mode detection: works inside Operative portal AND standalone ──
-    const _isPortalMode = (typeof window._isPortalEnv !== 'undefined' && window._isPortalEnv === true);
   </script>
   <script>
     const SLUG  = 'cur-analyser';
@@ -404,6 +402,8 @@
     let _insightsTs = null;
     const _insightsCache = {};    // keyed by report_id
     const _insightsCacheTs = {};
+    const _dashCache = {};         // keyed by report_id — /dashboard payload cache
+    const _DASH_CACHE_TTL_MS = 60000; // 60 seconds
 
     // Service → category map (mirrors the synthetic generator) for client-side labelling
     const SERVICE_CAT = {
@@ -665,27 +665,21 @@
           { headers: _authHeaders(), cache: 'no-store' });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const s = await res.json();
-        // For large files (enrichment_level === 'account') the enriched-summary
-        // returns a stub with no row-level breakdowns. The dashboard API already
-        // populates environment/tag breakdowns via the DuckDB JOIN, so skip
-        // overwriting them entirely — just handle tag coverage below.
-        if (s.enrichment_level !== 'account') {
-          if (s.env_breakdown && s.env_breakdown.length > 0) {
-            DASH.environment_breakdown = s.env_breakdown
-              .map(e => ({ environment: e.environment, cost: e.cost, pct_of_total: e.pct }));
-          }
-          if (s.customer_breakdown && s.customer_breakdown.length > 0) {
-            DASH.tag_customer_breakdown = s.customer_breakdown
-              .map(t => ({ tag_value: t.customer, cost: t.cost, pct_of_total: t.pct }));
-          }
-          if (s.application_breakdown && s.application_breakdown.length > 0) {
-            DASH.tag_product_breakdown = s.application_breakdown
-              .map(t => ({ tag_value: t.application, cost: t.cost, pct_of_total: t.pct }));
-          }
-          if (s.budget_code_breakdown && s.budget_code_breakdown.length > 0) {
-            DASH.tag_costcentre_breakdown = s.budget_code_breakdown
-              .map(t => ({ tag_value: t.budget_code, cost: t.cost, pct_of_total: t.pct }));
-          }
+        if (s.environment_breakdown?.length || s.env_breakdown?.length) {
+          DASH.environment_breakdown = (s.environment_breakdown || s.env_breakdown || [])
+            .map(e => ({ environment: e.environment, cost: e.cost, pct_of_total: e.pct }));
+        }
+        if (s.customer_breakdown?.length) {
+          DASH.tag_customer_breakdown = (s.customer_breakdown || [])
+            .map(t => ({ tag_value: t.customer, cost: t.cost, pct_of_total: t.pct }));
+        }
+        if (s.application_breakdown?.length) {
+          DASH.tag_product_breakdown = (s.application_breakdown || [])
+            .map(t => ({ tag_value: t.application, cost: t.cost, pct_of_total: t.pct }));
+        }
+        if (s.budget_code_breakdown?.length) {
+          DASH.tag_costcentre_breakdown = (s.budget_code_breakdown || [])
+            .map(t => ({ tag_value: t.budget_code, cost: t.cost, pct_of_total: t.pct }));
         }
         // tag_team has no inventory equivalent — keep the server (native) value.
         // Tag Coverage panel (untagged_resources shape).
@@ -1612,24 +1606,22 @@
 
     // ── TAB 3: By Environment ───────────────────────────────────────────────────────
     function renderEnvironments() {
-      console.log('DEBUG renderEnvironments: DASH.environment_breakdown=', JSON.stringify(DASH.environment_breakdown));
       const env = DASH.environment_breakdown || [];
       const total = DASH.total_cost || 0;
 
-      // Aggregate the raw environment values into canonical buckets so the KPI
-      // cards match regardless of casing/spelling in the source data.
       const envAgg = {};
       env.forEach(e => {
-        const k = envCanon(e.environment);
+        const k = e.environment || 'Untagged';
         envAgg[k] = (envAgg[k] || 0) + (e.cost || 0);
       });
-      const kpis = ['prod', 'staging', 'nonprod', 'dev'].map(name => {
-        const cost = envAgg[name] || 0;
-        const pct = total ? (cost / total) * 100 : 0;
-        return `<div class="kpi"><div class="kpi__label"><span class="env-badge" style="background:${envColor(name)}22;color:${envColor(name)}">${name}</span></div>
-          <div class="kpi__value" style="font-size:1.25rem">${fmtUSD0(cost)}</div>
-          <div class="kpi__sub">${fmtPct(pct)} of total</div></div>`;
-      }).join('');
+      const kpis = Object.entries(envAgg)
+        .sort((a, b) => b[1] - a[1])
+        .map(([name, cost]) => {
+          const pct = total ? (cost / total) * 100 : 0;
+          return `<div class="kpi"><div class="kpi__label"><span class="env-badge" style="background:${envColor(name)}22;color:${envColor(name)}">${name}</span></div>
+            <div class="kpi__value" style="font-size:1.25rem">${fmtUSD0(cost)}</div>
+            <div class="kpi__sub">${fmtPct(pct)} of total</div></div>`;
+        }).join('');
 
       const rows = env.map(e => {
         const c = envColor((e.environment || '').toLowerCase());
@@ -1643,15 +1635,18 @@
       }).join('') || emptyTable(5, 'No environment data');
 
       // env × category matrix (computed from raw rows)
-      const ec = _filteredRows.length ? envByCategory() : (() => {
-        const env = DASH.environment_breakdown || [];
-        const cat = DASH.service_category_breakdown || [];
-        if (!env.length || !cat.length) return null;
-        return {
-          envs: env.map(e => e.environment).filter(Boolean),
-          cats: cat.map(c => c.category),
-          matrix: {}
-        };
+      const ec = (() => {
+        if (_filteredRows.length) return envByCategory();
+        const rows = DASH.env_category_breakdown || [];
+        if (!rows.length) return null;
+        const envs = [...new Set(rows.map(r => r.environment).filter(Boolean))];
+        const cats = [...new Set(rows.map(r => r.category).filter(Boolean))];
+        const matrix = {};
+        rows.forEach(r => {
+          matrix[r.environment] = matrix[r.environment] || {};
+          matrix[r.environment][r.category] = (matrix[r.environment][r.category] || 0) + r.cost;
+        });
+        return { envs, cats, matrix };
       })();
       let matrixHtml;
       if (ec && ec.envs.length) {
@@ -1682,25 +1677,33 @@
         ${matrixHtml}`;
 
       // stacked bar: env per month
-      if (_filteredRows.length) {
-        const em = envByMonth();
-        destroyChart('envMonth');
-        const ctx = document.getElementById('envMonthChart');
-        if (ctx) {
-          charts['envMonth'] = new Chart(ctx.getContext('2d'), {
-            type: 'bar',
-            data: { labels: em.months, datasets: em.envs.map(en => ({
-              label: en, backgroundColor: envColor(en.toLowerCase()),
-              data: em.months.map(mo => Math.round((em.matrix[en] && em.matrix[en][mo]) || 0)) })) },
-            options: { responsive: true, maintainAspectRatio: false,
-              plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
-                         tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmtUSD(c.parsed.y)}` } } },
-              scales: { x: { stacked: true }, y: { stacked: true, ticks: { callback: v => '$' + Number(v).toLocaleString() } } } },
-          });
-        }
-      } else {
-        const el = document.getElementById('envMonthChart');
-        if (el) el.parentElement.innerHTML = '<div class="data-table__empty">Line-level data unavailable for monthly split.</div>';
+      const emRows = _filteredRows.length ? null : (DASH.env_month_breakdown || []);
+      const em = _filteredRows.length ? envByMonth() : (() => {
+        if (!emRows || !emRows.length) return null;
+        const months = [...new Set(emRows.map(r => r.month))].sort();
+        const envs = [...new Set(emRows.map(r => r.environment).filter(Boolean))];
+        const matrix = {};
+        emRows.forEach(r => {
+          matrix[r.environment] = matrix[r.environment] || {};
+          matrix[r.environment][r.month] = (matrix[r.environment][r.month] || 0) + r.cost;
+        });
+        return { months, envs, matrix };
+      })();
+      destroyChart('envMonth');
+      const ctx = document.getElementById('envMonthChart');
+      if (em && em.months && em.months.length && ctx) {
+        charts['envMonth'] = new Chart(ctx.getContext('2d'), {
+          type: 'bar',
+          data: { labels: em.months, datasets: em.envs.map(en => ({
+            label: en, backgroundColor: envColor(en.toLowerCase()),
+            data: em.months.map(mo => Math.round((em.matrix[en] && em.matrix[en][mo]) || 0)) })) },
+          options: { responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+                       tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmtUSD(c.parsed.y)}` } } },
+            scales: { x: { stacked: true }, y: { stacked: true, ticks: { callback: v => '$' + Number(v).toLocaleString() } } } },
+        });
+      } else if (ctx) {
+        ctx.parentElement.innerHTML = '<div class="data-table__empty">No monthly environment data available.</div>';
       }
     }
 
@@ -2325,6 +2328,7 @@ ${JSON.stringify(payload, null, 2)}
     }
     function onReportChange() {
       const v = document.getElementById('reportSelect').value;
+      delete _dashCache[v ? parseInt(v, 10) : null];
       window.location.search = v ? `?report_id=${v}` : '';
     }
     function populateSelector(activeFilename) {
@@ -2356,6 +2360,7 @@ ${JSON.stringify(payload, null, 2)}
 
     // Single-report load reuses the existing URL-driven flow (full reload → init()).
     function loadDashboard(id) {
+      delete _dashCache[id != null ? id : null];
       window.location.search = id != null ? `?report_id=${id}` : '';
     }
 
@@ -2908,7 +2913,13 @@ ${JSON.stringify(payload, null, 2)}
       } catch (_) { _invActive = false; }
       try {
         REPORTS = await api('/reports').catch(() => []);
-        DASH = await api('/dashboard' + (REPORT_ID !== null ? `?report_id=${REPORT_ID}` : ''));
+        const _dashHit = _dashCache[REPORT_ID];
+        if (_dashHit && (Date.now() - _dashHit.ts) < _DASH_CACHE_TTL_MS) {
+          DASH = _dashHit.data;
+        } else {
+          DASH = await api('/dashboard' + (REPORT_ID !== null ? `?report_id=${REPORT_ID}` : ''));
+          _dashCache[REPORT_ID] = { data: DASH, ts: Date.now() };
+        }
         document.getElementById('loadingState').style.display = 'none';
 
         if (!DASH || DASH.empty) {
@@ -2923,11 +2934,6 @@ ${JSON.stringify(payload, null, 2)}
           filename = r ? r.filename : `Report ${REPORT_ID}`;
         } else if (DASH.report) {
           filename = DASH.report.filename; activeId = DASH.report.id;
-        }
-
-        // Fetch raw rows for cross-tabs (env×month, env×category) — best effort
-        if (activeId != null) {
-          try { ROWS = await api(`/reports/${activeId}/data`); } catch (_) { ROWS = []; }
         }
 
         // Multi-select report picker (single-report mode on first load)
@@ -3054,8 +3060,6 @@ ${JSON.stringify(payload, null, 2)}
       });
       var topbar = document.querySelector('.topbar');
       if (topbar) topbar.style.display = 'none';
-      var lbl = document.getElementById('agent-label');
-      if (lbl) lbl.style.display = 'inline';
     }
   </script>
 </body>
