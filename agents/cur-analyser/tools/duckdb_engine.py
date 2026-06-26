@@ -620,8 +620,6 @@ def _register_account_lookup(con: duckdb.DuckDBPyConnection, enricher) -> bool:
         return False
     col_defs = ", ".join(f'"{f}" VARCHAR' for f in inv_fields)
     con.execute(f'CREATE TABLE inv_account_lookup (account_id VARCHAR, {col_defs})')
-    import logging as _l
-    _l.getLogger(__name__).warning("DEBUG _register_account_lookup: created table with fields=%s rows=%d", inv_fields, len(lookup))
     placeholders = ", ".join("?" * (1 + len(inv_fields)))
     for acct_id, entry in lookup.items():
         vals = [str(acct_id)] + [
@@ -707,9 +705,6 @@ def _load_df(
 def get_total_cost(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None) -> dict:
     df, con = _load_df(csv_text, file_path=file_path, filters=filters)
     try:
-        # DEBUG: log the raw CUR column names once per dashboard build so the
-        # actual header format (and any unexpected tag-column naming) is visible.
-        logger.info("get_total_cost: raw CUR columns = %s", list(df.columns))
         cost_col = _detect_cost_col(list(df.columns))
         if not cost_col:
             return {"error": "No cost column found in CUR data."}
@@ -890,14 +885,10 @@ def get_cost_by_org_unit(csv_text: str | None = None, file_path: str | None = No
 
 
 def get_cost_by_environment(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None, enricher=None) -> list[dict]:
-    import logging as _l
-    _l.getLogger(__name__).warning("DEBUG get_cost_by_environment: enricher=%s active=%s", enricher, getattr(enricher, 'active', None))
     df, con = _load_df(csv_text, enricher=enricher, file_path=file_path, filters=filters)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
-        import logging as _l2
-        _l2.getLogger(__name__).warning("DEBUG get_cost_by_environment: cols=%s cost_col=%s", cols[:5], cost_col)
         if not cost_col:
             return []
         total = float(con.execute(f'SELECT SUM("{cost_col}") FROM cur_data').fetchone()[0] or 0)
@@ -907,12 +898,6 @@ def get_cost_by_environment(csv_text: str | None = None, file_path: str | None =
 
         if has_inv and acct_col and not env_col:
             # No native environment tag — derive from inventory JOIN.
-            import logging as _l3
-            _l3.getLogger(__name__).warning(
-                "DEBUG env JOIN: acct_col=%s has_inv=%s sample_accounts=%s",
-                acct_col, has_inv,
-                con.execute(f'SELECT DISTINCT CAST("{acct_col}" AS VARCHAR) FROM cur_data LIMIT 3').fetchall()
-            )
             rows = con.execute(
                 f'SELECT COALESCE(NULLIF(i.inv_environment, \'\'), \'Untagged\') AS env, '
                 f'SUM(c."{cost_col}") AS cost '
@@ -920,7 +905,6 @@ def get_cost_by_environment(csv_text: str | None = None, file_path: str | None =
                 f'LEFT JOIN inv_account_lookup i ON CAST(c."{acct_col}" AS VARCHAR) = i.account_id '
                 f'GROUP BY env ORDER BY cost DESC'
             ).fetchall()
-            _l3.getLogger(__name__).warning("DEBUG env JOIN result: %s rows", len(rows))
             return [
                 {
                     "environment": str(r[0]),
