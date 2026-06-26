@@ -41,15 +41,24 @@ _executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="dash-query")
 # ── Core aggregation ──────────────────────────────────────────────────────────
 
 def _assemble_dashboard(results: list) -> dict:
-    """Build the dashboard payload from the 19 query results (same order whether
-    they were produced sequentially or concurrently)."""
-    (summary, service_breakdown, daily_trend, region_breakdown,
-     account_breakdown, org_unit_breakdown, environment_breakdown,
-     env_month_breakdown, env_category_breakdown,
-     service_category_breakdown, tag_product_breakdown, tag_team_breakdown,
-     tag_customer_breakdown, tag_costcentre_breakdown, untagged_resources,
-     pricing_term_breakdown, mom_comparison, top_resources,
-     savings_opportunities) = results
+    """Build the dashboard payload from the sequential runner's query results."""
+    if len(results) == 19:
+        (summary, service_breakdown, daily_trend, region_breakdown,
+         account_breakdown, org_unit_breakdown, environment_breakdown,
+         env_month_breakdown, env_category_breakdown,
+         service_category_breakdown, tag_product_breakdown, tag_team_breakdown,
+         tag_customer_breakdown, tag_costcentre_breakdown, untagged_resources,
+         pricing_term_breakdown, mom_comparison, top_resources,
+         savings_opportunities) = results
+    else:
+        (summary, service_breakdown, daily_trend, region_breakdown,
+         account_breakdown, org_unit_breakdown, environment_breakdown,
+         service_category_breakdown, tag_product_breakdown, tag_team_breakdown,
+         tag_customer_breakdown, tag_costcentre_breakdown, untagged_resources,
+         pricing_term_breakdown, mom_comparison, top_resources,
+         savings_opportunities) = results
+        env_month_breakdown = []
+        env_category_breakdown = []
 
     top_service = service_breakdown[0] if service_breakdown else None
 
@@ -98,7 +107,7 @@ def _run_all_queries(csv_text, file_path, filters, enricher=None) -> list:
         get_cost_by_environment(csv_text, file_path=file_path, filters=filters, enricher=enricher),
         get_cost_by_env_month(csv_text, file_path=file_path, filters=filters, enricher=enricher),
         get_cost_by_env_category(csv_text, file_path=file_path, filters=filters, enricher=enricher),
-        get_cost_by_service_category(csv_text, file_path=file_path, filters=filters, enricher=enricher),
+        get_cost_by_service_category(csv_text, file_path=file_path, filters=filters),
         get_cost_by_tag(csv_text, "tag_Product", file_path=file_path, filters=filters, enricher=enricher),
         get_cost_by_tag(csv_text, "tag_Team", file_path=file_path, filters=filters, enricher=enricher),
         get_cost_by_tag(csv_text, "tag_Customer", file_path=file_path, filters=filters, enricher=enricher),
@@ -135,7 +144,7 @@ async def compute_dashboard_async(
     def run(fn, *args, **kwargs):
         return loop.run_in_executor(_executor, lambda: fn(*args, **kwargs))
 
-    results = await asyncio.gather(
+    results = list(await asyncio.gather(
         run(get_total_cost, csv_text, file_path=file_path, filters=filters),
         run(get_cost_by_service, csv_text, limit=15, file_path=file_path, filters=filters),
         run(get_daily_trend, csv_text, file_path=file_path, filters=filters),
@@ -143,9 +152,7 @@ async def compute_dashboard_async(
         run(get_cost_by_account, csv_text, file_path=file_path, filters=filters, enricher=enricher),
         run(get_cost_by_org_unit, csv_text, file_path=file_path, filters=filters),
         run(get_cost_by_environment, csv_text, file_path=file_path, filters=filters, enricher=enricher),
-        run(get_cost_by_env_month, csv_text, file_path=file_path, filters=filters, enricher=enricher),
-        run(get_cost_by_env_category, csv_text, file_path=file_path, filters=filters, enricher=enricher),
-        run(get_cost_by_service_category, csv_text, file_path=file_path, filters=filters, enricher=enricher),
+        run(get_cost_by_service_category, csv_text, file_path=file_path, filters=filters),
         run(get_cost_by_tag, csv_text, "tag_Product", file_path=file_path, filters=filters, enricher=enricher),
         run(get_cost_by_tag, csv_text, "tag_Team", file_path=file_path, filters=filters, enricher=enricher),
         run(get_cost_by_tag, csv_text, "tag_Customer", file_path=file_path, filters=filters, enricher=enricher),
@@ -155,8 +162,13 @@ async def compute_dashboard_async(
         run(get_mom_comparison, csv_text, file_path=file_path, filters=filters),
         run(get_top_resources, csv_text, limit=10, file_path=file_path, filters=filters),
         run(get_savings_opportunities, csv_text, file_path=file_path, filters=filters),
-    )
-    return _assemble_dashboard(list(results))
+    ))
+    env_month = await loop.run_in_executor(_executor, lambda: get_cost_by_env_month(csv_text, file_path=file_path, filters=filters, enricher=enricher))
+    env_category = await loop.run_in_executor(_executor, lambda: get_cost_by_env_category(csv_text, file_path=file_path, filters=filters, enricher=enricher))
+    full_results = list(results)
+    full_results.insert(7, env_month)
+    full_results.insert(8, env_category)
+    return _assemble_dashboard(full_results)
 
 
 # ── ToolExecutor wrapper ──────────────────────────────────────────────────────

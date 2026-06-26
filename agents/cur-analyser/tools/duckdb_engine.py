@@ -1053,8 +1053,8 @@ def get_cost_by_env_category(csv_text: str | None = None, file_path: str | None 
         con.close()
 
 
-def get_cost_by_service_category(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None, enricher=None) -> list[dict]:
-    df, con = _load_df(csv_text, enricher=enricher, file_path=file_path, filters=filters)
+def get_cost_by_service_category(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None) -> list[dict]:
+    df, con = _load_df(csv_text, file_path=file_path, filters=filters)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
@@ -1210,7 +1210,6 @@ def get_untagged_resources(csv_text: str | None = None, file_path: str | None = 
             "total_rows": total_rows,
             "tag_coverage": coverage,
             "overall_coverage_pct": overall,
-            "has_tag_columns": len(tag_cols) > 0,
         }
     except Exception:
         return {"total_rows": 0, "tag_coverage": [], "overall_coverage_pct": 0.0}
