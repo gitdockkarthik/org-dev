@@ -1210,6 +1210,7 @@ def get_untagged_resources(csv_text: str | None = None, file_path: str | None = 
             "total_rows": total_rows,
             "tag_coverage": coverage,
             "overall_coverage_pct": overall,
+            "has_tag_columns": len(tag_cols) > 0,
         }
     except Exception:
         return {"total_rows": 0, "tag_coverage": [], "overall_coverage_pct": 0.0}
