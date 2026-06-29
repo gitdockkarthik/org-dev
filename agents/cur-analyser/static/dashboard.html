@@ -242,9 +242,47 @@
 
     <!-- Loading -->
     <div id="loadingState">
-      <div class="empty-state" style="margin-top:60px">
-        <div class="ai-spinner" style="width:36px;height:36px;border-width:3px;margin:0 auto 16px;display:block"></div>
-        <div class="empty-state__title" id="loadingMsg">Loading cost data…</div>
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:320px;gap:24px;padding:40px 20px">
+        <div style="position:relative;width:160px;height:120px">
+          <style>
+            @keyframes floatDollar{0%{opacity:0;transform:translateY(80px) scale(.6)}20%{opacity:1}80%{opacity:.8}100%{opacity:0;transform:translateY(0) scale(1)}}
+            @keyframes scanRow{0%,100%{opacity:0}40%{opacity:1;stroke:#FF6B35}80%{opacity:.4}}
+            @keyframes coinBounce{0%,100%{transform:translateY(0);opacity:.35}50%{transform:translateY(-14px);opacity:1}}
+            @keyframes progressShimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+            @keyframes progressGrow{0%{width:3%}25%{width:35%}55%{width:62%}80%{width:82%}100%{width:90%}}
+            .ldr-dollar{position:absolute;font-size:20px;font-weight:700;opacity:0;animation:floatDollar 3s ease-in infinite}
+            .ldr-scanline{stroke-linecap:round;stroke-width:1.5;opacity:0}
+          </style>
+          <span class="ldr-dollar" style="left:8px;animation-delay:0s;color:#FF6B35">$</span>
+          <span class="ldr-dollar" style="left:40px;animation-delay:.7s;color:#0EA5E9">$</span>
+          <span class="ldr-dollar" style="left:72px;animation-delay:1.4s;color:#16a34a">$</span>
+          <span class="ldr-dollar" style="left:104px;animation-delay:2.1s;color:#9333ea">$</span>
+          <span class="ldr-dollar" style="left:128px;animation-delay:2.7s;color:#e11d48">$</span>
+          <svg viewBox="0 0 64 80" width="64" height="80" style="position:absolute;bottom:0;left:50%;transform:translateX(-50%)" xmlns="http://www.w3.org/2000/svg">
+            <rect x="2" y="2" width="52" height="68" rx="6" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
+            <polygon points="38,2 54,18 38,18" fill="#f1f5f9"/>
+            <text x="10" y="34" fill="#0EA5E9" font-size="8" font-weight="700" font-family="monospace">CSV</text>
+            <line class="ldr-scanline" x1="10" y1="42" x2="46" y2="42" stroke="#FF6B35" style="animation:scanRow 2s ease-in-out infinite .1s"/>
+            <line class="ldr-scanline" x1="10" y1="50" x2="38" y2="50" stroke="#0EA5E9" style="animation:scanRow 2s ease-in-out infinite .5s"/>
+            <line class="ldr-scanline" x1="10" y1="58" x2="44" y2="58" stroke="#16a34a" style="animation:scanRow 2s ease-in-out infinite .9s"/>
+            <line class="ldr-scanline" x1="10" y1="66" x2="34" y2="66" stroke="#9333ea" style="animation:scanRow 2s ease-in-out infinite 1.3s"/>
+          </svg>
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-end;height:28px">
+          <div style="width:10px;height:10px;border-radius:50%;background:#FF6B35;animation:coinBounce 1.2s ease-in-out infinite;animation-delay:0s"></div>
+          <div style="width:10px;height:10px;border-radius:50%;background:#0EA5E9;animation:coinBounce 1.2s ease-in-out infinite;animation-delay:.18s"></div>
+          <div style="width:10px;height:10px;border-radius:50%;background:#16a34a;animation:coinBounce 1.2s ease-in-out infinite;animation-delay:.36s"></div>
+          <div style="width:10px;height:10px;border-radius:50%;background:#9333ea;animation:coinBounce 1.2s ease-in-out infinite;animation-delay:.54s"></div>
+          <div style="width:10px;height:10px;border-radius:50%;background:#e11d48;animation:coinBounce 1.2s ease-in-out infinite;animation-delay:.72s"></div>
+        </div>
+        <div style="width:280px;background:#f1f5f9;border-radius:8px;height:5px;overflow:hidden">
+          <div style="height:100%;border-radius:8px;background:linear-gradient(90deg,#FF6B35,#0EA5E9,#16a34a);background-size:200% 100%;animation:progressGrow 8s ease-in-out forwards,progressShimmer 1.8s linear infinite"></div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:11px;color:#FF6B35;text-transform:uppercase;letter-spacing:.1em;font-weight:600;margin-bottom:6px" id="loadingStage">Reading file</div>
+          <div style="font-size:14px;color:#64748b;min-height:22px" id="loadingMsg">Loading cost data…</div>
+        </div>
+        <div style="font-size:12px;color:#94a3b8" id="loadingElapsed">0s elapsed · large files may take up to 60s</div>
       </div>
     </div>
 
@@ -1334,31 +1372,48 @@
 
     // ── Loading UX helpers ──────────────────────────────────────────────────────
     // Full-page loading: cycle progressive messages while the dashboard loads.
-    const _LOADING_MESSAGES = [
-      'Loading cost data…',
-      'Computing service breakdown…',
-      'Applying inventory enrichment…',
-      'Almost ready…',
+    const _LOADING_STAGES = [
+      { stage: 'Reading file',        messages: ['Scanning billing rows…', 'Parsing CSV columns…', 'Detecting account IDs…'] },
+      { stage: 'Computing costs',     messages: ['Aggregating by service…', 'Building environment breakdown…', 'Calculating monthly trends…'] },
+      { stage: 'Applying inventory',  messages: ['Matching AWS accounts…', 'Enriching with customer data…', 'Joining cost centre data…'] },
+      { stage: 'Finalising',          messages: ['Almost ready…', 'Assembling dashboard…', 'Rendering charts…'] },
     ];
     let _loadingMsgTimer = null;
+    let _loadingElapsedTimer = null;
     function startLoadingMessages() {
       const el = document.getElementById('loadingMsg');
       if (!el) return;
-      let i = 0;
-      el.textContent = _LOADING_MESSAGES[0];
+      let stageIdx = 0, msgIdx = 0, elapsed = 0;
+      const elStage = document.getElementById('loadingStage');
+      const elElapsed = document.getElementById('loadingElapsed');
+      if (elStage) elStage.textContent = _LOADING_STAGES[0].stage;
+      el.textContent = _LOADING_STAGES[0].messages[0];
       clearInterval(_loadingMsgTimer);
+      clearInterval(_loadingElapsedTimer);
+      _loadingElapsedTimer = setInterval(() => {
+        const ls = document.getElementById('loadingState');
+        if (!ls || ls.style.display === 'none') { clearInterval(_loadingElapsedTimer); return; }
+        elapsed++;
+        if (elElapsed) elElapsed.textContent = `${elapsed}s elapsed · large files may take longer to load`;
+      }, 1000);
       _loadingMsgTimer = setInterval(() => {
         const e = document.getElementById('loadingMsg');
         const ls = document.getElementById('loadingState');
-        // Self-stop once the loading state is hidden/replaced.
         if (!e || !ls || ls.style.display === 'none') { stopLoadingMessages(); return; }
-        i = (i + 1) % _LOADING_MESSAGES.length;
-        e.textContent = _LOADING_MESSAGES[i];
-      }, 800);
+        msgIdx++;
+        const s = _LOADING_STAGES[stageIdx];
+        e.textContent = s.messages[msgIdx % s.messages.length];
+        if (msgIdx % s.messages.length === s.messages.length - 1) {
+          stageIdx = Math.min(stageIdx + 1, _LOADING_STAGES.length - 1);
+          if (elStage) elStage.textContent = _LOADING_STAGES[stageIdx].stage;
+        }
+      }, 3000);
     }
     function stopLoadingMessages() {
       clearInterval(_loadingMsgTimer);
+      clearInterval(_loadingElapsedTimer);
       _loadingMsgTimer = null;
+      _loadingElapsedTimer = null;
     }
 
     // Per-tab skeleton placeholder shown before a tab's first render.
