@@ -319,7 +319,7 @@ class DashboardBuilderTool(ToolExecutor):
         self._cache = cache
 
     async def execute(self, session_id: str) -> str:  # type: ignore[override]
-        alerts = self._cache.get(session_id, [])
+        alerts, _ = self._cache.get(session_id, ([], 0.0))
         if not alerts:
             return json.dumps({"error": "No alert data loaded for this session."})
 

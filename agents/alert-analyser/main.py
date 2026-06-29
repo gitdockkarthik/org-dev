@@ -28,7 +28,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ── Alert cache ───────────────────────────────────────────────────────────────
-_alert_cache: dict[str, list[dict]] = {}
+import time as _time
+_ALERT_CACHE_TTL_SECS = 1800  # 30 minutes
+_alert_cache: dict[str, tuple[list[dict], float]] = {}  # session_id -> (alerts, timestamp)
+
+def _evict_alert_cache() -> None:
+    """Remove cache entries older than _ALERT_CACHE_TTL_SECS."""
+    now = _time.time()
+    expired = [k for k, (_, ts) in _alert_cache.items() if now - ts > _ALERT_CACHE_TTL_SECS]
+    for k in expired:
+        del _alert_cache[k]
 
 # ── Agent setup ───────────────────────────────────────────────────────────────
 _runner = AgentRunner(
@@ -269,19 +278,19 @@ async def invoke(
 ) -> InvokeResponse:
     ctx = body.context
 
+    _evict_alert_cache()
     if "raw_data" in ctx:
         source = FileSource(ctx["raw_data"], ctx.get("format", "json"))
-        _alert_cache[body.session_id] = await source.load_alerts()
+        _alert_cache[body.session_id] = (await source.load_alerts(), _time.time())
     elif "alerts" in ctx:
-        _alert_cache[body.session_id] = ctx["alerts"]
-
-    alerts = _alert_cache.get(body.session_id, [])
+        _alert_cache[body.session_id] = (ctx["alerts"], _time.time())
+    alerts, _ = _alert_cache.get(body.session_id, ([], 0.0))
     if not alerts:
         from report_store import get_latest_classified
         cached = get_latest_classified()
         if cached:
             alerts = cached
-            _alert_cache[body.session_id] = alerts
+            _alert_cache[body.session_id] = (alerts, _time.time())
     has_data = bool(alerts)
     alert_count = len(alerts)
 
@@ -388,19 +397,20 @@ async def invoke_stream(
     x_anthropic_key: str | None = Header(default=None),
 ):
     import anthropic as _anthropic
+    _evict_alert_cache()
     ctx = body.context
     if "raw_data" in ctx:
         source = FileSource(ctx["raw_data"], ctx.get("format", "json"))
-        _alert_cache[body.session_id] = await source.load_alerts()
+        _alert_cache[body.session_id] = (await source.load_alerts(), _time.time())
     elif "alerts" in ctx:
-        _alert_cache[body.session_id] = ctx["alerts"]
-    alerts = _alert_cache.get(body.session_id, [])
+        _alert_cache[body.session_id] = (ctx["alerts"], _time.time())
+    alerts, _ = _alert_cache.get(body.session_id, ([], 0.0))
     if not alerts:
         from report_store import get_latest_classified
         cached = get_latest_classified()
         if cached:
             alerts = cached
-            _alert_cache[body.session_id] = alerts
+            _alert_cache[body.session_id] = (alerts, _time.time())
     has_data = bool(alerts)
     alert_count = len(alerts)
     classified = classify_alerts(alerts) if alerts else []

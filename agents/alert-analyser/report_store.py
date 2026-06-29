@@ -53,6 +53,10 @@ def add_report(filename: str, alerts: list[dict], classified: list[dict]) -> dic
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         _reports.insert(0, report)
+        # Cap in-memory report list to avoid unbounded memory growth.
+        # Only the latest 3 reports are kept; older entries are evicted.
+        while len(_reports) > 3:
+            _reports.pop()
     meta = _public(report)
     _schedule_persist(classified, meta)
     return meta
@@ -275,7 +279,7 @@ async def load_latest_from_db() -> bool:
                 select(AlertReport)
                 .where(AlertReport.agent_slug == settings.agent_slug)
                 .order_by(AlertReport.created_at.desc())
-                .limit(30)
+                .limit(3)
             )
             reports = result.scalars().all()
             if not reports:
