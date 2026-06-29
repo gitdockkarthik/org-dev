@@ -45,7 +45,6 @@ def _csv_list(value: str | None) -> list[str]:
     return [v for v in (s.strip() for s in value.split(",")) if v]
 
 
-@router.get("/dashboard")
 async def compute_dashboard_for_report(report_id: int) -> dict | None:
     """Extract core dashboard computation for a specific report_id — used by the
     startup cache pre-warmer. No filters, no cache read/write (caller handles that)."""
@@ -65,6 +64,7 @@ async def compute_dashboard_for_report(report_id: int) -> dict | None:
         return None
 
 
+@router.get("/dashboard")
 async def get_dashboard(
     report_id: int = Query(default=None),
     date_from: str | None = Query(default=None),
