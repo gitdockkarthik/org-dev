@@ -174,6 +174,35 @@ async def _sync_loop() -> None:
 
 
 @asynccontextmanager
+async def _prewarm_dashboard_cache() -> None:
+    """Background task: compute and cache the dashboard for the latest report on startup.
+    Runs once after _init_config completes. Failures are logged and ignored — agent starts normally.
+    Backout: remove the create_task call in lifespan. No other changes needed."""
+    try:
+        from report_store import get_report_path, list_reports
+        reports = list_reports()
+        if not reports:
+            return
+        latest = reports[0]
+        report_id = latest.get("id")
+        if not report_id:
+            return
+        path = get_report_path(report_id)
+        if not path:
+            return
+        from routes_dashboard import _get_cached_dashboard, _set_cached_dashboard, compute_dashboard_for_report
+        if _get_cached_dashboard(report_id):
+            logger.info("_prewarm: report %s already cached — skipping", report_id)
+            return
+        logger.info("_prewarm: pre-warming dashboard cache for report %s (%s)", report_id, latest.get("filename", ""))
+        dashboard = await compute_dashboard_for_report(report_id)
+        if dashboard:
+            _set_cached_dashboard(report_id, dashboard)
+            logger.info("_prewarm: dashboard cache ready for report %s", report_id)
+    except Exception:
+        logger.exception("_prewarm: cache pre-warm failed (agent still starts normally)")
+
+
 async def lifespan(app: FastAPI):
     try:
         await _register_self()
