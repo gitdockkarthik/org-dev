@@ -4,6 +4,7 @@ from typing import Any
 
 import anthropic
 import httpx
+from shared.llm import create_message as llm_create_message
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
@@ -98,7 +99,14 @@ async def _call_anthropic(
     if agent.tools:
         kwargs["tools"] = agent.tools
 
-    resp = await anthropic.AsyncAnthropic(api_key=get_anthropic_key()).messages.create(**kwargs)
+    resp = await llm_create_message(
+        model=kwargs.pop("model"),
+        max_tokens=kwargs.pop("max_tokens"),
+        system=kwargs.pop("system"),
+        messages=kwargs.pop("messages"),
+        tools=kwargs.pop("tools", None),
+        api_key=get_anthropic_key(),
+    )
     text = resp.content[0].text if resp.content else ""
     tokens = resp.usage.input_tokens + resp.usage.output_tokens
     return text, tokens

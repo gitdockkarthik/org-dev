@@ -1,7 +1,7 @@
 import json
 from typing import Any
 
-import anthropic
+from shared.llm import create_message as llm_create_message
 
 from config import settings
 from tools.base import ToolExecutor
@@ -47,23 +47,19 @@ class AgentRunner:
                 "No Anthropic API key available. "
                 "Set ANTHROPIC_API_KEY env var or pass X-Anthropic-Key header."
             )
-        client = anthropic.AsyncAnthropic(api_key=resolved_key)
-
         system = self._build_system(context)
         messages = self._build_messages(history, user_message)
         total_tokens = 0
 
         while True:
-            kwargs: dict[str, Any] = {
-                "model": settings.model,
-                "max_tokens": 4096,
-                "system": system,
-                "messages": messages,
-            }
-            if self._tool_map:
-                kwargs["tools"] = self._anthropic_tools
-
-            response = await client.messages.create(**kwargs)
+            response = await llm_create_message(
+                model=settings.model,
+                max_tokens=4096,
+                system=system,
+                messages=messages,
+                tools=self._anthropic_tools if self._tool_map else None,
+                api_key=resolved_key,
+            )
             total_tokens += response.usage.input_tokens + response.usage.output_tokens
 
             if response.stop_reason != "tool_use":

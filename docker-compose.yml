@@ -32,6 +32,13 @@ services:
     environment:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       BACKEND_API_KEY: ${BACKEND_API_KEY}
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      LLM_MODEL: ${LLM_MODEL:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      VERTEX_PROJECT_ID: ${VERTEX_PROJECT_ID:-}
+      VERTEX_REGION: ${VERTEX_REGION:-us-east5}
       DATABASE_URL: ${DATABASE_URL}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       SECRET_KEY: ${SECRET_KEY}
@@ -44,6 +51,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
+      - ./shared:/app/shared
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
   # ── Agent: Alert Analyser ───────────────────────────────────────────────────
@@ -51,8 +59,8 @@ services:
   # by the backend orchestrator. Direct invocation (make test) requires the header.
   alert-analyser:
     build:
-      context: ./agents/alert-analyser
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: agents/alert-analyser/Dockerfile
     restart: unless-stopped
     ports:
       - "${ALERT_ANALYSER_PORT:-8001}:8001"
@@ -61,6 +69,13 @@ services:
       AGENT_SLUG: alert-analyser
       AGENT_NAME: Alert Analyser
       MODEL: ${MODEL:-claude-sonnet-4-6}
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      LLM_MODEL: ${LLM_MODEL:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      VERTEX_PROJECT_ID: ${VERTEX_PROJECT_ID:-}
+      VERTEX_REGION: ${VERTEX_REGION:-us-east5}
       NOISE_THRESHOLD_REPEAT: ${NOISE_THRESHOLD_REPEAT:-3}
       NOISE_THRESHOLD_CLOSE_SECS: ${NOISE_THRESHOLD_CLOSE_SECS:-300}
       REGISTRY_URL: http://backend:8000
@@ -74,8 +89,8 @@ services:
   # No ANTHROPIC_API_KEY — key is injected per-request via X-Anthropic-Key header.
   cur-analyser:
     build:
-      context: ./agents/cur-analyser
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: agents/cur-analyser/Dockerfile
     restart: unless-stopped
     ports:
       - "${CUR_ANALYSER_PORT:-8002}:8002"
@@ -84,6 +99,13 @@ services:
       AGENT_SLUG: cur-analyser
       AGENT_NAME: CUR Analyser
       MODEL: ${MODEL:-claude-sonnet-4-6}
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      LLM_MODEL: ${LLM_MODEL:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      VERTEX_PROJECT_ID: ${VERTEX_PROJECT_ID:-}
+      VERTEX_REGION: ${VERTEX_REGION:-us-east5}
       REGISTRY_URL: http://backend:8000
       BACKEND_API_KEY: ${BACKEND_API_KEY}
       DATABASE_URL: ${DATABASE_URL}
@@ -119,7 +141,8 @@ services:
   # ── Agent: Kafka Analyser ───────────────────────────────────────────────────
   kafka-analyser:
     build:
-      context: ./agents/kafka-analyser
+      context: .
+      dockerfile: agents/kafka-analyser/Dockerfile
     restart: unless-stopped
     ports:
       - "${KAFKA_ANALYSER_PORT:-8003}:8003"
@@ -130,6 +153,13 @@ services:
       STORAGE_BACKEND: ${STORAGE_BACKEND:-postgres}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       MODEL: ${MODEL:-claude-sonnet-4-6}
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      LLM_MODEL: ${LLM_MODEL:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      VERTEX_PROJECT_ID: ${VERTEX_PROJECT_ID:-}
+      VERTEX_REGION: ${VERTEX_REGION:-us-east5}
       AGENT_SLUG: kafka-analyser
     depends_on:
       - backend

@@ -1,0 +1,8 @@
+.git
+operative-bitbucket/
+images/
+**/__pycache__/
+**/*.pyc
+*.egg-info/
+.env
+portal/node_modules/

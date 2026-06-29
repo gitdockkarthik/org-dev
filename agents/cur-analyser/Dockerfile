@@ -5,10 +5,11 @@ WORKDIR /app
 # pandas/duckdb need build tools on slim
 RUN apt-get update && apt-get install -y --no-install-recommends gcc && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY agents/cur-analyser/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY agents/cur-analyser/ .
+COPY shared/ /app/shared/
 
 ENV PYTHONPATH=/app
 

@@ -2,10 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY agents/alert-analyser/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY agents/alert-analyser/ .
+COPY shared/ /app/shared/
 
 ENV PYTHONPATH=/app
 

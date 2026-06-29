@@ -4,10 +4,11 @@ ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY agents/kafka-analyser/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY agents/kafka-analyser/ .
+COPY shared/ /app/shared/
 
 ENV PYTHONPATH=/app
 
