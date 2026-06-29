@@ -26,12 +26,15 @@ class FileSource(AlertSource):
         return json.loads(self._raw_data)
 
 
-def _map_alert(a: dict) -> dict:
+def _map_alert(a: dict, team_lookup: dict | None = None) -> dict:
     """Map a raw OpsGenie / JSM alert dict to the internal alert format.
 
     Field names are identical between JSM and standalone OpsGenie, so both
     source classes share this function.
+    team_lookup: optional {team_id: team_name} dict for resolving IDs to names.
     """
+    if team_lookup is None:
+        team_lookup = {}
     created_at = a.get("createdAt", "")
     updated_at = a.get("updatedAt", "")
     status = a.get("status", "")
@@ -46,10 +49,14 @@ def _map_alert(a: dict) -> dict:
             pass
 
     responders = a.get("responders", [])
-    teams = [
-        r.get("name", str(r)) if isinstance(r, dict) else str(r)
-        for r in responders
-    ]
+    teams = []
+    for r in responders:
+        if isinstance(r, dict):
+            tid = r.get("id", "")
+            name = team_lookup.get(tid) or r.get("name") or (f"Team-{tid[:8]}" if tid else str(r))
+            teams.append(name)
+        else:
+            teams.append(str(r))
 
     return {
         "id": a.get("id", ""),
@@ -209,7 +216,22 @@ class StandaloneOpsgenieSource(AlertSource):
                     break
                 offset += limit
 
-        return [_map_alert(a) for a in all_alerts]
+            team_lookup: dict = {}
+            try:
+                teams_resp = await client.get(
+                    f"{self._base_url}/v2/teams",
+                    headers=headers,
+                    timeout=10.0,
+                )
+                if teams_resp.status_code == 200:
+                    for t in teams_resp.json().get("data", []):
+                        tid = t.get("id", "")
+                        name = t.get("name", "")
+                        if tid and name:
+                            team_lookup[tid] = name
+            except Exception:
+                pass
+        return [_map_alert(a, team_lookup=team_lookup) for a in all_alerts]
 
 
 # Backward-compatibility alias — existing callers (routes_settings.py, main.py) keep working.
