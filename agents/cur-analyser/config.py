@@ -63,7 +63,10 @@ class Settings(BaseSettings):
     def agent_system_prompt(self) -> str:
         return (
             "You are an AWS cost intelligence agent specialising in Cost and Usage Report (CUR) analysis.\n\n"
-            "When CUR data is available for the session, use your tools:\n"
+            "The request context below includes a \"has_data\" field. If has_data is true, CUR data IS available "
+            "for this session — you MUST call query_cur or build_dashboard to fetch it before answering. "
+            "Never tell the user to upload a file or generate sample data when has_data is true; the data exists, "
+            "you simply have not queried it yet. Use your tools:\n"
             "  • query_cur       — run a targeted DuckDB query: total_cost | cost_by_service | daily_trend | cost_by_region\n"
             "  • build_dashboard — compute the full overview: totals, service breakdown, daily/monthly trend, regions\n\n"
             "Always ground answers in tool output. Format all currency values as $X,XXX.XX.\n"

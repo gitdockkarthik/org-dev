@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, ClassVar
 
@@ -30,6 +31,8 @@ from tools.duckdb_engine import (
 )
 from tools.data_sources.registry import get_registry
 from tools.inventory_enricher import build_enricher
+
+logger = logging.getLogger(__name__)
 
 # Thread pool for running the (blocking, DuckDB-backed) query functions
 # concurrently. Each query opens and closes its OWN DuckDB connection inside
@@ -193,11 +196,20 @@ class DashboardBuilderTool(ToolExecutor):
         "required": ["session_id"],
     }
 
-    def __init__(self, cache: dict[str, str]) -> None:
+    def __init__(self, cache: dict[str, str], report_map: dict[str, int] | None = None) -> None:
         self._cache = cache
+        self._report_map = report_map if report_map is not None else {}
 
     async def execute(self, session_id: str) -> str:  # type: ignore[override]
         csv_text = self._cache.get(session_id)
-        if not csv_text:
-            return json.dumps({"error": "No CUR data loaded for this session."})
-        return json.dumps(compute_dashboard(csv_text), default=str)
+        if csv_text:
+            return json.dumps(compute_dashboard(csv_text), default=str)
+        report_id = self._report_map.get(session_id)
+        if report_id:
+            from report_store import get_report_path
+            file_path = get_report_path(report_id)
+            if file_path:
+                from tools.dashboard_builder import compute_dashboard_async
+                result = await compute_dashboard_async(None, file_path=file_path, filters=None)
+                return json.dumps(result, default=str)
+        return json.dumps({"error": "No CUR data loaded for this session."})

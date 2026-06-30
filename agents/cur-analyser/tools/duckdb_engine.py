@@ -1717,20 +1717,27 @@ class CurQueryTool(ToolExecutor):
         "required": ["session_id", "query_type"],
     }
 
-    def __init__(self, cache: dict[str, str]) -> None:
+    def __init__(self, cache: dict[str, str], report_map: dict[str, int] | None = None) -> None:
         self._cache = cache  # session_id → raw CSV text
+        self._report_map = report_map if report_map is not None else {}
 
     async def execute(self, session_id: str, query_type: QueryType) -> str:  # type: ignore[override]
         csv_text = self._cache.get(session_id)
+        file_path = None
         if not csv_text:
+            report_id = self._report_map.get(session_id)
+            if report_id:
+                from report_store import get_report_path
+                file_path = get_report_path(report_id)
+        if not csv_text and not file_path:
             return json.dumps({"error": "No CUR data loaded for this session."})
 
         if query_type == "total_cost":
-            return json.dumps(get_total_cost(csv_text))
+            return json.dumps(get_total_cost(csv_text, file_path=file_path))
         if query_type == "cost_by_service":
-            return json.dumps(get_cost_by_service(csv_text))
+            return json.dumps(get_cost_by_service(csv_text, file_path=file_path))
         if query_type == "daily_trend":
-            return json.dumps(get_daily_trend(csv_text))
+            return json.dumps(get_daily_trend(csv_text, file_path=file_path))
         if query_type == "cost_by_region":
-            return json.dumps(get_cost_by_region(csv_text))
+            return json.dumps(get_cost_by_region(csv_text, file_path=file_path))
         return json.dumps({"error": f"Unknown query_type '{query_type}'."})

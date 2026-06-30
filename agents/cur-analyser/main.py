@@ -33,12 +33,13 @@ logger = logging.getLogger(__name__)
 
 # ── CUR CSV cache ─────────────────────────────────────────────────────────────
 _cur_cache: dict[str, str] = {}
+_session_report_map: dict[str, int] = {}  # session_id -> report_id, for tools to resolve file_path when csv_text cache is empty (large files)
 
 # ── Agent setup ───────────────────────────────────────────────────────────────
 _runner = AgentRunner(
     tools=[
-        CurQueryTool(_cur_cache),
-        DashboardBuilderTool(_cur_cache),
+        CurQueryTool(_cur_cache, _session_report_map),
+        DashboardBuilderTool(_cur_cache, _session_report_map),
     ]
 )
 
@@ -742,17 +743,19 @@ async def invoke(
     # files: loading a multi-GB CUR as csv_text would OOM, and the chat tools
     # are csv_text-only. has_data stays False so the agent tells the user to use
     # the dashboard (file-path pipeline) for large reports.
+    if ctx.get("report_id"):
+        _session_report_map[body.session_id] = int(ctx["report_id"])
     if not _cur_cache.get(body.session_id) and ctx.get("report_id"):
         _rid = int(ctx["report_id"])
         if _is_large_file(_rid):
-            logger.info("invoke: skipping chat cache load for large report %s", _rid)
+            logger.info("invoke: skipping chat cache load for large report %s — tools will use file_path instead", _rid)
         else:
             from report_store import get_report_csv
             csv_text = get_report_csv(_rid)
             if csv_text:
                 _cur_cache[body.session_id] = csv_text
 
-    has_data = bool(_cur_cache.get(body.session_id))
+    has_data = bool(_cur_cache.get(body.session_id)) or body.session_id in _session_report_map
 
     response_text, tokens = await _runner.run(
         user_message=body.user_message,
