@@ -109,7 +109,7 @@ async def get_dashboard(
                     # falling back to all-time unfiltered stats.
                     q = select(AlertReport).where(
                         AlertReport.agent_slug == 'alert-analyser'
-                    ).order_by(AlertReport.created_at.desc())
+                    ).order_by(AlertReport.created_at.desc()).limit(1)
                     result = await sess.execute(q)
                     reports = result.scalars().all()
                 if reports:
@@ -264,7 +264,7 @@ async def get_period_summary(
                 # selected window — which showed Row 2 as "NO SYNCS".
                 q = select(AlertReport).where(
                     AlertReport.agent_slug == 'alert-analyser'
-                ).order_by(AlertReport.created_at.desc())
+                ).order_by(AlertReport.created_at.desc()).limit(1)
                 result = await sess.execute(q)
                 reports = result.scalars().all()
 
