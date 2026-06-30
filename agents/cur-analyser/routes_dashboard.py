@@ -45,25 +45,6 @@ def _csv_list(value: str | None) -> list[str]:
     return [v for v in (s.strip() for s in value.split(",")) if v]
 
 
-async def compute_dashboard_for_report(report_id: int) -> dict | None:
-    """Extract core dashboard computation for a specific report_id — used by the
-    startup cache pre-warmer. No filters, no cache read/write (caller handles that)."""
-    try:
-        from report_store import get_report_path, get_report_csv
-        file_path = get_report_path(report_id)
-        if file_path:
-            csv_text = None
-        else:
-            csv_text = get_report_csv(report_id)
-            if csv_text is None:
-                return None
-        _reg = get_registry()
-        enricher = await build_enricher(_reg)
-        return await compute_dashboard_async(csv_text, file_path=file_path, filters=None, enricher=enricher)
-    except Exception:
-        return None
-
-
 @router.get("/dashboard")
 async def get_dashboard(
     report_id: int = Query(default=None),
