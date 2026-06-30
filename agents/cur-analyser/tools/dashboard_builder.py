@@ -210,6 +210,7 @@ class DashboardBuilderTool(ToolExecutor):
             file_path = get_report_path(report_id)
             if file_path:
                 from tools.dashboard_builder import compute_dashboard_async
-                result = await compute_dashboard_async(None, file_path=file_path, filters=None)
+                enricher = await build_enricher(get_registry())
+                result = await compute_dashboard_async(None, file_path=file_path, filters=None, enricher=enricher)
                 return json.dumps(result, default=str)
         return json.dumps({"error": "No CUR data loaded for this session."})

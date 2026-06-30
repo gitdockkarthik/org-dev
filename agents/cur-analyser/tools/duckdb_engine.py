@@ -19,12 +19,14 @@ import duckdb
 import pandas as pd
 
 from tools.base import ToolExecutor
+from tools.data_sources.registry import get_registry
+from tools.inventory_enricher import build_enricher
 
 logger = logging.getLogger(__name__)
 
 # ── Column detection helpers ──────────────────────────────────────────────────
 
-QueryType = Literal["total_cost", "cost_by_service", "daily_trend", "cost_by_region"]
+QueryType = Literal["total_cost", "cost_by_service", "daily_trend", "cost_by_region", "cost_by_environment", "cost_by_account", "cost_by_tag"]
 
 
 # Ordered column-name candidates per logical column. Real AWS CUR 2.0 uses the
@@ -1699,7 +1701,10 @@ class CurQueryTool(ToolExecutor):
         "'total_cost' — total spend and row count; "
         "'cost_by_service' — spend breakdown by AWS service; "
         "'daily_trend' — day-by-day cost totals sorted by date; "
-        "'cost_by_region' — spend breakdown by AWS region."
+        "'cost_by_region' — spend breakdown by AWS region; "
+        "'cost_by_environment' — spend breakdown by environment (via inventory enrichment); "
+        "'cost_by_account' — spend breakdown by AWS account; "
+        "'cost_by_tag' — spend breakdown by Product/Team/Customer/CostCentre tags."
     )
     input_schema: ClassVar[dict[str, Any]] = {
         "type": "object",
@@ -1710,7 +1715,7 @@ class CurQueryTool(ToolExecutor):
             },
             "query_type": {
                 "type": "string",
-                "enum": ["total_cost", "cost_by_service", "daily_trend", "cost_by_region"],
+                "enum": ["total_cost", "cost_by_service", "daily_trend", "cost_by_region", "cost_by_environment", "cost_by_account", "cost_by_tag"],
                 "description": "Which analysis to run.",
             },
         },
@@ -1740,4 +1745,18 @@ class CurQueryTool(ToolExecutor):
             return json.dumps(get_daily_trend(csv_text, file_path=file_path))
         if query_type == "cost_by_region":
             return json.dumps(get_cost_by_region(csv_text, file_path=file_path))
+        if query_type == "cost_by_environment":
+            enricher = await build_enricher(get_registry())
+            return json.dumps(get_cost_by_environment(csv_text, file_path=file_path, filters=None, enricher=enricher), default=str)
+        if query_type == "cost_by_account":
+            enricher = await build_enricher(get_registry())
+            return json.dumps(get_cost_by_account(csv_text, file_path=file_path, filters=None, enricher=enricher), default=str)
+        if query_type == "cost_by_tag":
+            enricher = await build_enricher(get_registry())
+            return json.dumps({
+                "tag_product": get_cost_by_tag(csv_text, "tag_Product", file_path=file_path, filters=None, enricher=enricher),
+                "tag_team": get_cost_by_tag(csv_text, "tag_Team", file_path=file_path, filters=None, enricher=enricher),
+                "tag_customer": get_cost_by_tag(csv_text, "tag_Customer", file_path=file_path, filters=None, enricher=enricher),
+                "tag_costcentre": get_cost_by_tag(csv_text, "tag_CostCentre", file_path=file_path, filters=None, enricher=enricher),
+            }, default=str)
         return json.dumps({"error": f"Unknown query_type '{query_type}'."})
