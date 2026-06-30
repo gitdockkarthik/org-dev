@@ -11,6 +11,8 @@ import os
 
 import kafka_store
 
+from shared.llm import stream_message as _llm_stream
+
 _lag_trend_cache: dict = {}
 _LAG_TREND_CACHE_TTL_SECS = 300  # 5 minutes — matches collection interval
 
@@ -723,7 +725,6 @@ async def stream_insights_narrative(
         pass
     continuation_of = body.get("continuation_of", None)
     from fastapi.responses import StreamingResponse
-    import anthropic as _anthropic
 
     api_key = request.headers.get("x-anthropic-key", "") or \
               os.getenv("ANTHROPIC_API_KEY", "")
@@ -925,8 +926,7 @@ Anomalies ({len(anomalies)} detected):
 
     async def event_stream():
         try:
-            client = _anthropic.AsyncAnthropic(api_key=api_key)
-            async with client.messages.stream(
+            async for chunk in _llm_stream(
                 model="claude-sonnet-4-6",
                 max_tokens=8192,
                 messages=(
@@ -938,17 +938,14 @@ Anomalies ({len(anomalies)} detected):
                     if continuation_of
                     else [{"role": "user", "content": prompt}]
                 ),
-            ) as stream:
-                async for text in stream.text_stream:
-                    escaped = text.replace("\n","\\n")
+                api_key=api_key,
+            ):
+                if chunk.startswith("[STOP_REASON]"):
+                    yield f"data: {chunk}\n\n"
+                else:
+                    escaped = chunk.replace("\n","\\n")
                     yield f"data: {escaped}\n\n"
-                try:
-                    final_msg = await stream.get_final_message()
-                    stop_reason = final_msg.stop_reason
-                except Exception:
-                    stop_reason = "end_turn"
-                yield f"data: [STOP_REASON] {stop_reason}\n\n"
-                yield "data: [DONE]\n\n"
+            yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: [ERROR] {str(e)}\n\n"
 
@@ -973,7 +970,6 @@ async def stream_tab_insights(
     tab = body.get("tab", "")
     continuation_of = body.get("continuation_of", None)
     from fastapi.responses import StreamingResponse
-    import anthropic as _anthropic
 
     api_key = request.headers.get("x-anthropic-key", "") or \
               os.getenv("ANTHROPIC_API_KEY", "")
@@ -1192,8 +1188,7 @@ Unknown tab "{tab}" — no specific data available.
 
     async def event_stream():
         try:
-            client = _anthropic.AsyncAnthropic(api_key=api_key)
-            async with client.messages.stream(
+            async for chunk in _llm_stream(
                 model="claude-sonnet-4-6",
                 max_tokens=4096,
                 messages=(
@@ -1205,17 +1200,14 @@ Unknown tab "{tab}" — no specific data available.
                     if continuation_of
                     else [{"role": "user", "content": prompt}]
                 ),
-            ) as stream:
-                async for text in stream.text_stream:
-                    escaped = text.replace("\n","\\n")
+                api_key=api_key,
+            ):
+                if chunk.startswith("[STOP_REASON]"):
+                    yield f"data: {chunk}\n\n"
+                else:
+                    escaped = chunk.replace("\n","\\n")
                     yield f"data: {escaped}\n\n"
-                try:
-                    final_msg = await stream.get_final_message()
-                    stop_reason = final_msg.stop_reason
-                except Exception:
-                    stop_reason = "end_turn"
-                yield f"data: [STOP_REASON] {stop_reason}\n\n"
-                yield "data: [DONE]\n\n"
+            yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: [ERROR] {str(e)}\n\n"
 

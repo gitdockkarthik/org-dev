@@ -26,6 +26,8 @@ from tools.kafka_tools import (
     TopicMetricsTool,
 )
 
+from shared.llm import stream_message as _llm_stream
+
 try:
     from tools.prometheus_collector import scrape_all_brokers, scrape_topic_metrics_and_top_by_size
     _PROMETHEUS_AVAILABLE = True
@@ -903,7 +905,6 @@ async def invoke_stream(
     body: InvokeRequest,
     x_anthropic_key: str | None = Header(default=None),
 ):
-    import anthropic as _anthropic
     import kafka_store as ks
     ctx = body.context
     # Use multi-cluster summary from context if provided (standalone/chat mode)
@@ -920,7 +921,6 @@ async def invoke_stream(
         broker_count = len(data["brokers"]) if data else 0
         topic_count = len(data["topics"]) if data else 0
         consumer_group_count = len(data["consumer_groups"]) if data else 0
-    resolved_key = x_anthropic_key or settings.anthropic_api_key
     system = _runner._build_system({
         "session_id": body.session_id,
         "has_data": has_data,
@@ -933,15 +933,17 @@ async def invoke_stream(
 
     async def event_stream():
         try:
-            client = _anthropic.AsyncAnthropic(api_key=resolved_key)
-            async with client.messages.stream(
+            async for chunk in _llm_stream(
                 model=settings.model,
                 max_tokens=4096,
                 system=system,
                 messages=messages,
-            ) as stream:
-                async for text in stream.text_stream:
-                    yield f"data: {text.replace(chr(10), chr(92)+'n')}\n\n"
+                api_key=x_anthropic_key or settings.anthropic_api_key,
+            ):
+                if chunk.startswith("[STOP_REASON]"):
+                    yield f"data: {chunk}\n\n"
+                else:
+                    yield f"data: {chunk.replace(chr(10), chr(92)+'n')}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: [ERROR] {str(e)}\n\n"

@@ -23,6 +23,8 @@ from tools.dashboard_builder import DashboardBuilderTool
 from tools.duckdb_engine import CurQueryTool
 from tools.source import FileSource
 
+from shared.llm import stream_message as _llm_stream
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s — %(message)s",
@@ -189,6 +191,9 @@ async def _prewarm_dashboard_cache() -> None:
             return
         path = get_report_path(report_id)
         if not path:
+            return
+        if _is_large_file(report_id):
+            logger.info("_prewarm: skipping large report %s — use dashboard file-path pipeline", report_id)
             return
         from routes_dashboard import _get_cached_dashboard, _set_cached_dashboard, compute_dashboard_for_report
         if _get_cached_dashboard(report_id):
@@ -814,16 +819,11 @@ async def stream_insights(
     body: InvokeRequest,
     x_anthropic_key: str | None = Header(default=None),
 ):
-    import anthropic as _anthropic
-    from config import settings as _settings
-
-    resolved_key = x_anthropic_key or _settings.anthropic_api_key
     prompt = body.user_message
 
     async def event_stream():
         try:
-            client = _anthropic.AsyncAnthropic(api_key=resolved_key)
-            async with client.messages.stream(
+            async for chunk in _llm_stream(
                 model="claude-sonnet-4-6",
                 max_tokens=8192,
                 messages=(
@@ -835,18 +835,13 @@ async def stream_insights(
                     if body.context.get("continuation_of")
                     else [{"role": "user", "content": prompt}]
                 ),
-            ) as stream:
-                async for text in stream.text_stream:
-                    # SSE format: data: <chunk>\n\n
-                    escaped = text.replace("\n", "\\n")
-                    yield f"data: {escaped}\n\n"
-                try:
-                    final_msg = await stream.get_final_message()
-                    stop_reason = final_msg.stop_reason
-                except Exception:
-                    stop_reason = "end_turn"
-                yield f"data: [STOP_REASON] {stop_reason}\n\n"
-                yield "data: [DONE]\n\n"
+                api_key=x_anthropic_key or settings.anthropic_api_key,
+            ):
+                if chunk.startswith("[STOP_REASON]"):
+                    yield f"data: {chunk}\n\n"
+                else:
+                    yield f"data: {chunk.replace(chr(10), chr(92)+'n')}\n\n"
+            yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: [ERROR] {str(e)}\n\n"
 
@@ -865,8 +860,6 @@ async def invoke_stream(
     body: InvokeRequest,
     x_anthropic_key: str | None = Header(default=None),
 ):
-    import anthropic as _anthropic
-    from config import settings as _settings
     ctx = body.context
     if "raw_data" in ctx:
         source = FileSource(ctx["raw_data"])
@@ -896,21 +889,22 @@ async def invoke_stream(
             if csv_text:
                 _cur_cache[body.session_id] = csv_text
     has_data = bool(_cur_cache.get(body.session_id))
-    resolved_key = x_anthropic_key or _settings.anthropic_api_key
     system = _runner._build_system({"session_id": body.session_id, "has_data": has_data})
     messages = _runner._build_messages(body.history, body.user_message)
 
     async def event_stream():
         try:
-            client = _anthropic.AsyncAnthropic(api_key=resolved_key)
-            async with client.messages.stream(
+            async for chunk in _llm_stream(
                 model=settings.model,
                 max_tokens=8192,
                 system=system,
                 messages=messages,
-            ) as stream:
-                async for text in stream.text_stream:
-                    yield f"data: {text.replace(chr(10), chr(92)+'n')}\n\n"
+                api_key=x_anthropic_key or settings.anthropic_api_key,
+            ):
+                if chunk.startswith("[STOP_REASON]"):
+                    yield f"data: {chunk}\n\n"
+                else:
+                    yield f"data: {chunk.replace(chr(10), chr(92)+'n')}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: [ERROR] {str(e)}\n\n"

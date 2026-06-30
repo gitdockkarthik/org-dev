@@ -21,6 +21,8 @@ from tools.noise_detector import NoiseDetectorTool, classify_alerts
 from tools.source import FileSource
 from tools.suppression_advisor import SuppressionAdvisorTool
 
+from shared.llm import stream_message as _llm_stream
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s — %(message)s",
@@ -353,13 +355,9 @@ async def stream_insights(
     body: InvokeRequest,
     x_anthropic_key: str | None = Header(default=None),
 ):
-    import anthropic as _anthropic
-    resolved_key = x_anthropic_key or settings.anthropic_api_key
-
     async def event_stream():
         try:
-            client = _anthropic.AsyncAnthropic(api_key=resolved_key)
-            async with client.messages.stream(
+            async for chunk in _llm_stream(
                 model="claude-sonnet-4-6",
                 max_tokens=8192,
                 messages=(
@@ -371,16 +369,13 @@ async def stream_insights(
                     if body.context.get("continuation_of")
                     else [{"role": "user", "content": body.user_message}]
                 ),
-            ) as stream:
-                async for text in stream.text_stream:
-                    yield f"data: {text.replace(chr(10), chr(92)+'n')}\n\n"
-                try:
-                    final_msg = await stream.get_final_message()
-                    stop_reason = final_msg.stop_reason
-                except Exception:
-                    stop_reason = "end_turn"
-                yield f"data: [STOP_REASON] {stop_reason}\n\n"
-                yield "data: [DONE]\n\n"
+                api_key=x_anthropic_key or settings.anthropic_api_key,
+            ):
+                if chunk.startswith("[STOP_REASON]"):
+                    yield f"data: {chunk}\n\n"
+                else:
+                    yield f"data: {chunk.replace(chr(10), chr(92)+'n')}\n\n"
+            yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: [ERROR] {str(e)}\n\n"
 
@@ -396,7 +391,6 @@ async def invoke_stream(
     body: InvokeRequest,
     x_anthropic_key: str | None = Header(default=None),
 ):
-    import anthropic as _anthropic
     _evict_alert_cache()
     ctx = body.context
     if "raw_data" in ctx:
@@ -430,7 +424,6 @@ async def invoke_stream(
             for a in classified if a.get("classification") == "genuine"
         ][:20],
     }
-    resolved_key = x_anthropic_key or settings.anthropic_api_key
     system = _runner._build_system({
         "session_id": body.session_id,
         "has_data": has_data,
@@ -441,15 +434,17 @@ async def invoke_stream(
 
     async def event_stream():
         try:
-            client = _anthropic.AsyncAnthropic(api_key=resolved_key)
-            async with client.messages.stream(
+            async for chunk in _llm_stream(
                 model=settings.model,
                 max_tokens=8192,
                 system=system,
                 messages=messages,
-            ) as stream:
-                async for text in stream.text_stream:
-                    yield f"data: {text.replace(chr(10), chr(92)+'n')}\n\n"
+                api_key=x_anthropic_key or settings.anthropic_api_key,
+            ):
+                if chunk.startswith("[STOP_REASON]"):
+                    yield f"data: {chunk}\n\n"
+                else:
+                    yield f"data: {chunk.replace(chr(10), chr(92)+'n')}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: [ERROR] {str(e)}\n\n"
