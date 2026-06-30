@@ -51,7 +51,10 @@ async def create_message(
         if not resolved_key:
             raise RuntimeError("Set ANTHROPIC_API_KEY env var.")
         client = anthropic.AsyncAnthropic(api_key=resolved_key)
-        return await client.messages.create(**kwargs)
+        try:
+            return await client.messages.create(**kwargs)
+        finally:
+            await client.close()
 
     if resolved_provider == "bedrock":
         import anthropic
@@ -63,14 +66,20 @@ async def create_message(
         # Resolves region from AWS_REGION / AWS_DEFAULT_REGION env vars automatically.
         # Picks up AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY from env.
         client = anthropic.AsyncAnthropicBedrockMantle()
-        return await client.messages.create(**kwargs)
+        try:
+            return await client.messages.create(**kwargs)
+        finally:
+            await client.close()
 
     if resolved_provider == "vertex":
         import anthropic
         project_id = os.environ.get("VERTEX_PROJECT_ID", "")
         region = os.environ.get("VERTEX_REGION", "us-east5")
         client = anthropic.AsyncAnthropicVertex(project_id=project_id, region=region)
-        return await client.messages.create(**kwargs)
+        try:
+            return await client.messages.create(**kwargs)
+        finally:
+            await client.close()
 
     raise ValueError(
         f"Unsupported LLM_PROVIDER '{resolved_provider}'. "
@@ -100,14 +109,17 @@ async def stream_message(
         if not resolved_key:
             raise RuntimeError("Set ANTHROPIC_API_KEY env var.")
         client = anthropic.AsyncAnthropic(api_key=resolved_key)
-        async with client.messages.stream(**kwargs) as stream:
-            async for text in stream.text_stream:
-                yield text
-            try:
-                final = await stream.get_final_message()
-                yield f"[STOP_REASON] {final.stop_reason}"
-            except Exception:
-                yield "[STOP_REASON] end_turn"
+        try:
+            async with client.messages.stream(**kwargs) as stream:
+                async for text in stream.text_stream:
+                    yield text
+                try:
+                    final = await stream.get_final_message()
+                    yield f"[STOP_REASON] {final.stop_reason}"
+                except Exception:
+                    yield "[STOP_REASON] end_turn"
+        finally:
+            await client.close()
 
     elif resolved_provider == "bedrock":
         import anthropic
@@ -115,28 +127,34 @@ async def stream_message(
             resolved_model = f"anthropic.{resolved_model}"
         kwargs["model"] = resolved_model
         client = anthropic.AsyncAnthropicBedrockMantle()
-        async with client.messages.stream(**kwargs) as stream:
-            async for text in stream.text_stream:
-                yield text
-            try:
-                final = await stream.get_final_message()
-                yield f"[STOP_REASON] {final.stop_reason}"
-            except Exception:
-                yield "[STOP_REASON] end_turn"
+        try:
+            async with client.messages.stream(**kwargs) as stream:
+                async for text in stream.text_stream:
+                    yield text
+                try:
+                    final = await stream.get_final_message()
+                    yield f"[STOP_REASON] {final.stop_reason}"
+                except Exception:
+                    yield "[STOP_REASON] end_turn"
+        finally:
+            await client.close()
 
     elif resolved_provider == "vertex":
         import anthropic
         project_id = os.environ.get("VERTEX_PROJECT_ID", "")
         region = os.environ.get("VERTEX_REGION", "us-east5")
         client = anthropic.AsyncAnthropicVertex(project_id=project_id, region=region)
-        async with client.messages.stream(**kwargs) as stream:
-            async for text in stream.text_stream:
-                yield text
-            try:
-                final = await stream.get_final_message()
-                yield f"[STOP_REASON] {final.stop_reason}"
-            except Exception:
-                yield "[STOP_REASON] end_turn"
+        try:
+            async with client.messages.stream(**kwargs) as stream:
+                async for text in stream.text_stream:
+                    yield text
+                try:
+                    final = await stream.get_final_message()
+                    yield f"[STOP_REASON] {final.stop_reason}"
+                except Exception:
+                    yield "[STOP_REASON] end_turn"
+        finally:
+            await client.close()
 
     else:
         raise ValueError(f"Unsupported LLM_PROVIDER '{resolved_provider}'.")
