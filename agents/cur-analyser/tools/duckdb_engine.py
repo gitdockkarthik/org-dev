@@ -1258,7 +1258,7 @@ def get_mom_comparison(csv_text: str | None = None, file_path: str | None = None
             return []
         rows = con.execute(
             f'SELECT strftime(CAST("{date_col}" AS DATE), \'%Y-%m\') AS month, '
-            f'"{svc_col}" AS service, SUM("{cost_col}") AS cost '
+            f"COALESCE(NULLIF(TRIM(CAST(\"{svc_col}\" AS VARCHAR)), ''), 'Unallocated') AS service, SUM(\"{cost_col}\") AS cost "
             f'FROM cur_data '
             f"WHERE \"{date_col}\" IS NOT NULL AND TRIM(CAST(\"{date_col}\" AS VARCHAR)) <> '' "
             f'GROUP BY month, service ORDER BY month, cost DESC'
@@ -1266,7 +1266,7 @@ def get_mom_comparison(csv_text: str | None = None, file_path: str | None = None
         return [
             {
                 "month": str(r[0]),
-                "service": str(r[1]) if r[1] is not None else "",
+                "service": str(r[1]),
                 "cost": round(float(r[2] or 0), 4),
             }
             for r in rows
