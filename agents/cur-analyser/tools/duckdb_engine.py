@@ -664,6 +664,7 @@ def _load_df(
     on the filtered subset.
     """
     con = duckdb.connect(database=":memory:")
+    con.execute("PRAGMA memory_limit='500MB'")
     if file_path is not None:
         # ── File-path pipeline: DuckDB native view straight off disk ──
         path_sql = str(file_path).replace("'", "''")
