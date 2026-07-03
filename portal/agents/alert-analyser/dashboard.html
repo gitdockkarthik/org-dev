@@ -6,6 +6,7 @@
   <title>Alert Dashboard — UAP</title>
   <link rel="stylesheet" href="/css/style.css?v=3">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
   <style>
     body { background: var(--bg); }
@@ -71,6 +72,38 @@
     .noise-table td.msg-cell .msg-text { display: inline-block; white-space: normal; overflow: visible; word-break: break-word; max-width: 100%; vertical-align: middle; }
     .noise-table td.msg-cell .msg-copy { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); display: none; cursor: pointer; border: none; background: var(--bg, #fff); padding: 0 4px; font-size: .85rem; line-height: 1; border-radius: 4px; box-shadow: 0 0 4px rgba(0,0,0,.15); }
     .noise-table td.msg-cell:hover .msg-copy { display: inline-block; }
+    /* Ticket modal styles */
+    #ticketModalOverlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000; }
+    #ticketModalOverlay.show { display: flex; }
+    .ticket-modal-panel { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); width: 90%; max-width: 700px; max-height: 90vh; overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.3); }
+    .ticket-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 20px; border-bottom: 1px solid var(--border); }
+    .ticket-modal-header-left { flex: 1; }
+    .ticket-modal-close { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.5rem; padding: 0; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; }
+    .ticket-modal-close:hover { color: var(--text); }
+    .ticket-modal-id { font-size: .75rem; color: var(--text-dim); font-family: monospace; margin-bottom: 6px; }
+    .ticket-modal-id-val { color: var(--text-muted); word-break: break-all; }
+    .ticket-modal-title { font-size: 1.1rem; font-weight: 600; color: var(--text); margin-bottom: 8px; word-break: break-word; }
+    .ticket-modal-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+    .ticket-modal-badge { display: inline-flex; align-items: center; padding: 3px 8px; border-radius: 4px; font-size: .72rem; font-weight: 600; }
+    .ticket-modal-timeline { padding: 20px; border-bottom: 1px solid var(--border); }
+    .ticket-modal-timeline-title { font-size: .75rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 12px; }
+    .ticket-modal-timeline-steps { display: flex; align-items: center; gap: 8px; font-size: .85rem; flex-wrap: wrap; }
+    .ticket-modal-step { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+    .ticket-modal-step-time { color: var(--text-dim); font-family: monospace; font-size: .8rem; }
+    .ticket-modal-step-label { color: var(--text-muted); font-size: .7rem; text-transform: uppercase; }
+    .ticket-modal-arrow { color: var(--text-dim); font-weight: 600; }
+    .ticket-modal-step-elapsed { color: var(--text-dim); font-size: .75rem; }
+    .ticket-modal-recurring { padding: 0 20px 12px; font-size: .85rem; color: var(--text-muted); }
+    .ticket-modal-recurring-link { color: var(--accent); font-family: monospace; word-break: break-all; }
+    .ticket-modal-body { padding: 20px; }
+    .ticket-modal-section { margin-bottom: 16px; }
+    .ticket-modal-section:last-child { margin-bottom: 0; }
+    .ticket-modal-section-title { font-size: .75rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }
+    .ticket-modal-details { border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--navy-2); }
+    .ticket-modal-details summary { padding: 10px 14px; cursor: pointer; font-weight: 500; color: var(--text); user-select: none; }
+    .ticket-modal-details summary:hover { background: var(--navy-3); }
+    .ticket-modal-details[open] summary { border-bottom: 1px solid var(--border); }
+    .ticket-modal-details pre { margin: 0; padding: 10px 14px; overflow-x: auto; font-size: .8rem; color: var(--text-muted); background: var(--navy-3); font-family: 'Courier New', monospace; }
   </style>
 </head>
 <body>
@@ -95,6 +128,13 @@
     <a href="/agents/alert-analyser/reports" data-standalone-href="reports.html" class="subnav__link">📁 Reports</a>
     <a href="/agents/alert-analyser/settings" data-standalone-href="settings.html" class="subnav__link">⚙ Settings</a>
   </nav>
+
+  <!-- Ticket Detail Modal -->
+  <div id="ticketModalOverlay">
+    <div class="ticket-modal-panel" id="ticketModalPanel">
+      <!-- Content will be populated by JavaScript -->
+    </div>
+  </div>
 
   <div class="content">
     <div class="page-heading">
@@ -157,6 +197,7 @@
       <button class="tab-btn" onclick="switchTab('noise',this)">Noise Analysis</button>
       <button class="tab-btn" onclick="switchTab('genuine',this)">Genuine Alerts</button>
       <button class="tab-btn" onclick="switchTab('trends',this)">Trends</button>
+      <button class="tab-btn" onclick="switchTab('incidents',this)">🚨 Escalated Incidents</button>
       <button class="tab-btn" onclick="switchTab('insights',this)">AI Insights</button>
     </div>
 
@@ -164,6 +205,7 @@
     <div id="tab-noise"    class="tab-panel"></div>
     <div id="tab-genuine"  class="tab-panel"></div>
     <div id="tab-trends"   class="tab-panel"></div>
+    <div id="tab-incidents" class="tab-panel"></div>
     <div id="tab-insights" class="tab-panel"></div>
   </div>
 
@@ -178,6 +220,7 @@
     }
   </script>
   <script>
+    Chart.register(ChartDataLabels);
     const SLUG  = 'alert-analyser';
     const _isPortalMode = (typeof window._authHeaders === 'function' && typeof window._authHeaders() === 'object');
     const PROXY = _isPortalMode ? `${BACKEND_URL}/api/agents/${SLUG}/proxy` : '';
@@ -440,6 +483,7 @@
             },
             plugins: {
               legend: { position: 'bottom' },
+              datalabels: { display: false },
               tooltip: {
                 callbacks: {
                   title: (items) => {
@@ -463,7 +507,7 @@
 
     async function loadDashboard() {
       await portalReady;
-      ['overview','noise','genuine','trends'].forEach(t =>
+      ['overview','noise','genuine','trends','incidents'].forEach(t =>
         document.getElementById('tab-' + t).innerHTML = skeletonHTML());
       try {
         const _qs = new URLSearchParams();
@@ -493,6 +537,7 @@
         renderNoise();
         renderGenuine();
         renderTrends();
+        renderIncidents();
       } catch (e) {
         showToast('Failed to load dashboard: ' + e.message, 'error');
       }
@@ -532,6 +577,175 @@
       btn.title = 'Copied!';
       setTimeout(() => { btn.textContent = orig; btn.title = 'Copy message'; }, 1000);
     }
+
+    // ── Ticket Detail Modal ──────────────────────────────────────────────
+    let _currentTicketData = null;
+
+    async function openTicketModal(ticket) {
+      _currentTicketData = ticket;
+      const overlay = document.getElementById('ticketModalOverlay');
+      const panel = document.getElementById('ticketModalPanel');
+      overlay.classList.add('show');
+
+      const statusColors = {
+        'ESCALATED': '#ea580c',
+        'INVESTIGATING': '#f59e0b',
+        'RCA_COMPLETE': '#a855f7',
+        'REMEDIATING': '#0EA5E9',
+        'RESOLVED': '#16a34a',
+        'MANUAL': '#dc2626',
+      };
+
+      const priColor = {
+        'P1': '#dc2626',
+        'P2': '#ea580c',
+        'P3': '#b45309',
+        'P4': '#64748b',
+      };
+
+      const esc = s => { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; };
+
+      // Build header with badges
+      const priClass = (p) => `pri pri--${(p||'p5').toLowerCase()}`;
+      let badges = `<span class="${priClass(ticket.priority)}">${esc(ticket.priority)}</span>`;
+      badges += `<span class="ticket-modal-badge" style="background:${statusColors[ticket.status] || '#64748b'}20;color:${statusColors[ticket.status] || '#64748b'}">${esc(ticket.status)}</span>`;
+      if (ticket.sla_breached) {
+        badges += `<span class="ticket-modal-badge" style="background:rgba(220,38,38,.1);color:#dc2626">⚠ SLA Breached</span>`;
+      }
+
+      // Compute resolution method badge
+      let resolutionBadge = '';
+      if (ticket.status === 'RESOLVED' || ticket.status === 'MANUAL') {
+        let resolutionLabel = '';
+        let resolutionColor = '#16a34a';
+        if (ticket.status === 'RESOLVED') {
+          if (ticket.resolved_externally) {
+            resolutionLabel = 'Action-Resolved';
+            resolutionColor = '#0EA5E9';
+          } else {
+            resolutionLabel = 'Auto-Resolved';
+          }
+        } else if (ticket.status === 'MANUAL') {
+          resolutionLabel = 'Manual';
+          resolutionColor = '#dc2626';
+        }
+        if (resolutionLabel) {
+          resolutionBadge = `<span class="ticket-modal-badge" style="background:${resolutionColor}20;color:${resolutionColor}">${resolutionLabel}</span>`;
+        }
+      }
+
+      // Helper to format elapsed time between dates
+      const elapsedTime = (from, to) => {
+        if (!from || !to) return '';
+        const f = new Date(from);
+        const t = new Date(to);
+        const ms = t - f;
+        const secs = Math.floor(ms / 1000);
+        if (secs < 60) return secs + 's';
+        const mins = Math.floor(secs / 60);
+        if (mins < 60) return mins + 'm';
+        const hours = Math.floor(mins / 60);
+        if (hours < 24) return hours + 'h';
+        const days = Math.floor(hours / 24);
+        return days + 'd';
+      };
+
+      // Build timeline
+      let timelineHTML = '';
+      const steps = [];
+      if (ticket.created_at) steps.push({ label: 'Created', time: ticket.created_at });
+      if (ticket.escalated_at) steps.push({ label: 'Escalated', time: ticket.escalated_at });
+      if (ticket.resolved_at) steps.push({ label: 'Resolved', time: ticket.resolved_at });
+
+      if (steps.length > 0) {
+        timelineHTML = '<div class="ticket-modal-timeline-steps">';
+        steps.forEach((step, idx) => {
+          timelineHTML += `<div class="ticket-modal-step">
+            <div class="ticket-modal-step-time">${step.time.substring(0, 16).replace('T', ' ')}</div>
+            <div class="ticket-modal-step-label">${step.label}</div>
+          </div>`;
+          if (idx < steps.length - 1) {
+            const nextStep = steps[idx + 1];
+            const elapsed = elapsedTime(step.time, nextStep.time);
+            timelineHTML += `<div class="ticket-modal-arrow">→</div><div class="ticket-modal-step-elapsed">${elapsed}</div>`;
+          }
+        });
+        timelineHTML += '</div>';
+      }
+
+      // Recurring link
+      let recurringHTML = '';
+      if (ticket.related_ticket_id) {
+        recurringHTML = `<div class="ticket-modal-recurring">
+          🔁 Recurring — related ticket: <span class="ticket-modal-recurring-link">${esc(ticket.related_ticket_id)}</span>
+        </div>`;
+      }
+
+      // Loading state for payload
+      let payloadHTML = '<div style="padding:10px 14px;color:var(--text-muted);font-size:.85rem">⏳ Loading alert payload…</div>';
+
+      panel.innerHTML = `
+        <div class="ticket-modal-header">
+          <div class="ticket-modal-header-left">
+            <div class="ticket-modal-id">ID: <span class="ticket-modal-id-val" title="${esc(ticket.id)}">${esc(ticket.id.substring(0, 12))}…</span></div>
+            <div style="font-size:.75rem;color:var(--text-dim);margin-bottom:8px">Alert: <span style="color:var(--text-muted);font-family:monospace">${esc(ticket.alert_id)}</span></div>
+            <div class="ticket-modal-title">${esc(ticket.title)}</div>
+            <div class="ticket-modal-badges">${badges}${resolutionBadge}</div>
+          </div>
+          <button class="ticket-modal-close" onclick="closeTicketModal()">✕</button>
+        </div>
+        ${timelineHTML ? `<div class="ticket-modal-timeline">
+          <div class="ticket-modal-timeline-title">Timeline</div>
+          ${timelineHTML}
+        </div>` : ''}
+        ${recurringHTML}
+        <div class="ticket-modal-body">
+          <div class="ticket-modal-section">
+            <div class="ticket-modal-section-title">Alert Payload</div>
+            <details class="ticket-modal-details" ${ticket.priority === 'P1' || ticket.priority === 'P2' ? (ticket.sla_breached ? 'open' : '') : ''}>
+              <summary>Raw JSON</summary>
+              <pre id="ticketPayloadPre">${payloadHTML}</pre>
+            </details>
+          </div>
+        </div>
+      `;
+
+      // Fetch alert payload
+      try {
+        const payload = await api(`/dashboard/incidents/${ticket.id}`);
+        if (payload && payload.alert_payload) {
+          const pre = document.getElementById('ticketPayloadPre');
+          if (pre) {
+            pre.textContent = JSON.stringify(payload.alert_payload, null, 2);
+          }
+        }
+      } catch (e) {
+        const pre = document.getElementById('ticketPayloadPre');
+        if (pre) {
+          pre.textContent = 'Failed to load payload: ' + e.message;
+          pre.style.color = 'var(--danger)';
+        }
+      }
+    }
+
+    function closeTicketModal() {
+      const overlay = document.getElementById('ticketModalOverlay');
+      overlay.classList.remove('show');
+      _currentTicketData = null;
+    }
+
+    // Close modal on Escape key and click-outside
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && document.getElementById('ticketModalOverlay').classList.contains('show')) {
+        closeTicketModal();
+      }
+    });
+
+    document.getElementById('ticketModalOverlay')?.addEventListener('click', (e) => {
+      if (e.target.id === 'ticketModalOverlay') {
+        closeTicketModal();
+      }
+    });
 
     // ── Data Quality Insights (Overview tab) ──
     function dqRec(text) {
@@ -762,9 +976,9 @@
           <div class="kpi__label">NEW GENUINE</div>
           <div class="kpi__value">${isCompare
             ? `+${(cmpA.new_genuine||0).toLocaleString()} → +${(cmpB.new_genuine||0).toLocaleString()} ${_cmpArrow(cmpA.new_genuine, cmpB.new_genuine)}`
-            : (noData ? '—' : '+' + (pd.new_genuine||0).toLocaleString())
+            : (noData ? '—' : '+' + (pd.new_incidents_count != null ? pd.new_incidents_count : pd.new_genuine||0).toLocaleString())
           }</div>
-          <div class="kpi__sub">${isCompare ? 'A → B' : (noData ? '—' : (pd.genuine_duplicates > 0 ? `(${pd.new_genuine + pd.genuine_duplicates} total · ${pd.genuine_duplicates} dupes removed)` : (pd.new_alerts ? Math.round(pd.new_genuine/pd.new_alerts*100)+'% of new' : '0% of new')))}</div>
+          <div class="kpi__sub">${isCompare ? 'A → B' : (noData ? '—' : `(${pd.new_genuine || 0} total · ${pd.recurring_incidents_count || 0} recurring)`)}</div>
         </div>
         <div class="kpi ${isCompare ? 'kpi--accent' : (noData ? 'kpi--accent' : (pd.new_alerts && pd.new_noise/pd.new_alerts > 0.5 ? 'kpi--danger' : 'kpi--success'))}"
           style="border-top:3px solid var(--accent)">
@@ -795,14 +1009,14 @@
       setTimeout(() => {
         destroyChart('donut');
         const c = document.getElementById('donutChart')?.getContext('2d');
-        if (c) charts['donut'] = new Chart(c, { type:'doughnut', data:{ labels:['Genuine','Noise'], datasets:[{ data:[sAllTime.genuine_count,sAllTime.noise_count], backgroundColor:['#16a34a','#dc2626'], borderWidth:0 }] }, options:{ responsive:true, cutout:'65%', plugins:{legend:{position:'bottom'}} } });
+        if (c) charts['donut'] = new Chart(c, { type:'doughnut', data:{ labels:['Genuine','Noise'], datasets:[{ data:[sAllTime.genuine_count,sAllTime.noise_count], backgroundColor:['#16a34a','#dc2626'], borderWidth:0 }] }, options:{ responsive:true, cutout:'65%', plugins:{legend:{position:'bottom'},datalabels:{display:false}} } });
         destroyChart('trend');
         const t = document.getElementById('trendChart')?.getContext('2d');
         if (t && s.daily_trend.length) charts['trend'] = new Chart(t, { type:'line', data:{ labels:s.daily_trend.map(d=>d.date), datasets:[
           { label:'Genuine',       data:s.daily_trend.map(d=>d.genuine),     borderColor:'#16a34a', backgroundColor:'rgba(22,163,74,.1)', fill:true, tension:.4 },
           { label:'Noise',         data:s.daily_trend.map(d=>d.noise),       borderColor:'#dc2626', backgroundColor:'rgba(220,38,38,.1)',  fill:true, tension:.4 },
           { label:'Noise Suspect', data:s.daily_trend.map(d=>d.suspect||0),  borderColor:'#f59e0b', backgroundColor:'rgba(245,158,11,.1)', fill:true, tension:.4 },
-        ] }, options:{ responsive:true, plugins:{legend:{position:'bottom'}} } });
+        ] }, options:{ responsive:true, plugins:{legend:{position:'bottom'},datalabels:{display:false}} } });
       }, 50);
     }
 
@@ -907,11 +1121,11 @@
       setTimeout(() => {
         destroyChart('src');
         const c = document.getElementById('srcChart')?.getContext('2d');
-        if (c) charts['src'] = new Chart(c, { type:'bar', data:{ labels:s.top_noisy_sources.map(x=>x.source), datasets:[{label:'Noise Count',data:s.top_noisy_sources.map(x=>x.count),backgroundColor:'#dc2626'}] }, options:{indexAxis:'y',responsive:true,plugins:{legend:{display:false}}} });
+        if (c) charts['src'] = new Chart(c, { type:'bar', data:{ labels:s.top_noisy_sources.map(x=>x.source), datasets:[{label:'Noise Count',data:s.top_noisy_sources.map(x=>x.count),backgroundColor:'#dc2626'}] }, options:{indexAxis:'y',responsive:true,plugins:{legend:{display:false},datalabels:{display:false}}} });
         destroyChart('score');
         const sc = document.getElementById('scoreChart')?.getContext('2d');
         const sorted = [...s.service_noise_scores].sort((a,b)=>b.score-a.score).slice(0,10);
-        if (sc) charts['score'] = new Chart(sc, { type:'bar', data:{ labels:sorted.map(x=>x.service), datasets:[{label:'Noise %',data:sorted.map(x=>x.score),backgroundColor:'#6366f1'}] }, options:{indexAxis:'y',responsive:true,plugins:{legend:{display:false}},scales:{x:{max:100}}} });
+        if (sc) charts['score'] = new Chart(sc, { type:'bar', data:{ labels:sorted.map(x=>x.service), datasets:[{label:'Noise %',data:sorted.map(x=>x.score),backgroundColor:'#6366f1'}] }, options:{indexAxis:'y',responsive:true,plugins:{legend:{display:false},datalabels:{display:false}},scales:{x:{max:100}}} });
       }, 50);
     }
 
@@ -928,9 +1142,9 @@
             <div class="kpi__label">Total Genuine</div>
             <div class="kpi__value">${isCompare && sB
               ? `+${(cmpSumA.new_genuine||0)} → +${(cmpSumB.new_genuine||0)} ${_cmpArrow(cmpSumA.new_genuine||0, cmpSumB.new_genuine||0)}`
-              : sA.genuine_count.toLocaleString()
+              : (sA.new_incidents_count || sA.genuine_count).toLocaleString()
             }</div>
-            <div class="kpi__sub">${sA.genuine_duplicates > 0 ? `(${sA.genuine_count_raw} total · ${sA.genuine_duplicates} dupes removed)` : 'real incidents'}</div>
+            <div class="kpi__sub">${isCompare ? '' : (sA.recurring_incidents_count !== undefined ? `(${sA.genuine_count || 0} total · ${sA.recurring_incidents_count || 0} recurring)` : (sA.genuine_duplicates > 0 ? `(${sA.genuine_count_raw} total · ${sA.genuine_duplicates} dupes removed)` : 'real incidents'))}</div>
           </div>
           <div class="kpi kpi--danger">
             <div class="kpi__label">Open Alerts</div>
@@ -1022,7 +1236,7 @@
             data: { labels: allTeams, datasets },
             options: {
                 responsive: true,
-                plugins: { legend: { position: 'bottom' } },
+                plugins: { legend: { position: 'bottom' }, datalabels: { display: false } },
                 scales: {
                     x: { stacked: !isCompare },
                     y: { stacked: !isCompare }
@@ -1068,7 +1282,7 @@
         destroyChart('hour');
         const c = document.getElementById('hourChart')?.getContext('2d');
         const topHours = new Set([...hourly].sort((a,b)=>b.count-a.count).slice(0,3).map(h=>h.hour));
-        if (c) charts['hour'] = new Chart(c, { type:'bar', data:{ labels:hourly.map(h=>`${h.hour}:00`), datasets:[{label:'Alerts',data:hourly.map(h=>h.count),backgroundColor:hourly.map(h=>topHours.has(h.hour)?'#dc2626':'#6366f1')}] }, options:{responsive:true,plugins:{legend:{display:false}}} });
+        if (c) charts['hour'] = new Chart(c, { type:'bar', data:{ labels:hourly.map(h=>`${h.hour}:00`), datasets:[{label:'Alerts',data:hourly.map(h=>h.count),backgroundColor:hourly.map(h=>topHours.has(h.hour)?'#dc2626':'#6366f1')}] }, options:{responsive:true,plugins:{legend:{display:false},datalabels:{display:false}}} });
         // FIX 3 — daily classification stacked bar (replaces Signal Quality line)
         destroyChart('class');
         const cc = document.getElementById('classChart')?.getContext('2d');
@@ -1076,13 +1290,13 @@
           {label:'Genuine',       data:s.daily_trend.map(d=>d.genuine||0), backgroundColor:'#16a34a'},
           {label:'Noise Suspect', data:s.daily_trend.map(d=>d.suspect||0), backgroundColor:'#f59e0b'},
           {label:'Noise',         data:s.daily_trend.map(d=>d.noise||0),   backgroundColor:'#dc2626'},
-        ] }, options:{responsive:true,plugins:{legend:{position:'bottom'}},scales:{x:{stacked:true},y:{stacked:true}}} });
+        ] }, options:{responsive:true,plugins:{legend:{position:'bottom'},datalabels:{display:false}},scales:{x:{stacked:true},y:{stacked:true}}} });
         // FIX 3 — hourly distribution bar with peak-hour annotation
         destroyChart('hourdist');
         const hd = document.getElementById('hourDistChart')?.getContext('2d');
         if (hd && hourly.length) {
           const peak = hourly.reduce((m,h)=>h.count>m.count?h:m, hourly[0]);
-          charts['hourdist'] = new Chart(hd, { type:'bar', data:{ labels:hourly.map(h=>`${h.hour}:00`), datasets:[{label:'Alerts',data:hourly.map(h=>h.count),backgroundColor:hourly.map(h=>h.hour===peak.hour?'#dc2626':'#6366f1')}] }, options:{responsive:true,plugins:{legend:{display:false},title:{display:true,text:`Peak: ${peak.hour}:00 (${peak.count} alerts)`}}} });
+          charts['hourdist'] = new Chart(hd, { type:'bar', data:{ labels:hourly.map(h=>`${h.hour}:00`), datasets:[{label:'Alerts',data:hourly.map(h=>h.count),backgroundColor:hourly.map(h=>h.hour===peak.hour?'#dc2626':'#6366f1')}] }, options:{responsive:true,plugins:{legend:{display:false},datalabels:{display:false},title:{display:true,text:`Peak: ${peak.hour}:00 (${peak.count} alerts)`}}} });
         }
       }, 50);
 
@@ -1132,11 +1346,495 @@
                   min: 0, max: 100,
                 },
               },
-              plugins: { legend: { position: 'bottom' } },
+              plugins: { legend: { position: 'bottom' }, datalabels: { display: false } },
             },
           });
         }, 50);
       }).catch(() => {});
+    }
+
+    // ── Escalated Incidents ──────────────────────────────────────────────────
+    let _ticketsMap = {}; // Global map of ticket ID -> ticket object for modal lookup
+    let _allIncidentTickets = []; // Global list of all incident tickets for filtering
+    let _expandedLanes = new Set(); // Track which lanes show all tickets
+
+    function filterAndSortIncidents() {
+      const search = (document.getElementById('incidentSearch')?.value || '').toLowerCase();
+      const statusFilter = document.getElementById('incidentStatusFilter')?.value || 'All';
+      const sortOption = document.getElementById('incidentSort')?.value || 'oldest-first';
+
+      let filtered = _allIncidentTickets.filter(t => {
+        if (statusFilter !== 'All' && t.status !== statusFilter) return false;
+        if (search) {
+          const titleMatch = t.title?.toLowerCase().includes(search);
+          const idMatch = t.alert_id?.toLowerCase().includes(search);
+          if (!titleMatch && !idMatch) return false;
+        }
+        return true;
+      });
+
+      if (sortOption === 'newest-first') {
+        filtered.sort((a, b) => new Date(b.escalated_at || b.created_at) - new Date(a.escalated_at || a.created_at));
+      } else if (sortOption === 'most-recurring') {
+        filtered.sort((a, b) => b.recurrence_count - a.recurrence_count);
+      } else {
+        filtered.sort((a, b) => new Date(a.escalated_at || a.created_at) - new Date(b.escalated_at || b.created_at));
+      }
+      return filtered;
+    }
+
+    function expandLane(priority) {
+      _expandedLanes.add(priority);
+      updateIncidentsDisplay();
+    }
+
+    function collapseLane(priority) {
+      _expandedLanes.delete(priority);
+      updateIncidentsDisplay();
+    }
+
+    function updateIncidentsDisplay() {
+      const filtered = filterAndSortIncidents();
+      const priorityGroups = {
+        'P1': { label: 'P1-CRITICAL', tickets: [] },
+        'P2': { label: 'P2-HIGH', tickets: [] },
+        'P3': { label: 'P3-MEDIUM', tickets: [] },
+        'P4': { label: 'P4-LOW', tickets: [] },
+      };
+      filtered.forEach(t => {
+        const p = t.priority || 'P4';
+        if (priorityGroups[p]) priorityGroups[p].tickets.push(t);
+      });
+
+      const statusDot = (status) => {
+        const statusColors = {
+          'ESCALATED': '#ea580c',
+          'INVESTIGATING': '#f59e0b',
+          'RCA_COMPLETE': '#a855f7',
+          'REMEDIATING': '#0EA5E9',
+          'RESOLVED': '#16a34a',
+          'MANUAL': '#dc2626',
+        };
+        const color = statusColors[status] || '#64748b';
+        return `<div style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:6px;vertical-align:middle"></div>`;
+      };
+
+      const timeAgo = (isoDateStr) => {
+        if (!isoDateStr) return 'unknown';
+        const date = new Date(isoDateStr);
+        const now = new Date();
+        const secs = Math.floor((now - date) / 1000);
+        if (secs < 60) return secs + 's';
+        if (secs < 3600) return Math.floor(secs / 60) + 'm';
+        if (secs < 86400) return Math.floor(secs / 3600) + 'h';
+        return Math.floor(secs / 86400) + 'd';
+      };
+
+      const buildCardForUpdate = (ticket) => {
+        const esc = s => { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; };
+        const recBadge = ticket.recurrence_count > 1
+          ? `<span style="display:inline-flex;align-items:center;padding:2px 6px;background:var(--warn-bg);color:var(--warn);border-radius:4px;font-size:.7rem;font-weight:600;margin-left:auto">${ticket.recurrence_count}×</span>`
+          : '';
+        const slaBadge = ticket.sla_breached
+          ? `<span style="display:inline-flex;align-items:center;padding:2px 6px;background:#fecaca;color:#dc2626;border-radius:4px;font-size:.7rem;font-weight:600;margin-left:4px">⚠ SLA</span>`
+          : '';
+        const time = timeAgo(ticket.escalated_at || ticket.created_at);
+        const borderLeftColor = ticket.sla_breached ? '#dc2626' : 'var(--border)';
+        return `
+          <div class="ticket-card" style="padding:10px;background:var(--navy-1);border:1px solid var(--border);border-left:3px solid ${borderLeftColor};border-radius:var(--r-sm);margin-bottom:8px;font-size:.8rem;cursor:pointer;transition:background var(--t);user-select:none" data-ticket-id="${esc(ticket.id)}">
+            <div style="display:flex;align-items:center;margin-bottom:6px;gap:4px">
+              ${statusDot(ticket.status)}
+              <span style="color:var(--text-dim);font-size:.7rem">${esc(ticket.id.substring(0, 8))}</span>
+              <span style="color:var(--text-muted);font-weight:600;margin-left:auto">${time}</span>
+            </div>
+            <div style="color:var(--text);font-weight:500;margin-bottom:4px;word-break:break-word;display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+              <span style="flex:1">${esc(ticket.title.substring(0, 45))}</span>
+              <div style="display:flex;gap:4px">${recBadge}${slaBadge}</div>
+            </div>
+            <div style="color:var(--text-dim);font-size:.75rem">${esc(ticket.alert_id)}</div>
+          </div>
+        `;
+      };
+
+      const buildColumnForUpdate = (priority, group) => {
+        const slaTargets = { 'P1': 15, 'P2': 30, 'P3': 60, 'P4': 240 };
+        const tix = group.tickets;
+        const isExpanded = _expandedLanes.has(priority);
+        const displayCount = isExpanded ? tix.length : 6;
+        const displayed = tix.slice(0, displayCount);
+        const remaining = tix.length - displayCount;
+
+        if (tix.length === 0) {
+          return `
+            <div style="flex:1;min-width:280px;padding:12px;background:var(--navy-2);border-radius:var(--r);border:1px solid var(--border)">
+              <div style="font-size:.85rem;font-weight:600;color:var(--text-muted);margin-bottom:4px">${group.label}</div>
+              <div style="font-size:.75rem;color:var(--text-dim);margin-bottom:12px">SLA: ${slaTargets[priority]} min</div>
+              <div style="text-align:center;color:var(--text-dim);font-size:.8rem;padding:24px 0">No tickets</div>
+            </div>
+          `;
+        }
+
+        let buttonHTML = '';
+        if (isExpanded) {
+          buttonHTML = `<button onclick="collapseLane('${priority}')" style="width:100%;padding:6px 12px;font-size:.75rem;margin-top:8px;background:var(--accent);color:#fff;border:none;border-radius:var(--r-sm);cursor:pointer">Show Less</button>`;
+        } else if (remaining > 0) {
+          buttonHTML = `<button onclick="expandLane('${priority}')" style="width:100%;padding:6px 12px;font-size:.75rem;margin-top:8px;background:var(--accent);color:#fff;border:none;border-radius:var(--r-sm);cursor:pointer">Show ${remaining} More</button>`;
+        }
+
+        return `
+          <div style="flex:1;min-width:280px;padding:12px;background:var(--navy-2);border-radius:var(--r);border:1px solid var(--border);display:flex;flex-direction:column">
+            <div style="font-size:.85rem;font-weight:600;color:var(--text-muted);margin-bottom:4px">${group.label}</div>
+            <div style="font-size:.75rem;color:var(--text-dim);margin-bottom:12px">SLA: ${slaTargets[priority]} min</div>
+            <div style="flex:1;overflow-y:auto;min-height:0;padding-right:8px">
+              ${displayed.map(t => buildCardForUpdate(t)).join('')}
+            </div>
+            ${buttonHTML}
+          </div>
+        `;
+      };
+
+      const lanesHTML = `<div style="display:flex;gap:12px;overflow-x:auto;padding-bottom:12px">
+        ${Object.entries(priorityGroups).map(([p, g]) => buildColumnForUpdate(p, g)).join('')}
+      </div>`;
+
+      const container = document.getElementById('incidentsLanesContainer');
+      if (container) {
+        container.innerHTML = lanesHTML;
+        attachIncidentCardListeners();
+      }
+    }
+
+    function attachIncidentCardListeners() {
+      document.querySelectorAll('.ticket-card').forEach(card => {
+        const ticketId = card.getAttribute('data-ticket-id');
+        if (ticketId && _ticketsMap[ticketId]) {
+          card.addEventListener('click', () => openTicketModal(_ticketsMap[ticketId]));
+          card.addEventListener('mouseover', () => { card.style.background = 'var(--navy-2)'; });
+          card.addEventListener('mouseout', () => { card.style.background = 'var(--navy-1)'; });
+        }
+      });
+    }
+
+    async function renderIncidents() {
+      const el = document.getElementById('tab-incidents');
+      const esc = s => { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; };
+      try {
+        const data = await api('/dashboard/incidents');
+        if (data.empty) {
+          el.innerHTML = emptyState('📭', 'No escalated incidents', 'Create your first incident by loading genuine P1/P2 alerts.');
+          return;
+        }
+
+        const pipelineFlow = data.pipeline_flow || [];
+        const agingBuckets = data.aging_buckets || [];
+        const agingLongest = data.aging_longest_wait;
+        const slaBreachData = data.sla_breach || {};
+        const resolutionRing = data.resolution_ring || {};
+        const recurrenceSignal = data.recurrence_signal || [];
+
+        const listData = await api('/dashboard/incidents/list').catch(() => ({ tickets: [] }));
+        const tickets = listData.tickets || [];
+
+        // Store for filtering/sorting
+        _allIncidentTickets = tickets;
+        _expandedLanes = new Set();
+
+        // Populate tickets map for modal lookup
+        _ticketsMap = {};
+        tickets.forEach(t => {
+          _ticketsMap[t.id] = t;
+        });
+
+        const priorityGroups = {
+          'P1': { label: 'P1-CRITICAL', tickets: [] },
+          'P2': { label: 'P2-HIGH', tickets: [] },
+          'P3': { label: 'P3-MEDIUM', tickets: [] },
+          'P4': { label: 'P4-LOW', tickets: [] },
+        };
+        tickets.forEach(t => {
+          const p = t.priority || 'P4';
+          if (priorityGroups[p]) priorityGroups[p].tickets.push(t);
+        });
+
+        const statusColors = {
+          'ESCALATED': '#ea580c',
+          'INVESTIGATING': '#f59e0b',
+          'RCA_COMPLETE': '#a855f7',
+          'REMEDIATING': '#0EA5E9',
+          'RESOLVED': '#16a34a',
+          'MANUAL': '#dc2626',
+        };
+
+        const pipelineLabels = pipelineFlow.map(p => p.status);
+        const pipelineData = pipelineFlow.map(p => p.count);
+        const pipelineColors = pipelineFlow.map(p => statusColors[p.status] || '#64748b');
+
+        const agingLabels = agingBuckets.map(b => b.bucket);
+        const agingData = agingBuckets.map(b => b.count);
+        const agingColors = ['#0EA5E9', '#f59e0b', '#dc2626'];
+
+        const agingCallout = agingLongest ? `
+          <div style="margin-top:12px;padding:10px;background:var(--navy-2);border-radius:6px;font-size:.8rem;border-left:3px solid #dc2626">
+            <div style="font-weight:600;color:var(--text);margin-bottom:4px">Longest Wait</div>
+            <div style="color:var(--text-muted);margin-bottom:3px"><strong>${esc(agingLongest.title).substring(0, 60)}</strong></div>
+            <div style="color:var(--text-dim);font-size:.75rem">${Number(agingLongest.minutes_waiting)|0} min • ${esc(agingLongest.alert_id)}</div>
+          </div>
+        ` : '';
+
+        const slaBreachColor = slaBreachData.breach_pct > 50 ? '#dc2626' : (slaBreachData.breach_pct >= 20 ? '#f59e0b' : '#16a34a');
+        const slaBreachSummary = slaBreachData.breached_count !== undefined ? `
+          <div style="margin-top:12px;padding:10px;background:var(--navy-2);border-radius:6px;font-size:.8rem;border-left:3px solid ${slaBreachColor}">
+            <div style="color:var(--text-muted);font-size:.75rem">SLA Breach: <strong style="color:${slaBreachColor}">${slaBreachData.breached_count}</strong> breached · <strong style="color:#16a34a">${slaBreachData.within_sla_count}</strong> within SLA <strong style="color:${slaBreachColor}">(${slaBreachData.breach_pct}%)</strong></div>
+          </div>
+        ` : '';
+
+        const recurrenceList = recurrenceSignal.length ? recurrenceSignal.map(r => `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;border-bottom:1px solid var(--border);font-size:.83rem">
+            <div style="flex:1">
+              <div style="font-weight:500;color:var(--text);margin-bottom:2px">${esc(r.title).substring(0, 50)}</div>
+              <div style="font-size:.72rem;color:var(--text-dim)">${esc(r.alert_id)}</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;margin-left:12px">
+              <span style="display:inline-flex;align-items:center;padding:2px 8px;background:var(--warn-bg);color:var(--warn);border-radius:4px;font-size:.72rem;font-weight:600">${Number(r.recurrence_count)|0}×</span>
+              <span style="font-size:.72rem;color:var(--text-muted);min-width:80px">${esc(r.status)}</span>
+            </div>
+          </div>
+        `).join('') : '<div style="padding:16px;text-align:center;color:var(--text-dim);font-size:.85rem">No recurring incidents</div>';
+
+        const timeAgo = (isoDateStr) => {
+          if (!isoDateStr) return 'unknown';
+          const date = new Date(isoDateStr);
+          const now = new Date();
+          const secs = Math.floor((now - date) / 1000);
+          if (secs < 60) return secs + 's';
+          if (secs < 3600) return Math.floor(secs / 60) + 'm';
+          if (secs < 86400) return Math.floor(secs / 3600) + 'h';
+          return Math.floor(secs / 86400) + 'd';
+        };
+
+        const statusDot = (status) => {
+          const color = statusColors[status] || '#64748b';
+          return `<div style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:6px;vertical-align:middle"></div>`;
+        };
+
+        const buildCard = (ticket) => {
+          const recBadge = ticket.recurrence_count > 1
+            ? `<span style="display:inline-flex;align-items:center;padding:2px 6px;background:var(--warn-bg);color:var(--warn);border-radius:4px;font-size:.7rem;font-weight:600;margin-left:auto">${ticket.recurrence_count}×</span>`
+            : '';
+          const slaBadge = ticket.sla_breached
+            ? `<span style="display:inline-flex;align-items:center;padding:2px 6px;background:#fecaca;color:#dc2626;border-radius:4px;font-size:.7rem;font-weight:600;margin-left:4px">⚠ SLA</span>`
+            : '';
+          const time = timeAgo(ticket.escalated_at || ticket.created_at);
+          const borderLeftColor = ticket.sla_breached ? '#dc2626' : 'var(--border)';
+          return `
+            <div class="ticket-card" style="padding:10px;background:var(--navy-1);border:1px solid var(--border);border-left:3px solid ${borderLeftColor};border-radius:var(--r-sm);margin-bottom:8px;font-size:.8rem;cursor:pointer;transition:background var(--t);user-select:none" data-ticket-id="${esc(ticket.id)}">
+              <div style="display:flex;align-items:center;margin-bottom:6px;gap:4px">
+                ${statusDot(ticket.status)}
+                <span style="color:var(--text-dim);font-size:.7rem">${esc(ticket.id.substring(0, 8))}</span>
+                <span style="color:var(--text-muted);font-weight:600;margin-left:auto">${time}</span>
+              </div>
+              <div style="color:var(--text);font-weight:500;margin-bottom:4px;word-break:break-word;display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+                <span style="flex:1">${esc(ticket.title.substring(0, 45))}</span>
+                <div style="display:flex;gap:4px">${recBadge}${slaBadge}</div>
+              </div>
+              <div style="color:var(--text-dim);font-size:.75rem">${esc(ticket.alert_id)}</div>
+            </div>
+          `;
+        };
+
+        const buildColumn = (priority, group) => {
+          const slaTargets = { 'P1': 15, 'P2': 30, 'P3': 60, 'P4': 240 };
+          const tix = group.tickets;
+          if (tix.length === 0) {
+            return `
+              <div style="flex:1;min-width:280px;padding:12px;background:var(--navy-2);border-radius:var(--r);border:1px solid var(--border)">
+                <div style="font-size:.85rem;font-weight:600;color:var(--text-muted);margin-bottom:4px">${group.label}</div>
+                <div style="font-size:.75rem;color:var(--text-dim);margin-bottom:12px">SLA: ${slaTargets[priority]} min</div>
+                <div style="text-align:center;color:var(--text-dim);font-size:.8rem;padding:24px 0">No tickets</div>
+              </div>
+            `;
+          }
+          const isExpanded = _expandedLanes.has(priority);
+          const displayCount = isExpanded ? tix.length : 6;
+          const displayed = tix.slice(0, displayCount);
+          const remaining = tix.length - displayCount;
+
+          let buttonHTML = '';
+          if (isExpanded) {
+            buttonHTML = `<button onclick="collapseLane('${priority}')" style="width:100%;padding:6px 12px;font-size:.75rem;margin-top:8px;background:var(--accent);color:#fff;border:none;border-radius:var(--r-sm);cursor:pointer">Show Less</button>`;
+          } else if (remaining > 0) {
+            buttonHTML = `<button onclick="expandLane('${priority}')" style="width:100%;padding:6px 12px;font-size:.75rem;margin-top:8px;background:var(--accent);color:#fff;border:none;border-radius:var(--r-sm);cursor:pointer">Show ${remaining} More</button>`;
+          }
+
+          return `
+            <div style="flex:1;min-width:280px;padding:12px;background:var(--navy-2);border-radius:var(--r);border:1px solid var(--border);display:flex;flex-direction:column">
+              <div style="font-size:.85rem;font-weight:600;color:var(--text-muted);margin-bottom:4px">${group.label}</div>
+              <div style="font-size:.75rem;color:var(--text-dim);margin-bottom:12px">SLA: ${slaTargets[priority]} min</div>
+              <div style="flex:1;overflow-y:auto;min-height:0;padding-right:8px">
+                ${displayed.map(t => buildCard(t)).join('')}
+              </div>
+              ${buttonHTML}
+            </div>
+          `;
+        };
+
+        const lanesHTML = `<div style="margin-top:20px;display:flex;gap:12px;overflow-x:auto;padding-bottom:12px">
+          ${Object.entries(priorityGroups).map(([p, g]) => buildColumn(p, g)).join('')}
+        </div>`;
+
+        el.innerHTML = `
+          <div class="chart-grid">
+            <div class="chart-card">
+              <div class="chart-card__title">Pipeline Flow</div>
+              <div class="chart-wrap" style="max-height:240px"><canvas id="pipelineChart"></canvas></div>
+            </div>
+            <div class="chart-card">
+              <div class="chart-card__title">Ticket Aging</div>
+              <div class="chart-wrap" style="max-height:240px"><canvas id="agingChart"></canvas></div>
+              ${agingCallout}
+              ${slaBreachSummary}
+            </div>
+            <div class="chart-card">
+              <div class="chart-card__title">Resolution Method</div>
+              <div class="chart-wrap" style="max-height:240px"><canvas id="resolutionChart"></canvas></div>
+            </div>
+            <div class="chart-card">
+              <div class="chart-card__title">Recurrence Signal</div>
+              <div style="max-height:280px;overflow-y:auto">${recurrenceList}</div>
+            </div>
+          </div>
+          <div style="margin-top:20px">
+            <div style="display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap;padding:12px;background:var(--navy-2);border-radius:var(--r)">
+              <input type="text" id="incidentSearch" placeholder="Search by title or alert ID..."
+                     onkeyup="updateIncidentsDisplay()"
+                     style="flex:1;min-width:200px;padding:6px 10px;background:var(--navy-1);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);font-size:.85rem">
+              <select id="incidentStatusFilter" onchange="updateIncidentsDisplay()"
+                      style="padding:6px 10px;background:var(--navy-1);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);font-size:.85rem">
+                <option value="All">All Statuses</option>
+                <option value="ESCALATED">ESCALATED</option>
+                <option value="INVESTIGATING">INVESTIGATING</option>
+                <option value="RCA_COMPLETE">RCA Complete</option>
+                <option value="REMEDIATING">Remediating</option>
+                <option value="RESOLVED">Resolved</option>
+                <option value="MANUAL">Manual</option>
+              </select>
+              <select id="incidentSort" onchange="updateIncidentsDisplay()"
+                      style="padding:6px 10px;background:var(--navy-1);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);font-size:.85rem">
+                <option value="oldest-first">Oldest First</option>
+                <option value="newest-first">Newest First</option>
+                <option value="most-recurring">Most Recurring</option>
+              </select>
+            </div>
+            <div style="font-size:.85rem;color:var(--text-muted);font-weight:600;margin-bottom:12px">🛣 PRIORITY LANES</div>
+            <div id="incidentsLanesContainer">${lanesHTML}</div>
+          </div>
+        `;
+
+        setTimeout(() => {
+          attachIncidentCardListeners();
+          destroyChart('pipeline');
+          const pc = document.getElementById('pipelineChart')?.getContext('2d');
+          if (pc) charts['pipeline'] = new Chart(pc, {
+            type: 'bar',
+            data: {
+              labels: pipelineLabels,
+              datasets: [{
+                label: 'Count',
+                data: pipelineData,
+                backgroundColor: pipelineColors,
+                borderWidth: 0,
+              }],
+            },
+            options: {
+              indexAxis: 'y',
+              responsive: true,
+              plugins: {
+                legend: { display: false },
+                datalabels: {
+                  color: '#ffffff',
+                  textStrokeColor: 'rgba(0,0,0,0.6)',
+                  textStrokeWidth: 3,
+                  font: { size: 11 },
+                  anchor: 'end',
+                  align: 'right',
+                  clamp: true,
+                  formatter: function(value) { return value > 0 ? value : ''; }
+                }
+              },
+              scales: { x: { beginAtZero: true } },
+            },
+          });
+
+          // Add pipeline status count summary below chart
+          const pipelineWrap = document.getElementById('pipelineChart')?.parentElement;
+          if (pipelineWrap && pipelineData.length > 0) {
+            const summary = pipelineLabels.map((label, i) => `${label}: ${pipelineData[i]}`).join(' · ');
+            const summaryEl = document.createElement('div');
+            summaryEl.style.cssText = 'margin-top:8px;padding:8px;background:var(--navy-2);border-radius:var(--r-sm);font-size:.75rem;color:var(--text-dim);word-break:break-word';
+            summaryEl.textContent = summary;
+            pipelineWrap.appendChild(summaryEl);
+          }
+
+          destroyChart('aging');
+          const ac = document.getElementById('agingChart')?.getContext('2d');
+          if (ac) charts['aging'] = new Chart(ac, {
+            type: 'bar',
+            data: {
+              labels: agingLabels,
+              datasets: [{
+                label: 'Tickets',
+                data: agingData,
+                backgroundColor: agingColors,
+                borderWidth: 0,
+              }],
+            },
+            options: {
+              indexAxis: 'y',
+              responsive: true,
+              plugins: { legend: { display: false }, datalabels: { display: true, color: '#ffffff', textStrokeColor: 'rgba(0,0,0,0.6)', textStrokeWidth: 3, font: { size: 11 }, anchor: 'end', align: 'right', clamp: true, formatter: function(value) { return value > 0 ? value : ''; } } },
+              scales: { x: { beginAtZero: true } },
+            },
+          });
+
+          destroyChart('resolution');
+          if (resolutionRing.auto_resolved_pct === 0 && resolutionRing.action_resolved_pct === 0 && resolutionRing.manual_pct === 0) {
+            const resChartWrap = document.getElementById('resolutionChart')?.parentElement;
+            if (resChartWrap) {
+              resChartWrap.innerHTML = emptyState('📊', 'No resolved or manual tickets yet', 'Tickets will appear here once they are marked as resolved or manual.');
+            }
+          } else {
+            const rc = document.getElementById('resolutionChart')?.getContext('2d');
+            if (rc) charts['resolution'] = new Chart(rc, {
+              type: 'doughnut',
+              data: {
+                labels: ['Auto-Resolved', 'Action-Resolved', 'Manual'],
+                datasets: [{
+                  data: [resolutionRing.auto_resolved_pct || 0, resolutionRing.action_resolved_pct || 0, resolutionRing.manual_pct || 0],
+                  backgroundColor: ['#16a34a', '#0EA5E9', '#dc2626'],
+                  borderWidth: 0,
+                }],
+              },
+              options: {
+                responsive: true,
+                cutout: '65%',
+                plugins: { legend: { position: 'bottom' }, datalabels: { display: true, color: '#ffffff', font: { size: 11 }, formatter: function(value) { return value > 0 ? value.toFixed(0) + '%' : ''; } } },
+              },
+            });
+          }
+        }, 50);
+
+        // Attach event listeners to ticket cards for modal opening
+        document.querySelectorAll('.ticket-card').forEach(card => {
+          const ticketId = card.getAttribute('data-ticket-id');
+          if (ticketId && _ticketsMap[ticketId]) {
+            card.addEventListener('click', () => openTicketModal(_ticketsMap[ticketId]));
+            card.addEventListener('mouseover', () => { card.style.background = 'var(--navy-2)'; });
+            card.addEventListener('mouseout', () => { card.style.background = 'var(--navy-1)'; });
+          }
+        });
+      } catch (e) {
+        el.innerHTML = emptyState('⚠️', 'Failed to load incidents', e.message);
+      }
     }
 
     // ── AI Insights ──────────────────────────────────────────────────────────

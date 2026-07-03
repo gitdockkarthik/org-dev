@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Operative Intelligence — Incident Pipeline Monitor</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface-2: #1c2128;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #7d8590;
+    --text-dim: #484f58;
+    --accent: #388bfd;
+    --orange: #FF6B35;
+    --green: #3fb950;
+    --purple: #bc8cff;
+    --amber: #d29922;
+    --red: #f85149;
+    --r: 8px;
+    --r-sm: 5px;
+    --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; line-height: 1.5; min-height: 100vh; }
+
+  /* Layout */
+  .topbar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; justify-content: space-between; height: 52px; position: sticky; top: 0; z-index: 100; }
+  .topbar__brand { font-size: 13px; font-weight: 700; color: var(--text); letter-spacing: .02em; display: flex; align-items: center; gap: 10px; }
+  .topbar__brand .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .topbar__right { display: flex; align-items: center; gap: 16px; font-size: 12px; color: var(--text-muted); }
+  .topbar__time { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+
+  .page { max-width: 1280px; margin: 0 auto; padding: 20px 24px 48px; }
+
+  /* KPI strip */
+  .kpi-strip { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 20px; }
+  .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 14px 16px; position: relative; overflow: hidden; }
+  .kpi::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; }
+  .kpi--green::before { background: var(--green); }
+  .kpi--orange::before { background: var(--orange); }
+  .kpi--purple::before { background: var(--purple); }
+  .kpi--amber::before { background: var(--amber); }
+  .kpi--red::before { background: var(--red); }
+  .kpi--accent::before { background: var(--accent); }
+  .kpi__label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); margin-bottom: 8px; }
+  .kpi__value { font-size: 24px; font-weight: 700; line-height: 1; margin-bottom: 4px; font-family: var(--mono); }
+  .kpi__sub { font-size: 10px; color: var(--text-muted); }
+  .kpi--green .kpi__value { color: var(--green); }
+  .kpi--orange .kpi__value { color: var(--orange); }
+  .kpi--purple .kpi__value { color: var(--purple); }
+  .kpi--amber .kpi__value { color: var(--amber); }
+  .kpi--red .kpi__value { color: var(--red); }
+  .kpi--accent .kpi__value { color: var(--accent); }
+
+  /* Pipeline flow */
+  .pipeline-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .section-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); }
+  .pipeline-flow { display: grid; grid-template-columns: repeat(6, 1fr) 20px repeat(1, 1fr); gap: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 16px; margin-bottom: 20px; align-items: center; }
+  .pipeline-stage { text-align: center; padding: 12px 8px; }
+  .pipeline-stage__count { font-size: 28px; font-weight: 700; font-family: var(--mono); margin-bottom: 4px; }
+  .pipeline-stage__label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; color: var(--text-muted); margin-bottom: 6px; }
+  .pipeline-stage__agent { font-size: 9px; color: var(--text-dim); }
+  .pipeline-arrow { text-align: center; color: var(--text-dim); font-size: 18px; }
+  .stage--new .pipeline-stage__count { color: var(--text-muted); }
+  .stage--escalated .pipeline-stage__count { color: var(--orange); }
+  .stage--investigating .pipeline-stage__count { color: var(--amber); }
+  .stage--rca .pipeline-stage__count { color: var(--purple); }
+  .stage--remediating .pipeline-stage__count { color: var(--accent); }
+  .stage--resolved .pipeline-stage__count { color: var(--green); }
+  .stage--manual .pipeline-stage__count { color: var(--red); }
+
+  /* Main grid */
+  .main-grid { display: grid; grid-template-columns: 1fr 340px; gap: 16px; }
+
+  /* Incident table */
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; margin-bottom: 16px; }
+  .panel__header { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .panel__title { font-size: 12px; font-weight: 600; color: var(--text); }
+  .panel__actions { display: flex; gap: 8px; }
+  .btn-sm { padding: 4px 10px; border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); font-size: 11px; cursor: pointer; }
+  .btn-sm:hover { border-color: var(--accent); color: var(--accent); }
+
+  table { width: 100%; border-collapse: collapse; }
+  th { padding: 8px 12px; text-align: left; font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-dim); border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 12px; vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--surface-2); }
+
+  .status-pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; white-space: nowrap; }
+  .status-pill::before { content: ''; width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+  .pill--escalated { background: rgba(255,107,53,.12); color: var(--orange); }
+  .pill--escalated::before { background: var(--orange); }
+  .pill--investigating { background: rgba(210,153,34,.12); color: var(--amber); }
+  .pill--investigating::before { background: var(--amber); animation: pulse 1.5s infinite; }
+  .pill--rca { background: rgba(188,140,255,.12); color: var(--purple); }
+  .pill--rca::before { background: var(--purple); }
+  .pill--remediating { background: rgba(56,139,253,.12); color: var(--accent); }
+  .pill--remediating::before { background: var(--accent); animation: pulse 1s infinite; }
+  .pill--resolved { background: rgba(63,185,80,.12); color: var(--green); }
+  .pill--resolved::before { background: var(--green); }
+  .pill--manual { background: rgba(248,81,73,.12); color: var(--red); }
+  .pill--manual::before { background: var(--red); }
+
+  .priority-badge { font-size: 10px; font-weight: 700; font-family: var(--mono); padding: 1px 6px; border-radius: 3px; }
+  .p1 { background: rgba(248,81,73,.2); color: var(--red); }
+  .p2 { background: rgba(255,107,53,.2); color: var(--orange); }
+  .p3 { background: rgba(210,153,34,.2); color: var(--amber); }
+  .p4 { background: rgba(63,185,80,.15); color: var(--green); }
+
+  .agent-tag { font-size: 10px; color: var(--text-dim); font-family: var(--mono); }
+  .time-cell { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+
+  /* Sidebar */
+  .sidebar { display: flex; flex-direction: column; gap: 16px; }
+
+  /* Agent health */
+  .agent-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+  .agent-row:last-child { border-bottom: none; }
+  .agent-row__left { display: flex; align-items: center; gap: 10px; }
+  .agent-indicator { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .agent-indicator--active { background: var(--green); box-shadow: 0 0 5px var(--green); animation: pulse 2s infinite; }
+  .agent-indicator--busy { background: var(--amber); box-shadow: 0 0 5px var(--amber); animation: pulse 1s infinite; }
+  .agent-name { font-size: 12px; font-weight: 600; }
+  .agent-status { font-size: 10px; color: var(--text-muted); }
+  .agent-metric { text-align: right; }
+  .agent-metric__val { font-size: 12px; font-weight: 600; font-family: var(--mono); }
+  .agent-metric__label { font-size: 9px; color: var(--text-dim); }
+
+  /* RAG */
+  .rag-row { display: flex; align-items: center; gap: 10px; padding: 8px 16px; border-bottom: 1px solid var(--border); font-size: 11px; }
+  .rag-row:last-child { border-bottom: none; }
+  .rag-icon { width: 20px; height: 20px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 10px; flex-shrink: 0; }
+  .rag-label { color: var(--text-muted); flex: 1; }
+  .rag-val { font-family: var(--mono); font-weight: 600; color: var(--text); }
+
+  /* Timeline */
+  .timeline { padding: 12px 16px; }
+  .tl-item { display: flex; gap: 10px; margin-bottom: 12px; position: relative; }
+  .tl-item:last-child { margin-bottom: 0; }
+  .tl-item::before { content: ''; position: absolute; left: 13px; top: 20px; bottom: -12px; width: 1px; background: var(--border); }
+  .tl-item:last-child::before { display: none; }
+  .tl-dot { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; flex-shrink: 0; border: 1px solid var(--border); }
+  .tl-body { flex: 1; }
+  .tl-agent { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); }
+  .tl-text { font-size: 11px; color: var(--text); margin-top: 2px; }
+  .tl-time { font-size: 10px; color: var(--text-dim); font-family: var(--mono); margin-top: 2px; }
+
+  /* Filter bar */
+  .filter-bar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .filter-btn { padding: 4px 12px; border-radius: 20px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-size: 11px; cursor: pointer; }
+  .filter-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(56,139,253,.1); }
+
+  /* Trend mini chart */
+  .mini-chart { padding: 12px 16px; }
+  .chart-bars { display: flex; align-items: flex-end; gap: 4px; height: 48px; }
+  .chart-bar { flex: 1; border-radius: 2px 2px 0 0; min-height: 4px; }
+  .chart-labels { display: flex; justify-content: space-between; margin-top: 4px; font-size: 9px; color: var(--text-dim); font-family: var(--mono); }
+
+  @media (max-width: 900px) {
+    .kpi-strip { grid-template-columns: repeat(3, 1fr); }
+    .main-grid { grid-template-columns: 1fr; }
+    .pipeline-flow { grid-template-columns: 1fr; }
+    .pipeline-arrow { display: none; }
+  }
+</style>
+
+<style>
+  .oi-shell { display: flex; min-height: 100vh; }
+  .oi-sidebar { width: 220px; background: #ffffff; border-right: 1px solid #e2e5ea; padding: 20px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; flex-shrink: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .oi-sidebar__brand { font-size: 13px; font-weight: 700; padding: 0 20px 16px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #e2e5ea; margin-bottom: 10px; color: #1a1d23; }
+  .oi-sidebar__brand .dot { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; flex-shrink: 0; }
+  .oi-sidebar__group-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #98a2b3; padding: 10px 20px 6px; }
+  .oi-sidebar__link { display: block; padding: 6px 20px; font-size: 12px; color: #667085; text-decoration: none; border-left: 2px solid transparent; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .oi-sidebar__link:hover { background: #f0f1f4; color: #1a1d23; }
+  .oi-sidebar__link.active { color: #2563eb; border-left-color: #2563eb; background: #f0f1f4; font-weight: 600; }
+  .oi-sidebar__link--disabled { color: #98a2b3; font-style: italic; cursor: default; }
+  
+  .oi-sidebar__group-label { cursor: pointer; display: flex; align-items: center; justify-content: space-between; user-select: none; }
+  .oi-sidebar__group-label .oi-caret { transition: transform .15s; font-size: 9px; }
+  .oi-sidebar__group.collapsed .oi-caret { transform: rotate(-90deg); }
+  .oi-sidebar__group.collapsed .oi-sidebar__links { display: none; }
+
+  .oi-main { flex: 1; min-width: 0; overflow-x: auto; }
+</style>
+</head>
+<body><div class="oi-shell">
+<div class="oi-sidebar">
+  <div class="oi-sidebar__brand"><span class="dot"></span> Operative Intelligence</div>
+  <div class="oi-sidebar__group">
+    <div class="oi-sidebar__group-label">Incident Response <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="operative_intelligence_agentic_pipeline.html">Agentic Pipeline Concept</a>
+    <a class="oi-sidebar__link" href="operative_intelligence_pipeline.html">Agent Pipeline Overview</a>
+    <a class="oi-sidebar__link active" href="incident_pipeline_monitor.html">Pipeline Monitor (Mockup)</a>
+    <a class="oi-sidebar__link" href="alert_ticketing_functional_spec.html">Functional Specification</a>
+    <a class="oi-sidebar__link" href="alert_ticketing_future_work_tracker.html">Future Work Tracker</a>
+  </div></div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">CUR Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <span class="oi-sidebar__link oi-sidebar__link--disabled">Coming soon</span>
+  </div></div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">Kafka Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <span class="oi-sidebar__link oi-sidebar__link--disabled">Coming soon</span>
+  </div></div>
+</div>
+<div class="oi-main">
+
+
+<div class="topbar">
+  <div class="topbar__brand">
+    <div class="dot"></div>
+    Operative Intelligence — Incident Pipeline
+  </div>
+  <div class="topbar__right">
+    <span>Last sync: 14s ago</span>
+    <span class="topbar__time" id="clock">--:--:--</span>
+  </div>
+</div>
+
+<div class="page">
+
+  <!-- KPI Strip -->
+  <div class="kpi-strip">
+    <div class="kpi kpi--orange">
+      <div class="kpi__label">Active Incidents</div>
+      <div class="kpi__value">12</div>
+      <div class="kpi__sub">3 P1 · 5 P2 · 4 P3</div>
+    </div>
+    <div class="kpi kpi--amber">
+      <div class="kpi__label">Avg MTTD</div>
+      <div class="kpi__value">2m 14s</div>
+      <div class="kpi__sub">↓ 18% vs last week</div>
+    </div>
+    <div class="kpi kpi--purple">
+      <div class="kpi__label">Avg MTTA</div>
+      <div class="kpi__value">0m 43s</div>
+      <div class="kpi__sub">Instant acknowledgement</div>
+    </div>
+    <div class="kpi kpi--accent">
+      <div class="kpi__label">Avg MTTR</div>
+      <div class="kpi__value">8m 31s</div>
+      <div class="kpi__sub">↓ 34% vs last week</div>
+    </div>
+    <div class="kpi kpi--green">
+      <div class="kpi__label">Auto-Resolved</div>
+      <div class="kpi__value">84%</div>
+      <div class="kpi__sub">47 of 56 today</div>
+    </div>
+    <div class="kpi kpi--red">
+      <div class="kpi__label">Manual Escalations</div>
+      <div class="kpi__value">9</div>
+      <div class="kpi__sub">Jira tickets created</div>
+    </div>
+  </div>
+
+  <!-- Pipeline Flow -->
+  <div class="pipeline-header">
+    <div class="section-label">Live pipeline — incidents by stage</div>
+    <div style="font-size:10px;color:var(--text-dim)">Updates every 30s</div>
+  </div>
+  <div class="pipeline-flow">
+    <div class="pipeline-stage stage--new">
+      <div class="pipeline-stage__count">247</div>
+      <div class="pipeline-stage__label">Alerts In</div>
+      <div class="pipeline-stage__agent">OpsGenie / JSM</div>
+    </div>
+    <div class="pipeline-arrow">→</div>
+    <div class="pipeline-stage stage--escalated">
+      <div class="pipeline-stage__count">12</div>
+      <div class="pipeline-stage__label">Escalated</div>
+      <div class="pipeline-stage__agent">Alert Analyser</div>
+    </div>
+    <div class="pipeline-arrow">→</div>
+    <div class="pipeline-stage stage--investigating">
+      <div class="pipeline-stage__count">5</div>
+      <div class="pipeline-stage__label">Investigating</div>
+      <div class="pipeline-stage__agent">RCA Agent</div>
+    </div>
+    <div class="pipeline-arrow">→</div>
+    <div class="pipeline-stage stage--rca">
+      <div class="pipeline-stage__count">3</div>
+      <div class="pipeline-stage__label">RCA Complete</div>
+      <div class="pipeline-stage__agent">Action Agent</div>
+    </div>
+    <div class="pipeline-arrow">→</div>
+    <div class="pipeline-stage stage--remediating">
+      <div class="pipeline-stage__count">2</div>
+      <div class="pipeline-stage__label">Remediating</div>
+      <div class="pipeline-stage__agent">Action Agent</div>
+    </div>
+    <div class="pipeline-arrow">→</div>
+    <div class="pipeline-stage stage--resolved">
+      <div class="pipeline-stage__count">47</div>
+      <div class="pipeline-stage__label">Resolved</div>
+      <div class="pipeline-stage__agent">Automated</div>
+    </div>
+    <div class="pipeline-arrow" style="color:var(--red)">⤵</div>
+    <div class="pipeline-stage stage--manual">
+      <div class="pipeline-stage__count">9</div>
+      <div class="pipeline-stage__label">Manual</div>
+      <div class="pipeline-stage__agent">Jira ticket</div>
+    </div>
+  </div>
+
+  <!-- Main Grid -->
+  <div class="main-grid">
+    <div>
+      <!-- Filter bar -->
+      <div class="filter-bar">
+        <button class="filter-btn active">All</button>
+        <button class="filter-btn">Escalated</button>
+        <button class="filter-btn">Investigating</button>
+        <button class="filter-btn">RCA Complete</button>
+        <button class="filter-btn">Remediating</button>
+        <button class="filter-btn">Manual</button>
+        <button class="filter-btn">P1 only</button>
+      </div>
+
+      <!-- Incident table -->
+      <div class="panel">
+        <div class="panel__header">
+          <div class="panel__title">Active Incidents</div>
+          <div class="panel__actions">
+            <button class="btn-sm">Export</button>
+            <button class="btn-sm">Refresh</button>
+          </div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Alert</th>
+              <th>Priority</th>
+              <th>Status</th>
+              <th>Current Agent</th>
+              <th>MTTD</th>
+              <th>MTTA</th>
+              <th>Open For</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span style="font-family:var(--mono);font-size:10px;color:var(--text-muted)">INC-1042</span></td>
+              <td style="max-width:200px;"><div style="font-weight:600;font-size:12px;">DB primary down — payment-service</div><div style="font-size:10px;color:var(--text-muted)">prod · db-primary</div></td>
+              <td><span class="priority-badge p1">P1</span></td>
+              <td><span class="status-pill pill--remediating">Remediating</span></td>
+              <td><span class="agent-tag">action-agent</span></td>
+              <td class="time-cell">1m 02s</td>
+              <td class="time-cell">0m 08s</td>
+              <td class="time-cell" style="color:var(--red)">6m 14s</td>
+            </tr>
+            <tr>
+              <td><span style="font-family:var(--mono);font-size:10px;color:var(--text-muted)">INC-1041</span></td>
+              <td style="max-width:200px;"><div style="font-weight:600;font-size:12px;">High CPU — payment-service (×4)</div><div style="font-size:10px;color:var(--text-muted)">prod · payment-service</div></td>
+              <td><span class="priority-badge p1">P1</span></td>
+              <td><span class="status-pill pill--investigating">Investigating</span></td>
+              <td><span class="agent-tag">rca-agent</span></td>
+              <td class="time-cell">0m 47s</td>
+              <td class="time-cell">0m 12s</td>
+              <td class="time-cell" style="color:var(--amber)">3m 41s</td>
+            </tr>
+            <tr>
+              <td><span style="font-family:var(--mono);font-size:10px;color:var(--text-muted)">INC-1040</span></td>
+              <td style="max-width:200px;"><div style="font-weight:600;font-size:12px;">Kafka consumer lag — order-service</div><div style="font-size:10px;color:var(--text-muted)">prod · kafka-cluster-1</div></td>
+              <td><span class="priority-badge p2">P2</span></td>
+              <td><span class="status-pill pill--rca">RCA Complete</span></td>
+              <td><span class="agent-tag">action-agent</span></td>
+              <td class="time-cell">1m 28s</td>
+              <td class="time-cell">0m 09s</td>
+              <td class="time-cell">5m 02s</td>
+            </tr>
+            <tr>
+              <td><span style="font-family:var(--mono);font-size:10px;color:var(--text-muted)">INC-1039</span></td>
+              <td style="max-width:200px;"><div style="font-weight:600;font-size:12px;">S3 latency spike — reporting pipeline</div><div style="font-size:10px;color:var(--text-muted)">prod · s3-eu-west-1</div></td>
+              <td><span class="priority-badge p2">P2</span></td>
+              <td><span class="status-pill pill--investigating">Investigating</span></td>
+              <td><span class="agent-tag">rca-agent</span></td>
+              <td class="time-cell">2m 11s</td>
+              <td class="time-cell">0m 15s</td>
+              <td class="time-cell">4m 18s</td>
+            </tr>
+            <tr>
+              <td><span style="font-family:var(--mono);font-size:10px;color:var(--text-muted)">INC-1038</span></td>
+              <td style="max-width:200px;"><div style="font-weight:600;font-size:12px;">Memory threshold — auth-service</div><div style="font-size:10px;color:var(--text-muted)">staging · auth-service</div></td>
+              <td><span class="priority-badge p3">P3</span></td>
+              <td><span class="status-pill pill--escalated">Escalated</span></td>
+              <td><span class="agent-tag">rca-agent</span></td>
+              <td class="time-cell">3m 05s</td>
+              <td class="time-cell">0m 22s</td>
+              <td class="time-cell">3m 55s</td>
+            </tr>
+            <tr>
+              <td><span style="font-family:var(--mono);font-size:10px;color:var(--text-muted)">INC-1037</span></td>
+              <td style="max-width:200px;"><div style="font-weight:600;font-size:12px;">EC2 instance unreachable — batch jobs</div><div style="font-size:10px;color:var(--text-muted)">prod · i-0a3f5e8b1c2d</div></td>
+              <td><span class="priority-badge p1">P1</span></td>
+              <td><span class="status-pill pill--manual">Manual</span></td>
+              <td><span class="agent-tag">jira · OPS-2841</span></td>
+              <td class="time-cell">0m 58s</td>
+              <td class="time-cell">0m 06s</td>
+              <td class="time-cell" style="color:var(--red)">12m 33s</td>
+            </tr>
+            <tr>
+              <td><span style="font-family:var(--mono);font-size:10px;color:var(--text-muted)">INC-1036</span></td>
+              <td style="max-width:200px;"><div style="font-weight:600;font-size:12px;">Certificate expiry — api-gateway</div><div style="font-size:10px;color:var(--text-muted)">prod · api-gateway-eu</div></td>
+              <td><span class="priority-badge p2">P2</span></td>
+              <td><span class="status-pill pill--remediating">Remediating</span></td>
+              <td><span class="agent-tag">action-agent</span></td>
+              <td class="time-cell">1m 44s</td>
+              <td class="time-cell">0m 11s</td>
+              <td class="time-cell">2m 08s</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Recent resolutions -->
+      <div class="panel">
+        <div class="panel__header">
+          <div class="panel__title">Recently Resolved — last 2 hours</div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Alert</th>
+              <th>Priority</th>
+              <th>Resolution</th>
+              <th>MTTR</th>
+              <th>RAG updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span style="font-family:var(--mono);font-size:10px;color:var(--text-muted)">INC-1035</span></td>
+              <td style="max-width:200px;"><div style="font-weight:600;font-size:12px;">High error rate — checkout-service</div><div style="font-size:10px;color:var(--text-muted)">prod</div></td>
+              <td><span class="priority-badge p1">P1</span></td>
+              <td><span style="font-size:11px;color:var(--green)">✓ Jenkins job deployed hotfix</span></td>
+              <td class="time-cell" style="color:var(--green)">4m 12s</td>
+              <td><span style="font-size:10px;color:var(--amber)">✓ Pattern stored</span></td>
+            </tr>
+            <tr>
+              <td><span style="font-family:var(--mono);font-size:10px;color:var(--text-muted)">INC-1034</span></td>
+              <td style="max-width:200px;"><div style="font-weight:600;font-size:12px;">Disk usage — log aggregator (×3)</div><div style="font-size:10px;color:var(--text-muted)">prod</div></td>
+              <td><span class="priority-badge p3">P3</span></td>
+              <td><span style="font-size:11px;color:var(--green)">✓ Auto log rotation triggered</span></td>
+              <td class="time-cell" style="color:var(--green)">1m 58s</td>
+              <td><span style="font-size:10px;color:var(--amber)">✓ Pattern stored</span></td>
+            </tr>
+            <tr>
+              <td><span style="font-family:var(--mono);font-size:10px;color:var(--text-muted)">INC-1033</span></td>
+              <td style="max-width:200px;"><div style="font-weight:600;font-size:12px;">RDS connection pool exhausted</div><div style="font-size:10px;color:var(--text-muted)">prod</div></td>
+              <td><span class="priority-badge p2">P2</span></td>
+              <td><span style="font-size:11px;color:var(--green)">✓ Pool size increased via param group</span></td>
+              <td class="time-cell" style="color:var(--green)">6m 44s</td>
+              <td><span style="font-size:10px;color:var(--amber)">✓ Pattern stored</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="sidebar">
+
+      <!-- Agent health -->
+      <div class="panel">
+        <div class="panel__header">
+          <div class="panel__title">Agent Status</div>
+        </div>
+        <div class="agent-row">
+          <div class="agent-row__left">
+            <div class="agent-indicator agent-indicator--busy"></div>
+            <div>
+              <div class="agent-name">Alert Analyser</div>
+              <div class="agent-status">Processing 247 alerts · 12 escalated</div>
+            </div>
+          </div>
+          <div class="agent-metric">
+            <div class="agent-metric__val" style="color:var(--green)">99.2%</div>
+            <div class="agent-metric__label">accuracy</div>
+          </div>
+        </div>
+        <div class="agent-row">
+          <div class="agent-row__left">
+            <div class="agent-indicator agent-indicator--busy"></div>
+            <div>
+              <div class="agent-name">RCA Agent</div>
+              <div class="agent-status">Investigating 5 incidents</div>
+            </div>
+          </div>
+          <div class="agent-metric">
+            <div class="agent-metric__val" style="color:var(--purple)">1m 48s</div>
+            <div class="agent-metric__label">avg RCA time</div>
+          </div>
+        </div>
+        <div class="agent-row">
+          <div class="agent-row__left">
+            <div class="agent-indicator agent-indicator--busy"></div>
+            <div>
+              <div class="agent-name">Action Agent</div>
+              <div class="agent-status">Remediating 2 · awaiting 3</div>
+            </div>
+          </div>
+          <div class="agent-metric">
+            <div class="agent-metric__val" style="color:var(--accent)">84%</div>
+            <div class="agent-metric__label">auto-resolve</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RAG Knowledge Base -->
+      <div class="panel">
+        <div class="panel__header">
+          <div class="panel__title">RAG Knowledge Base</div>
+        </div>
+        <div class="rag-row">
+          <div class="rag-icon" style="background:rgba(255,107,53,.15);color:var(--orange)">📋</div>
+          <div class="rag-label">Alert patterns stored</div>
+          <div class="rag-val">1,247</div>
+        </div>
+        <div class="rag-row">
+          <div class="rag-icon" style="background:rgba(188,140,255,.15);color:var(--purple)">🔍</div>
+          <div class="rag-label">RCA findings indexed</div>
+          <div class="rag-val">389</div>
+        </div>
+        <div class="rag-row">
+          <div class="rag-icon" style="background:rgba(56,139,253,.15);color:var(--accent)">⚡</div>
+          <div class="rag-label">Remediation playbooks</div>
+          <div class="rag-val">142</div>
+        </div>
+        <div class="rag-row">
+          <div class="rag-icon" style="background:rgba(63,185,80,.15);color:var(--green)">✓</div>
+          <div class="rag-label">RAG hits today</div>
+          <div class="rag-val" style="color:var(--green)">38</div>
+        </div>
+        <div class="rag-row">
+          <div class="rag-icon" style="background:rgba(210,153,34,.15);color:var(--amber)">📈</div>
+          <div class="rag-label">New patterns learned</div>
+          <div class="rag-val" style="color:var(--amber)">+6 today</div>
+        </div>
+      </div>
+
+      <!-- Incident timeline -->
+      <div class="panel">
+        <div class="panel__header">
+          <div class="panel__title">INC-1042 — Live Audit Trail</div>
+        </div>
+        <div class="timeline">
+          <div class="tl-item">
+            <div class="tl-dot" style="background:rgba(255,107,53,.15);color:var(--orange)">🔔</div>
+            <div class="tl-body">
+              <div class="tl-agent">Alert Analyser</div>
+              <div class="tl-text">Genuine alert detected. Deduplicated 3 duplicates. Enriched with account context. No RAG hit — new pattern.</div>
+              <div class="tl-time">04:31:02</div>
+            </div>
+          </div>
+          <div class="tl-item">
+            <div class="tl-dot" style="background:rgba(255,107,53,.15);color:var(--orange)">📋</div>
+            <div class="tl-body">
+              <div class="tl-agent">Alert Analyser</div>
+              <div class="tl-text">Ticket INC-1042 created. Status → ESCALATED.</div>
+              <div class="tl-time">04:31:04</div>
+            </div>
+          </div>
+          <div class="tl-item">
+            <div class="tl-dot" style="background:rgba(188,140,255,.15);color:var(--purple)">🔍</div>
+            <div class="tl-body">
+              <div class="tl-agent">RCA Agent</div>
+              <div class="tl-text">Picked up ticket. Queried logs, metrics, deployment history. Root cause: failed migration at 04:28.</div>
+              <div class="tl-time">04:31:47</div>
+            </div>
+          </div>
+          <div class="tl-item">
+            <div class="tl-dot" style="background:rgba(188,140,255,.15);color:var(--purple)">📝</div>
+            <div class="tl-body">
+              <div class="tl-agent">RCA Agent</div>
+              <div class="tl-text">Findings written to ticket. Recommended: trigger rollback job. Status → RCA_COMPLETE.</div>
+              <div class="tl-time">04:32:51</div>
+            </div>
+          </div>
+          <div class="tl-item">
+            <div class="tl-dot" style="background:rgba(56,139,253,.15);color:var(--accent)" style="animation:pulse 1s infinite">⚡</div>
+            <div class="tl-body">
+              <div class="tl-agent">Action Agent</div>
+              <div class="tl-text">Jenkins job <code style="font-size:10px;background:var(--surface-2);padding:1px 4px;border-radius:3px">db-rollback-prod</code> triggered. Monitoring execution…</div>
+              <div class="tl-time">04:33:06 · in progress</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 24h trend -->
+      <div class="panel">
+        <div class="panel__header">
+          <div class="panel__title">24h Incident Volume</div>
+        </div>
+        <div class="mini-chart">
+          <div class="chart-bars">
+            <div class="chart-bar" style="height:30%;background:var(--border)"></div>
+            <div class="chart-bar" style="height:20%;background:var(--border)"></div>
+            <div class="chart-bar" style="height:45%;background:var(--border)"></div>
+            <div class="chart-bar" style="height:60%;background:var(--border)"></div>
+            <div class="chart-bar" style="height:35%;background:var(--border)"></div>
+            <div class="chart-bar" style="height:25%;background:var(--border)"></div>
+            <div class="chart-bar" style="height:40%;background:var(--border)"></div>
+            <div class="chart-bar" style="height:55%;background:var(--border)"></div>
+            <div class="chart-bar" style="height:70%;background:var(--border)"></div>
+            <div class="chart-bar" style="height:85%;background:var(--orange);opacity:.8"></div>
+            <div class="chart-bar" style="height:90%;background:var(--orange);opacity:.9"></div>
+            <div class="chart-bar" style="height:100%;background:var(--orange)"></div>
+          </div>
+          <div class="chart-labels">
+            <span>00:00</span>
+            <span>06:00</span>
+            <span>12:00</span>
+            <span>18:00</span>
+            <span>now</span>
+          </div>
+          <div style="margin-top:10px;display:flex;gap:16px;">
+            <div style="font-size:10px;"><span style="color:var(--text-muted)">Total today</span> <span style="font-weight:700;font-family:var(--mono)">56</span></div>
+            <div style="font-size:10px;"><span style="color:var(--text-muted)">Auto-resolved</span> <span style="font-weight:700;font-family:var(--mono);color:var(--green)">47</span></div>
+            <div style="font-size:10px;"><span style="color:var(--text-muted)">Manual</span> <span style="font-weight:700;font-family:var(--mono);color:var(--red)">9</span></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+  // Live clock
+  function tick() {
+    const now = new Date();
+    document.getElementById('clock').textContent = now.toTimeString().slice(0,8);
+  }
+  tick();
+  setInterval(tick, 1000);
+
+  // Filter buttons
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
+</script>
+
+
+</div>
+</div>
+<script>
+  document.querySelectorAll('.oi-sidebar__group-label').forEach(function(label) {
+    label.addEventListener('click', function() {
+      label.parentElement.classList.toggle('collapsed');
+    });
+  });
+</script>
+</body>
+</html>

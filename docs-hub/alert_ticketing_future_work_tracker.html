@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Operative Intelligence — Future Work Tracker</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --surface: #ffffff; --surface-2: #f0f1f4; --border: #e2e5ea;
+    --text: #1a1d23; --text-muted: #667085; --text-dim: #98a2b3;
+    --accent: #2563eb; --orange: #ea580c; --green: #16a34a; --purple: #a855f7;
+    --amber: #d97706; --red: #dc2626; --r: 10px; --r-sm: 6px;
+    --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; line-height: 1.6; }
+  .topbar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 32px; display: flex; align-items: center; justify-content: space-between; height: 60px; position: sticky; top: 0; z-index: 100; }
+  .topbar__brand { font-size: 14px; font-weight: 700; }
+  .topbar__brand a { color: var(--text-muted); text-decoration: none; font-weight: 500; }
+  .topbar__right { font-size: 12px; color: var(--text-muted); font-family: var(--mono); }
+  .page { max-width: 960px; margin: 0 auto; padding: 40px 32px 80px; }
+  h1 { font-size: 26px; margin-bottom: 8px; }
+  .subtitle { color: var(--text-muted); font-size: 14px; margin-bottom: 32px; }
+  .filter-bar { display: flex; gap: 8px; margin-bottom: 24px; flex-wrap: wrap; }
+  .filter-chip { font-size: 11.5px; font-weight: 600; padding: 5px 12px; border-radius: 20px; border: 1px solid var(--border); background: var(--surface); color: var(--text-muted); }
+  .item { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 18px 20px; margin-bottom: 14px; position: relative; overflow: hidden; }
+  .item::before { content: ''; position: absolute; top: 0; left: 0; bottom: 0; width: 3px; }
+  .item--high::before { background: var(--red); }
+  .item--medium::before { background: var(--amber); }
+  .item--low::before { background: var(--text-dim); }
+  .item__header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; flex-wrap: wrap; gap: 8px; }
+  .item__title { font-size: 14.5px; font-weight: 700; }
+  .badge { display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 3px 9px; border-radius: 4px; }
+  .badge--high { background: rgba(220,38,38,.1); color: var(--red); }
+  .badge--medium { background: rgba(217,119,6,.1); color: var(--amber); }
+  .badge--low { background: rgba(102,112,133,.1); color: var(--text-muted); }
+  .item__desc { font-size: 13px; color: var(--text); margin-bottom: 10px; }
+  .item__meta { display: flex; gap: 16px; flex-wrap: wrap; font-size: 11.5px; color: var(--text-dim); }
+  .item__meta code { font-family: var(--mono); background: var(--surface-2); padding: 1px 6px; border-radius: 4px; color: var(--text-muted); }
+  h2.section-title { font-size: 15px; margin: 36px 0 14px; padding-bottom: 8px; border-bottom: 2px solid var(--border); color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; font-size: 12px; }
+  footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--text-dim); }
+</style>
+
+<style>
+  .oi-shell { display: flex; min-height: 100vh; }
+  .oi-sidebar { width: 220px; background: #ffffff; border-right: 1px solid #e2e5ea; padding: 20px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; flex-shrink: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .oi-sidebar__brand { font-size: 13px; font-weight: 700; padding: 0 20px 16px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #e2e5ea; margin-bottom: 10px; color: #1a1d23; }
+  .oi-sidebar__brand .dot { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; flex-shrink: 0; }
+  .oi-sidebar__group-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #98a2b3; padding: 10px 20px 6px; }
+  .oi-sidebar__link { display: block; padding: 6px 20px; font-size: 12px; color: #667085; text-decoration: none; border-left: 2px solid transparent; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .oi-sidebar__link:hover { background: #f0f1f4; color: #1a1d23; }
+  .oi-sidebar__link.active { color: #2563eb; border-left-color: #2563eb; background: #f0f1f4; font-weight: 600; }
+  .oi-sidebar__link--disabled { color: #98a2b3; font-style: italic; cursor: default; }
+  
+  .oi-sidebar__group-label { cursor: pointer; display: flex; align-items: center; justify-content: space-between; user-select: none; }
+  .oi-sidebar__group-label .oi-caret { transition: transform .15s; font-size: 9px; }
+  .oi-sidebar__group.collapsed .oi-caret { transform: rotate(-90deg); }
+  .oi-sidebar__group.collapsed .oi-sidebar__links { display: none; }
+
+  .oi-main { flex: 1; min-width: 0; overflow-x: auto; }
+</style>
+</head>
+<body><div class="oi-shell">
+<div class="oi-sidebar">
+  <div class="oi-sidebar__brand"><span class="dot"></span> Operative Intelligence</div>
+  <div class="oi-sidebar__group">
+    <div class="oi-sidebar__group-label">Incident Response <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="operative_intelligence_agentic_pipeline.html">Agentic Pipeline Concept</a>
+    <a class="oi-sidebar__link" href="operative_intelligence_pipeline.html">Agent Pipeline Overview</a>
+    <a class="oi-sidebar__link" href="incident_pipeline_monitor.html">Pipeline Monitor (Mockup)</a>
+    <a class="oi-sidebar__link" href="alert_ticketing_functional_spec.html">Functional Specification</a>
+    <a class="oi-sidebar__link active" href="alert_ticketing_future_work_tracker.html">Future Work Tracker</a>
+  </div></div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">CUR Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <span class="oi-sidebar__link oi-sidebar__link--disabled">Coming soon</span>
+  </div></div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">Kafka Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <span class="oi-sidebar__link oi-sidebar__link--disabled">Coming soon</span>
+  </div></div>
+</div>
+<div class="oi-main">
+
+
+<div class="topbar">
+  <div class="topbar__brand"><a href="index.html">← Docs Hub</a></div>
+  <div class="topbar__right">alert-analyser</div>
+</div>
+
+<div class="page">
+  <h1>Future Work Tracker</h1>
+  <div class="subtitle">Live tracker of flagged gaps, placeholders, and pending follow-ups across the Alert Ticketing / Escalated Incidents feature. Update this whenever new work is deferred or an item below is completed.</div>
+
+  <h2 class="section-title">High Priority</h2>
+
+  <div class="item item--high">
+    <div class="item__header">
+      <div class="item__title">OpsGenie status field is unreliable for resolution detection</div>
+      <span class="badge badge--high">High</span>
+    </div>
+    <div class="item__desc">Source tools (New Relic, Check_MK, etc.) frequently update the alert's <code>message</code>/title field (e.g. "closed CRITICAL...", "Resolved: ...") upon resolution, without ever changing OpsGenie's own <code>status</code> field. Our ticket-creation skip and reconciliation logic currently only check <code>status</code>, so a large number of already-resolved-at-source alerts remain open as ESCALATED tickets. Confirmed via direct query: multiple tickets have <code>opsgenie_status = "open"</code> while their message clearly says "closed"/"resolved". Evidence has been escalated to TOC head to address at the process level; code fix (parsing message field as a secondary/primary resolution signal) is pending proper restructuring.</div>
+    <div class="item__meta">
+      <span>Location: <code>agents/alert-analyser/routes_settings.py</code> — ticket creation skip + reconciliation blocks</span>
+      <span>Flagged: 3 Jul 2026</span>
+    </div>
+  </div>
+
+  <div class="item item--high">
+    <div class="item__header">
+      <div class="item__title">Test/dirty ticket data from initial full-sync</div>
+      <span class="badge badge--high">High</span>
+    </div>
+    <div class="item__desc">First full-sync run against production OpsGenie data created ~4,723 tickets in one batch (after truncation and re-sync during this session's testing). This is a realistic baseline snapshot of currently-open genuine incidents, not fabricated test data, but it inflates "created" timestamps to a single point in time and should be reviewed before treating metrics like ticket age or creation-rate as meaningful. No further action needed unless a clean historical baseline is required.</div>
+    <div class="item__meta">
+      <span>Table: <code>incident_management.incidents</code></span>
+      <span>Flagged: 2 Jul 2026</span>
+    </div>
+  </div>
+
+  <h2 class="section-title">Medium Priority</h2>
+
+  <div class="item item--medium">
+    <div class="item__header">
+      <div class="item__title">Resolution ring "auto_resolved" vs "action_resolved" split is inferred, not explicit</div>
+      <span class="badge badge--medium">Medium</span>
+    </div>
+    <div class="item__desc">In <code>GET /dashboard/incidents</code>, any ticket with <code>status=RESOLVED</code> and <code>resolved_externally=FALSE</code> is currently classified as "auto_resolved" purely because no Action agent exists yet to properly close tickets it worked on. Once an Action agent is built, it must explicitly set a proper resolution-type signal when it closes a ticket (e.g. a dedicated <code>resolution_type</code> field), rather than this being inferred from the absence of the externally-resolved flag.</div>
+    <div class="item__meta">
+      <span>Location: <code>agents/alert-analyser/routes_dashboard.py</code> — resolution_ring calculation</span>
+      <span>Flagged: 3 Jul 2026</span>
+    </div>
+  </div>
+
+  <div class="item item--medium">
+    <div class="item__header">
+      <div class="item__title">"NEW GENUINE" dashboard metric was mislabeled (Overview + Genuine Alerts tabs)</div>
+      <span class="badge badge--medium">Medium</span>
+    </div>
+    <div class="item__desc">Originally counted genuine-classified alert events in a time window, including re-firings of already-ticketed/open incidents — not first-time-ever new incidents. Fixed this session: both tabs now show true <code>new_incidents_count</code> (from the incidents table) as the headline number, with total events and recurring count as sub-text. Included here for traceability since it changed user-facing numbers.</div>
+    <div class="item__meta">
+      <span>Status: <strong style="color:var(--green)">Resolved 3 Jul 2026</strong></span>
+      <span>Location: <code>routes_dashboard.py</code> — get_period_summary(), get_dashboard()</span>
+    </div>
+  </div>
+
+  <h2 class="section-title">Low Priority / Deferred (Blocked on Future Agents)</h2>
+
+  <div class="item item--low">
+    <div class="item__header">
+      <div class="item__title">Priority-lanes ticket-list endpoint</div>
+      <span class="badge badge--low">Done</span>
+    </div>
+    <div class="item__desc">Originally flagged as missing; built and verified this session as <code>GET /dashboard/incidents/list</code>, now powering the kanban priority lanes with SLA breach flags.</div>
+    <div class="item__meta"><span>Status: <strong style="color:var(--green)">Resolved 3 Jul 2026</strong></span></div>
+  </div>
+
+  <div class="item item--low">
+    <div class="item__header">
+      <div class="item__title">Backlog volume management for RCA/Action agent consumption</div>
+      <span class="badge badge--low">Deferred</span>
+    </div>
+    <div class="item__desc">With thousands of ESCALATED tickets sitting unconsumed (no RCA/Action agent exists yet), a future concern is throttling/prioritizing what those agents pick up first, so they aren't overwhelmed on day one. Decision: this should be solved on the consumer side (RCA agent's polling/batching logic — oldest/highest-priority first, batch size limits) rather than the producer side (ticket creation), which should continue to reflect true state. No code changes needed until RCA agent design begins.</div>
+    <div class="item__meta"><span>Depends on: RCA Agent (not yet built)</span></div>
+  </div>
+
+  <div class="item item--low">
+    <div class="item__header">
+      <div class="item__title">Target Resolution SLA metric not yet used</div>
+      <span class="badge badge--low">Deferred</span>
+    </div>
+    <div class="item__desc">The proposed SLA policy includes both Target Response (implemented, drives the Aging panel breach flag) and Target Resolution (2h/4h/8h/3 business days by priority) — the latter is not actionable yet since no Action agent exists to actually close tickets on a timeline. Revisit once Action agent is designed.</div>
+    <div class="item__meta"><span>Depends on: Action Agent (not yet built)</span></div>
+  </div>
+
+  <div class="item item--low">
+    <div class="item__header">
+      <div class="item__title">SLA threshold policy is proposed, not org-adopted</div>
+      <span class="badge badge--low">Note</span>
+    </div>
+    <div class="item__desc">The P1–P4 SLA thresholds currently implemented in code were proposed internally (no formal human sign-off exists yet). Being used now to drive the agentic pipeline's prioritization since no alternative policy exists. Revisit thresholds if/when a formal policy is agreed.</div>
+    <div class="item__meta"><span>Location: <code>agents/alert-analyser/routes_dashboard.py</code> — sla thresholds; also mirrored in dashboard.html kanban labels</span></div>
+  </div>
+
+  <h2 class="section-title">Cross-Session Protocol</h2>
+  <div class="item item--low">
+    <div class="item__header">
+      <div class="item__title">Parallel rebranded workstream — verification protocol</div>
+      <span class="badge badge--low">Ongoing</span>
+    </div>
+    <div class="item__desc">A separately branded product is developed in parallel under a different Claude account using the same codebase (pull/rebrand only, never pushes back). Suggestions arriving from that session must be treated as unverified claims — always confirm against live <code>git log</code>/<code>grep</code> output in this repo before acting, not the other session's PDF summaries. This has caused at least one documented incident where a claimed fix was not actually live in this repo.</div>
+    <div class="item__meta"><span>Reference: prior handoff PDF, 30 June 2026</span></div>
+  </div>
+
+  <footer>Operative Intelligence — Internal Platforms Engineering · Last updated 3 July 2026</footer>
+</div>
+
+
+</div>
+</div>
+<script>
+  document.querySelectorAll('.oi-sidebar__group-label').forEach(function(label) {
+    label.addEventListener('click', function() {
+      label.parentElement.classList.toggle('collapsed');
+    });
+  });
+</script>
+</body>
+</html>

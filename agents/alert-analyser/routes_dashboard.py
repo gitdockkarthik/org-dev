@@ -132,6 +132,58 @@ async def get_dashboard(
                     else:
                         stats = _json.loads(latest.stats_data) \
                             if latest.stats_data else {}
+
+                    # Query incidents for period
+                    new_incidents_count = 0
+                    recurring_incidents_count = 0
+                    try:
+                        from sqlalchemy import text
+                        from datetime import datetime, timezone
+                        _fd = from_date.replace('T', ' ') if from_date else None
+                        _td = to_date.replace('T', ' ') if to_date else None
+                        incident_params = {}
+
+                        if _fd:
+                            try:
+                                incident_params["period_start"] = datetime.strptime(
+                                    _fd, '%Y-%m-%d %H:%M'
+                                ).replace(tzinfo=timezone.utc)
+                            except ValueError:
+                                incident_params["period_start"] = datetime.strptime(
+                                    _fd, '%Y-%m-%d'
+                                ).replace(tzinfo=timezone.utc)
+
+                        if _td:
+                            try:
+                                incident_params["period_end"] = datetime.strptime(
+                                    _td, '%Y-%m-%d %H:%M'
+                                ).replace(tzinfo=timezone.utc)
+                            except ValueError:
+                                incident_params["period_end"] = datetime.strptime(
+                                    _td + ' 23:59:59', '%Y-%m-%d %H:%M:%S'
+                                ).replace(tzinfo=timezone.utc)
+
+                        if incident_params.get("period_start") and incident_params.get("period_end"):
+                            async with SessionLocal() as incident_sess:
+                                incident_result = await incident_sess.execute(
+                                    text("""
+                                        SELECT COUNT(DISTINCT alert_id) as incident_count
+                                        FROM incident_management.incidents
+                                        WHERE (alert_payload->>'createdAt')::timestamptz BETWEEN :period_start AND :period_end
+                                    """),
+                                    incident_params
+                                )
+                                incident_row = incident_result.fetchone()
+                                if incident_row:
+                                    new_incidents_count = int(incident_row.incident_count or 0)
+                    except Exception as _ie:
+                        import logging
+                        logging.getLogger(__name__).error(f"dashboard incident query error: {_ie}")
+
+                    recurring_incidents_count = max(0, stats.get("genuine_count", 0) - new_incidents_count)
+                    stats["new_incidents_count"] = new_incidents_count
+                    stats["recurring_incidents_count"] = recurring_incidents_count
+
                     return {
                         "stats": _ensure_dedup_fields(stats),
                         "report": {
@@ -153,6 +205,34 @@ async def get_dashboard(
     stats = get_latest_stats()
     if stats is None:
         return {"empty": True}
+
+    # Query all incidents (no date filter) for all-time view
+    new_incidents_count = 0
+    recurring_incidents_count = 0
+    try:
+        from database import SessionLocal
+        from sqlalchemy import text
+        import logging
+        _log = logging.getLogger(__name__)
+        if SessionLocal is not None:
+            async with SessionLocal() as sess:
+                incident_result = await sess.execute(
+                    text("""
+                        SELECT COUNT(DISTINCT alert_id) as incident_count
+                        FROM incident_management.incidents
+                    """)
+                )
+                incident_row = incident_result.fetchone()
+                if incident_row:
+                    new_incidents_count = int(incident_row.incident_count or 0)
+    except Exception as _ie:
+        import logging
+        logging.getLogger(__name__).error(f"dashboard all-time incident query error: {_ie}")
+
+    recurring_incidents_count = max(0, stats.get("genuine_count", 0) - new_incidents_count)
+    stats["new_incidents_count"] = new_incidents_count
+    stats["recurring_incidents_count"] = recurring_incidents_count
+
     return {
         "stats": _ensure_dedup_fields(stats),
         "report": get_latest_meta(),
@@ -276,6 +356,54 @@ async def get_period_summary(
                     raw_classified, from_date, to_date
                 )
                 stats = compute_dashboard_stats(filtered)
+
+                # Query incident_management.incidents for period
+                new_incidents_count = 0
+                recurring_incidents_count = 0
+                try:
+                    async with SessionLocal() as incident_sess:
+                        # Convert from_date/to_date to datetime for incident query
+                        _fd = from_date.replace('T', ' ') if from_date else None
+                        _td = to_date.replace('T', ' ') if to_date else None
+                        incident_params = {}
+
+                        if _fd:
+                            try:
+                                incident_params["period_start"] = datetime.strptime(
+                                    _fd, '%Y-%m-%d %H:%M'
+                                ).replace(tzinfo=timezone.utc)
+                            except ValueError:
+                                incident_params["period_start"] = datetime.strptime(
+                                    _fd, '%Y-%m-%d'
+                                ).replace(tzinfo=timezone.utc)
+
+                        if _td:
+                            try:
+                                incident_params["period_end"] = datetime.strptime(
+                                    _td, '%Y-%m-%d %H:%M'
+                                ).replace(tzinfo=timezone.utc)
+                            except ValueError:
+                                incident_params["period_end"] = datetime.strptime(
+                                    _td + ' 23:59:59', '%Y-%m-%d %H:%M:%S'
+                                ).replace(tzinfo=timezone.utc)
+
+                        if incident_params.get("period_start") and incident_params.get("period_end"):
+                            incident_result = await incident_sess.execute(
+                                text("""
+                                    SELECT COUNT(DISTINCT alert_id) as incident_count
+                                    FROM incident_management.incidents
+                                    WHERE (alert_payload->>'createdAt')::timestamptz BETWEEN :period_start AND :period_end
+                                """),
+                                incident_params
+                            )
+                            incident_row = incident_result.fetchone()
+                            if incident_row:
+                                new_incidents_count = int(incident_row.incident_count or 0)
+                except Exception as _ie:
+                    _log.error(f"period_summary incident query error: {_ie}")
+
+                recurring_incidents_count = max(0, stats["genuine_count"] - new_incidents_count)
+
                 return {
                     "empty": False,
                     "new_alerts": stats["total"],
@@ -290,6 +418,8 @@ async def get_period_summary(
                     "genuine_duplicates": stats.get("genuine_duplicates", 0),
                     "noise_duplicates": stats.get("noise_duplicates", 0),
                     "suspect_duplicates": stats.get("suspect_duplicates", 0),
+                    "new_incidents_count": new_incidents_count,
+                    "recurring_incidents_count": recurring_incidents_count,
                 }
             # No report ingested in range — fall through to the synced_at path.
         except Exception as _e:
@@ -356,12 +486,37 @@ async def get_period_summary(
             result = await sess.execute(text(sql), params)
             row = result.fetchone()
 
+            # Query incidents for period
+            new_incidents_count = 0
+            recurring_incidents_count = 0
+            try:
+                if params.get("from_date") and params.get("to_date"):
+                    incident_result = await sess.execute(
+                        text("""
+                            SELECT COUNT(DISTINCT alert_id) as incident_count
+                            FROM incident_management.incidents
+                            WHERE created_at BETWEEN :period_start AND :period_end
+                        """),
+                        {"period_start": params["from_date"], "period_end": params["to_date"]}
+                    )
+                    incident_row = incident_result.fetchone()
+                    if incident_row:
+                        new_incidents_count = int(incident_row.incident_count or 0)
+            except Exception as _ie:
+                _log.error(f"period_summary incident query error: {_ie}")
+
+            # Compute recurring as genuine_count - new_incidents (floor at 0)
+            new_genuine = int(row.new_genuine or 0) if row else 0
+            recurring_incidents_count = max(0, new_genuine - new_incidents_count)
+
         if not row or not row.sync_count:
             return {
                 "empty": True,
                 "sync_count": 0,
                 "oldest_date": oldest_date,
                 "newest_date": newest_date,
+                "new_incidents_count": 0,
+                "recurring_incidents_count": 0,
             }
 
         return {
@@ -379,7 +534,285 @@ async def get_period_summary(
             "avg_never_acked_pct": round(float(row.avg_never_acked_pct), 1) if row.avg_never_acked_pct else None,
             "oldest_date": oldest_date,
             "newest_date": newest_date,
+            "new_incidents_count": new_incidents_count,
+            "recurring_incidents_count": recurring_incidents_count,
         }
     except Exception as e:
         _log.error(f"period_summary error: {e}")
         return {"empty": True}
+
+
+@router.get("/dashboard/incidents")
+async def get_incidents() -> dict:
+    """Return incident pipeline flow, aging analysis, resolution metrics, and recurrence signal."""
+    from database import SessionLocal
+    from sqlalchemy import text
+    from datetime import datetime, timezone
+    from fastapi import HTTPException
+    import logging
+    _log = logging.getLogger(__name__)
+
+    if SessionLocal is None:
+        return {"empty": True}
+
+    try:
+        async with SessionLocal() as sess:
+            # 1. Pipeline flow: count by status (all 6 statuses always present)
+            result = await sess.execute(text("""
+                SELECT status, COUNT(*) as cnt
+                FROM incident_management.incidents
+                GROUP BY status
+            """))
+            status_rows = result.fetchall()
+            status_counts = {row.status: row.cnt for row in status_rows}
+            pipeline_flow = [
+                {"status": s, "count": status_counts.get(s, 0)}
+                for s in ["ESCALATED", "INVESTIGATING", "RCA_COMPLETE", "REMEDIATING", "RESOLVED", "MANUAL"]
+            ]
+
+            # 2. Aging buckets: only non-resolved/manual, bucketed by time waiting
+            result = await sess.execute(text("""
+                SELECT EXTRACT(EPOCH FROM (NOW() - COALESCE(escalated_at, created_at)))/60 as minutes_waiting
+                FROM incident_management.incidents
+                WHERE status NOT IN ('RESOLVED', 'MANUAL')
+            """))
+            aging_rows = result.fetchall()
+            bucket_0_5 = sum(1 for r in aging_rows if r.minutes_waiting is not None and 0 <= r.minutes_waiting < 5)
+            bucket_5_15 = sum(1 for r in aging_rows if r.minutes_waiting is not None and 5 <= r.minutes_waiting < 15)
+            bucket_15_plus = sum(1 for r in aging_rows if r.minutes_waiting is not None and r.minutes_waiting >= 15)
+            aging_buckets = [
+                {"bucket": "0-5m", "count": bucket_0_5},
+                {"bucket": "5-15m", "count": bucket_5_15},
+                {"bucket": "15m+", "count": bucket_15_plus},
+            ]
+
+            # 2b. SLA breach detection: priority-based response time policy (minutes)
+            sla_thresholds = {"P1": 15, "P2": 30, "P3": 60, "P4": 240}
+            breached_count = 0
+            within_sla_count = 0
+            try:
+                # Query active tickets with minutes_waiting and priority
+                result = await sess.execute(text("""
+                    SELECT priority,
+                           EXTRACT(EPOCH FROM (NOW() - COALESCE(escalated_at, created_at)))/60 as minutes_waiting
+                    FROM incident_management.incidents
+                    WHERE status NOT IN ('RESOLVED', 'MANUAL')
+                """))
+                sla_rows = result.fetchall()
+                for row in sla_rows:
+                    if row.minutes_waiting is not None:
+                        threshold = sla_thresholds.get(row.priority, 240)
+                        if row.minutes_waiting > threshold:
+                            breached_count += 1
+                        else:
+                            within_sla_count += 1
+            except Exception as _sla_e:
+                _log.error(f"SLA breach calculation error: {_sla_e}")
+
+            total_sla = breached_count + within_sla_count
+            breach_pct = (breached_count / total_sla * 100) if total_sla > 0 else 0
+            sla_breach = {
+                "breached_count": breached_count,
+                "within_sla_count": within_sla_count,
+                "breach_pct": round(breach_pct, 1),
+            }
+
+            # 3. Aging longest wait: single ticket with max age (non-resolved/manual)
+            result = await sess.execute(text("""
+                SELECT id, alert_id, title,
+                       EXTRACT(EPOCH FROM (NOW() - COALESCE(escalated_at, created_at)))/60 as minutes_waiting
+                FROM incident_management.incidents
+                WHERE status NOT IN ('RESOLVED', 'MANUAL')
+                ORDER BY minutes_waiting DESC
+                LIMIT 1
+            """))
+            longest_row = result.fetchone()
+            aging_longest_wait = None
+            if longest_row:
+                aging_longest_wait = {
+                    "id": str(longest_row.id),
+                    "alert_id": longest_row.alert_id,
+                    "title": longest_row.title,
+                    "minutes_waiting": int(longest_row.minutes_waiting) if longest_row.minutes_waiting else 0,
+                }
+
+            # 4. Resolution ring: auto-resolved vs action-resolved vs manual
+            result = await sess.execute(text("""
+                SELECT
+                    SUM(CASE WHEN status = 'RESOLVED' AND (resolved_externally IS NULL OR resolved_externally = FALSE) THEN 1 ELSE 0 END) as auto_resolved_count,
+                    SUM(CASE WHEN status = 'RESOLVED' AND resolved_externally = TRUE THEN 1 ELSE 0 END) as action_resolved_count,
+                    SUM(CASE WHEN status = 'MANUAL' THEN 1 ELSE 0 END) as manual_count
+                FROM incident_management.incidents
+                WHERE status IN ('RESOLVED', 'MANUAL')
+            """))
+            ring_row = result.fetchone()
+            auto_resolved_count = ring_row.auto_resolved_count or 0
+            action_resolved_count = ring_row.action_resolved_count or 0
+            manual_count = ring_row.manual_count or 0
+            total_resolved = auto_resolved_count + action_resolved_count + manual_count
+            auto_resolved_pct = (auto_resolved_count / total_resolved * 100) if total_resolved > 0 else 0
+            action_resolved_pct = (action_resolved_count / total_resolved * 100) if total_resolved > 0 else 0
+            manual_pct = (manual_count / total_resolved * 100) if total_resolved > 0 else 0
+            resolution_ring = {
+                "auto_resolved_pct": round(auto_resolved_pct, 1),
+                "action_resolved_pct": round(action_resolved_pct, 1),
+                "manual_pct": round(manual_pct, 1),
+            }
+
+            # 5. Recurrence signal: top 10 by recurrence_count > 1
+            result = await sess.execute(text("""
+                SELECT id, alert_id, title, recurrence_count, status
+                FROM incident_management.incidents
+                WHERE recurrence_count > 1
+                ORDER BY recurrence_count DESC
+                LIMIT 10
+            """))
+            recurrence_rows = result.fetchall()
+            recurrence_signal = [
+                {
+                    "id": str(r.id),
+                    "alert_id": r.alert_id,
+                    "title": r.title,
+                    "recurrence_count": r.recurrence_count,
+                    "status": r.status,
+                }
+                for r in recurrence_rows
+            ]
+
+            return {
+                "pipeline_flow": pipeline_flow,
+                "aging_buckets": aging_buckets,
+                "sla_breach": sla_breach,
+                "aging_longest_wait": aging_longest_wait,
+                "resolution_ring": resolution_ring,
+                "recurrence_signal": recurrence_signal,
+            }
+    except Exception as e:
+        _log.error(f"incidents error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/dashboard/incidents/list")
+async def get_incidents_list(
+    status: str | None = None,
+    priority: str | None = None,
+) -> dict:
+    """Return filtered list of incident tickets, ordered oldest-first (longest-waiting first)."""
+    from database import SessionLocal
+    from sqlalchemy import text
+    from fastapi import HTTPException
+    import logging
+    _log = logging.getLogger(__name__)
+
+    if SessionLocal is None:
+        return {"tickets": []}
+
+    try:
+        async with SessionLocal() as sess:
+            sql = """
+                SELECT id, alert_id, priority, status, title, escalated_at, created_at, recurrence_count, related_ticket_id, resolved_externally, resolved_at
+                FROM incident_management.incidents
+                WHERE 1=1
+            """
+            params = {}
+
+            if status:
+                sql += " AND status = :status"
+                params["status"] = status
+
+            if priority:
+                sql += " AND priority = :priority"
+                params["priority"] = priority
+
+            sql += " ORDER BY COALESCE(escalated_at, created_at) ASC"
+
+            result = await sess.execute(text(sql), params)
+            rows = result.fetchall()
+
+        # SLA thresholds for ticket prioritization (minutes)
+        sla_thresholds = {"P1": 15, "P2": 30, "P3": 60, "P4": 240}
+        from datetime import datetime, timezone
+
+        tickets = []
+        for row in rows:
+            # Calculate SLA breach status for active tickets
+            sla_breached = False
+            if row.status not in ('RESOLVED', 'MANUAL'):
+                try:
+                    now = datetime.now(timezone.utc)
+                    waiting_since = row.escalated_at or row.created_at
+                    if waiting_since:
+                        # Ensure waiting_since is timezone-aware
+                        if waiting_since.tzinfo is None:
+                            waiting_since = waiting_since.replace(tzinfo=timezone.utc)
+                        minutes_waiting = (now - waiting_since).total_seconds() / 60
+                        threshold = sla_thresholds.get(row.priority, 240)
+                        sla_breached = minutes_waiting > threshold
+                except Exception:
+                    sla_breached = False
+
+            tickets.append({
+                "id": str(row.id),
+                "alert_id": row.alert_id,
+                "priority": row.priority,
+                "status": row.status,
+                "title": row.title,
+                "escalated_at": str(row.escalated_at) if row.escalated_at else None,
+                "created_at": str(row.created_at) if row.created_at else None,
+                "recurrence_count": row.recurrence_count,
+                "related_ticket_id": str(row.related_ticket_id) if row.related_ticket_id else None,
+                "resolved_externally": row.resolved_externally or False,
+                "resolved_at": str(row.resolved_at) if row.resolved_at else None,
+                "sla_breached": sla_breached,
+            })
+        return {"tickets": tickets}
+    except Exception as e:
+        _log.error(f"incidents/list error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/dashboard/incidents/{ticket_id}")
+async def get_incident_detail(ticket_id: str) -> dict:
+    """Return alert payload for a single incident ticket by ID."""
+    from database import SessionLocal
+    from sqlalchemy import text
+    from fastapi import HTTPException
+    import logging
+    import json
+    _log = logging.getLogger(__name__)
+
+    if SessionLocal is None:
+        raise HTTPException(status_code=500, detail="Database not available")
+
+    try:
+        async with SessionLocal() as sess:
+            result = await sess.execute(
+                text("""
+                    SELECT id, alert_payload
+                    FROM incident_management.incidents
+                    WHERE id = :ticket_id
+                """),
+                {"ticket_id": ticket_id}
+            )
+            row = result.fetchone()
+
+            if not row:
+                raise HTTPException(status_code=404, detail="Incident not found")
+
+            # Parse alert_payload if it's stored as JSON string
+            alert_payload = row.alert_payload
+            if isinstance(alert_payload, str):
+                try:
+                    alert_payload = json.loads(alert_payload)
+                except json.JSONDecodeError:
+                    alert_payload = None
+
+            return {
+                "id": str(row.id),
+                "alert_payload": alert_payload
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        _log.error(f"incident detail error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

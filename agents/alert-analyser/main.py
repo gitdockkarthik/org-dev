@@ -134,6 +134,38 @@ async def _register_self() -> None:
 # ── App ───────────────────────────────────────────────────────────────────────
 
 
+async def _run_migrations() -> None:
+    from database import SessionLocal
+    from sqlalchemy import text
+
+    if SessionLocal is None:
+        logger.warning("_run_migrations: DATABASE_URL not configured — skipping")
+        return
+
+    try:
+        migration_sql = (Path(__file__).parent / "migrations/incident_management.sql").read_text()
+        statements = migration_sql.split(';')
+
+        async with SessionLocal() as session:
+            for stmt in statements:
+                stmt = stmt.strip()
+
+                # Skip empty statements and comment-only lines
+                if not stmt or stmt.startswith('--'):
+                    continue
+
+                try:
+                    await session.execute(text(stmt))
+                    await session.commit()
+                except Exception as stmt_error:
+                    logger.warning("_run_migrations: statement failed: %s", stmt_error)
+                    # Continue with next statement
+
+        logger.info("_run_migrations: completed successfully")
+    except Exception as e:
+        logger.warning("_run_migrations: failed (agent will still start): %s", e)
+
+
 async def _init_config() -> None:
     from database import engine
     from models import Base
@@ -225,6 +257,10 @@ async def _sync_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    try:
+        await _run_migrations()
+    except Exception:
+        logger.exception("Migration raised an unexpected exception (agent will still start)")
     try:
         await _register_self()
     except Exception:

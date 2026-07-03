@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Operative Intelligence — Alert Ticketing Functional Spec</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --surface: #ffffff; --surface-2: #f0f1f4; --border: #e2e5ea;
+    --text: #1a1d23; --text-muted: #667085; --text-dim: #98a2b3;
+    --accent: #2563eb; --orange: #ea580c; --green: #16a34a; --purple: #a855f7;
+    --amber: #d97706; --red: #dc2626; --r: 10px; --r-sm: 6px;
+    --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; line-height: 1.6; }
+  .topbar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 32px; display: flex; align-items: center; justify-content: space-between; height: 60px; position: sticky; top: 0; z-index: 100; }
+  .topbar__brand { font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+  .topbar__brand a { color: var(--text-muted); text-decoration: none; font-weight: 500; }
+  .topbar__right { font-size: 12px; color: var(--text-muted); font-family: var(--mono); }
+  .page { max-width: 900px; margin: 0 auto; padding: 40px 32px 80px; }
+  h1 { font-size: 26px; margin-bottom: 8px; }
+  .subtitle { color: var(--text-muted); font-size: 14px; margin-bottom: 32px; }
+  .meta-table { width: 100%; border-collapse: collapse; margin-bottom: 36px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; }
+  .meta-table td { padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .meta-table tr:last-child td { border-bottom: none; }
+  .meta-table td:first-child { font-weight: 600; color: var(--text-muted); width: 180px; }
+  h2 { font-size: 19px; margin: 40px 0 14px; padding-bottom: 8px; border-bottom: 2px solid var(--border); }
+  h3 { font-size: 15px; margin: 22px 0 10px; color: var(--text); }
+  p { margin-bottom: 12px; }
+  ul, ol { margin: 0 0 14px 22px; }
+  li { margin-bottom: 6px; }
+  code { font-family: var(--mono); background: var(--surface-2); padding: 1px 6px; border-radius: 4px; font-size: 12.5px; }
+  pre { background: #1a1d23; color: #e6edf3; padding: 14px 16px; border-radius: var(--r-sm); overflow-x: auto; font-family: var(--mono); font-size: 12px; margin-bottom: 14px; line-height: 1.55; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 18px 20px; margin-bottom: 18px; }
+  table.data { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 12.5px; }
+  table.data th { background: var(--surface-2); text-align: left; padding: 8px 10px; font-weight: 600; border-bottom: 1px solid var(--border); }
+  table.data td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .badge { display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 2px 7px; border-radius: 4px; }
+  .badge--done { background: rgba(22,163,74,.12); color: var(--green); }
+  .badge--placeholder { background: rgba(217,119,6,.12); color: var(--amber); }
+  .flow-step { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .flow-step:last-child { border-bottom: none; }
+  .flow-num { width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 1px; }
+  .flow-text { font-size: 13px; }
+  .sla-table td.sla-num { font-family: var(--mono); font-weight: 700; }
+  footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--text-dim); }
+</style>
+
+<style>
+  .oi-shell { display: flex; min-height: 100vh; }
+  .oi-sidebar { width: 220px; background: #ffffff; border-right: 1px solid #e2e5ea; padding: 20px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; flex-shrink: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .oi-sidebar__brand { font-size: 13px; font-weight: 700; padding: 0 20px 16px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #e2e5ea; margin-bottom: 10px; color: #1a1d23; }
+  .oi-sidebar__brand .dot { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; flex-shrink: 0; }
+  .oi-sidebar__group-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #98a2b3; padding: 10px 20px 6px; }
+  .oi-sidebar__link { display: block; padding: 6px 20px; font-size: 12px; color: #667085; text-decoration: none; border-left: 2px solid transparent; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .oi-sidebar__link:hover { background: #f0f1f4; color: #1a1d23; }
+  .oi-sidebar__link.active { color: #2563eb; border-left-color: #2563eb; background: #f0f1f4; font-weight: 600; }
+  .oi-sidebar__link--disabled { color: #98a2b3; font-style: italic; cursor: default; }
+  
+  .oi-sidebar__group-label { cursor: pointer; display: flex; align-items: center; justify-content: space-between; user-select: none; }
+  .oi-sidebar__group-label .oi-caret { transition: transform .15s; font-size: 9px; }
+  .oi-sidebar__group.collapsed .oi-caret { transform: rotate(-90deg); }
+  .oi-sidebar__group.collapsed .oi-sidebar__links { display: none; }
+
+  .oi-main { flex: 1; min-width: 0; overflow-x: auto; }
+</style>
+</head>
+<body><div class="oi-shell">
+<div class="oi-sidebar">
+  <div class="oi-sidebar__brand"><span class="dot"></span> Operative Intelligence</div>
+  <div class="oi-sidebar__group">
+    <div class="oi-sidebar__group-label">Incident Response <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="operative_intelligence_agentic_pipeline.html">Agentic Pipeline Concept</a>
+    <a class="oi-sidebar__link" href="operative_intelligence_pipeline.html">Agent Pipeline Overview</a>
+    <a class="oi-sidebar__link" href="incident_pipeline_monitor.html">Pipeline Monitor (Mockup)</a>
+    <a class="oi-sidebar__link active" href="alert_ticketing_functional_spec.html">Functional Specification</a>
+    <a class="oi-sidebar__link" href="alert_ticketing_future_work_tracker.html">Future Work Tracker</a>
+  </div></div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">CUR Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <span class="oi-sidebar__link oi-sidebar__link--disabled">Coming soon</span>
+  </div></div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">Kafka Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <span class="oi-sidebar__link oi-sidebar__link--disabled">Coming soon</span>
+  </div></div>
+</div>
+<div class="oi-main">
+
+
+<div class="topbar">
+  <div class="topbar__brand"><a href="index.html">← Docs Hub</a></div>
+  <div class="topbar__right">alert-analyser</div>
+</div>
+
+<div class="page">
+  <h1>Alert Ticketing &amp; Escalated Incidents — Functional Specification</h1>
+  <div class="subtitle">Detailed functional and logical reference for the incident ticketing pipeline built into alert-analyser.</div>
+
+  <table class="meta-table">
+    <tr><td>Agent</td><td>agents/alert-analyser/</td></tr>
+    <tr><td>Schema</td><td>incident_management.incidents (Postgres)</td></tr>
+    <tr><td>Status</td><td>Live, verified end-to-end. RCA/Action agents not yet built (consumers pending).</td></tr>
+    <tr><td>Generated</td><td>3 July 2026</td></tr>
+  </table>
+
+  <h2>1. Purpose</h2>
+  <p>When alert-analyser's sync cycle classifies an OpsGenie alert as "genuine," the system synchronously creates or updates a ticket in a shared <code>incident_management</code> Postgres schema. This schema is designed to be polled by future RCA and Action agents, giving them a durable, deduplicated queue of real incidents to work — independent of OpsGenie's own state, noise, and duplicate open/close event pairs.</p>
+
+  <h2>2. Ticket Lifecycle — Dedup &amp; Escalation Rule</h2>
+  <p>Dedup key is <code>alert_id</code> (OpsGenie's alert ID). On each sync, for every genuine alert:</p>
+  <div class="panel">
+    <div class="flow-step"><div class="flow-num">1</div><div class="flow-text">No ticket exists for this <code>alert_id</code> → create new ticket, <code>status = ESCALATED</code>.</div></div>
+    <div class="flow-step"><div class="flow-num">2</div><div class="flow-text">Ticket exists, status NOT IN (RESOLVED, MANUAL) → still in-flight. Do not create a new ticket; bump <code>updated_at</code>, increment <code>recurrence_count</code>.</div></div>
+    <div class="flow-step"><div class="flow-num">3</div><div class="flow-text">Ticket exists, status IS RESOLVED or MANUAL → prior incident closed, this is a new occurrence. Create a new ticket with <code>related_ticket_id</code> pointing to the prior ticket.</div></div>
+  </div>
+
+  <h3>Pre-ticket filtering (applied before the above rule)</h3>
+  <ul>
+    <li><strong>Alias-based deduplication</strong> — before iterating, alerts are deduplicated by <code>alias</code> (fallback <code>id</code>), keeping the record with the latest <code>createdAt</code>. Same incident firing multiple open/close events in one sync no longer creates duplicate ticket-loop iterations.</li>
+    <li><strong>Source-status skip</strong> — alerts whose OpsGenie <code>status</code> field is <code>closed</code> or <code>resolved</code> are skipped entirely, even if classified genuine. <span class="badge badge--placeholder">Known limitation</span> — see Future Work Tracker: the <code>status</code> field alone is unreliable; many source tools update the alert's message/title instead.</li>
+  </ul>
+
+  <h2>3. Reconciliation Pass — Auto-Resolving Stale Tickets</h2>
+  <p>After ticket creation/update, a second pass runs on every sync to detect tickets whose underlying alert is no longer open+genuine, and reconciles their state:</p>
+  <table class="data">
+    <tr><th>Current Ticket Status</th><th>Alert No Longer Open+Genuine</th><th>Action</th></tr>
+    <tr><td><code>ESCALATED</code></td><td>Yes</td><td>Auto-set <code>status = RESOLVED</code>, <code>resolved_at = now()</code> (nothing was in-flight, safe to close)</td></tr>
+    <tr><td><code>INVESTIGATING / RCA_COMPLETE / REMEDIATING</code></td><td>Yes</td><td>Set <code>resolved_externally = TRUE</code> — flags that the alert self-cleared mid-pipeline, without overwriting agent-driven status (preserves whether the pipeline's work mattered)</td></tr>
+    <tr><td><code>RESOLVED / MANUAL</code></td><td>N/A</td><td>No-op — already terminal</td></tr>
+  </table>
+
+  <h2>4. Schema</h2>
+  <table class="data">
+    <tr><th>Column</th><th>Type</th><th>Purpose</th></tr>
+    <tr><td>id</td><td>UUID (PK)</td><td>Ticket identifier</td></tr>
+    <tr><td>alert_id</td><td>TEXT</td><td>OpsGenie alert ID (dedup key)</td></tr>
+    <tr><td>alert_signature</td><td>TEXT</td><td>Reserved for future RAG pattern matching</td></tr>
+    <tr><td>status</td><td>TEXT</td><td>ESCALATED / INVESTIGATING / RCA_COMPLETE / REMEDIATING / RESOLVED / MANUAL</td></tr>
+    <tr><td>priority</td><td>TEXT</td><td>P1–P4 (from OpsGenie)</td></tr>
+    <tr><td>title</td><td>TEXT</td><td>Alert message/alias, truncated</td></tr>
+    <tr><td>alert_payload</td><td>JSONB</td><td>Full original alert object — the data contract for RCA/Action agents</td></tr>
+    <tr><td>rca_findings / action_outcome</td><td>JSONB</td><td>Reserved for RCA/Action agents (not yet populated)</td></tr>
+    <tr><td>recurrence_count</td><td>INTEGER</td><td>How many times this alert has re-fired while ticket stayed open</td></tr>
+    <tr><td>related_ticket_id</td><td>UUID (FK, self)</td><td>Links a new ticket to a prior resolved/manual ticket for the same alert_id</td></tr>
+    <tr><td>resolved_externally</td><td>BOOLEAN</td><td>True if the ticket was reconciled/closed by the sync process rather than an Action agent</td></tr>
+    <tr><td>detected_at / escalated_at / rca_completed_at / resolved_at</td><td>TIMESTAMPTZ</td><td>Lifecycle timestamps</td></tr>
+    <tr><td>created_at / updated_at</td><td>TIMESTAMPTZ</td><td>Row bookkeeping</td></tr>
+  </table>
+
+  <h2>5. SLA Policy</h2>
+  <p>Priority-based response-time targets, applied to the Aging panel and per-ticket breach flag (proposed policy — not yet formally adopted org-wide):</p>
+  <table class="data sla-table">
+    <tr><th>Priority</th><th>Definition</th><th>Target Response</th><th>Target Resolution</th></tr>
+    <tr><td class="sla-num">P1 — Critical</td><td>Service outage, major business impact</td><td class="sla-num">15 min</td><td>2 hours</td></tr>
+    <tr><td class="sla-num">P2 — Major</td><td>Major functionality degraded, no workaround</td><td class="sla-num">30 min</td><td>4 hours</td></tr>
+    <tr><td class="sla-num">P3 — Minor</td><td>Limited impact, workaround available</td><td class="sla-num">60 min</td><td>8 hours</td></tr>
+    <tr><td class="sla-num">P4 — Internal</td><td>Minor impact, non-urgent</td><td class="sla-num">240 min</td><td>3 business days</td></tr>
+  </table>
+  <p><span class="badge badge--done">Implemented</span> Target Response is applied today as the SLA breach flag on the Aging panel and kanban lanes. Target Resolution is not yet used (no Action agent exists to actually close tickets on a timeline).</p>
+
+  <h2>6. Resolution Method Breakdown</h2>
+  <table class="data">
+    <tr><th>Category</th><th>Definition</th></tr>
+    <tr><td>Auto-Resolved</td><td><code>status=RESOLVED</code> and <code>resolved_externally=FALSE</code> — closed by reconciliation because the source alert cleared before any agent touched it</td></tr>
+    <tr><td>Action-Resolved</td><td><code>status=RESOLVED</code> and <code>resolved_externally=TRUE</code> — <span class="badge badge--placeholder">Placeholder</span> currently indistinguishable from resolved-mid-pipeline; needs a real Action agent to set this deliberately</td></tr>
+    <tr><td>Manual</td><td><code>status=MANUAL</code> — closed by a human</td></tr>
+  </table>
+
+  <h2>7. Dashboard — Escalated Incidents Tab</h2>
+  <h3>KPI Panels</h3>
+  <ul>
+    <li><strong>Pipeline Flow</strong> — horizontal bar, count per status (all 6 statuses always shown), with on-bar value labels.</li>
+    <li><strong>Ticket Aging</strong> — time-bucketed histogram (0-5m / 5-15m / 15m+) for all non-terminal tickets, longest-wait callout, and an SLA breach summary line (breached vs within-SLA count and %, color-coded by severity).</li>
+    <li><strong>Resolution Method</strong> — 3-segment donut (Auto-Resolved / Action-Resolved / Manual), with percentage labels, hidden when all-zero.</li>
+    <li><strong>Recurrence Signal</strong> — top 10 tickets by <code>recurrence_count</code>, surfacing alerts that keep re-firing while a ticket is open.</li>
+  </ul>
+  <h3>Priority Lanes (Kanban)</h3>
+  <p>Four columns — P1-CRITICAL, P2-HIGH, P3-MEDIUM, P4-LOW — each showing its SLA target as a subtitle, ticket cards sorted oldest-first, capped at 6 visible with a "+N more" indicator. Cards show status dot, short ID, time-since-escalation, title, alert ID, recurrence badge (if &gt;1), and a red border + "⚠ SLA" badge when the SLA has been breached.</p>
+
+  <h2>8. API Endpoints</h2>
+  <table class="data">
+    <tr><th>Endpoint</th><th>Purpose</th></tr>
+    <tr><td><code>GET /dashboard/incidents</code></td><td>Aggregated KPI data: pipeline_flow, aging_buckets, aging_longest_wait, resolution_ring, recurrence_signal, sla_breach</td></tr>
+    <tr><td><code>GET /dashboard/incidents/list</code></td><td>Individual tickets (optionally filtered by status/priority), including <code>sla_breached</code> and <code>resolved_externally</code>, sorted oldest-first — powers the kanban lanes</td></tr>
+    <tr><td><code>GET /dashboard/period-summary</code></td><td>Row 2 "Alerts in Period" KPI cards; extended this session with <code>new_incidents_count</code> / <code>recurring_incidents_count</code> sourced from the incidents table (true new-vs-recurring split, replacing the previously misleading "new genuine" alert-event count)</td></tr>
+    <tr><td><code>GET /dashboard</code></td><td>Main dashboard stats; also extended with the same new/recurring incident fields for the Genuine Alerts tab</td></tr>
+  </table>
+
+  <h2>9. Known Simplifications</h2>
+  <p>See the companion <a href="alert_ticketing_future_work_tracker.html">Future Work Tracker</a> for the full, current list of flagged gaps and their code locations.</p>
+
+  <footer>Operative Intelligence — Internal Platforms Engineering · Generated 3 July 2026</footer>
+</div>
+
+
+</div>
+</div>
+<script>
+  document.querySelectorAll('.oi-sidebar__group-label').forEach(function(label) {
+    label.addEventListener('click', function() {
+      label.parentElement.classList.toggle('collapsed');
+    });
+  });
+</script>
+</body>
+</html>

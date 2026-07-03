@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Operative Intelligence — Agent Pipeline</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8f7f4; color: #2c2c2a; line-height: 1.7; }
+  .page { max-width: 960px; margin: 0 auto; padding: 48px 32px; }
+  h1 { font-size: 28px; font-weight: 600; color: #1a1a18; margin-bottom: 8px; }
+  .subtitle { font-size: 16px; color: #5f5e5a; margin-bottom: 40px; }
+  .diagram-card { background: #fff; border-radius: 16px; border: 1px solid #e8e6e0; padding: 32px; margin-bottom: 40px; }
+  .section { margin-bottom: 40px; }
+  h2 { font-size: 20px; font-weight: 600; color: #1a1a18; margin-bottom: 16px; border-left: 4px solid #534AB7; padding-left: 12px; }
+  h3 { font-size: 16px; font-weight: 600; color: #1a1a18; margin-bottom: 8px; margin-top: 20px; }
+  p { font-size: 15px; color: #3d3d3a; margin-bottom: 12px; }
+  .agent-card { background: #fff; border-radius: 12px; border: 1px solid #e8e6e0; padding: 24px; margin-bottom: 16px; }
+  .agent-card.purple { border-left: 4px solid #534AB7; }
+  .agent-card.teal   { border-left: 4px solid #0F6E56; }
+  .agent-card.coral  { border-left: 4px solid #993C1D; }
+  .agent-card.blue   { border-left: 4px solid #185FA5; }
+  .agent-card.amber  { border-left: 4px solid #854F0B; }
+  .agent-card.green  { border-left: 4px solid #3B6D11; }
+  .badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px; margin-bottom: 8px; }
+  .badge.purple { background: #EEEDFE; color: #3C3489; }
+  .badge.teal   { background: #E1F5EE; color: #085041; }
+  .badge.coral  { background: #FAECE7; color: #712B13; }
+  .badge.blue   { background: #E6F1FB; color: #0C447C; }
+  .metric-row { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+  .metric { flex: 1; min-width: 140px; background: #fff; border-radius: 12px; border: 1px solid #e8e6e0; padding: 20px; text-align: center; }
+  .metric-value { font-size: 22px; font-weight: 700; color: #3B6D11; }
+  .metric-label { font-size: 13px; color: #5f5e5a; margin-top: 4px; }
+  ul { padding-left: 20px; margin-bottom: 12px; }
+  li { font-size: 15px; color: #3d3d3a; margin-bottom: 6px; }
+  .flow-step { display: flex; gap: 16px; align-items: flex-start; margin-bottom: 16px; }
+  .step-num { min-width: 32px; height: 32px; border-radius: 50%; background: #534AB7; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; flex-shrink: 0; }
+  .step-content { flex: 1; }
+  .arrow-down { text-align: center; font-size: 20px; color: #888780; margin: 4px 0; }
+  .rag-box { background: #E6F1FB; border-radius: 12px; border: 1px solid #B5D4F4; padding: 24px; margin-top: 24px; }
+  .rag-box h3 { color: #0C447C; margin-top: 0; }
+  .feedback-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+  .feedback-tag { background: #fff; border: 1px solid #B5D4F4; border-radius: 8px; padding: 6px 12px; font-size: 13px; color: #185FA5; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+  th { background: #f1efe8; text-align: left; padding: 10px 14px; font-size: 13px; font-weight: 600; color: #444441; }
+  td { padding: 10px 14px; font-size: 14px; color: #3d3d3a; border-top: 1px solid #e8e6e0; }
+  tr:hover td { background: #fafaf8; }
+  .footer { margin-top: 48px; padding-top: 24px; border-top: 1px solid #e8e6e0; font-size: 13px; color: #888780; }
+</style>
+
+<style>
+  .oi-shell { display: flex; min-height: 100vh; }
+  .oi-sidebar { width: 220px; background: #ffffff; border-right: 1px solid #e2e5ea; padding: 20px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; flex-shrink: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .oi-sidebar__brand { font-size: 13px; font-weight: 700; padding: 0 20px 16px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #e2e5ea; margin-bottom: 10px; color: #1a1d23; }
+  .oi-sidebar__brand .dot { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; flex-shrink: 0; }
+  .oi-sidebar__group-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #98a2b3; padding: 10px 20px 6px; }
+  .oi-sidebar__link { display: block; padding: 6px 20px; font-size: 12px; color: #667085; text-decoration: none; border-left: 2px solid transparent; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .oi-sidebar__link:hover { background: #f0f1f4; color: #1a1d23; }
+  .oi-sidebar__link.active { color: #2563eb; border-left-color: #2563eb; background: #f0f1f4; font-weight: 600; }
+  .oi-sidebar__link--disabled { color: #98a2b3; font-style: italic; cursor: default; }
+  
+  .oi-sidebar__group-label { cursor: pointer; display: flex; align-items: center; justify-content: space-between; user-select: none; }
+  .oi-sidebar__group-label .oi-caret { transition: transform .15s; font-size: 9px; }
+  .oi-sidebar__group.collapsed .oi-caret { transform: rotate(-90deg); }
+  .oi-sidebar__group.collapsed .oi-sidebar__links { display: none; }
+
+  .oi-main { flex: 1; min-width: 0; overflow-x: auto; }
+</style>
+</head>
+<body><div class="oi-shell">
+<div class="oi-sidebar">
+  <div class="oi-sidebar__brand"><span class="dot"></span> Operative Intelligence</div>
+  <div class="oi-sidebar__group">
+    <div class="oi-sidebar__group-label">Incident Response <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="operative_intelligence_agentic_pipeline.html">Agentic Pipeline Concept</a>
+    <a class="oi-sidebar__link active" href="operative_intelligence_pipeline.html">Agent Pipeline Overview</a>
+    <a class="oi-sidebar__link" href="incident_pipeline_monitor.html">Pipeline Monitor (Mockup)</a>
+    <a class="oi-sidebar__link" href="alert_ticketing_functional_spec.html">Functional Specification</a>
+    <a class="oi-sidebar__link" href="alert_ticketing_future_work_tracker.html">Future Work Tracker</a>
+  </div></div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">CUR Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <span class="oi-sidebar__link oi-sidebar__link--disabled">Coming soon</span>
+  </div></div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">Kafka Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <span class="oi-sidebar__link oi-sidebar__link--disabled">Coming soon</span>
+  </div></div>
+</div>
+<div class="oi-main">
+
+<div class="page">
+
+  <h1>Operative Intelligence — Agent Pipeline</h1>
+  <p class="subtitle">Three-agent autonomous incident detection, investigation and resolution system.<br>For internal brainstorming — Operative Engineering, Internal Platforms.</p>
+
+  <!-- Diagram -->
+  <div class="diagram-card">
+    <svg width="100%" viewBox="0 0 680 820" role="img">
+      <title>Operative Intelligence agent pipeline</title>
+      <desc>Three agents in sequence: Alert Analyser, RCA Agent, Action Agent, connected by a shared RAG knowledge base feedback loop.</desc>
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+      </defs>
+
+      <!-- OpsGenie -->
+      <rect x="240" y="20" width="200" height="44" rx="8" fill="#F1EFE8" stroke="#B4B2A9" stroke-width="0.5"/>
+      <text font-family="-apple-system,sans-serif" font-size="14" font-weight="500" fill="#444441" x="340" y="46" text-anchor="middle" dominant-baseline="central">OpsGenie / JSM</text>
+
+      <line x1="340" y1="64" x2="340" y2="108" stroke="#888780" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <text font-family="-apple-system,sans-serif" font-size="11" fill="#888780" x="356" y="90" dominant-baseline="central">raw alerts</text>
+
+      <!-- Alert Analyser -->
+      <rect x="140" y="108" width="400" height="80" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
+      <text font-family="-apple-system,sans-serif" font-size="14" font-weight="600" fill="#3C3489" x="340" y="136" text-anchor="middle" dominant-baseline="central">Alert Analyser</text>
+      <text font-family="-apple-system,sans-serif" font-size="12" fill="#534AB7" x="340" y="158" text-anchor="middle" dominant-baseline="central">Deduplicate · bucket · classify genuine / noise / suspect</text>
+      <text font-family="-apple-system,sans-serif" font-size="12" fill="#534AB7" x="340" y="175" text-anchor="middle" dominant-baseline="central">Enrich with inventory · RAG context lookup</text>
+
+      <!-- Noise bucket -->
+      <rect x="30" y="144" width="90" height="44" rx="8" fill="#F1EFE8" stroke="#B4B2A9" stroke-width="0.5"/>
+      <text font-family="-apple-system,sans-serif" font-size="13" font-weight="500" fill="#5F5E5A" x="75" y="166" text-anchor="middle" dominant-baseline="central">Noise</text>
+      <line x1="140" y1="158" x2="122" y2="158" stroke="#888780" stroke-width="1" marker-end="url(#arrow)"/>
+
+      <text font-family="-apple-system,sans-serif" font-size="11" fill="#3B6D11" x="340" y="204" text-anchor="middle">↑ MTTD improved — faster detection &amp; triage</text>
+
+      <line x1="340" y1="210" x2="340" y2="254" stroke="#888780" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <text font-family="-apple-system,sans-serif" font-size="11" fill="#888780" x="356" y="236" dominant-baseline="central">genuine alerts + enriched context</text>
+
+      <!-- RCA Agent -->
+      <rect x="140" y="254" width="400" height="80" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.8"/>
+      <text font-family="-apple-system,sans-serif" font-size="14" font-weight="600" fill="#085041" x="340" y="282" text-anchor="middle" dominant-baseline="central">RCA Agent</text>
+      <text font-family="-apple-system,sans-serif" font-size="12" fill="#0F6E56" x="340" y="304" text-anchor="middle" dominant-baseline="central">Investigate · identify root cause · recommend actions</text>
+      <text font-family="-apple-system,sans-serif" font-size="12" fill="#0F6E56" x="340" y="321" text-anchor="middle" dominant-baseline="central">Build findings RAG · feed back to Alert Analyser</text>
+
+      <text font-family="-apple-system,sans-serif" font-size="11" fill="#3B6D11" x="340" y="352" text-anchor="middle">↑ MTTA improved — faster acknowledgement &amp; response</text>
+
+      <line x1="340" y1="356" x2="340" y2="400" stroke="#888780" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <text font-family="-apple-system,sans-serif" font-size="11" fill="#888780" x="356" y="382" dominant-baseline="central">findings + recommended actions</text>
+
+      <!-- Action Agent -->
+      <rect x="140" y="400" width="400" height="80" rx="8" fill="#FAECE7" stroke="#993C1D" stroke-width="0.8"/>
+      <text font-family="-apple-system,sans-serif" font-size="14" font-weight="600" fill="#712B13" x="340" y="428" text-anchor="middle" dominant-baseline="central">Action Agent</text>
+      <text font-family="-apple-system,sans-serif" font-size="12" fill="#993C1D" x="340" y="450" text-anchor="middle" dominant-baseline="central">Trigger Jenkins jobs · apply fix · verify resolution</text>
+      <text font-family="-apple-system,sans-serif" font-size="12" fill="#993C1D" x="340" y="467" text-anchor="middle" dominant-baseline="central">Feed results back to Alert + RCA agents</text>
+
+      <line x1="340" y1="480" x2="340" y2="510" stroke="#888780" stroke-width="1" stroke-dasharray="3 2" marker-end="url(#arrow)"/>
+
+      <!-- Jira -->
+      <rect x="30" y="498" width="130" height="56" rx="8" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+      <text font-family="-apple-system,sans-serif" font-size="13" font-weight="600" fill="#633806" x="95" y="521" text-anchor="middle" dominant-baseline="central">Jira ticket</text>
+      <text font-family="-apple-system,sans-serif" font-size="11" fill="#854F0B" x="95" y="540" text-anchor="middle" dominant-baseline="central">No action mapped</text>
+      <line x1="140" y1="526" x2="162" y2="526" stroke="#854F0B" stroke-width="1" marker-end="url(#arrow)"/>
+      <text font-family="-apple-system,sans-serif" font-size="11" fill="#888780" x="155" y="514" dominant-baseline="central">no fix</text>
+
+      <!-- Jenkins -->
+      <rect x="520" y="498" width="130" height="56" rx="8" fill="#EAF3DE" stroke="#3B6D11" stroke-width="0.5"/>
+      <text font-family="-apple-system,sans-serif" font-size="13" font-weight="600" fill="#27500A" x="585" y="521" text-anchor="middle" dominant-baseline="central">Jenkins job</text>
+      <text font-family="-apple-system,sans-serif" font-size="11" fill="#3B6D11" x="585" y="540" text-anchor="middle" dominant-baseline="central">Automated fix</text>
+      <line x1="540" y1="526" x2="518" y2="526" stroke="#3B6D11" stroke-width="1" marker-end="url(#arrow)"/>
+      <text font-family="-apple-system,sans-serif" font-size="11" fill="#888780" x="490" y="514" dominant-baseline="central">fix available</text>
+
+      <text font-family="-apple-system,sans-serif" font-size="11" fill="#3B6D11" x="340" y="572" text-anchor="middle">↑ MTTR improved — automated resolution or tracked escalation</text>
+
+      <!-- RAG Knowledge Base -->
+      <rect x="140" y="592" width="400" height="80" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.8"/>
+      <text font-family="-apple-system,sans-serif" font-size="14" font-weight="600" fill="#0C447C" x="340" y="618" text-anchor="middle" dominant-baseline="central">Shared RAG knowledge base</text>
+      <text font-family="-apple-system,sans-serif" font-size="12" fill="#185FA5" x="340" y="638" text-anchor="middle" dominant-baseline="central">Alert patterns · RCA findings · action outcomes</text>
+      <text font-family="-apple-system,sans-serif" font-size="12" fill="#185FA5" x="340" y="655" text-anchor="middle" dominant-baseline="central">Grows smarter with every incident</text>
+
+      <!-- Feedback arrows -->
+      <path d="M140 632 L80 632 L80 148 L140 148" fill="none" stroke="#888780" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+      <path d="M540 632 L600 632 L600 294 L540 294" fill="none" stroke="#888780" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+      <line x1="340" y1="480" x2="340" y2="592" stroke="#888780" stroke-width="0.8" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+      <path d="M160 188 L115 188 L115 632 L140 632" fill="none" stroke="#888780" stroke-width="0.8" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+      <path d="M520 334 L565 334 L565 632 L540 632" fill="none" stroke="#888780" stroke-width="0.8" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+
+      <!-- Legend -->
+      <rect x="140" y="700" width="400" height="80" rx="8" fill="none" stroke="#D3D1C7" stroke-width="0.5"/>
+      <text font-family="-apple-system,sans-serif" font-size="12" fill="#5F5E5A" x="340" y="718" text-anchor="middle">Continuous improvement loop</text>
+      <line x1="165" y1="744" x2="205" y2="744" stroke="#888780" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+      <text font-family="-apple-system,sans-serif" font-size="12" fill="#5F5E5A" x="215" y="748" dominant-baseline="central">RAG feedback</text>
+      <line x1="165" y1="766" x2="205" y2="766" stroke="#888780" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <text font-family="-apple-system,sans-serif" font-size="12" fill="#5F5E5A" x="215" y="770" dominant-baseline="central">Alert / action flow</text>
+    </svg>
+  </div>
+
+  <!-- Value proposition -->
+  <div class="section">
+    <h2>What this solves</h2>
+    <p>Today, when an alert fires, multiple engineers are pulled in to triage, investigate, and fix — often spending hours on incidents that follow known patterns. This pipeline automates that entire chain, reserving human attention for genuinely novel problems.</p>
+    <div class="metric-row">
+      <div class="metric">
+        <div class="metric-value">MTTD</div>
+        <div class="metric-label">Mean time to detect<br>Alert Analyser reduces noise, surfaces real incidents faster</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">MTTA</div>
+        <div class="metric-label">Mean time to acknowledge<br>RCA Agent starts investigation instantly, no human triage needed</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">MTTR</div>
+        <div class="metric-label">Mean time to resolve<br>Action Agent applies known fixes automatically via Jenkins</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Agent breakdown -->
+  <div class="section">
+    <h2>The three agents</h2>
+
+    <div class="agent-card purple">
+      <span class="badge purple">Agent 1</span>
+      <h3>Alert Analyser</h3>
+      <p>Reads alerts from OpsGenie / JSM and classifies them before any human sees them.</p>
+      <ul>
+        <li>Deduplicates alerts — the same incident fired by multiple tools counts once</li>
+        <li>Classifies each alert as genuine, noise, or suspect using rule-based scoring</li>
+        <li>Enriches genuine alerts with inventory context (Customer, Application, Environment)</li>
+        <li>Looks up the RAG for known patterns matching this alert signature</li>
+        <li>Passes enriched genuine alerts downstream to the RCA Agent</li>
+      </ul>
+    </div>
+
+    <div class="agent-card teal">
+      <span class="badge teal">Agent 2</span>
+      <h3>RCA Agent</h3>
+      <p>Receives genuine alerts and investigates to find the root cause.</p>
+      <ul>
+        <li>Checks RAG for previous occurrences of the same or similar incident</li>
+        <li>Investigates logs, metrics, and service dependencies autonomously</li>
+        <li>Identifies root cause and generates a structured finding</li>
+        <li>Recommends specific remediation actions mapped to known fixes</li>
+        <li>Writes findings back to RAG so future incidents benefit from this analysis</li>
+        <li>Feeds findings and recommended actions to the Action Agent</li>
+      </ul>
+    </div>
+
+    <div class="agent-card coral">
+      <span class="badge coral">Agent 3</span>
+      <h3>Action Agent</h3>
+      <p>Receives RCA findings and takes remediation action.</p>
+      <ul>
+        <li>Checks if a Jenkins job exists for the recommended action</li>
+        <li>If yes — triggers the job, monitors execution, verifies resolution</li>
+        <li>If no — creates a Jira ticket with full context for the on-call engineer</li>
+        <li>Records outcome (success/failure, time taken) back to RAG</li>
+        <li>Feeds results back to Alert Analyser and RCA Agent to improve future classification</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- RAG section -->
+  <div class="section">
+    <h2>The shared RAG knowledge base</h2>
+    <p>All three agents read from and write to a shared RAG store. This is what makes the system improve over time rather than repeating the same work on every incident.</p>
+    <div class="rag-box">
+      <h3>What gets stored</h3>
+      <div class="feedback-row">
+        <span class="feedback-tag">Alert patterns &amp; signatures</span>
+        <span class="feedback-tag">Root cause findings</span>
+        <span class="feedback-tag">Recommended actions</span>
+        <span class="feedback-tag">Fix outcomes (success/fail)</span>
+        <span class="feedback-tag">Incident timelines</span>
+        <span class="feedback-tag">Service dependency maps</span>
+        <span class="feedback-tag">Jenkins job mappings</span>
+        <span class="feedback-tag">Jira tickets created</span>
+      </div>
+      <p style="margin-top:16px;font-size:14px;color:#185FA5;">Over time, the Alert Analyser stops escalating known-noise patterns. The RCA Agent skips investigation for known root causes. The Action Agent builds a larger library of automated fixes. The system matures towards full autonomous incident response.</p>
+    </div>
+  </div>
+
+  <!-- Data flow -->
+  <div class="section">
+    <h2>Data flow — step by step</h2>
+
+    <div class="flow-step">
+      <div class="step-num">1</div>
+      <div class="step-content">
+        <h3>Alert fires in OpsGenie</h3>
+        <p>New Relic, Zabbix, LightStep, or another monitoring tool sends an alert to OpsGenie. OpsGenie records it.</p>
+      </div>
+    </div>
+    <div class="arrow-down">↓</div>
+
+    <div class="flow-step">
+      <div class="step-num">2</div>
+      <div class="step-content">
+        <h3>Alert Analyser syncs and classifies</h3>
+        <p>On the next sync cycle, Alert Analyser reads new alerts from OpsGenie. It deduplicates (same alias = same incident), scores each alert, and classifies it. Noise goes nowhere. Suspect gets flagged for human review. Genuine alerts are enriched with inventory data and RAG context.</p>
+      </div>
+    </div>
+    <div class="arrow-down">↓</div>
+
+    <div class="flow-step">
+      <div class="step-num">3</div>
+      <div class="step-content">
+        <h3>RCA Agent investigates</h3>
+        <p>Alert Analyser passes enriched genuine alerts to RCA Agent. RCA checks the RAG first — if this pattern has been seen before, it applies the known root cause directly. Otherwise it investigates: pulling logs, checking dependent services, correlating with recent deployments. It produces a structured finding with recommended remediation actions.</p>
+      </div>
+    </div>
+    <div class="arrow-down">↓</div>
+
+    <div class="flow-step">
+      <div class="step-num">4</div>
+      <div class="step-content">
+        <h3>Action Agent remediates</h3>
+        <p>RCA findings arrive at the Action Agent. It checks whether a Jenkins job exists for the recommended action. If yes, it triggers the job, watches the execution, and verifies the alert clears in OpsGenie. If no job is mapped, it creates a Jira ticket with the full RCA context attached so the on-call engineer has everything they need.</p>
+      </div>
+    </div>
+    <div class="arrow-down">↓</div>
+
+    <div class="flow-step">
+      <div class="step-num">5</div>
+      <div class="step-content">
+        <h3>Outcome feeds back to RAG</h3>
+        <p>Regardless of whether the fix was automated or manual, the outcome is written to the shared RAG. Next time a similar alert fires, the whole chain is faster — Alert Analyser recognises the pattern, RCA skips investigation, Action Agent knows exactly which job to trigger.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Open questions for brainstorming -->
+  <div class="section">
+    <h2>Open questions for brainstorming</h2>
+    <table>
+      <tr><th>Area</th><th>Question</th></tr>
+      <tr><td>Alert Analyser → RCA</td><td>What is the exact data contract? Which fields does RCA need from Alert Analyser?</td></tr>
+      <tr><td>RCA Agent</td><td>Which data sources can RCA query autonomously? Logs, metrics, traces, deployment history?</td></tr>
+      <tr><td>Action Agent</td><td>How is the Jenkins job catalogue maintained? Who maps alert types to jobs?</td></tr>
+      <tr><td>Action Agent</td><td>What approval gates exist before automated actions execute on production?</td></tr>
+      <tr><td>RAG</td><td>How is the RAG structured? Per-service, per-alert-type, or a single global store?</td></tr>
+      <tr><td>RAG</td><td>How do we prevent bad fixes from being learned and re-applied?</td></tr>
+      <tr><td>Jira fallback</td><td>When a Jira is created and resolved manually, how does that fix get added to the Jenkins catalogue?</td></tr>
+      <tr><td>Governance</td><td>Which alert severities are allowed to trigger automated remediation without human approval?</td></tr>
+      <tr><td>Observability</td><td>How do we track agent decisions end-to-end for audit and debugging?</td></tr>
+    </table>
+  </div>
+
+  <div class="footer">
+    Operative Intelligence — Internal Platforms · Generated for brainstorming purposes · Not for external distribution
+  </div>
+
+</div>
+
+</div>
+</div>
+<script>
+  document.querySelectorAll('.oi-sidebar__group-label').forEach(function(label) {
+    label.addEventListener('click', function() {
+      label.parentElement.classList.toggle('collapsed');
+    });
+  });
+</script>
+</body>
+</html>

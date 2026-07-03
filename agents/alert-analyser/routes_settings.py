@@ -214,6 +214,144 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
             # Deduplicate — keep top 8 by severity
             escalation_anomalies = escalation_anomalies[:8]
 
+            try:
+                from database import SessionLocal
+                from sqlalchemy import text
+                import json
+
+                created_count = 0
+                updated_count = 0
+
+                # Deduplicate alerts by alias, keep newest createdAt
+                _seen = {}
+                for a in classified:
+                    alias = a.get("alias") or a.get("id", "")
+                    if not alias:
+                        continue
+                    existing = _seen.get(alias)
+                    if existing is None or a.get("createdAt", "") > existing.get("createdAt", ""):
+                        _seen[alias] = a
+                deduped_alerts = list(_seen.values())
+
+                async with SessionLocal() as session:
+                    for alert in deduped_alerts:
+                        if alert.get("classification") != "genuine":
+                            continue
+                        if alert.get("status", "").lower() in ("closed", "resolved"):
+                            continue
+                        alert_id = alert.get("id")
+                        priority = alert.get("priority", "P3")
+                        title = alert.get("message", alert.get("alias", "Unknown"))[:200]
+                        payload_json = json.dumps(alert)
+
+                        # Derive source_tool
+                        source_tool = alert.get("source", "unknown")
+
+                        result = await session.execute(
+                            text("""
+                                SELECT id, status FROM incident_management.incidents
+                                WHERE alert_id = :alert_id
+                                ORDER BY created_at DESC LIMIT 1
+                            """),
+                            {"alert_id": alert_id},
+                        )
+                        row = result.fetchone()
+
+                        if row is None:
+                            await session.execute(
+                                text("""
+                                    INSERT INTO incident_management.incidents
+                                    (alert_id, status, priority, title, alert_payload,
+                                     recurrence_count, source_tool, created_at, updated_at)
+                                    VALUES (:alert_id, 'ESCALATED', :priority, :title,
+                                            :payload, 1, :source_tool, now(), now())
+                                """),
+                                {"alert_id": alert_id, "priority": priority,
+                                 "title": title, "payload": payload_json,
+                                 "source_tool": source_tool},
+                            )
+                            created_count += 1
+                        elif row.status not in ("RESOLVED", "MANUAL"):
+                            await session.execute(
+                                text("""
+                                    UPDATE incident_management.incidents
+                                    SET updated_at = now(), recurrence_count = recurrence_count + 1,
+                                        source_tool = :source_tool
+                                    WHERE id = :id
+                                """),
+                                {"id": row.id,
+                                 "source_tool": source_tool},
+                            )
+                            updated_count += 1
+                        else:
+                            await session.execute(
+                                text("""
+                                    INSERT INTO incident_management.incidents
+                                    (alert_id, status, priority, title, alert_payload,
+                                     recurrence_count, related_ticket_id, source_tool,
+                                     created_at, updated_at)
+                                    VALUES (:alert_id, 'ESCALATED', :priority, :title,
+                                            :payload, 1, :related_id, :source_tool,
+                                            now(), now())
+                                """),
+                                {"alert_id": alert_id, "priority": priority, "title": title,
+                                 "payload": payload_json, "related_id": row.id,
+                                 "source_tool": source_tool},
+                            )
+                            created_count += 1
+                    await session.commit()
+
+                    # Reconciliation: auto-close tickets for alerts no longer open+genuine
+                    try:
+                        open_genuine_ids = {
+                            a.get("id") for a in deduped_alerts
+                            if a.get("classification") == "genuine"
+                            and a.get("status", "").lower() not in ("closed", "resolved")
+                        }
+
+                        result = await session.execute(
+                            text("""
+                                SELECT id, alert_id, status FROM incident_management.incidents
+                                WHERE status NOT IN ('RESOLVED', 'MANUAL')
+                            """)
+                        )
+                        open_tickets = result.fetchall()
+
+                        auto_resolved_count = 0
+                        resolved_externally_count = 0
+
+                        for ticket in open_tickets:
+                            if ticket.alert_id not in open_genuine_ids:
+                                if ticket.status == 'ESCALATED':
+                                    await session.execute(
+                                        text("""
+                                            UPDATE incident_management.incidents
+                                            SET status = 'RESOLVED', resolved_at = now(), updated_at = now()
+                                            WHERE id = :id
+                                        """),
+                                        {"id": ticket.id},
+                                    )
+                                    auto_resolved_count += 1
+                                else:
+                                    await session.execute(
+                                        text("""
+                                            UPDATE incident_management.incidents
+                                            SET resolved_externally = TRUE, updated_at = now()
+                                            WHERE id = :id
+                                        """),
+                                        {"id": ticket.id},
+                                    )
+                                    resolved_externally_count += 1
+
+                        await session.commit()
+                        logger.info("Incident reconciliation: %d auto-resolved, %d marked resolved_externally", auto_resolved_count, resolved_externally_count)
+                    except Exception as recon_exc:
+                        logger.warning("Incident reconciliation failed: %s", recon_exc)
+
+                logger.info("Incident tickets: %d created, %d updated", created_count, updated_count)
+            except Exception as exc:
+                logger.warning("Incident ticket creation failed: %s", exc)
+
             if escalation_anomalies:
                 cooldown_key = "alert_analyser_summary"
                 cooldown_mins = teams_cfg.get("teams_cooldown_mins", 10)

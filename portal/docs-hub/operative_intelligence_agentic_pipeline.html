@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Operative Intelligence — Agentic Incident Response Pipeline</title>
+<style>
+  :root {
+    --bg: #f0f2f5;
+    --surface: #ffffff;
+    --surface-2: #f8fafc;
+    --border: #e2e8f0;
+    --text: #1e293b;
+    --text-muted: #64748b;
+    --text-dim: #94a3b8;
+    --accent: #0EA5E9;
+    --orange: #FF6B35;
+    --green: #16a34a;
+    --purple: #7c3aed;
+    --amber: #d97706;
+    --red: #dc2626;
+    --r: 8px;
+    --r-sm: 6px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 15px; line-height: 1.6; }
+
+  .page { max-width: 960px; margin: 0 auto; padding: 48px 24px 80px; }
+
+  /* Header */
+  .header { margin-bottom: 48px; padding-bottom: 32px; border-bottom: 1px solid var(--border); }
+  .header__eyebrow { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .1em; color: var(--orange); margin-bottom: 12px; }
+  .header__title { font-size: 32px; font-weight: 700; color: var(--text); line-height: 1.2; margin-bottom: 10px; }
+  .header__sub { font-size: 15px; color: var(--text-muted); max-width: 600px; }
+  .header__meta { margin-top: 20px; display: flex; gap: 24px; font-size: 12px; color: var(--text-dim); }
+  .header__meta span { display: flex; align-items: center; gap: 6px; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+  .badge--draft { background: #fef3c7; color: #92400e; }
+  .badge--internal { background: #e0f2fe; color: #0369a1; }
+
+  /* Section */
+  .section { margin-bottom: 48px; }
+  .section__title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--text-dim); margin-bottom: 20px; display: flex; align-items: center; gap: 10px; }
+  .section__title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+  /* KPI row */
+  .kpi-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 32px; }
+  .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 20px 24px; }
+  .kpi__label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--text-dim); margin-bottom: 8px; }
+  .kpi__value { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+  .kpi__desc { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+
+  /* Pipeline flow */
+  .pipeline { display: flex; flex-direction: column; gap: 0; }
+  .pipeline-step { display: flex; gap: 0; position: relative; }
+  .pipeline-step__connector { width: 40px; display: flex; flex-direction: column; align-items: center; flex-shrink: 0; }
+  .pipeline-step__dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid; flex-shrink: 0; margin-top: 20px; }
+  .pipeline-step__line { flex: 1; width: 2px; margin: 4px 0; }
+  .pipeline-step:last-child .pipeline-step__line { display: none; }
+  .pipeline-step__body { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 20px 24px; margin-bottom: 16px; margin-left: 8px; }
+  .pipeline-step__header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 12px; }
+  .pipeline-step__agent { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 4px; }
+  .pipeline-step__title { font-size: 16px; font-weight: 600; color: var(--text); }
+  .pipeline-step__status-pill { font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px; white-space: nowrap; }
+  .pipeline-step__desc { font-size: 13px; color: var(--text-muted); margin-bottom: 14px; line-height: 1.6; }
+  .action-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+  .action-list li { font-size: 12px; color: var(--text-muted); display: flex; align-items: flex-start; gap: 8px; }
+  .action-list li::before { content: '→'; color: var(--text-dim); flex-shrink: 0; margin-top: 1px; }
+  .ticket-transition { font-size: 11px; font-weight: 600; margin-top: 14px; padding: 8px 12px; border-radius: var(--r-sm); display: inline-flex; align-items: center; gap: 6px; }
+
+  /* Color themes for steps */
+  .step--alert .pipeline-step__dot { border-color: var(--orange); background: #fff7f4; }
+  .step--alert .pipeline-step__line { background: linear-gradient(to bottom, var(--orange), var(--purple)); opacity: .3; }
+  .step--alert .pipeline-step__agent { color: var(--orange); }
+  .step--alert .pipeline-step__status-pill { background: #fff7f4; color: var(--orange); }
+  .step--alert .ticket-transition { background: #fff7f4; color: var(--orange); }
+
+  .step--rca .pipeline-step__dot { border-color: var(--purple); background: #f5f3ff; }
+  .step--rca .pipeline-step__line { background: linear-gradient(to bottom, var(--purple), var(--green)); opacity: .3; }
+  .step--rca .pipeline-step__agent { color: var(--purple); }
+  .step--rca .pipeline-step__status-pill { background: #f5f3ff; color: var(--purple); }
+  .step--rca .ticket-transition { background: #f5f3ff; color: var(--purple); }
+
+  .step--action .pipeline-step__dot { border-color: var(--green); background: #f0fdf4; }
+  .step--action .pipeline-step__line { background: linear-gradient(to bottom, var(--green), var(--accent)); opacity: .3; }
+  .step--action .pipeline-step__agent { color: var(--green); }
+  .step--action .pipeline-step__status-pill { background: #f0fdf4; color: var(--green); }
+  .step--action .ticket-transition { background: #f0fdf4; color: var(--green); }
+
+  .step--rag .pipeline-step__dot { border-color: var(--accent); background: #f0f9ff; }
+  .step--rag .pipeline-step__agent { color: var(--accent); }
+  .step--rag .pipeline-step__status-pill { background: #f0f9ff; color: var(--accent); }
+
+  /* Schema */
+  .schema-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .schema-table { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; }
+  .schema-table__header { padding: 12px 16px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+  .schema-table__row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .schema-table__row:last-child { border-bottom: none; }
+  .schema-table__field { font-family: 'SF Mono', 'Fira Code', monospace; color: var(--text); }
+  .schema-table__type { color: var(--text-dim); }
+  .schema-table__pk { color: var(--orange); font-weight: 600; }
+  .schema-table__fk { color: var(--accent); }
+  .schema-table__important { color: var(--green); }
+
+  /* Status flow */
+  .status-flow { display: flex; align-items: center; gap: 0; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 20px 24px; margin-bottom: 16px; }
+  .status-pill { padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .status-arrow { color: var(--text-dim); font-size: 16px; padding: 0 8px; }
+  .status-label { font-size: 10px; color: var(--text-dim); text-align: center; margin-top: 4px; display: block; }
+
+  /* Arch diagram */
+  .arch { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 24px; margin-bottom: 16px; }
+  .arch-row { display: flex; gap: 12px; align-items: stretch; margin-bottom: 12px; }
+  .arch-box { border-radius: var(--r-sm); padding: 14px 16px; flex: 1; }
+  .arch-box__label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 6px; }
+  .arch-box__name { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+  .arch-box__detail { font-size: 11px; line-height: 1.5; }
+  .arch-arrow { display: flex; align-items: center; justify-content: center; font-size: 18px; color: var(--text-dim); padding: 0 4px; flex-shrink: 0; }
+  .arch-arrow--down { transform: rotate(90deg); }
+
+  .arch-box--alert { background: #fff7f4; border: 1px solid #fed7aa; }
+  .arch-box--alert .arch-box__label { color: var(--orange); }
+  .arch-box--rca { background: #f5f3ff; border: 1px solid #ddd6fe; }
+  .arch-box--rca .arch-box__label { color: var(--purple); }
+  .arch-box--action { background: #f0fdf4; border: 1px solid #bbf7d0; }
+  .arch-box--action .arch-box__label { color: var(--green); }
+  .arch-box--db { background: #f0f9ff; border: 1px solid #bae6fd; }
+  .arch-box--db .arch-box__label { color: var(--accent); }
+  .arch-box--rag { background: #fefce8; border: 1px solid #fde68a; }
+  .arch-box--rag .arch-box__label { color: var(--amber); }
+  .arch-box--dashboard { background: var(--surface-2); border: 1px solid var(--border); }
+  .arch-box--dashboard .arch-box__label { color: var(--text-dim); }
+
+  /* Open questions */
+  .questions { display: flex; flex-direction: column; gap: 12px; }
+  .question { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--border); border-radius: var(--r); padding: 14px 18px; }
+  .question--alert { border-left-color: var(--orange); }
+  .question--rca { border-left-color: var(--purple); }
+  .question--action { border-left-color: var(--green); }
+  .question--rag { border-left-color: var(--accent); }
+  .question--governance { border-left-color: var(--amber); }
+  .question__area { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--text-dim); margin-bottom: 4px; }
+  .question__text { font-size: 13px; color: var(--text); }
+
+  /* Footer */
+  .footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--text-dim); }
+
+  @media (max-width: 640px) {
+    .kpi-row { grid-template-columns: 1fr; }
+    .schema-grid { grid-template-columns: 1fr; }
+    .arch-row { flex-direction: column; }
+  }
+</style>
+
+<style>
+  .oi-shell { display: flex; min-height: 100vh; }
+  .oi-sidebar { width: 220px; background: #ffffff; border-right: 1px solid #e2e5ea; padding: 20px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; flex-shrink: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .oi-sidebar__brand { font-size: 13px; font-weight: 700; padding: 0 20px 16px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #e2e5ea; margin-bottom: 10px; color: #1a1d23; }
+  .oi-sidebar__brand .dot { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; flex-shrink: 0; }
+  .oi-sidebar__group-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #98a2b3; padding: 10px 20px 6px; }
+  .oi-sidebar__link { display: block; padding: 6px 20px; font-size: 12px; color: #667085; text-decoration: none; border-left: 2px solid transparent; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .oi-sidebar__link:hover { background: #f0f1f4; color: #1a1d23; }
+  .oi-sidebar__link.active { color: #2563eb; border-left-color: #2563eb; background: #f0f1f4; font-weight: 600; }
+  .oi-sidebar__link--disabled { color: #98a2b3; font-style: italic; cursor: default; }
+  
+  .oi-sidebar__group-label { cursor: pointer; display: flex; align-items: center; justify-content: space-between; user-select: none; }
+  .oi-sidebar__group-label .oi-caret { transition: transform .15s; font-size: 9px; }
+  .oi-sidebar__group.collapsed .oi-caret { transform: rotate(-90deg); }
+  .oi-sidebar__group.collapsed .oi-sidebar__links { display: none; }
+
+  .oi-main { flex: 1; min-width: 0; overflow-x: auto; }
+</style>
+</head>
+<body><div class="oi-shell">
+<div class="oi-sidebar">
+  <div class="oi-sidebar__brand"><span class="dot"></span> Operative Intelligence</div>
+  <div class="oi-sidebar__group">
+    <div class="oi-sidebar__group-label">Incident Response <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link active" href="operative_intelligence_agentic_pipeline.html">Agentic Pipeline Concept</a>
+    <a class="oi-sidebar__link" href="operative_intelligence_pipeline.html">Agent Pipeline Overview</a>
+    <a class="oi-sidebar__link" href="incident_pipeline_monitor.html">Pipeline Monitor (Mockup)</a>
+    <a class="oi-sidebar__link" href="alert_ticketing_functional_spec.html">Functional Specification</a>
+    <a class="oi-sidebar__link" href="alert_ticketing_future_work_tracker.html">Future Work Tracker</a>
+  </div></div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">CUR Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <span class="oi-sidebar__link oi-sidebar__link--disabled">Coming soon</span>
+  </div></div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">Kafka Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <span class="oi-sidebar__link oi-sidebar__link--disabled">Coming soon</span>
+  </div></div>
+</div>
+<div class="oi-main">
+
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header__eyebrow">Operative Intelligence — Internal Platforms Engineering</div>
+    <div class="header__title">Agentic Incident Response Pipeline</div>
+    <div class="header__sub">Three-agent autonomous system for alert detection, root cause analysis, and remediation — with shared RAG knowledge base and internal ticket tracking.</div>
+    <div class="header__meta">
+      <span><span class="badge badge--draft">Draft</span></span>
+      <span><span class="badge badge--internal">Internal</span></span>
+      <span>Version 0.1 — June 2026</span>
+      <span>For review and feedback</span>
+    </div>
+  </div>
+
+  <!-- What this solves -->
+  <div class="section">
+    <div class="section__title">What this solves</div>
+    <p style="color:var(--text-muted);font-size:14px;line-height:1.7;max-width:720px;margin-bottom:24px;">
+      When an alert fires, multiple engineers are pulled in to triage, investigate, and fix — often spending hours on incidents that follow known patterns. This pipeline automates that entire chain, reserving human attention for genuinely novel problems.
+    </p>
+    <div class="kpi-row">
+      <div class="kpi">
+        <div class="kpi__label">MTTD</div>
+        <div class="kpi__value" style="color:var(--orange)">Faster</div>
+        <div class="kpi__desc">Alert Analyser reduces noise, surfaces real incidents faster. No human triage needed to separate genuine alerts from noise.</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi__label">MTTA</div>
+        <div class="kpi__value" style="color:var(--purple)">Instant</div>
+        <div class="kpi__desc">RCA Agent starts investigation immediately on escalation. No human acknowledgement step for known patterns.</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi__label">MTTR</div>
+        <div class="kpi__value" style="color:var(--green)">Automated</div>
+        <div class="kpi__desc">Action Agent applies known fixes automatically via Jenkins. Tracked escalation to Jira when automation is not available.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Architecture overview -->
+  <div class="section">
+    <div class="section__title">Architecture overview</div>
+    <div class="arch">
+      <div class="arch-row">
+        <div class="arch-box arch-box--alert">
+          <div class="arch-box__label">Agent 1</div>
+          <div class="arch-box__name">Alert Analyser</div>
+          <div class="arch-box__detail">Reads OpsGenie / JSM · deduplicates · classifies genuine / noise / suspect · enriches with inventory context · RAG lookup · creates incident ticket · escalates genuine alerts</div>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-box arch-box--db">
+          <div class="arch-box__label">Shared DB</div>
+          <div class="arch-box__name">Incident ticket</div>
+          <div class="arch-box__detail">Status: ESCALATED · Alert Analyser writes · RCA Agent polls · Decoupled — no direct agent-to-agent calls</div>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-box arch-box--rca">
+          <div class="arch-box__label">Agent 2</div>
+          <div class="arch-box__name">RCA Agent</div>
+          <div class="arch-box__detail">Polls for ESCALATED tickets · checks RAG · investigates logs / metrics / deps · produces structured findings · recommends actions · feeds RAG</div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;padding-right:0;margin-bottom:12px;">
+        <div style="width:calc(33% - 8px);display:flex;justify-content:center;">
+          <span style="font-size:18px;color:var(--text-dim);">↓</span>
+        </div>
+      </div>
+      <div class="arch-row">
+        <div class="arch-box arch-box--rag">
+          <div class="arch-box__label">Shared RAG</div>
+          <div class="arch-box__name">Knowledge base</div>
+          <div class="arch-box__detail">Alert patterns · RCA findings · recommended actions · fix outcomes · grows smarter with every incident · all three agents read and write</div>
+        </div>
+        <div class="arch-arrow">←</div>
+        <div class="arch-box arch-box--db">
+          <div class="arch-box__label">Shared DB</div>
+          <div class="arch-box__name">Incident ticket</div>
+          <div class="arch-box__detail">Status: RCA_COMPLETE · RCA Agent writes findings · Action Agent polls · Full audit trail of every state change</div>
+        </div>
+        <div class="arch-arrow">←</div>
+        <div class="arch-box arch-box--action">
+          <div class="arch-box__label">Agent 3</div>
+          <div class="arch-box__name">Action Agent</div>
+          <div class="arch-box__detail">Polls for RCA_COMPLETE tickets · checks Jenkins job catalogue · triggers fix or creates Jira ticket · records outcome · feeds results back to RAG</div>
+        </div>
+      </div>
+      <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);display:flex;gap:12px;align-items:center;">
+        <div class="arch-box arch-box--dashboard" style="flex:none;padding:10px 16px;">
+          <div class="arch-box__label">Dashboard</div>
+          <div class="arch-box__name" style="font-size:12px;">Standalone — reads incident_management DB</div>
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);flex:1;">Independently deployable on any platform (UAP or other). Read-only over shared Postgres. Shows incident pipeline, MTTD/MTTA/MTTR KPIs, per-ticket audit timeline.</div>
+      </div>
+    </div>
+    <div style="font-size:12px;color:var(--text-muted);padding:0 4px;">
+      Agents communicate exclusively via the shared database — no direct HTTP calls between agents. Each agent can be deployed, restarted, or replaced independently. Tickets queue safely in DB when any agent is unavailable.
+    </div>
+  </div>
+
+  <!-- Agent pipeline -->
+  <div class="section">
+    <div class="section__title">Agent pipeline — step by step</div>
+    <div class="pipeline">
+
+      <div class="pipeline-step step--alert">
+        <div class="pipeline-step__connector">
+          <div class="pipeline-step__dot"></div>
+          <div class="pipeline-step__line"></div>
+        </div>
+        <div class="pipeline-step__body">
+          <div class="pipeline-step__header">
+            <div>
+              <div class="pipeline-step__agent">Agent 1 — Alert Analyser</div>
+              <div class="pipeline-step__title">Detect, classify and escalate</div>
+            </div>
+            <div class="pipeline-step__status-pill">Existing agent — extend</div>
+          </div>
+          <div class="pipeline-step__desc">
+            On each sync cycle, Alert Analyser reads new alerts from OpsGenie / JSM. It deduplicates, scores noise, and enriches genuine alerts with inventory context (account, environment, customer). It then checks the RAG store for known patterns matching this alert's signature.
+          </div>
+          <ul class="action-list">
+            <li>Deduplicate — same incident fired by multiple tools counts once</li>
+            <li>Classify each alert as genuine, noise, or suspect using rule-based scoring</li>
+            <li>Enrich genuine alerts with inventory context (customer, application, environment)</li>
+            <li>Look up RAG for known patterns matching this alert signature</li>
+            <li>Create an incident ticket with enriched context and RAG hit (if any)</li>
+            <li>Set ticket status to ESCALATED — RCA Agent picks it up via polling</li>
+          </ul>
+          <div class="ticket-transition">Ticket created → status: ESCALATED</div>
+        </div>
+      </div>
+
+      <div class="pipeline-step step--rca">
+        <div class="pipeline-step__connector">
+          <div class="pipeline-step__dot"></div>
+          <div class="pipeline-step__line"></div>
+        </div>
+        <div class="pipeline-step__body">
+          <div class="pipeline-step__header">
+            <div>
+              <div class="pipeline-step__agent">Agent 2 — RCA Agent</div>
+              <div class="pipeline-step__title">Investigate and find root cause</div>
+            </div>
+            <div class="pipeline-step__status-pill">New agent — to build</div>
+          </div>
+          <div class="pipeline-step__desc">
+            RCA Agent polls the incident_management DB for tickets in ESCALATED status. For each ticket it picks up, it updates the status to INVESTIGATING, then begins autonomous analysis using the enriched alert context, RAG findings, and available data sources (logs, metrics, deployment history, service dependencies).
+          </div>
+          <ul class="action-list">
+            <li>Poll DB for ESCALATED tickets — update to INVESTIGATING on pickup</li>
+            <li>Query RAG for previous occurrences of the same alert signature</li>
+            <li>Investigate logs, metrics, and service dependencies autonomously</li>
+            <li>Correlate with recent deployments, config changes, or dependency failures</li>
+            <li>Produce structured finding: root cause, evidence, confidence score</li>
+            <li>Recommend specific remediation actions (Jenkins job, config change, rollback)</li>
+            <li>Write findings back to RAG — future incidents with same pattern benefit immediately</li>
+            <li>Update ticket with findings and set status to RCA_COMPLETE</li>
+          </ul>
+          <div class="ticket-transition">Ticket updated → status: RCA_COMPLETE + findings attached</div>
+        </div>
+      </div>
+
+      <div class="pipeline-step step--action">
+        <div class="pipeline-step__connector">
+          <div class="pipeline-step__dot"></div>
+          <div class="pipeline-step__line"></div>
+        </div>
+        <div class="pipeline-step__body">
+          <div class="pipeline-step__header">
+            <div>
+              <div class="pipeline-step__agent">Agent 3 — Action Agent</div>
+              <div class="pipeline-step__title">Remediate and record outcome</div>
+            </div>
+            <div class="pipeline-step__status-pill">New agent — to build</div>
+          </div>
+          <div class="pipeline-step__desc">
+            Action Agent polls for tickets in RCA_COMPLETE status. It reads the RCA findings and recommended actions, then checks whether a Jenkins job exists for the recommended fix. If yes, it triggers the job and monitors execution. If no, it creates a Jira ticket with full RCA context for the on-call engineer.
+          </div>
+          <ul class="action-list">
+            <li>Poll DB for RCA_COMPLETE tickets — update to REMEDIATING on pickup</li>
+            <li>Check Jenkins job catalogue for a job mapped to the recommended action</li>
+            <li>If job exists — trigger, monitor execution, verify resolution in OpsGenie</li>
+            <li>If no job — create Jira ticket with full RCA context for on-call engineer</li>
+            <li>Record outcome (success / failure / manual escalation) back to ticket</li>
+            <li>Feed outcome to RAG — successful fixes become known-good actions for future</li>
+            <li>Feed results back to Alert Analyser for enriched escalation context in future</li>
+            <li>Set ticket to RESOLVED (automated) or MANUAL (human intervention needed)</li>
+          </ul>
+          <div class="ticket-transition">Ticket updated → status: RESOLVED or MANUAL</div>
+        </div>
+      </div>
+
+      <div class="pipeline-step step--rag">
+        <div class="pipeline-step__connector">
+          <div class="pipeline-step__dot"></div>
+        </div>
+        <div class="pipeline-step__body">
+          <div class="pipeline-step__header">
+            <div>
+              <div class="pipeline-step__agent">Shared RAG — Continuous improvement</div>
+              <div class="pipeline-step__title">Knowledge base grows with every incident</div>
+            </div>
+            <div class="pipeline-step__status-pill">New shared service — to build</div>
+          </div>
+          <div class="pipeline-step__desc">
+            All three agents read from and write to a shared RAG store. Over time, the system learns which alert signatures map to which root causes, which Jenkins jobs resolve which issues, and which patterns repeat. Each incident makes the next one faster to resolve.
+          </div>
+          <ul class="action-list">
+            <li>Alert patterns and signatures — dedup and noise detection improves over time</li>
+            <li>Root cause findings — matched by alert signature for instant RCA on repeat incidents</li>
+            <li>Recommended actions and their outcomes — Action Agent knows which fixes work</li>
+            <li>Jenkins job mappings — auto-populated as successful remediations are recorded</li>
+            <li>Jira tickets created — tracked alongside automated resolutions for audit</li>
+          </ul>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Ticket lifecycle -->
+  <div class="section">
+    <div class="section__title">Ticket status lifecycle</div>
+    <div class="status-flow">
+      <div style="text-align:center">
+        <div class="status-pill" style="background:#f1f5f9;color:#475569;">NEW</div>
+        <span class="status-label">Alert fired</span>
+      </div>
+      <div class="status-arrow">→</div>
+      <div style="text-align:center">
+        <div class="status-pill" style="background:#fff7f4;color:var(--orange);">ESCALATED</div>
+        <span class="status-label">Alert Analyser</span>
+      </div>
+      <div class="status-arrow">→</div>
+      <div style="text-align:center">
+        <div class="status-pill" style="background:#faf5ff;color:var(--purple);">INVESTIGATING</div>
+        <span class="status-label">RCA Agent picks up</span>
+      </div>
+      <div class="status-arrow">→</div>
+      <div style="text-align:center">
+        <div class="status-pill" style="background:#f5f3ff;color:var(--purple);">RCA_COMPLETE</div>
+        <span class="status-label">Findings attached</span>
+      </div>
+      <div class="status-arrow">→</div>
+      <div style="text-align:center">
+        <div class="status-pill" style="background:#f0fdf4;color:var(--green);">REMEDIATING</div>
+        <span class="status-label">Action Agent</span>
+      </div>
+      <div class="status-arrow">→</div>
+      <div style="display:flex;flex-direction:column;gap:6px;text-align:center">
+        <div class="status-pill" style="background:#f0fdf4;color:var(--green);">RESOLVED</div>
+        <div class="status-pill" style="background:#fff7f4;color:var(--red);">MANUAL</div>
+        <span class="status-label">Automated / Jira</span>
+      </div>
+    </div>
+    <div style="font-size:12px;color:var(--text-muted);padding:0 4px;">
+      MTTD = ESCALATED − detected_at &nbsp;·&nbsp; MTTA = INVESTIGATING − detected_at &nbsp;·&nbsp; MTTR = RESOLVED − detected_at
+    </div>
+  </div>
+
+  <!-- Schema -->
+  <div class="section">
+    <div class="section__title">Data schema — incident_management DB</div>
+    <div style="font-size:13px;color:var(--text-muted);margin-bottom:16px;">Separate logical database within the shared Postgres instance. Agents write directly; dashboard reads via a lightweight read-only API.</div>
+    <div class="schema-grid">
+      <div class="schema-table">
+        <div class="schema-table__header" style="background:#fff7f4;color:var(--orange);">incidents</div>
+        <div class="schema-table__row"><span class="schema-table__field schema-table__pk">id</span><span class="schema-table__type">UUID PK</span></div>
+        <div class="schema-table__row"><span class="schema-table__field">alert_id</span><span class="schema-table__type">VARCHAR — OpsGenie/JSM ID</span></div>
+        <div class="schema-table__row"><span class="schema-table__field">alert_signature</span><span class="schema-table__type">VARCHAR — for RAG dedup</span></div>
+        <div class="schema-table__row"><span class="schema-table__field schema-table__important">status</span><span class="schema-table__type">ENUM — see lifecycle</span></div>
+        <div class="schema-table__row"><span class="schema-table__field">priority</span><span class="schema-table__type">VARCHAR — P1/P2/P3/P4</span></div>
+        <div class="schema-table__row"><span class="schema-table__field">title</span><span class="schema-table__type">TEXT</span></div>
+        <div class="schema-table__row"><span class="schema-table__field">alert_payload</span><span class="schema-table__type">JSONB — enriched alert</span></div>
+        <div class="schema-table__row"><span class="schema-table__field">rca_findings</span><span class="schema-table__type">JSONB — root cause + actions</span></div>
+        <div class="schema-table__row"><span class="schema-table__field">action_outcome</span><span class="schema-table__type">JSONB — fix result + logs</span></div>
+        <div class="schema-table__row"><span class="schema-table__field schema-table__important">detected_at</span><span class="schema-table__type">TIMESTAMPTZ — MTTD anchor</span></div>
+        <div class="schema-table__row"><span class="schema-table__field schema-table__important">escalated_at</span><span class="schema-table__type">TIMESTAMPTZ — MTTA anchor</span></div>
+        <div class="schema-table__row"><span class="schema-table__field">rca_completed_at</span><span class="schema-table__type">TIMESTAMPTZ</span></div>
+        <div class="schema-table__row"><span class="schema-table__field schema-table__important">resolved_at</span><span class="schema-table__type">TIMESTAMPTZ — MTTR anchor</span></div>
+        <div class="schema-table__row"><span class="schema-table__field">created_at</span><span class="schema-table__type">TIMESTAMPTZ</span></div>
+        <div class="schema-table__row"><span class="schema-table__field">updated_at</span><span class="schema-table__type">TIMESTAMPTZ</span></div>
+      </div>
+      <div class="schema-table">
+        <div class="schema-table__header" style="background:#f0f9ff;color:var(--accent);">incident_events (audit log)</div>
+        <div class="schema-table__row"><span class="schema-table__field schema-table__pk">id</span><span class="schema-table__type">UUID PK</span></div>
+        <div class="schema-table__row"><span class="schema-table__field schema-table__fk">incident_id</span><span class="schema-table__type">UUID FK → incidents</span></div>
+        <div class="schema-table__row"><span class="schema-table__field">agent</span><span class="schema-table__type">VARCHAR — which agent acted</span></div>
+        <div class="schema-table__row"><span class="schema-table__field">event_type</span><span class="schema-table__type">ENUM — see below</span></div>
+        <div class="schema-table__row"><span class="schema-table__field">from_status</span><span class="schema-table__type">VARCHAR — previous state</span></div>
+        <div class="schema-table__row"><span class="schema-table__field">to_status</span><span class="schema-table__type">VARCHAR — new state</span></div>
+        <div class="schema-table__row"><span class="schema-table__field">payload</span><span class="schema-table__type">JSONB — event detail</span></div>
+        <div class="schema-table__row"><span class="schema-table__field">created_at</span><span class="schema-table__type">TIMESTAMPTZ</span></div>
+        <div style="padding:12px 16px;border-top:1px solid var(--border);">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text-dim);margin-bottom:8px;">event_type values</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;">
+            <span style="font-size:11px;font-family:monospace;background:var(--surface-2);padding:2px 8px;border-radius:4px;color:var(--text-muted);">STATE_CHANGE</span>
+            <span style="font-size:11px;font-family:monospace;background:var(--surface-2);padding:2px 8px;border-radius:4px;color:var(--text-muted);">NOTE</span>
+            <span style="font-size:11px;font-family:monospace;background:var(--surface-2);padding:2px 8px;border-radius:4px;color:var(--text-muted);">RAG_HIT</span>
+            <span style="font-size:11px;font-family:monospace;background:var(--surface-2);padding:2px 8px;border-radius:4px;color:var(--text-muted);">ACTION_TRIGGERED</span>
+            <span style="font-size:11px;font-family:monospace;background:var(--surface-2);padding:2px 8px;border-radius:4px;color:var(--text-muted);">JIRA_CREATED</span>
+            <span style="font-size:11px;font-family:monospace;background:var(--surface-2);padding:2px 8px;border-radius:4px;color:var(--text-muted);">RAG_WRITE</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Deployment -->
+  <div class="section">
+    <div class="section__title">Deployment model</div>
+    <div class="arch">
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px;">
+        <div class="arch-box arch-box--alert">
+          <div class="arch-box__label">Alert Analyser</div>
+          <div class="arch-box__name" style="font-size:12px;">Existing agent — extended</div>
+          <div class="arch-box__detail">Add ticket writer. Add RAG client. Existing dedup, classify, enrich logic unchanged.</div>
+        </div>
+        <div class="arch-box arch-box--rca">
+          <div class="arch-box__label">RCA Agent</div>
+          <div class="arch-box__name" style="font-size:12px;">New standalone agent</div>
+          <div class="arch-box__detail">Polls incidents DB. Reads logs/metrics. Writes findings. Feeds RAG. Standalone FastAPI.</div>
+        </div>
+        <div class="arch-box arch-box--action">
+          <div class="arch-box__label">Action Agent</div>
+          <div class="arch-box__name" style="font-size:12px;">New standalone agent</div>
+          <div class="arch-box__detail">Polls incidents DB. Jenkins integration. Jira escalation. Feeds outcome to RAG.</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div class="arch-box arch-box--db">
+          <div class="arch-box__label">Shared Postgres</div>
+          <div class="arch-box__name" style="font-size:12px;">incident_management DB — existing instance</div>
+          <div class="arch-box__detail">Separate logical DB in operative_db Postgres. Schema owned by Alert Analyser (created on startup). All agents read/write.</div>
+        </div>
+        <div class="arch-box arch-box--dashboard">
+          <div class="arch-box__label">Incident Dashboard</div>
+          <div class="arch-box__name" style="font-size:12px;">Standalone — independently deployable</div>
+          <div class="arch-box__detail">Lightweight FastAPI (read-only) + nginx + HTML/JS. Deployable on UAP or any platform that can reach Postgres. Shows live pipeline, MTTD/MTTA/MTTR, audit trail.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Open questions -->
+  <div class="section">
+    <div class="section__title">Open questions for review</div>
+    <div class="questions">
+      <div class="question question--alert">
+        <div class="question__area">Alert Analyser → RCA Agent</div>
+        <div class="question__text">What is the exact data contract? Which fields does RCA need from Alert Analyser — just the enriched alert payload, or also the RAG hit context and confidence score?</div>
+      </div>
+      <div class="question question--rca">
+        <div class="question__area">RCA Agent</div>
+        <div class="question__text">Which data sources can RCA Agent query autonomously? Logs, metrics, traces, deployment history — which are available via API and which need integration work?</div>
+      </div>
+      <div class="question question--action">
+        <div class="question__area">Action Agent</div>
+        <div class="question__text">How is the Jenkins job catalogue maintained? Who maps alert types to jobs, and how do we prevent bad remediations on production without human approval?</div>
+      </div>
+      <div class="question question--rag">
+        <div class="question__area">Shared RAG</div>
+        <div class="question__text">How is the RAG structured — per-service, per-alert-type, or a single global store? How do we prevent bad findings from being stored and reused in future incidents?</div>
+      </div>
+      <div class="question question--governance">
+        <div class="question__area">Governance</div>
+        <div class="question__text">Which alert types are allowed to trigger automated remediation without human approval? P1 incidents — do they always go to MANUAL first, or can automation proceed?</div>
+      </div>
+      <div class="question question--governance">
+        <div class="question__area">Observability</div>
+        <div class="question__text">How do we track agent decisions end-to-end for audit and debugging? Should every RAG read/write be logged in incident_events, or do we need a separate agent decision log?</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div>Operative Intelligence — Internal Platforms Engineering</div>
+    <div>Generated June 2026 · Draft v0.1 · For review</div>
+  </div>
+
+</div>
+
+</div>
+</div>
+<script>
+  document.querySelectorAll('.oi-sidebar__group-label').forEach(function(label) {
+    label.addEventListener('click', function() {
+      label.parentElement.classList.toggle('collapsed');
+    });
+  });
+</script>
+</body>
+</html>
