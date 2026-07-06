@@ -927,7 +927,7 @@ Anomalies ({len(anomalies)} detected):
     async def event_stream():
         try:
             async for chunk in _llm_stream(
-                model="claude-sonnet-4-6",
+                model=settings.model,
                 max_tokens=8192,
                 messages=(
                     [
@@ -1189,7 +1189,7 @@ Unknown tab "{tab}" — no specific data available.
     async def event_stream():
         try:
             async for chunk in _llm_stream(
-                model="claude-sonnet-4-6",
+                model=settings.model,
                 max_tokens=4096,
                 messages=(
                     [

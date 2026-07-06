@@ -1,3 +1,8 @@
+import os
+import sys
+sys.path.insert(0, "/app")
+from shared.llm import DEFAULT_MODEL
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
@@ -6,7 +11,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     anthropic_api_key: str = ""
-    model: str = "claude-sonnet-4-6"
+    model: str = os.environ.get("LLM_MODEL", DEFAULT_MODEL)
 
     agent_id: str = ""
     agent_slug: str = "kafka-analyser"

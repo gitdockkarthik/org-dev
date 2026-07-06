@@ -1,12 +1,17 @@
 from __future__ import annotations
+import logging
 import os
 from typing import Any
+
+DEFAULT_MODEL = "claude-sonnet-4-6"
+
+logger = logging.getLogger(__name__)
 
 def _provider() -> str:
     return os.environ.get("LLM_PROVIDER", "anthropic").lower().strip()
 
 def _model() -> str:
-    return os.environ.get("LLM_MODEL", "claude-sonnet-4-6")
+    return os.environ.get("LLM_MODEL", DEFAULT_MODEL)
 
 async def create_message(
     *,
@@ -34,7 +39,9 @@ async def create_message(
     # LLM_MODEL env var takes precedence when explicitly set;
     # falls back to the model argument (from agent config / DB), then the default.
     env_model = os.environ.get("LLM_MODEL", "").strip()
-    resolved_model = env_model if env_model else (model or "claude-sonnet-4-6")
+    resolved_model = env_model if env_model else (model or DEFAULT_MODEL)
+    if not env_model and not model:
+        logger.warning("LLM_MODEL not set; falling back to DEFAULT_MODEL=%s", DEFAULT_MODEL)
 
     kwargs: dict[str, Any] = {
         "model": resolved_model,
@@ -98,7 +105,9 @@ async def stream_message(
 ):
     resolved_provider = (provider or _provider()).lower()
     env_model = os.environ.get("LLM_MODEL", "").strip()
-    resolved_model = env_model if env_model else (model or "claude-sonnet-4-6")
+    resolved_model = env_model if env_model else (model or DEFAULT_MODEL)
+    if not env_model and not model:
+        logger.warning("LLM_MODEL not set; falling back to DEFAULT_MODEL=%s", DEFAULT_MODEL)
     kwargs: dict[str, Any] = {"model": resolved_model, "max_tokens": max_tokens, "messages": messages}
     if system:
         kwargs["system"] = system
