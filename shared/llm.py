@@ -65,14 +65,15 @@ async def create_message(
 
     if resolved_provider == "bedrock":
         import anthropic
-        # Bedrock model IDs require the 'anthropic.' prefix.
-        if not resolved_model.startswith("anthropic."):
+        # Bedrock model IDs require an 'anthropic.' or region-prefixed
+        # (e.g. 'us.anthropic.') prefix for inference profiles.
+        if not resolved_model.startswith("anthropic.") and not resolved_model.startswith("us.anthropic.") and not resolved_model.startswith("eu.anthropic.") and not resolved_model.startswith("apac.anthropic."):
             resolved_model = f"anthropic.{resolved_model}"
         kwargs["model"] = resolved_model
-        # AsyncAnthropicBedrockMantle uses the Messages API endpoint.
+        # AsyncAnthropicBedrock uses the Messages API endpoint.
         # Resolves region from AWS_REGION / AWS_DEFAULT_REGION env vars automatically.
         # Picks up AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY from env.
-        client = anthropic.AsyncAnthropicBedrockMantle()
+        client = anthropic.AsyncAnthropicBedrock()
         try:
             return await client.messages.create(**kwargs)
         finally:
@@ -132,10 +133,12 @@ async def stream_message(
 
     elif resolved_provider == "bedrock":
         import anthropic
-        if not resolved_model.startswith("anthropic."):
+        # Bedrock model IDs require an 'anthropic.' or region-prefixed
+        # (e.g. 'us.anthropic.') prefix for inference profiles.
+        if not resolved_model.startswith("anthropic.") and not resolved_model.startswith("us.anthropic.") and not resolved_model.startswith("eu.anthropic.") and not resolved_model.startswith("apac.anthropic."):
             resolved_model = f"anthropic.{resolved_model}"
         kwargs["model"] = resolved_model
-        client = anthropic.AsyncAnthropicBedrockMantle()
+        client = anthropic.AsyncAnthropicBedrock()
         try:
             async with client.messages.stream(**kwargs) as stream:
                 async for text in stream.text_stream:
