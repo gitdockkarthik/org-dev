@@ -10,3 +10,4 @@ cryptography>=42.0.0
 python-multipart
 kafka-python-ng>=2.2.3
 jpype1>=1.5.0
+boto3>=1.34.0

@@ -1,7 +1,7 @@
 import json
 from typing import Any
 
-from shared.llm import create_message as llm_create_message
+from shared.llm import create_message as llm_create_message, _provider
 
 from config import settings
 from tools.base import ToolExecutor
@@ -52,7 +52,7 @@ class AgentRunner:
                  settings.anthropic_api_key for direct (non-orchestrated) invocations.
         """
         resolved_key = api_key or settings.anthropic_api_key
-        if not resolved_key:
+        if _provider() == "anthropic" and not resolved_key:
             raise RuntimeError(
                 "No Anthropic API key available. "
                 "Set ANTHROPIC_API_KEY env var or pass X-Anthropic-Key header."
