@@ -195,6 +195,7 @@
             <div class="agent-card__footer">
               <div class="agent-card__meta">
                 <span class="badge badge--published">published</span>
+                <span class="badge" style="background:${agentLinks[slug] ? 'rgba(99,102,241,.12);color:#6366f1' : 'rgba(217,119,6,.12);color:#d97706'}">${agentLinks[slug] ? 'Native' : 'Stand-alone'}</span>
                 ${model ? `<span class="agent-card__model">${model}</span>` : ''}
               </div>
               <div style="display:flex;gap:6px;flex-wrap:wrap">
