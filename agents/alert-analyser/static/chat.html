@@ -182,13 +182,8 @@
         const reports = await api('/reports');
         if (!reports.length) return;
         const r = reports[0];
-        let alerts = [];
-        try {
-          const dataRes = await fetch((_isPortalMode ? `${BACKEND_URL}/api/agents/alert-analyser/proxy` : '') + `/reports/${r.id}/data`, { headers: _authHeaders() });
-          if (dataRes.ok) alerts = await dataRes.json();
-        } catch (_) {}
-        const suspect_count = alerts.filter(a => a && a.classification === 'noise-suspect').length;
-        agentContext = { has_data: true, report_id: r.id, total_alerts: r.total_alerts, genuine_count: r.genuine_count, noise_count: r.noise_count, suspect_count, filename: r.filename, alerts };
+        const suspect_count = r.suspect_count || 0;
+        agentContext = { has_data: true, report_id: r.id, total_alerts: r.total_alerts, genuine_count: r.genuine_count, noise_count: r.noise_count, suspect_count, filename: r.filename };
         const genuineOnly = (r.genuine_count || 0) - suspect_count;
         document.getElementById('ctx-info').innerHTML =
           `<div style="color:#4ade80;font-weight:600">✓ Report loaded</div>` +

@@ -37,6 +37,7 @@ def add_report(filename: str, alerts: list[dict], classified: list[dict]) -> dic
     global _counter
     noise_count = sum(1 for a in classified if a["classification"] == "noise")
     genuine_count = len(classified) - noise_count
+    suspect_count = sum(1 for a in classified if a["classification"] == "noise-suspect")
     stats = compute_dashboard_stats(classified)
     with _lock:
         _counter += 1
@@ -49,6 +50,7 @@ def add_report(filename: str, alerts: list[dict], classified: list[dict]) -> dic
             "total_alerts": len(alerts),
             "genuine_count": genuine_count,
             "noise_count": noise_count,
+            "suspect_count": suspect_count,
             "status": "ready",
             "created_at": datetime.now(timezone.utc).isoformat(),
         }

@@ -111,27 +111,7 @@
         console.log('[ctx:alert-analyser] reports count:', reports.length);
         if (!reports.length) return {};
         const r = reports[0];
-
-        let alerts = [];
-        const dataUrl = `${BACKEND_URL}/api/agents/alert-analyser/proxy/reports/${r.id}/data`;
-        console.log('[ctx:alert-analyser] GET', dataUrl);
-        try {
-          const dataRes = await fetch(dataUrl, { headers: _authHeaders() });
-          console.log('[ctx:alert-analyser] data status:', dataRes.status);
-          if (dataRes.ok) {
-            alerts = await dataRes.json();
-            console.log('[ctx:alert-analyser] loaded', alerts.length, 'alerts');
-          } else {
-            const errBody = await dataRes.json().catch(() => ({ detail: dataRes.statusText }));
-            console.warn('[ctx:alert-analyser] data fetch failed:', dataRes.status, errBody);
-          }
-        } catch (e) {
-          console.warn('[ctx:alert-analyser] data fetch threw:', e.message);
-        }
-
-        // suspect_count isn't in the report meta — derive it from the classified data.
-        const suspect_count = alerts.filter(a => a && a.classification === 'noise-suspect').length;
-
+        const suspect_count = r.suspect_count || 0;
         return {
           has_data: true,
           report_id: r.id,
@@ -140,7 +120,6 @@
           noise_count: r.noise_count,
           suspect_count,
           filename: r.filename,
-          alerts,
         };
       },
       'cur-analyser': async () => {

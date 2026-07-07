@@ -101,17 +101,68 @@ async def stream_message(
     max_tokens: int = 8192,
     system: str | None = None,
     messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None = None,
+    tool_executor: Any = None,
     api_key: str | None = None,
     provider: str | None = None,
 ):
+    """Stream messages with optional tool_use support.
+
+    Args:
+        tool_executor: Optional async callable(name: str, input: dict) -> str
+                       that executes tools. If provided and stop_reason is
+                       'tool_use', automatically executes tools and continues.
+    """
     resolved_provider = (provider or _provider()).lower()
     env_model = os.environ.get("LLM_MODEL", "").strip()
     resolved_model = env_model if env_model else (model or DEFAULT_MODEL)
     if not env_model and not model:
         logger.warning("LLM_MODEL not set; falling back to DEFAULT_MODEL=%s", DEFAULT_MODEL)
-    kwargs: dict[str, Any] = {"model": resolved_model, "max_tokens": max_tokens, "messages": messages}
-    if system:
-        kwargs["system"] = system
+
+    async def _stream_with_tools(client: Any, model_id: str, msg_list: list[dict[str, Any]]):
+        """Shared streaming loop with tool_use support across all providers."""
+        while True:
+            kwargs: dict[str, Any] = {"model": model_id, "max_tokens": max_tokens, "messages": msg_list}
+            if system:
+                kwargs["system"] = system
+            if tools:
+                kwargs["tools"] = tools
+
+            async with client.messages.stream(**kwargs) as stream:
+                async for text in stream.text_stream:
+                    yield text
+                try:
+                    final = await stream.get_final_message()
+                except Exception:
+                    yield "[STOP_REASON] end_turn"
+                    return
+
+            if final.stop_reason == "tool_use" and tool_executor is not None:
+                msg_list.append({"role": "assistant", "content": final.content})
+
+                tool_results = []
+                for content_block in final.content:
+                    if content_block.type == "tool_use":
+                        try:
+                            result = await tool_executor(content_block.name, content_block.input)
+                            tool_results.append({
+                                "type": "tool_result",
+                                "tool_use_id": content_block.id,
+                                "content": result
+                            })
+                        except Exception as e:
+                            tool_results.append({
+                                "type": "tool_result",
+                                "tool_use_id": content_block.id,
+                                "content": f"Error: {str(e)}",
+                                "is_error": True
+                            })
+
+                if tool_results:
+                    msg_list.append({"role": "user", "content": tool_results})
+            else:
+                yield f"[STOP_REASON] {final.stop_reason}"
+                return
 
     if resolved_provider == "anthropic":
         import anthropic
@@ -120,14 +171,8 @@ async def stream_message(
             raise RuntimeError("Set ANTHROPIC_API_KEY env var.")
         client = anthropic.AsyncAnthropic(api_key=resolved_key)
         try:
-            async with client.messages.stream(**kwargs) as stream:
-                async for text in stream.text_stream:
-                    yield text
-                try:
-                    final = await stream.get_final_message()
-                    yield f"[STOP_REASON] {final.stop_reason}"
-                except Exception:
-                    yield "[STOP_REASON] end_turn"
+            async for chunk in _stream_with_tools(client, resolved_model, messages):
+                yield chunk
         finally:
             await client.close()
 
@@ -135,19 +180,13 @@ async def stream_message(
         import anthropic
         # Bedrock model IDs require an 'anthropic.' or region-prefixed
         # (e.g. 'us.anthropic.') prefix for inference profiles.
-        if not resolved_model.startswith("anthropic.") and not resolved_model.startswith("us.anthropic.") and not resolved_model.startswith("eu.anthropic.") and not resolved_model.startswith("apac.anthropic."):
-            resolved_model = f"anthropic.{resolved_model}"
-        kwargs["model"] = resolved_model
+        model_id = resolved_model
+        if not model_id.startswith("anthropic.") and not model_id.startswith("us.anthropic.") and not model_id.startswith("eu.anthropic.") and not model_id.startswith("apac.anthropic."):
+            model_id = f"anthropic.{model_id}"
         client = anthropic.AsyncAnthropicBedrock()
         try:
-            async with client.messages.stream(**kwargs) as stream:
-                async for text in stream.text_stream:
-                    yield text
-                try:
-                    final = await stream.get_final_message()
-                    yield f"[STOP_REASON] {final.stop_reason}"
-                except Exception:
-                    yield "[STOP_REASON] end_turn"
+            async for chunk in _stream_with_tools(client, model_id, messages):
+                yield chunk
         finally:
             await client.close()
 
@@ -157,14 +196,8 @@ async def stream_message(
         region = os.environ.get("VERTEX_REGION", "us-east5")
         client = anthropic.AsyncAnthropicVertex(project_id=project_id, region=region)
         try:
-            async with client.messages.stream(**kwargs) as stream:
-                async for text in stream.text_stream:
-                    yield text
-                try:
-                    final = await stream.get_final_message()
-                    yield f"[STOP_REASON] {final.stop_reason}"
-                except Exception:
-                    yield "[STOP_REASON] end_turn"
+            async for chunk in _stream_with_tools(client, resolved_model, messages):
+                yield chunk
         finally:
             await client.close()
 
