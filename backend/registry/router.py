@@ -143,6 +143,17 @@ async def deprecate_agent(agent_id: uuid.UUID, db: AsyncSession = Depends(get_db
     return agent
 
 
+@router.delete(
+    "/agents/{agent_id}",
+    status_code=204,
+    dependencies=[Depends(require_api_key)],
+)
+async def delete_agent(agent_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    agent = await _get_or_404(db, agent_id)
+    await db.delete(agent)
+    await db.commit()
+
+
 @router.get(
     "/agents/{agent_id}/versions",
     response_model=list[AgentVersionResponse],

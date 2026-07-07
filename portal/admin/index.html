@@ -254,6 +254,10 @@
               ` : ''}
               <button class="btn btn--ghost btn--sm"
                 onclick="openEditModal('${agent.id}')">Edit</button>
+              <button class="btn btn--danger btn--sm"
+                data-id="${agent.id}"
+                data-name="${agent.name.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"
+                onclick="confirmDeleteAgent(this.dataset.id, this.dataset.name)">Delete</button>
               <a href="/chat?agent=${encodeURIComponent(agent.slug)}"
                  class="btn btn--ghost btn--sm"
                  ${agent.status !== 'published' ? 'style="opacity:.4;pointer-events:none"' : ''}>Chat</a>
@@ -332,6 +336,19 @@
         updateCounts();
         renderTable(activeFilter);
         showToast(`"${agentName}" ${action}ed successfully`, 'success');
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    async function confirmDeleteAgent(agentId, agentName) {
+      if (!confirm(`Permanently delete "${agentName}"? This cannot be undone — all version history will be removed and chat sessions will be unlinked.`)) return;
+      try {
+        await deleteAgent(agentId);
+        allAgents = allAgents.filter(a => a.id !== agentId);
+        updateCounts();
+        renderTable(activeFilter);
+        showToast(`"${agentName}" deleted permanently`, 'success');
       } catch (err) {
         showToast(err.message, 'error');
       }

@@ -115,6 +115,18 @@ async function updateAgent(agentId, data) {
   }));
 }
 
+/** Permanently delete an agent by registry ID. */
+async function deleteAgent(agentId) {
+  const res = await fetch(`${BACKEND_URL}/api/registry/agents/${agentId}`, {
+    method: 'DELETE',
+    headers: _authHeaders(),
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(e.detail || `HTTP ${res.status}`);
+  }
+}
+
 /** Fetch chat history for a session UUID. */
 async function getHistory(sessionId) {
   return _json(await fetch(`${BACKEND_URL}/api/session/${encodeURIComponent(sessionId)}`));
