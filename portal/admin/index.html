@@ -255,8 +255,8 @@
               <button class="btn btn--ghost btn--sm"
                 onclick="openEditModal('${agent.id}')">Edit</button>
               <button class="btn btn--danger btn--sm"
-                data-id="${agent.id}"
-                data-name="${agent.name.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"
+                data-id="${agent.id.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')}"
+                data-name="${agent.name.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')}"
                 onclick="confirmDeleteAgent(this.dataset.id, this.dataset.name)">Delete</button>
               <a href="/chat?agent=${encodeURIComponent(agent.slug)}"
                  class="btn btn--ghost btn--sm"
