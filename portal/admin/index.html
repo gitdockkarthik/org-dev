@@ -252,12 +252,71 @@
                 <button class="btn btn--danger btn--sm"
                   onclick="act('deprecate','${agent.id}','${agent.name}')">Deprecate</button>
               ` : ''}
+              <button class="btn btn--ghost btn--sm"
+                onclick="openEditModal('${agent.id}')">Edit</button>
               <a href="/chat?agent=${encodeURIComponent(agent.slug)}"
                  class="btn btn--ghost btn--sm"
                  ${agent.status !== 'published' ? 'style="opacity:.4;pointer-events:none"' : ''}>Chat</a>
             </td>
           </tr>`;
       }).join('');
+    }
+
+    // ── Edit modal ──────────────────────────────────────────────────────────────
+    let _editingAgentId = null;
+
+    function openEditModal(agentId) {
+      const agent = allAgents.find(a => a.id === agentId);
+      if (!agent) return;
+      _editingAgentId = agentId;
+      document.getElementById('edit-name').value = agent.name || '';
+      document.getElementById('edit-description').value = agent.description || '';
+      document.getElementById('edit-version').value = agent.version || '';
+      document.getElementById('edit-model').value = agent.model || '';
+      document.getElementById('edit-invoke-url').value = agent.invoke_url || '';
+      document.getElementById('edit-landing-page-url').value = agent.landing_page_url || '';
+      document.getElementById('edit-system-prompt').value = agent.system_prompt || '';
+      document.getElementById('edit-temperature').value = agent.temperature ?? 0.7;
+      document.getElementById('edit-tools').value = JSON.stringify(agent.tools || [], null, 2);
+      document.getElementById('edit-modal-overlay').style.display = 'flex';
+    }
+
+    function closeEditModal() {
+      document.getElementById('edit-modal-overlay').style.display = 'none';
+      _editingAgentId = null;
+    }
+
+    async function submitEditModal() {
+      if (!_editingAgentId) return;
+      let tools;
+      try {
+        tools = JSON.parse(document.getElementById('edit-tools').value || '[]');
+      } catch (e) {
+        showToast('Tools field must be valid JSON', 'error');
+        return;
+      }
+      const payload = {
+        name: document.getElementById('edit-name').value,
+        description: document.getElementById('edit-description').value,
+        version: document.getElementById('edit-version').value,
+        model: document.getElementById('edit-model').value,
+        invoke_url: document.getElementById('edit-invoke-url').value,
+        landing_page_url: document.getElementById('edit-landing-page-url').value,
+        system_prompt: document.getElementById('edit-system-prompt').value,
+        temperature: parseFloat(document.getElementById('edit-temperature').value),
+        tools: tools,
+      };
+      try {
+        const updated = await updateAgent(_editingAgentId, payload);
+        const idx = allAgents.findIndex(a => a.id === _editingAgentId);
+        if (idx !== -1) allAgents[idx] = updated;
+        updateCounts();
+        renderTable(activeFilter);
+        showToast(`"${updated.name}" updated successfully`, 'success');
+        closeEditModal();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
     }
 
     // ── Actions ────────────────────────────────────────────────────────────────
@@ -496,5 +555,54 @@
       el.style.cssText = `display:block;margin-top:14px;padding:11px 14px;border-radius:8px;font-size:.85rem;${styles[type] || ''}`;
     }
   </script>
+
+  <div id="edit-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center;">
+    <div style="background:var(--navy-1,#fff);border-radius:8px;padding:28px;width:520px;max-height:85vh;overflow-y:auto;">
+      <h3 style="margin:0 0 18px 0;font-size:1.1rem;">Edit Agent</h3>
+      <div class="form-field">
+        <label class="form-label" for="edit-name">Name</label>
+        <input id="edit-name" type="text" class="form-input">
+      </div>
+      <div class="form-field">
+        <label class="form-label" for="edit-description">Description</label>
+        <input id="edit-description" type="text" class="form-input">
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label class="form-label" for="edit-version">Version</label>
+          <input id="edit-version" type="text" class="form-input">
+        </div>
+        <div class="form-field">
+          <label class="form-label" for="edit-model">Model</label>
+          <input id="edit-model" type="text" class="form-input">
+        </div>
+      </div>
+      <div class="form-field">
+        <label class="form-label" for="edit-invoke-url">Invoke URL</label>
+        <input id="edit-invoke-url" type="url" class="form-input">
+      </div>
+      <div class="form-field">
+        <label class="form-label" for="edit-landing-page-url">Landing Page URL</label>
+        <input id="edit-landing-page-url" type="url" class="form-input" placeholder="For externally-built agents">
+      </div>
+      <div class="form-field">
+        <label class="form-label" for="edit-system-prompt">System Prompt</label>
+        <textarea id="edit-system-prompt" class="form-input" rows="4"></textarea>
+      </div>
+      <div class="form-field">
+        <label class="form-label" for="edit-temperature">Temperature</label>
+        <input id="edit-temperature" type="number" min="0" max="1" step="0.1" class="form-input">
+      </div>
+      <div class="form-field">
+        <label class="form-label" for="edit-tools">Tools (JSON array)</label>
+        <textarea id="edit-tools" class="form-input" rows="3"></textarea>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+        <button class="btn btn--ghost btn--sm" onclick="closeEditModal()">Cancel</button>
+        <button class="btn btn--primary btn--sm" onclick="submitEditModal()">Save</button>
+      </div>
+    </div>
+  </div>
+
 </body>
 </html>

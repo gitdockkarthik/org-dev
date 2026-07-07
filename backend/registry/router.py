@@ -22,6 +22,7 @@ def _snapshot(agent: Agent) -> dict[str, Any]:
         "version": agent.version,
         "status": agent.status,
         "invoke_url": agent.invoke_url,
+        "landing_page_url": agent.landing_page_url,
         "system_prompt": agent.system_prompt,
         "model": agent.model,
         "temperature": agent.temperature,

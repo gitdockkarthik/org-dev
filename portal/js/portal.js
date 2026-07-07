@@ -106,6 +106,15 @@ async function deprecateAgent(agentId) {
   }));
 }
 
+/** Update an agent's editable fields by registry ID. */
+async function updateAgent(agentId, data) {
+  return _json(await fetch(`${BACKEND_URL}/api/registry/agents/${agentId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+    body: JSON.stringify(data),
+  }));
+}
+
 /** Fetch chat history for a session UUID. */
 async function getHistory(sessionId) {
   return _json(await fetch(`${BACKEND_URL}/api/session/${encodeURIComponent(sessionId)}`));

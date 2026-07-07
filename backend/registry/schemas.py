@@ -13,6 +13,7 @@ class AgentCreate(BaseModel):
     description: str = ""
     version: str = "0.1.0"
     invoke_url: str | None = None
+    landing_page_url: str | None = None
     system_prompt: str = ""
     model: str = "claude-sonnet-4-6"
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
@@ -24,6 +25,7 @@ class AgentUpdate(BaseModel):
     description: str | None = None
     version: str | None = None
     invoke_url: str | None = None
+    landing_page_url: str | None = None
     system_prompt: str | None = None
     model: str | None = None
     temperature: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -40,6 +42,7 @@ class AgentResponse(BaseModel):
     version: str
     status: AgentStatus
     invoke_url: str | None
+    landing_page_url: str | None
     system_prompt: str
     model: str
     temperature: float

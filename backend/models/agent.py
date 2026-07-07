@@ -35,6 +35,7 @@ class Agent(Base):
         String, nullable=False, default=AgentStatus.draft
     )
     invoke_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    landing_page_url: Mapped[str | None] = mapped_column(String, nullable=True)
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
     model: Mapped[str] = mapped_column(
         String, nullable=False, default="claude-sonnet-4-6"
