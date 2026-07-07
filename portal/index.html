@@ -167,14 +167,23 @@
           'kafka-analyser': '#FF6B35',
         };
         const acStyle = accentOverrides[slug]
-          ? `--ca:${accentOverrides[slug]};cursor:pointer`
-          : 'cursor:pointer';
-        const extras = (agentLinks[slug] || []).map(l =>
-          `<a href="${l.href}" class="btn btn--ghost btn--sm" onclick="event.stopPropagation()">${l.label}</a>`
-        ).join('');
+          ? `--ca:${accentOverrides[slug]};${agentLinks[slug] ? 'cursor:pointer' : ''}`
+          : (agentLinks[slug] ? 'cursor:pointer' : '');
+        const extras = agentLinks[slug]
+          ? agentLinks[slug].map(l =>
+              `<a href="${l.href}" class="btn btn--ghost btn--sm" onclick="event.stopPropagation()">${l.label}</a>`
+            ).join('')
+          : (() => {
+              const safeUrl = /^https?:\/\//i.test(agent.landing_page_url)
+                ? agent.landing_page_url.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+                : '';
+              return safeUrl
+                ? `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="btn btn--primary btn--sm" onclick="event.stopPropagation()">Launch Agent</a>`
+                : '';
+            })();
 
         return `
-          <div class="agent-card ${ac}" onclick="window.location='/chat?agent=${encodeURIComponent(slug)}'" style="${acStyle}">
+          <div class="agent-card ${ac}" ${agentLinks[slug] ? `onclick="window.location='/chat?agent=${encodeURIComponent(slug)}'"` : ''} style="${acStyle}">
             <div class="agent-card__accent"></div>
             <div class="agent-card__body">
               <div class="agent-card__icon">${initial}</div>
@@ -190,9 +199,11 @@
               </div>
               <div style="display:flex;gap:6px;flex-wrap:wrap">
                 ${extras}
+                ${agentLinks[slug] ? `
                 <a href="/chat?agent=${encodeURIComponent(slug)}"
                    class="btn btn--primary btn--sm"
                    onclick="event.stopPropagation()">Chat →</a>
+                ` : ''}
               </div>
             </div>
           </div>`;

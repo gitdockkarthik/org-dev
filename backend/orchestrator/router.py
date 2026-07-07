@@ -215,6 +215,7 @@ async def list_published_agents(db: AsyncSession = Depends(get_db)):
             "description": a.description,
             "version": a.version,
             "model": a.model,
+            "landing_page_url": a.landing_page_url,
             "capabilities": [],
         }
         for a in result.scalars().all()
