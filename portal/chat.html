@@ -132,31 +132,12 @@
         console.log('[ctx:cur-analyser] reports count:', reports.length);
         if (!reports.length) return {};
         const r = reports[0];
-
-        let cur_data = [];
-        const dataUrl = `${BACKEND_URL}/api/agents/cur-analyser/proxy/reports/${r.id}/data`;
-        console.log('[ctx:cur-analyser] GET', dataUrl);
-        try {
-          const dataRes = await fetch(dataUrl, { headers: _authHeaders() });
-          console.log('[ctx:cur-analyser] data status:', dataRes.status);
-          if (dataRes.ok) {
-            cur_data = await dataRes.json();
-            console.log('[ctx:cur-analyser] loaded', cur_data.length, 'rows');
-          } else {
-            const errBody = await dataRes.json().catch(() => ({ detail: dataRes.statusText }));
-            console.warn('[ctx:cur-analyser] data fetch failed:', dataRes.status, errBody);
-          }
-        } catch (e) {
-          console.warn('[ctx:cur-analyser] data fetch threw:', e.message);
-        }
-
         return {
           has_data: true,
           report_id: r.id,
           row_count: r.row_count,
           total_cost: r.total_cost,
           filename: r.filename,
-          cur_data,
         };
       },
       'kafka-analyser': async () => {

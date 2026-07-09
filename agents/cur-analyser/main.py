@@ -846,6 +846,8 @@ async def invoke_stream(
             writer.writeheader()
             writer.writerows(rows)
             _cur_cache[body.session_id] = buf.getvalue()
+    if ctx.get("report_id"):
+        _session_report_map[body.session_id] = int(ctx["report_id"])
     # Load from DB by report_id if session cache is still empty. Skip large
     # files: loading a multi-GB CUR as csv_text would OOM, and the chat tools
     # are csv_text-only. has_data stays False so the agent tells the user to use
@@ -859,17 +861,30 @@ async def invoke_stream(
             csv_text = get_report_csv(_rid)
             if csv_text:
                 _cur_cache[body.session_id] = csv_text
-    has_data = bool(_cur_cache.get(body.session_id))
+    has_data = bool(_cur_cache.get(body.session_id)) or body.session_id in _session_report_map
     system = _runner._build_system({"session_id": body.session_id, "has_data": has_data})
     messages = _runner._build_messages(body.history, body.user_message)
 
+    async def _execute_tool(name: str, tool_input: dict) -> str:
+        executor = _runner._tool_map.get(name)
+        if executor is None:
+            return f"Unknown tool '{name}'"
+        try:
+            result = await executor.execute(**tool_input)
+            return result if isinstance(result, str) else json.dumps(result, default=str)
+        except Exception as exc:
+            return f"Tool '{name}' error: {exc}"
+
     async def event_stream():
         try:
+            yield f"data: Analyzing CUR data...\n\n"
             async for chunk in _llm_stream(
                 model=settings.model,
                 max_tokens=8192,
                 system=system,
                 messages=messages,
+                tools=_runner._anthropic_tools if _runner._tool_map else None,
+                tool_executor=_execute_tool,
                 api_key=x_anthropic_key or settings.anthropic_api_key,
             ):
                 if chunk.startswith("[STOP_REASON]"):
