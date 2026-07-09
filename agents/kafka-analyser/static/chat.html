@@ -207,6 +207,32 @@
 
         document.getElementById('chat-status').textContent =
           `Ready · ${allClusters.length} cluster${allClusters.length > 1 ? 's' : ''} loaded`;
+        const section = document.getElementById('ctx-section');
+        const info = document.getElementById('ctx-info');
+        if (section && info) {
+          info.innerHTML = '';
+          const header = document.createElement('div');
+          header.style.color = 'var(--success)';
+          header.style.fontWeight = '600';
+          header.textContent = `✓ ${allClusters.length} cluster${allClusters.length !== 1 ? 's' : ''} loaded`;
+          info.appendChild(header);
+          allClusters.forEach(c => {
+            const nameDiv = document.createElement('div');
+            nameDiv.style.marginTop = '.4rem';
+            nameDiv.style.fontWeight = '600';
+            nameDiv.textContent = c.name;
+            info.appendChild(nameDiv);
+            const detailDiv = document.createElement('div');
+            detailDiv.style.color = '#94a3b8';
+            detailDiv.textContent = `${c.environment} · ${c.broker_count} brokers · ${c.topic_count} topics`;
+            info.appendChild(detailDiv);
+            const healthDiv = document.createElement('div');
+            healthDiv.style.color = c.health === 'healthy' ? 'var(--success)' : '#f59e0b';
+            healthDiv.textContent = c.health;
+            info.appendChild(healthDiv);
+          });
+          section.style.display = 'block';
+        }
 
       } catch (_) {
         document.getElementById('chat-status').textContent = 'Ready — no cluster data';

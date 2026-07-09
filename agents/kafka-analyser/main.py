@@ -931,13 +931,26 @@ async def invoke_stream(
     })
     messages = _runner._build_messages(body.history, body.user_message)
 
+    async def _execute_tool(name: str, tool_input: dict) -> str:
+        executor = _runner._tool_map.get(name)
+        if executor is None:
+            return f"Unknown tool '{name}'"
+        try:
+            result = await executor.execute(**tool_input)
+            return result if isinstance(result, str) else json.dumps(result, default=str)
+        except Exception as exc:
+            return f"Tool '{name}' error: {exc}"
+
     async def event_stream():
         try:
+            yield f"data: Analyzing Kafka cluster data...\n\n"
             async for chunk in _llm_stream(
                 model=settings.model,
                 max_tokens=4096,
                 system=system,
                 messages=messages,
+                tools=_runner._anthropic_tools if _runner._tool_map else None,
+                tool_executor=_execute_tool,
                 api_key=x_anthropic_key or settings.anthropic_api_key,
             ):
                 if chunk.startswith("[STOP_REASON]"):
