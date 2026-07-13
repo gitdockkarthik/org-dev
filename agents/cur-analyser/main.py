@@ -35,6 +35,36 @@ logger = logging.getLogger(__name__)
 _cur_cache: dict[str, str] = {}
 _session_report_map: dict[str, int] = {}  # session_id -> report_id, for tools to resolve file_path when csv_text cache is empty (large files)
 
+# --- async upload jobs ------------------------------------------------------
+import uuid as _uuid_mod
+from enum import Enum as _Enum
+
+class UploadStatus(_Enum):
+    UPLOADING    = "uploading"
+    DECOMPRESSING = "decompressing"
+    PROCESSING   = "processing"
+    READY        = "ready"
+    FAILED       = "failed"
+    CANCELLED    = "cancelled"
+
+_upload_jobs: dict[str, dict] = {}  # job_id -> job record
+
+def _make_job(filename: str) -> dict:
+    job_id = _uuid_mod.uuid4().hex
+    _upload_jobs[job_id] = {
+        "job_id":    job_id,
+        "filename":  filename,
+        "status":    UploadStatus.UPLOADING.value,
+        "report_id": None,
+        "error":     None,
+        "cancel":    False,
+    }
+    return _upload_jobs[job_id]
+
+def _job_update(job: dict, status: UploadStatus, **kw) -> None:
+    job["status"] = status.value
+    job.update(kw)
+
 # ── Agent setup ───────────────────────────────────────────────────────────────
 _runner = AgentRunner(
     tools=[
@@ -275,13 +305,10 @@ def _quote_ident(name: str) -> str:
     return '"' + str(name).replace('"', '""') + '"'
 
 
-@app.post("/data-sources/cur/upload")
-async def ds_cur_upload(file: UploadFile) -> dict:
-    """Upload a new CUR file (CSV / CSV.zip / Parquet) and register it as a
-    data source. Reuses the existing report store so the dashboard picks it up."""
+async def _process_upload_job(job: dict, tmp_path: str, filename: str, file_size: int) -> None:
+    """Background task: decompress, register, and mark job ready or failed."""
     import os
     import shutil
-
     from report_store import (
         _ensure_data_dir,
         add_report,
@@ -290,38 +317,30 @@ async def ds_cur_upload(file: UploadFile) -> dict:
         set_report_path,
     )
     from routes_dashboard import invalidate_dashboard_cache
-    from tools.data_sources.file_providers import (
-        FileUploadCURProvider,
-        UploadTooLarge,
-        materialize_cur,
-        stream_upload_to_temp,
-    )
+    from tools.data_sources.file_providers import FileUploadCURProvider, materialize_cur
     from tools.duckdb_engine import get_total_cost
-
     reg = _require_registry()
-
-    # Stream the upload to a temp file on disk (bounded memory) rather than
-    # loading the whole CUR into memory via ``await file.read()``.
-    try:
-        tmp_path, file_size = await stream_upload_to_temp(
-            file, max_bytes=_MAX_CUR_BYTES
-        )
-    except UploadTooLarge:
-        raise HTTPException(status_code=413, detail="File too large (max 2 GB)")
-
     mat_path: str | None = None
     try:
+        _job_update(job, UploadStatus.DECOMPRESSING)
+        if job["cancel"]:
+            _job_update(job, UploadStatus.CANCELLED)
+            return
         try:
-            mat_path, resolved, ext = materialize_cur(file.filename or "", tmp_path)
+            mat_path, resolved, ext = materialize_cur(filename, tmp_path)
         except ValueError as exc:
-            code = 400 if "Unsupported" in str(exc) else 422
-            raise HTTPException(status_code=code, detail=str(exc))
+            _job_update(job, UploadStatus.FAILED, error=str(exc))
+            return
 
-        # Summarise straight from the file on disk — never materialise a
-        # multi-GB CSV string.
+        _job_update(job, UploadStatus.PROCESSING)
+        if job["cancel"]:
+            _job_update(job, UploadStatus.CANCELLED)
+            return
+
         summary = get_total_cost(file_path=mat_path)
         if "error" in summary:
-            raise HTTPException(status_code=422, detail=summary["error"])
+            _job_update(job, UploadStatus.FAILED, error=summary["error"])
+            return
 
         report = add_report(
             filename=resolved,
@@ -331,12 +350,37 @@ async def ds_cur_upload(file: UploadFile) -> dict:
             file_size=file_size,
             file_path=mat_path,
         )
-        # Move the materialised file into permanent per-report storage.
         _ensure_data_dir()
         perm_path = report_file_path(report["id"], ext)
         shutil.move(mat_path, perm_path)
-        mat_path = None  # moved — nothing left to clean up
+        mat_path = None
         set_report_path(report["id"], perm_path)
+
+        await persist_report(report["id"])
+        invalidate_dashboard_cache(report["id"])
+        invalidate_dashboard_cache(None)
+
+        provider = FileUploadCURProvider(
+            source_id=f"cur-{report['id']}",
+            filename=resolved,
+            csv_text="",
+            record_count=summary.get("row_count", 0),
+            total_cost=summary.get("total_cost", 0.0),
+            file_size=file_size,
+            report_id=report["id"],
+            file_path=perm_path,
+        )
+        await reg.register_cur(provider)
+        # Compute date range in background after registration — safe, scalar DuckDB query only
+        try:
+            provider.get_date_ranges()
+            await reg.register_cur(provider)
+        except Exception:
+            pass
+        _job_update(job, UploadStatus.READY, report_id=report["id"])
+
+    except Exception as exc:
+        _job_update(job, UploadStatus.FAILED, error=f"Unexpected error: {exc}")
     finally:
         for p in (tmp_path, mat_path):
             if p and os.path.exists(p):
@@ -345,22 +389,56 @@ async def ds_cur_upload(file: UploadFile) -> dict:
                 except OSError:
                     pass
 
-    await persist_report(report["id"])
-    invalidate_dashboard_cache(report["id"])
-    invalidate_dashboard_cache(None)
 
-    provider = FileUploadCURProvider(
-        source_id=f"cur-{report['id']}",
-        filename=resolved,
-        csv_text="",
-        record_count=summary.get("row_count", 0),
-        total_cost=summary.get("total_cost", 0.0),
-        file_size=file_size,
-        report_id=report["id"],
-        file_path=perm_path,
+@app.post("/data-sources/cur/upload")
+async def ds_cur_upload(file: UploadFile) -> dict:
+    """Upload a new CUR file (CSV / CSV.zip / Parquet) and register it as a
+    data source. Reuses the existing report store so the dashboard picks it up."""
+    from tools.data_sources.file_providers import UploadTooLarge, stream_upload_to_temp
+    from starlette.background import BackgroundTask
+    from fastapi.responses import JSONResponse
+
+    filename = file.filename or "upload.csv"
+    try:
+        tmp_path, file_size = await stream_upload_to_temp(
+            file, max_bytes=_MAX_CUR_BYTES
+        )
+    except UploadTooLarge:
+        raise HTTPException(status_code=413, detail="File too large (max 2 GB)")
+
+    job = _make_job(filename)
+    return JSONResponse(
+        status_code=202,
+        content={"job_id": job["job_id"], "filename": filename},
+        background=BackgroundTask(
+            _process_upload_job, job, tmp_path, filename, file_size
+        ),
     )
-    meta = await reg.register_cur(provider)
-    return {"ok": True, "report": report, "source": meta.to_dict()}
+
+
+@app.get("/data-sources/cur/upload-status/{job_id}")
+async def ds_cur_upload_status(job_id: str) -> dict:
+    """Poll the status of an async CUR upload job."""
+    job = _upload_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Upload job not found")
+    return job
+
+
+@app.delete("/data-sources/cur/upload-status/{job_id}")
+async def ds_cur_upload_cancel(job_id: str) -> dict:
+    """Cancel an in-progress CUR upload job and clean up any partial files."""
+    import os
+
+    job = _upload_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Upload job not found")
+    if job["status"] in (UploadStatus.READY.value, UploadStatus.FAILED.value, UploadStatus.CANCELLED.value):
+        _upload_jobs.pop(job_id, None)
+        return {"ok": True, "cancelled": False, "reason": "Job already completed"}
+    job["cancel"] = True
+    _upload_jobs.pop(job_id, None)
+    return {"ok": True, "cancelled": True}
 
 
 @app.post("/data-sources/inventory/upload")
@@ -442,7 +520,7 @@ async def ds_inventory_coverage(report_id: int = Query(default=None)) -> dict:
         import duckdb
 
         from report_store import get_report_path
-        from tools.duckdb_engine import _detect_account_col
+        from tools.duckdb_engine import _detect_account_col, _detect_resource_col
 
         path = get_report_path(report_id)
         con = duckdb.connect(":memory:")
@@ -453,6 +531,7 @@ async def ds_inventory_coverage(report_id: int = Query(default=None)) -> dict:
             )
             cols = [r[0] for r in con.execute("DESCRIBE f").fetchall()]
             acct_col = _detect_account_col(cols)
+            has_resource_col = _detect_resource_col(cols) is not None
             if not acct_col:
                 return {"report_id": report_id, "active": True, "joinable": False,
                         "inventory_loaded": True, "enabled": True,
@@ -478,10 +557,13 @@ async def ds_inventory_coverage(report_id: int = Query(default=None)) -> dict:
             "inventory_loaded": True,
             "enabled": True,
             "enrichment_level": "account",
-            "has_resource_column": False,
+            "has_resource_column": has_resource_col,
             "matched_accounts": len(matched),
             "total_accounts": len(cur_accounts),
             "account_match_rate": round(match_rate * 100, 1),
+            "spend_match_rate_pct": round(match_rate * 100, 1),
+            "matched_count": len(matched),
+            "unmatched_count": len(cur_accounts) - len(matched),
         }
 
     csv_text = get_report_csv(report_id) if report_id is not None else await _active_cur_csv(reg)
@@ -640,6 +722,39 @@ async def ds_enriched_summary(report_id: int) -> dict:
     _meta = next((r for r in __import__('report_store').list_reports() if r["id"] == report_id), None)
     _row_count_large = (_meta["row_count"] > 500_000) if _meta else False
     if _is_large_file(report_id) or _row_count_large:
+        from report_store import get_report_path
+        from tools.data_sources.registry import get_registry
+        from tools.inventory_enricher import build_enricher
+        import duckdb as _duckdb
+        from tools.duckdb_engine import _detect_account_col, _detect_cost_col
+        _reg = get_registry()
+        _enricher = await build_enricher(_reg)
+        _inv_accounts = set(_enricher._account_lookup.keys()) if _enricher and _enricher.active else set()
+        _path = get_report_path(report_id)
+        _spend_match_pct = None
+        _inv_cost = 0.0
+        _total_cost = 0.0
+        if _path and _inv_accounts:
+            try:
+                _con = _duckdb.connect(":memory:")
+                _safe = str(_path).replace("'", "''")
+                _con.execute(f"CREATE VIEW f AS SELECT * FROM read_csv_auto('{_safe}', ignore_errors=true)")
+                _cols = [r[0] for r in _con.execute("DESCRIBE f").fetchall()]
+                _acct_col = _detect_account_col(_cols)
+                _cost_col = _detect_cost_col(_cols)
+                if _acct_col and _cost_col:
+                    _qa = _quote_ident(_acct_col)
+                    _qc = _quote_ident(_cost_col)
+                    _total_cost = float(_con.execute(f"SELECT SUM({_qc}) FROM f").fetchone()[0] or 0)
+                    _placeholders = ",".join(["?"] * len(_inv_accounts))
+                    _inv_cost = float(_con.execute(
+                        f"SELECT SUM({_qc}) FROM f WHERE CAST({_qa} AS VARCHAR) IN ({_placeholders})",
+                        list(_inv_accounts)
+                    ).fetchone()[0] or 0)
+                    _spend_match_pct = round(_inv_cost / _total_cost * 100, 1) if _total_cost else 0.0
+                _con.close()
+            except Exception:
+                pass
         return {
             "report_id": report_id,
             "active": True,
@@ -647,6 +762,9 @@ async def ds_enriched_summary(report_id: int) -> dict:
             "enrichment_level": "account",
             "has_resource_column": False,
             "reason": "Account-level enrichment — resource IDs not in this CUR format",
+            "spend_match_rate_pct": _spend_match_pct,
+            "matched_count": round(_inv_cost, 2),
+            "unmatched_count": round(_total_cost - _inv_cost, 2),
         }
 
     from report_store import get_report_csv, get_report_path

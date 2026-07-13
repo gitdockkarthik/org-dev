@@ -1173,7 +1173,7 @@ def get_cost_by_tag(csv_text: str | None = None, tag_col: str = "", file_path: s
         con.close()
 
 
-def get_untagged_resources(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None) -> dict:
+def get_untagged_resources(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None, enricher=None) -> dict:
     df, con = _load_df(csv_text, file_path=file_path, filters=filters)
     try:
         cols = list(df.columns)
@@ -1182,6 +1182,55 @@ def get_untagged_resources(csv_text: str | None = None, file_path: str | None = 
         # Detect tag columns across tag_ and resourceTags/user: prefixes.
         tag_cols = detect_tag_columns(df)
         logger.info("get_untagged_resources: detected tag columns %s", tag_cols)
+
+        # CUR 2.0 Athena export: tags stored as JSON blob in `tags` column.
+        # No per-tag columns exist, so detect coverage from the JSON column directly.
+        has_tags_col = "tags" in cols
+        if not tag_cols and has_tags_col:
+            # Count rows with at least one user: tag in the JSON blob
+            aws_tagged = int(con.execute(
+                "SELECT COUNT(*) FROM cur_data WHERE tags LIKE '%user:%'"
+            ).fetchone()[0] or 0)
+            aws_tag_pct = round(aws_tagged / total_rows * 100, 1) if total_rows else 0.0
+            untagged_in_aws = total_rows - aws_tagged
+            untagged_pct = round(untagged_in_aws / total_rows * 100, 1) if total_rows else 0.0
+
+            # Cost for untagged rows
+            untagged_cost = 0.0
+            if cost_col:
+                untagged_cost = float(con.execute(
+                    f'SELECT SUM("{cost_col}") FROM cur_data WHERE tags NOT LIKE \'%user:%\' OR tags IS NULL'
+                ).fetchone()[0] or 0)
+
+            # Inventory covers the gap when enricher is active
+            inv_active = enricher is not None and getattr(enricher, "active", False)
+            inv_pct = untagged_pct if inv_active else 0.0
+            overall = round(aws_tag_pct + inv_pct, 1)
+
+            coverage = [
+                {
+                    "tag": "AWS Resource Tags",
+                    "coverage_pct": aws_tag_pct,
+                    "untagged_count": untagged_in_aws,
+                    "untagged_cost": round(untagged_cost, 4),
+                },
+            ]
+            if inv_active and untagged_in_aws > 0:
+                coverage.append({
+                    "tag": "Inventory Enrichment",
+                    "coverage_pct": inv_pct,
+                    "untagged_count": 0,
+                    "untagged_cost": 0.0,
+                })
+            return {
+                "total_rows": total_rows,
+                "tag_coverage": coverage,
+                "overall_coverage_pct": min(overall, 100.0),
+                "has_tag_columns": False,
+                "aws_tag_pct": aws_tag_pct,
+                "inventory_pct": inv_pct,
+            }
+
         coverage = []
         for tag in tag_cols.values():
             untagged_count = int(con.execute(
@@ -1213,9 +1262,11 @@ def get_untagged_resources(csv_text: str | None = None, file_path: str | None = 
             "total_rows": total_rows,
             "tag_coverage": coverage,
             "overall_coverage_pct": overall,
+            "has_tag_columns": True,
         }
     except Exception:
-        return {"total_rows": 0, "tag_coverage": [], "overall_coverage_pct": 0.0}
+        logger.exception("get_untagged_resources failed")
+        return {"total_rows": 0, "tag_coverage": [], "overall_coverage_pct": 0.0, "has_tag_columns": False}
     finally:
         con.close()
 

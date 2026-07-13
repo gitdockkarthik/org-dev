@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CUR Dashboard — UAP</title>
-  <link rel="stylesheet" href="css/style.css?v=3">
+  <link rel="stylesheet" href="/css/style.css?v=3">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
   <style>
@@ -721,18 +721,22 @@
         }
         // tag_team has no inventory equivalent — keep the server (native) value.
         // Tag Coverage panel (untagged_resources shape).
+        // Only overwrite if enriched-summary has actual tag coverage data;
+        // otherwise preserve the richer payload from the dashboard endpoint.
         const tc = s.tag_coverage || {};
-        DASH.untagged_resources = {
-          total_rows: 0,
-          tag_coverage: Object.keys(tc).map(k => ({
-            tag: k.replace(/_/g, ' '),
-            coverage_pct: tc[k].covered_pct,
-            untagged_count: 0,
-            untagged_cost: tc[k].untagged_cost,
-          })),
-          overall_coverage_pct: tc.Customer ? tc.Customer.covered_pct : 0,
-          has_tag_columns: Object.keys(tc).length > 0,
-        };
+        if (Object.keys(tc).length > 0) {
+          DASH.untagged_resources = {
+            total_rows: 0,
+            tag_coverage: Object.keys(tc).map(k => ({
+              tag: k.replace(/_/g, ' '),
+              coverage_pct: tc[k].covered_pct,
+              untagged_count: 0,
+              untagged_cost: tc[k].untagged_cost,
+            })),
+            overall_coverage_pct: tc.Customer ? tc.Customer.covered_pct : 0,
+            has_tag_columns: true,
+          };
+        }
       } catch (e) {
         console.warn('enriched-summary failed:', e);
       }
@@ -1852,16 +1856,53 @@
       const ut = DASH.untagged_resources || { tag_coverage: [], overall_coverage_pct: 0 };
       const cov = ut.tag_coverage || [];
 
-      const covRows = cov.map(c => {
-        const col = covColor(c.coverage_pct);
-        const label = c.tag.replace(/^tag_/, '');
-        return `<div class="cov-row">
-          <div class="cov-row__name">${escapeHtml(label)}</div>
-          <div class="progress-bar"><div class="progress-bar__fill" style="width:${c.coverage_pct}%;background:${col}"></div></div>
-          <div style="color:${col};font-weight:700">${fmtPct(c.coverage_pct)}</div>
-          <div class="cov-row__cost" style="color:var(--text-muted);font-size:.8rem">${fmtUSD0(c.untagged_cost)} untagged</div>
-        </div>`;
-      }).join('') || `<div class="data-table__empty">${ut.has_tag_columns === false ? 'Tag columns not available in this CUR format. Cost attribution is provided via inventory enrichment.' : 'No tag columns found.'}</div>`;
+      const awsPct   = ut.aws_tag_pct   ?? null;
+      const invPct   = ut.inventory_pct ?? null;
+      const covRows = (awsPct !== null && invPct !== null)
+        ? (() => {
+            const awsCost  = ut.tag_coverage?.[0]?.untagged_cost ?? 0;   // cost of untagged-in-AWS rows
+            const invCost  = awsCost;                                      // inventory covers exactly those rows
+            const taggedCost = (DASH.total_cost || 0) - awsCost;
+            return `<div style="margin-bottom:18px">
+              <div style="display:flex;border-radius:8px;overflow:hidden;height:36px">
+                <div style="flex:${awsPct};background:#22c55e;display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700;color:#fff;min-width:60px">
+                  ${fmtPct(awsPct)}
+                </div>
+                <div style="flex:${invPct};background:#f59e0b;display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700;color:#fff;min-width:60px">
+                  ${fmtPct(invPct)}
+                </div>
+              </div>
+              <div style="display:flex;margin-top:10px;gap:24px;flex-wrap:wrap">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <div style="width:12px;height:12px;border-radius:2px;background:#22c55e;flex-shrink:0"></div>
+                  <div>
+                    <div style="font-weight:600;font-size:.85rem">AWS Resource Tags</div>
+                    <div style="color:var(--text-muted);font-size:.78rem">${fmtPct(awsPct)} of rows tagged in AWS · ${fmtUSD0(taggedCost)} attributed</div>
+                  </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <div style="width:12px;height:12px;border-radius:2px;background:#f59e0b;flex-shrink:0"></div>
+                  <div>
+                    <div style="font-weight:600;font-size:.85rem">Inventory Enrichment</div>
+                    <div style="color:var(--text-muted);font-size:.78rem">${fmtPct(invPct)} covered by inventory · ${fmtUSD0(invCost)} attributed</div>
+                  </div>
+                </div>
+              </div>
+              <div style="margin-top:10px;font-size:.78rem;color:var(--text-muted)">
+                💡 Improve AWS tagging to reduce inventory dependency. Target: move spend from amber to green.
+              </div>
+            </div>`;
+          })()
+        : cov.map(c => {
+            const col = covColor(c.coverage_pct);
+            const label = c.tag.replace(/^tag_/, '');
+            return `<div class="cov-row">
+              <div class="cov-row__name">${escapeHtml(label)}</div>
+              <div class="progress-bar"><div class="progress-bar__fill" style="width:${c.coverage_pct}%;background:${col}"></div></div>
+              <div style="color:${col};font-weight:700">${fmtPct(c.coverage_pct)}</div>
+              <div class="cov-row__cost" style="color:var(--text-muted);font-size:.8rem">${fmtUSD0(c.untagged_cost)} untagged</div>
+            </div>`;
+          }).join('') || `<div class="data-table__empty">${ut.has_tag_columns === false ? 'Tag columns not available in this CUR format. Cost attribution is provided via inventory enrichment.' : 'No tag columns found.'}</div>`;
 
       const overall = ut.overall_coverage_pct || 0;
       const ocol = covColor(overall);
@@ -1937,7 +1978,7 @@
         return;
       }
 
-      const isAccountLevelOnly = c.spend_match_rate_pct === null || c.spend_match_rate_pct === undefined;
+      const isAccountLevelOnly = c.enrichment_level === 'account';
       const spend = c.spend_match_rate_pct || 0;
       const scol = covColor(spend);
       const matchedN = c.matched_count || 0;
@@ -1981,15 +2022,14 @@
             <div style="color:${scol};font-weight:700">${fmtPct(spend)}</div>
             <div class="cov-row__cost" style="color:var(--text-muted);font-size:.8rem">${fmtNum(matchedN)} / ${fmtNum(totalN)} resources</div>
           </div>
-          ${isAccountLevelOnly ? `<div style="margin:12px 0;padding:10px 14px;background:var(--navy-2);border-left:3px solid var(--accent);border-radius:4px;font-size:.84rem;color:var(--text-muted)">ℹ️ This report uses DBR format which does not include resource IDs. Match rates show 0% as matching is resource-level. Cost attribution by environment, customer, and cost centre is working via account-level inventory enrichment.</div>` : ''}
-          <div style="margin-top:16px">
+          ${!isAccountLevelOnly ? `<div style="margin-top:16px">
             <div class="chart-card__title">Tag coverage — with vs without inventory</div>
             <div class="data-table-wrap" style="margin-top:8px"><table class="data-table">
               <thead><tr><th>Attribute</th><th>Without inventory</th><th>With inventory</th><th>Improvement</th></tr></thead>
               <tbody>${baRows}</tbody></table></div>
-          </div>
+          </div>` : ''}
         </div>
-        <div class="chart-grid chart-grid--2">
+        ${!isAccountLevelOnly ? `<div class="chart-grid chart-grid--2">
           <div class="panel-card">
             <div class="chart-card__title">Per-service match rate</div>
             <div class="data-table-wrap" style="margin-top:8px"><table class="data-table">
@@ -2002,7 +2042,8 @@
               <thead><tr><th>Resource ID</th><th>Service</th><th>Cost</th><th>Reason</th></tr></thead>
               <tbody>${umRows}</tbody></table></div>
           </div>
-        </div>`;
+        </div>` : ''}`;
+
     }
 
     // ── TAB 6: Trends ─────────────────────────────────────────────────────────────

@@ -15,6 +15,7 @@ upload route is left untouched.
 from __future__ import annotations
 
 import csv
+import gzip
 import io
 import logging
 import zipfile
@@ -270,8 +271,19 @@ def materialize_cur(filename: str, src_path: str) -> tuple[str, str, str]:
         except zipfile.BadZipFile as exc:
             raise ValueError("Invalid ZIP file") from exc
 
+    if fname_lower.endswith(".csv.gz") or fname_lower.endswith(".gz"):
+        fd, out_path = tempfile.mkstemp(suffix=".csv")
+        try:
+            with os.fdopen(fd, "wb") as out, gzip.open(src_path, "rb") as src:
+                shutil.copyfileobj(src, out, length=8 * 1024 * 1024)
+        except Exception as exc:
+            os.unlink(out_path)
+            raise ValueError(f"Invalid GZ file: {exc}") from exc
+        resolved = filename[:-3] if fname_lower.endswith(".csv.gz") else filename
+        return out_path, resolved, ".csv"
+
     raise ValueError(
-        "Unsupported file format. Supported: .csv, .zip (containing CSV), .parquet"
+        "Unsupported file format. Supported: .csv, .zip (containing CSV), .csv.gz, .parquet"
     )
 
 
@@ -339,7 +351,7 @@ class FileUploadCURProvider(CURDataProvider):
         return False
 
     def get_meta(self) -> DataSourceMeta:
-        start, end = self.get_date_ranges()
+        start, end = self._date_range if self._date_range is not None else (None, None)
         return DataSourceMeta(
             source_id=self.source_id,
             source_type=self.source_type,
@@ -375,7 +387,23 @@ class FileUploadCURProvider(CURDataProvider):
                     "SELECT * FROM read_parquet(?)", [self.file_path]
                 ).df()
             elif self.file_path:
-                df = pd.read_csv(self.file_path)
+                con_pre = duckdb.connect(database=":memory:")
+                date_col_name = _detect_date_col(
+                    [r[0] for r in con_pre.execute(
+                        f"DESCRIBE SELECT * FROM read_csv_auto('{self.file_path.replace(chr(39), chr(39)*2)}', ignore_errors=true)"
+                    ).fetchall()]
+                )
+                if not date_col_name:
+                    return (None, None)
+                row = con_pre.execute(
+                    f"SELECT MIN(CAST(\"{date_col_name}\" AS DATE)), "
+                    f"MAX(CAST(\"{date_col_name}\" AS DATE)) "
+                    f"FROM read_csv_auto('{self.file_path.replace(chr(39), chr(39)*2)}', ignore_errors=true)"
+                ).fetchone()
+                con_pre.close()
+                if not row or row[0] is None:
+                    return (None, None)
+                return (str(row[0]), str(row[1]))
             else:
                 return (None, None)
             date_col = _detect_date_col(list(df.columns))

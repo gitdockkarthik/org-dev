@@ -207,7 +207,6 @@
     }
     .cur-table { width: 100%; min-width: 650px; border-collapse: collapse; font-size: 0.82rem; }
     .cur-table th[data-col="name"]    { min-width: 140px; }
-    .cur-table th[data-col="range"]   { min-width: 140px; }
     .cur-table th[data-col="rows"]    { min-width: 70px; }
     .cur-table th[data-col="match"]   { min-width: 120px; }
     .cur-table th[data-col="actions"] { min-width: 170px; }
@@ -267,6 +266,7 @@
   </header>
 
   <nav class="subnav">
+    <span id="agent-label" style="display:none;position:absolute;right:1.5rem;font-size:.8rem;font-weight:600;color:var(--accent,#0891b2)">CUR Analyser</span>
     <a href="/chat?agent=cur-analyser" data-standalone-href="chat.html" class="subnav__link">💬 Chat</a>
     <a href="/agents/cur-analyser/dashboard" data-standalone-href="dashboard.html" class="subnav__link">📊 Dashboard</a>
     <a href="/agents/cur-analyser/reports" data-standalone-href="reports.html" class="subnav__link">📁 Reports</a>
@@ -349,10 +349,10 @@
         <div class="actions" style="margin-top:1rem">
           <label class="btn btn-primary" style="cursor:pointer">
             + Upload CUR file
-            <input type="file" id="ds-cur-file" accept=".csv,.zip,.parquet" multiple style="display:none" />
+            <input type="file" id="ds-cur-file" accept=".csv,.zip,.parquet,.gz" multiple style="display:none" />
           </label>
         </div>
-        <p class="hint" style="margin-top:0.5rem">Upload multiple CUR files to enable comparison mode.</p>
+        <p class="hint" style="margin-top:0.5rem">Upload multiple CUR files to enable comparison mode. Large files (>50 MB) may take several minutes to upload over VPN.</p>
         <div id="ds-cur-msg" class="action-msg hidden"></div>
       </div>
 
@@ -656,17 +656,19 @@
   </div><!-- /.container -->
   </div><!-- /.content -->
 
-  <script src="/js/config.js?v=3"></script>
   <script src="/js/portal.js?v=3"></script>
   <script>
-    // ── Dual-mode detection: works inside Operative portal AND standalone ──
-    const _isPortalMode = (typeof window._isPortalEnv !== 'undefined' && window._isPortalEnv === true);
-    if (!_isPortalMode) {
+    // ── Standalone mode: stub portal dependencies ─────────────────────────
+    if (typeof window._authHeaders !== 'function') {
       window.BACKEND_URL = '';
       window._authHeaders = () => ({});
       window.portalReady = Promise.resolve();
       window.showToast = (msg, type) => console.log('[toast]', type || 'info', msg);
     }
+  </script>
+  <script>
+    // ── Dual-mode detection: works inside Operative portal AND standalone ──
+    const _isPortalMode = (typeof window._isPortalEnv !== 'undefined' && window._isPortalEnv === true);
   </script>
   <script>
     const SLUG  = 'cur-analyser';
@@ -846,8 +848,6 @@
       function curRowHtml(s) {
         const sid = escapeHtml(s.source_id);
         const reportId = (s.extra && s.extra.report_id != null) ? s.extra.report_id : null;
-        const rng = (s.date_range_start && s.date_range_end)
-          ? escapeHtml(s.date_range_start) + ' → ' + escapeHtml(s.date_range_end) : '—';
         const rows = s.record_count != null ? Number(s.record_count).toLocaleString() : '—';
         const name = escapeHtml(s.label);
         const nameAttr = attrEsc(s.label);
@@ -855,16 +855,13 @@
           ? '<td class="cur-cell-match" data-match-for="' + escapeHtml(reportId) + '">' + muted('checking…') + '</td>'
           : '<td class="cur-cell-match">' + muted('—') + '</td>';
         const actions =
-          (s.active
-            ? '<span class="badge" style="background:#dcfce7;color:#15803d">Active</span>'
-            : '<button class="btn btn-secondary btn-sm cur-set-active" data-sid="' + sid + '">Set Active</button>')
+          ''
           + '<button class="btn btn-danger btn-sm cur-remove" data-sid="' + sid + '">Remove</button>';
         return '<tr class="cur-row' + (s.active ? ' active' : '') + '" data-sid="' + sid + '">'
           + '<td><div class="cur-cell-name" title="' + nameAttr + '">'
           +   '<span class="cur-fname">' + name + '</span>'
           +   '<button class="cur-copy" title="Copy filename">📋</button>'
           + '</div></td>'
-          + '<td title="' + rng + '">' + rng + '</td>'
           + '<td>' + rows + '</td>'
           + matchCell
           + '<td><div class="cur-cell-actions">' + actions + '</div></td>'
@@ -886,7 +883,6 @@
           + '<div class="cur-table-wrap"><table class="cur-table">'
           +   '<thead><tr>'
           +     '<th data-col="name">Filename</th>'
-          +     '<th data-col="range">Date Range</th>'
           +     '<th data-col="rows">Rows</th>'
           +     '<th data-col="match">Match Rate</th>'
           +     '<th data-col="actions">Actions</th>'
@@ -919,7 +915,9 @@
           } else if (c.has_resource_column === false) {
             cell.innerHTML = muted('Resource ID not in CUR');
           } else if (c.enrichment_level === 'account') {
-            cell.innerHTML = muted('Account-level only');
+            cell.innerHTML = c.has_resource_column
+              ? muted(c.account_match_rate + '% (' + c.matched_accounts + '/' + c.total_accounts + ' accounts)')
+              : muted('Account-level only');
           } else {
             cell.innerHTML = '<strong>' + c.match_rate_pct + '%</strong> '
               + '<span style="color:#94a3b8">(' + c.spend_match_rate_pct + '% spend)</span>';
@@ -1036,22 +1034,154 @@
         return res.json();
       }
 
+      function _setCurUploadLocked(locked) {
+        const label = document.querySelector('label.btn-primary');
+        const input = $('ds-cur-file');
+        if (locked) {
+          label.style.opacity = '0.5';
+          label.style.pointerEvents = 'none';
+          label.title = 'Upload in progress — wait or cancel the current upload';
+          if (input) input.disabled = true;
+        } else {
+          label.style.opacity = '';
+          label.style.pointerEvents = '';
+          label.title = '';
+          if (input) input.disabled = false;
+          localStorage.removeItem('cur_upload_job');
+        }
+      }
+
+      function _curUploadXhr(file) {
+        return new Promise((resolve, reject) => {
+          const fd = new FormData();
+          fd.append('file', file);
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', `${PROXY}/data-sources/cur/upload`);
+          const hdrs = authHeaders();
+          Object.keys(hdrs).forEach(k => xhr.setRequestHeader(k, hdrs[k]));
+          xhr.upload.addEventListener('progress', ev => {
+            if (!ev.lengthComputable) return;
+            const pct = Math.round(ev.loaded / ev.total * 100);
+            const row = document.getElementById('cur-inprogress-row');
+            if (row) row.querySelector('.cur-inprogress-status').textContent = 'Uploading ' + pct + '%…';
+          });
+          xhr.addEventListener('load', () => {
+            if (xhr.status === 202) {
+              try { resolve(JSON.parse(xhr.responseText)); }
+              catch (e) { reject(new Error('Invalid server response')); }
+            } else {
+              let detail = 'HTTP ' + xhr.status;
+              try { const j = JSON.parse(xhr.responseText); if (j.detail) detail = j.detail; } catch (_) {}
+              reject(new Error(detail));
+            }
+          });
+          xhr.addEventListener('error', () => reject(new Error('Network error')));
+          xhr.send(fd);
+        });
+      }
+
+      async function _pollUploadJob(jobId, filename) {
+        const INTERVAL = 3000;
+        while (true) {
+          await new Promise(r => setTimeout(r, INTERVAL));
+          let job;
+          try {
+            const res = await fetch(`${PROXY}/data-sources/cur/upload-status/${jobId}`, { headers: authHeaders() });
+            if (!res.ok) break;
+            job = await res.json();
+          } catch (_) { break; }
+          const row = document.getElementById('cur-inprogress-row');
+          const statusEl = row && row.querySelector('.cur-inprogress-status');
+          const statusMap = {
+            decompressing: 'Decompressing…',
+            processing:    'Processing…',
+            ready:         'Ready',
+            failed:        null,
+            cancelled:     null,
+          };
+          if (statusEl && statusMap[job.status] !== undefined && statusMap[job.status] !== null) {
+            statusEl.textContent = statusMap[job.status];
+          }
+          if (job.status === 'ready') {
+            if (row) row.remove();
+            _setCurUploadLocked(false);
+            await loadDataSources();
+            return;
+          }
+          if (job.status === 'failed') {
+            if (row) row.remove();
+            _setCurUploadLocked(false);
+            showMsg($('ds-cur-msg'), 'Upload failed: ' + (job.error || 'Unknown error'), 'err');
+            await loadDataSources();
+            return;
+          }
+          if (job.status === 'cancelled') {
+            if (row) row.remove();
+            _setCurUploadLocked(false);
+            await loadDataSources();
+            return;
+          }
+        }
+        _setCurUploadLocked(false);
+      }
+
+      function _addInProgressRow(jobId, filename) {
+        const grid = $('ds-cur-grid');
+        let tbody = grid && grid.querySelector('tbody');
+        const rowHtml = '<tr id="cur-inprogress-row">'
+          + '<td><div class="cur-cell-name"><span class="cur-fname">' + escapeHtml(filename) + '</span></div></td>'
+          + '<td>—</td><td>—</td><td>—</td>'
+          + '<td><div class="cur-cell-actions">'
+          +   '<span class="cur-inprogress-status" style="color:#f59e0b;font-weight:600">Uploading…</span>'
+          +   ' <button class="btn btn-danger btn-sm" id="cur-cancel-btn">Cancel</button>'
+          + '</div></td>'
+          + '</tr>';
+        if (tbody) {
+          tbody.insertAdjacentHTML('afterbegin', rowHtml);
+        } else {
+          grid.innerHTML = '<div class="cur-table-wrap"><table class="cur-table"><thead><tr>'
+            + '<th>Filename</th><th>Rows</th><th>Match Rate</th><th>Actions</th>'
+            + '</tr></thead><tbody>' + rowHtml + '</tbody></table></div>';
+        }
+        document.getElementById('cur-cancel-btn').addEventListener('click', async () => {
+          const cancelRow = document.getElementById('cur-inprogress-row');
+          const cancelJobId = cancelRow && cancelRow.dataset.jobId;
+          if (cancelJobId && cancelJobId !== 'pending') {
+            await fetch(`${PROXY}/data-sources/cur/upload-status/${cancelJobId}`, {
+              method: 'DELETE', headers: authHeaders(),
+            });
+          }
+          const row = document.getElementById('cur-inprogress-row');
+          if (row) row.remove();
+          _setCurUploadLocked(false);
+          localStorage.removeItem('cur_upload_job');
+          await loadDataSources();
+        });
+      }
+
       $('ds-cur-file').addEventListener('change', async (ev) => {
         const files = [...ev.target.files];
+        ev.target.value = '';
         if (!files.length) return;
+        const file = files[0];
         const msgEl = $('ds-cur-msg');
-        let ok = 0;
+        if (file.size > 50 * 1024 * 1024) {
+          showMsg(msgEl, 'Large file detected (' + Math.round(file.size/1024/1024) + ' MB) — upload may take several minutes over VPN.', 'info', 30000);
+        }
+        _setCurUploadLocked(true);
+        _addInProgressRow('pending', file.name);
         try {
-          for (const file of files) {
-            await uploadFile('/data-sources/cur/upload', file, msgEl);
-            ok++;
-          }
-          showMsg(msgEl, ok + ' CUR file' + (ok === 1 ? '' : 's') + ' uploaded.', 'ok');
-          await loadDataSources();
+          const job = await _curUploadXhr(file);
+          const row = document.getElementById('cur-inprogress-row');
+          if (row) row.dataset.jobId = job.job_id;
+          localStorage.setItem('cur_upload_job', JSON.stringify({ jobId: job.job_id, filename: job.filename }));
+          _pollUploadJob(job.job_id, job.filename);
         } catch (e) {
-          showMsg(msgEl, 'Upload failed after ' + ok + ' file(s): ' + e.message, 'err');
-          await loadDataSources();
-        } finally { ev.target.value = ''; }
+          const row = document.getElementById('cur-inprogress-row');
+          if (row) row.remove();
+          _setCurUploadLocked(false);
+          showMsg(msgEl, 'Upload failed: ' + e.message, 'err');
+        }
       });
 
       // Set Active / Remove buttons inside the CUR grid (event delegation —
@@ -1135,16 +1265,50 @@
       });
 
       loadDataSources();
+
+      // Restore in-progress upload state after page refresh
+      (function _restoreUploadJob() {
+        const saved = localStorage.getItem('cur_upload_job');
+        if (!saved) return;
+        try {
+          const { jobId, filename } = JSON.parse(saved);
+          if (!jobId || !filename) return;
+          fetch(`${PROXY}/data-sources/cur/upload-status/${jobId}`, { headers: authHeaders() })
+            .then(r => r.ok ? r.json() : null)
+            .then(job => {
+              if (!job) { localStorage.removeItem('cur_upload_job'); return; }
+              if (job.status === 'ready' || job.status === 'failed' || job.status === 'cancelled') {
+                localStorage.removeItem('cur_upload_job');
+                loadDataSources();
+                return;
+              }
+              _setCurUploadLocked(true);
+              _addInProgressRow(jobId, filename);
+              _pollUploadJob(jobId, filename);
+            })
+            .catch(() => localStorage.removeItem('cur_upload_job'));
+        } catch (_) { localStorage.removeItem('cur_upload_job'); }
+      })();
     })();
   </script>
   <script>
-    // ── Fix nav links in standalone mode ──────────────────────────────────
+    // ── Fix nav links and UI in standalone mode ───────────────────────────
     if (!_isPortalMode) {
       document.querySelectorAll('[data-standalone-href]').forEach(el => {
         el.href = el.dataset.standaloneHref;
       });
       var topbar = document.querySelector('.topbar');
       if (topbar) topbar.style.display = 'none';
+      var lbl = document.getElementById('agent-label');
+      if (lbl) lbl.style.display = 'inline';
+      // Hide API key banner and section — key is injected via env var on EKS
+      var banners = document.querySelectorAll('#no-key-banner, .banner-yellow');
+      banners.forEach(function(b) { b.style.display = 'none'; });
+      var apiKeyCard = document.getElementById('save-api-key');
+      if (apiKeyCard) {
+        var card = apiKeyCard.closest('.card, .settings-card, section, [class*="card"]');
+        if (card) card.style.display = 'none';
+      }
     }
   </script>
 </body>

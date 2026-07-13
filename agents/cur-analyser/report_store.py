@@ -184,6 +184,13 @@ def get_report_rows(report_id: int) -> list[dict[str, str]] | None:
     # files out of memory).
     if path and os.path.exists(path):
         try:
+            file_size = os.path.getsize(path)
+            if file_size > 200 * 1024 * 1024:
+                # Large file — read header only for column detection; never load full file
+                with open(path, encoding="utf-8-sig", errors="replace") as f:
+                    header = f.readline()
+                    first_row = f.readline()
+                return _parse_rows(header + first_row)
             return _parse_rows(_file_to_csv_text(path))
         except Exception:
             logger.exception("get_report_rows: failed to read %s", path)
