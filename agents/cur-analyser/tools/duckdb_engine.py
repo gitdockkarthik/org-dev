@@ -25,6 +25,10 @@ from tools.inventory_enricher import build_enricher
 
 logger = logging.getLogger(__name__)
 
+# Line item types that represent billing credits/discounts — always shown in
+# "Credits / Refunds" category regardless of the service name.
+_CREDIT_LINE_ITEM_TYPES = {'EdpDiscount', 'SavingsPlanNegation', 'BundledDiscount', 'Refund', 'Credit'}
+
 def ingest_to_duckdb(src_path: str, duckdb_path: str) -> None:
     """Ingest a CSV or gz file into a persistent DuckDB database file.
     Uses ZSTD compression for optimal storage and query performance.
@@ -310,16 +314,18 @@ def _service_category_from_names(con, cost_col: str, svc_col: str | None) -> lis
     total = float(con.execute(f'SELECT SUM("{cost_col}") FROM cur_data').fetchone()[0] or 0)
     rows = con.execute(
         f"SELECT COALESCE(NULLIF(TRIM(CAST(\"{svc_col}\" AS VARCHAR)), ''), 'Unallocated') AS svc, "
-        f'SUM("{cost_col}") AS cost FROM cur_data GROUP BY svc'
+        f"COALESCE(line_item_line_item_type, '') AS item_type, "
+        f'SUM("{cost_col}") AS cost FROM cur_data GROUP BY svc, item_type'
     ).fetchall()
     cat_totals: dict[str, float] = {}
     for r in rows:
         svc_name = str(r[0] or "")
-        cost = float(r[1] or 0)
-        if svc_name == "Unallocated":
-            cat = "Unallocated"
-        elif cost < 0:
+        item_type = str(r[1] or "")
+        cost = float(r[2] or 0)
+        if item_type in _CREDIT_TYPES:
             cat = "Credits / Refunds"
+        elif svc_name == "Unallocated":
+            cat = "Unallocated"
         else:
             cat = _categorise_service(svc_name)
         cat_totals[cat] = cat_totals.get(cat, 0.0) + cost
@@ -1039,7 +1045,6 @@ def get_cost_by_env_category(csv_text: str | None = None, file_path: str | None 
         has_inv = _has_inv_lookup(con)
         acct_col = _detect_account_col(cols)
         if has_inv and acct_col and not env_col:
-            _CREDIT_TYPES = {'EdpDiscount', 'SavingsPlanNegation', 'BundledDiscount', 'Refund', 'Credit'}
             rows = con.execute(
                 f"SELECT COALESCE(NULLIF(i.inv_environment, ''), 'Untagged') AS env, "
                 f"COALESCE(NULLIF(TRIM(CAST(c.\"{svc_col}\" AS VARCHAR)), ''), 'Unallocated') AS svc, "
@@ -1055,7 +1060,7 @@ def get_cost_by_env_category(csv_text: str | None = None, file_path: str | None 
                 svc_name = str(r[1] or "")
                 item_type = str(r[2] or "")
                 cost = float(r[3] or 0)
-                if item_type in _CREDIT_TYPES:
+                if item_type in _CREDIT_LINE_ITEM_TYPES:
                     cat = "Credits / Refunds"
                 elif svc_name == "Unallocated":
                     cat = "Unallocated"
@@ -1075,14 +1080,21 @@ def get_cost_by_env_category(csv_text: str | None = None, file_path: str | None 
             return [{"environment": str(r[0]), "category": str(r[1]), "cost": round(float(r[2] or 0), 4)} for r in rows]
         rows = con.execute(
             f"SELECT \"{env_col}\", COALESCE(NULLIF(TRIM(CAST(\"{svc_col}\" AS VARCHAR)),''),'Unallocated') AS svc, "
-            f"SUM(\"{cost_col}\") AS cost FROM cur_data GROUP BY \"{env_col}\", svc"
+            f"COALESCE(line_item_line_item_type, '') AS item_type, "
+            f"SUM(\"{cost_col}\") AS cost FROM cur_data GROUP BY \"{env_col}\", svc, item_type"
         ).fetchall()
         result = {}
         for r in rows:
             env = str(r[0])
             svc_name = str(r[1] or "")
-            cost = float(r[2] or 0)
-            cat = "Unallocated" if svc_name == "Unallocated" else ("Credits / Refunds" if cost < 0 else _categorise_service(svc_name))
+            item_type = str(r[2] or "")
+            cost = float(r[3] or 0)
+            if item_type in _CREDIT_TYPES:
+                cat = "Credits / Refunds"
+            elif svc_name == "Unallocated":
+                cat = "Unallocated"
+            else:
+                cat = _categorise_service(svc_name)
             result.setdefault(env, {})
             result[env][cat] = result[env].get(cat, 0.0) + cost
         return [{"environment": env, "category": cat, "cost": round(cost, 4)} for env, cats in result.items() for cat, cost in sorted(cats.items(), key=lambda kv: kv[1], reverse=True)]
