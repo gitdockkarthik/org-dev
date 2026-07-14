@@ -1039,20 +1039,28 @@ def get_cost_by_env_category(csv_text: str | None = None, file_path: str | None 
         has_inv = _has_inv_lookup(con)
         acct_col = _detect_account_col(cols)
         if has_inv and acct_col and not env_col:
+            _CREDIT_TYPES = {'EdpDiscount', 'SavingsPlanNegation', 'BundledDiscount', 'Refund', 'Credit'}
             rows = con.execute(
                 f"SELECT COALESCE(NULLIF(i.inv_environment, ''), 'Untagged') AS env, "
                 f"COALESCE(NULLIF(TRIM(CAST(c.\"{svc_col}\" AS VARCHAR)), ''), 'Unallocated') AS svc, "
+                f"COALESCE(c.line_item_line_item_type, '') AS item_type, "
                 f"SUM(c.\"{cost_col}\") AS cost "
                 f"FROM cur_data c "
                 f"LEFT JOIN inv_account_lookup i ON CAST(c.\"{acct_col}\" AS VARCHAR) = i.account_id "
-                f"GROUP BY env, svc"
+                f"GROUP BY env, svc, item_type"
             ).fetchall() if svc_col else []
             result: dict[str, dict[str, float]] = {}
             for r in rows:
                 env = str(r[0])
                 svc_name = str(r[1] or "")
-                cost = float(r[2] or 0)
-                cat = "Unallocated" if svc_name == "Unallocated" else ("Credits / Refunds" if cost < 0 else _categorise_service(svc_name))
+                item_type = str(r[2] or "")
+                cost = float(r[3] or 0)
+                if item_type in _CREDIT_TYPES:
+                    cat = "Credits / Refunds"
+                elif svc_name == "Unallocated":
+                    cat = "Unallocated"
+                else:
+                    cat = _categorise_service(svc_name)
                 result.setdefault(env, {})
                 result[env][cat] = result[env].get(cat, 0.0) + cost
             return [{"environment": env, "category": cat, "cost": round(cost, 4)} for env, cats in result.items() for cat, cost in sorted(cats.items(), key=lambda kv: kv[1], reverse=True)]
