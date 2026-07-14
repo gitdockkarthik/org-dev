@@ -562,9 +562,13 @@ async def ds_inventory_coverage(report_id: int = Query(default=None)) -> dict:
         con = duckdb.connect(":memory:")
         try:
             safe_path = str(path).replace("'", "''")
-            con.execute(
-                f"CREATE VIEW f AS SELECT * FROM read_csv_auto('{safe_path}', ignore_errors=true)"
-            )
+            if str(path).lower().endswith(".duckdb"):
+                con.execute(f"ATTACH '{safe_path}' AS src (READ_ONLY)")
+                con.execute("CREATE VIEW f AS SELECT * FROM src.cur_data")
+            else:
+                con.execute(
+                    f"CREATE VIEW f AS SELECT * FROM read_csv_auto('{safe_path}', ignore_errors=true)"
+                )
             cols = [r[0] for r in con.execute("DESCRIBE f").fetchall()]
             acct_col = _detect_account_col(cols)
             has_resource_col = _detect_resource_col(cols) is not None
@@ -774,7 +778,11 @@ async def ds_enriched_summary(report_id: int) -> dict:
             try:
                 _con = _duckdb.connect(":memory:")
                 _safe = str(_path).replace("'", "''")
-                _con.execute(f"CREATE VIEW f AS SELECT * FROM read_csv_auto('{_safe}', ignore_errors=true)")
+                if str(_path).lower().endswith(".duckdb"):
+                    _con.execute(f"ATTACH '{_safe}' AS src (READ_ONLY)")
+                    _con.execute("CREATE VIEW f AS SELECT * FROM src.cur_data")
+                else:
+                    _con.execute(f"CREATE VIEW f AS SELECT * FROM read_csv_auto('{_safe}', ignore_errors=true)")
                 _cols = [r[0] for r in _con.execute("DESCRIBE f").fetchall()]
                 _acct_col = _detect_account_col(_cols)
                 _cost_col = _detect_cost_col(_cols)
