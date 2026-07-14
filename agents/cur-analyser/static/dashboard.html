@@ -1456,6 +1456,14 @@
     }
 
     // ── Tab switching ───────────────────────────────────────────────────────────
+    const _TAB_API = {
+      accounts:     'accounts',
+      environments: 'environments',
+      services:     'services',
+      tags:         'tags',
+      trends:       'trends',
+    };
+
     function switchTab(name, btn) {
       document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('tab-panel--active'));
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('tab-btn--active'));
@@ -1463,14 +1471,29 @@
       btn.classList.add('tab-btn--active');
       if (!_loaded.has(name)) {
         _loaded.add(name);
-        // Show a skeleton + tab spinner, then render on the next frame so the
-        // placeholder actually paints (no blank white flash between tabs).
         showTabSkeleton(document.getElementById('tab-' + name));
         setTabLoading(btn, true);
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          renderTab(name);
-          setTabLoading(btn, false);
-        }));
+        const tabEndpoint = _TAB_API[name];
+        if (tabEndpoint) {
+          // Fetch tab data from dedicated endpoint, merge into DASH, then render.
+          const rparam = REPORT_ID !== null ? `?report_id=${REPORT_ID}` : '';
+          api('/dashboard/tab/' + tabEndpoint + rparam)
+            .then(data => {
+              if (data && !data.empty) Object.assign(DASH, data);
+              renderTab(name);
+              setTabLoading(btn, false);
+            })
+            .catch(() => {
+              setTabLoading(btn, false);
+              renderTab(name);
+            });
+        } else {
+          // overview and insights render from existing DASH data.
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            renderTab(name);
+            setTabLoading(btn, false);
+          }));
+        }
       }
     }
     function renderTab(name) {
@@ -3014,11 +3037,13 @@ ${JSON.stringify(payload, null, 2)}
       } catch (_) { _invActive = false; }
       try {
         REPORTS = await api('/reports').catch(() => []);
+        // Load overview tab only on init — other tabs load lazily on first click.
+        const _rparam = REPORT_ID !== null ? `?report_id=${REPORT_ID}` : '';
         const _dashHit = _dashCache[REPORT_ID];
         if (_dashHit && (Date.now() - _dashHit.ts) < _DASH_CACHE_TTL_MS) {
           DASH = _dashHit.data;
         } else {
-          DASH = await api('/dashboard' + (REPORT_ID !== null ? `?report_id=${REPORT_ID}` : ''));
+          DASH = await api('/dashboard/tab/overview' + _rparam);
           _dashCache[REPORT_ID] = { data: DASH, ts: Date.now() };
         }
         document.getElementById('loadingState').style.display = 'none';
@@ -3069,8 +3094,7 @@ ${JSON.stringify(payload, null, 2)}
         const progEl = document.getElementById('filterProgress');
         if (_invActive) {
           if (progEl) progEl.style.display = 'none';
-          await loadEnrichedSummary(currentReportId);
-          populateEnrichedFilters(currentReportId);
+          loadEnrichedSummary(currentReportId).then(() => populateEnrichedFilters(currentReportId));
           // Re-render the active (or already-rendered Environment) tab now that
           // the enriched breakdowns are populated.
           const _at = document.querySelector('.tab-btn--active')?.dataset.tab;

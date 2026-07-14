@@ -530,13 +530,19 @@ async def ds_inventory_coverage(report_id: int = Query(default=None)) -> dict:
     # coverage. Sample the distinct account ids via DuckDB and do account-level
     # matching against the inventory (large/DBR exports have no resource id
     # column, so resource-level enrichment isn't possible anyway).
-    if report_id is not None and _is_large_file(report_id):
+    _effective_report_id = report_id
+    if _effective_report_id is None:
+        from report_store import list_reports
+        _rpts = list_reports()
+        if _rpts:
+            _effective_report_id = _rpts[0]["id"]
+    if _effective_report_id is not None and _is_large_file(_effective_report_id):
         import duckdb
 
         from report_store import get_report_path
         from tools.duckdb_engine import _detect_account_col, _detect_resource_col
 
-        path = get_report_path(report_id)
+        path = get_report_path(_effective_report_id)
         con = duckdb.connect(":memory:")
         try:
             safe_path = str(path).replace("'", "''")

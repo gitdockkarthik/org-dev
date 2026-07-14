@@ -43,7 +43,7 @@ def report_file_path(report_id: int, ext: str = ".csv") -> str:
 def _discover_file_path(report_id: int) -> str | None:
     """Recover a report's on-disk CUR file by convention (used on startup, since
     the path itself is not persisted in the DB)."""
-    for ext in (".csv", ".parquet"):
+    for ext in (".csv.gz", ".csv", ".parquet"):
         p = report_file_path(report_id, ext)
         if os.path.exists(p):
             return p
