@@ -322,7 +322,7 @@ def _service_category_from_names(con, cost_col: str, svc_col: str | None) -> lis
         svc_name = str(r[0] or "")
         item_type = str(r[1] or "")
         cost = float(r[2] or 0)
-        if item_type in _CREDIT_TYPES:
+        if item_type in _CREDIT_LINE_ITEM_TYPES:
             cat = "Credits / Refunds"
         elif svc_name == "Unallocated":
             cat = "Unallocated"
@@ -1089,7 +1089,7 @@ def get_cost_by_env_category(csv_text: str | None = None, file_path: str | None 
             svc_name = str(r[1] or "")
             item_type = str(r[2] or "")
             cost = float(r[3] or 0)
-            if item_type in _CREDIT_TYPES:
+            if item_type in _CREDIT_LINE_ITEM_TYPES:
                 cat = "Credits / Refunds"
             elif svc_name == "Unallocated":
                 cat = "Unallocated"
