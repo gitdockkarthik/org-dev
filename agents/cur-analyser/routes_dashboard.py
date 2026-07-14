@@ -268,7 +268,7 @@ async def get_tab_services(report_id: int = Query(default=None)) -> dict:
         return loop.run_in_executor(_executor, lambda: fn(*args, **kwargs))
     service_category_breakdown, top_resources = await asyncio.gather(
         run(get_cost_by_service_category, csv_text, file_path=file_path),
-        run(get_top_resources, csv_text, limit=10, file_path=file_path),
+        run(get_top_resources, csv_text, limit=10, file_path=file_path, enricher=enricher),
     )
     result = {
         "service_category_breakdown": service_category_breakdown,

@@ -118,7 +118,7 @@ def _run_all_queries(csv_text, file_path, filters, enricher=None) -> list:
         get_untagged_resources(csv_text, file_path=file_path, filters=filters, enricher=enricher),
         get_cost_by_pricing_term(csv_text, file_path=file_path, filters=filters),
         get_mom_comparison(csv_text, file_path=file_path, filters=filters),
-        get_top_resources(csv_text, limit=10, file_path=file_path, filters=filters),
+        get_top_resources(csv_text, limit=10, file_path=file_path, filters=filters, enricher=enricher),
         get_savings_opportunities(csv_text, file_path=file_path, filters=filters),
     ]
 
@@ -163,7 +163,7 @@ async def compute_dashboard_async(
         run(get_untagged_resources, csv_text, file_path=file_path, filters=filters, enricher=enricher),
         run(get_cost_by_pricing_term, csv_text, file_path=file_path, filters=filters),
         run(get_mom_comparison, csv_text, file_path=file_path, filters=filters),
-        run(get_top_resources, csv_text, limit=10, file_path=file_path, filters=filters),
+        run(get_top_resources, csv_text, limit=10, file_path=file_path, filters=filters, enricher=enricher),
         run(get_savings_opportunities, csv_text, file_path=file_path, filters=filters),
     ))
     env_month = await loop.run_in_executor(_executor, lambda: get_cost_by_env_month(csv_text, file_path=file_path, filters=filters, enricher=enricher))

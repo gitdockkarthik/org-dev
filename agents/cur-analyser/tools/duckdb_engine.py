@@ -655,6 +655,46 @@ def _register_account_lookup(con: duckdb.DuckDBPyConnection, enricher) -> bool:
     return True
 
 
+def _register_resource_lookup(con: duckdb.DuckDBPyConnection, enricher) -> bool:
+    """Register the enricher's resource-level inventory lookup as a DuckDB
+    in-memory table ``inv_resource_lookup`` on the given connection.
+    Keyed by resource_id; columns named with inv_* prefix matching INV_FIELD_MAP.
+    Returns True when the table was created, False when enricher is inactive."""
+    if enricher is None or not getattr(enricher, "active", False):
+        return False
+    lookup: dict = getattr(enricher, "_lookup", {})
+    if not lookup:
+        return False
+    from tools.inventory_enricher import INV_FIELD_MAP
+    raw_to_inv: dict[str, str] = {v: k for k, v in INV_FIELD_MAP.items()}
+    inv_fields: list[str] = []
+    for entry in lookup.values():
+        for raw_field in entry:
+            inv_col = raw_to_inv.get(raw_field)
+            if inv_col and inv_col not in inv_fields:
+                inv_fields.append(inv_col)
+    if not inv_fields:
+        return False
+    col_defs = ", ".join(f'"{f}" VARCHAR' for f in inv_fields)
+    con.execute('DROP TABLE IF EXISTS inv_resource_lookup')
+    con.execute(f'CREATE TABLE inv_resource_lookup (resource_id VARCHAR, {col_defs})')
+    placeholders = ", ".join("?" * (1 + len(inv_fields)))
+    for (acct_id, res_id), entry in lookup.items():
+        vals = [str(res_id)] + [
+            str(entry.get(INV_FIELD_MAP[f], "") or "") for f in inv_fields
+        ]
+        con.execute(f"INSERT INTO inv_resource_lookup VALUES ({placeholders})", vals)
+    return True
+
+def _has_resource_lookup(con: duckdb.DuckDBPyConnection) -> bool:
+    """True when inv_resource_lookup was registered on this connection."""
+    try:
+        con.execute("SELECT 1 FROM inv_resource_lookup LIMIT 1")
+        return True
+    except Exception:
+        return False
+
+
 def _load_df(
     csv_text: str | None = None, enricher=None, file_path: str | None = None,
     filters: dict | None = None,
@@ -719,6 +759,7 @@ def _load_df(
         # any CUR rows. The table holds at most one row per inventory account
         # (~24 rows, ~1KB) — zero impact on the file-path memory profile.
         _register_account_lookup(con, enricher)
+        _register_resource_lookup(con, enricher)
         # Return a columns-carrier (NOT a DataFrame): query functions detect
         # columns via ``df.columns`` while all aggregation hits the view, so no
         # CUR data is materialised in Python. Append inv_* columns to the carrier
@@ -1376,8 +1417,8 @@ def get_mom_comparison(csv_text: str | None = None, file_path: str | None = None
         con.close()
 
 
-def get_top_resources(csv_text: str | None = None, limit: int = 10, file_path: str | None = None, filters: dict | None = None) -> list[dict]:
-    df, con = _load_df(csv_text, file_path=file_path, filters=filters)
+def get_top_resources(csv_text: str | None = None, limit: int = 10, file_path: str | None = None, filters: dict | None = None, enricher=None) -> list[dict]:
+    df, con = _load_df(csv_text, enricher=enricher, file_path=file_path, filters=filters)
     try:
         cols = list(df.columns)
         cost_col = _detect_cost_col(cols)
@@ -1388,16 +1429,36 @@ def get_top_resources(csv_text: str | None = None, limit: int = 10, file_path: s
         region_col = _detect_region_col(cols)
         env_col = _resolve_tag_col(df, "tag_Environment")
         team_col = _resolve_tag_col(df, "tag_Team")
-        svc_sel = f'MAX("{svc_col}")' if svc_col else "''"
-        region_sel = f'MAX("{region_col}")' if region_col else "''"
-        env_sel = f'MAX("{env_col}")' if env_col else "''"
-        team_sel = f'MAX("{team_col}")' if team_col else "''"
+        svc_sel = f'MAX(c."{svc_col}")' if svc_col else "''"
+        region_sel = f'MAX(c."{region_col}")' if region_col else "''"
+        has_res_inv = _has_resource_lookup(con)
+        acct_col = _detect_account_col(cols)
+        if has_res_inv and not env_col:
+            env_sel = "MAX(COALESCE(NULLIF(r.inv_environment,''), a.inv_environment))"
+        elif env_col:
+            env_sel = f'MAX(c."{env_col}")'
+        else:
+            env_sel = "''"
+        if has_res_inv and not team_col:
+            team_sel = "MAX(COALESCE(NULLIF(r.inv_managed_by,''), a.inv_managed_by))"
+        elif team_col:
+            team_sel = f'MAX(c."{team_col}")'
+        else:
+            team_sel = "''"
+        if has_res_inv and acct_col:
+            join_clause = (
+                f'LEFT JOIN inv_resource_lookup r ON '
+                f'SPLIT_PART(CAST(c."{res_col}" AS VARCHAR), \':\', -1) = r.resource_id '
+                f'LEFT JOIN inv_account_lookup a ON CAST(c."{acct_col}" AS VARCHAR) = a.account_id '
+            )
+        else:
+            join_clause = ""
         rows = con.execute(
-            f'SELECT "{res_col}", {svc_sel}, {region_sel}, {env_sel}, {team_sel}, '
-            f'SUM("{cost_col}") AS cost '
-            f'FROM cur_data '
-            f"WHERE \"{res_col}\" IS NOT NULL AND CAST(\"{res_col}\" AS VARCHAR) <> '' "
-            f'GROUP BY "{res_col}" ORDER BY cost DESC LIMIT {limit}'
+            f'SELECT c."{res_col}", {svc_sel}, {region_sel}, {env_sel}, {team_sel}, '
+            f'SUM(c."{cost_col}") AS cost '
+            f'FROM cur_data c {join_clause}'
+            f"WHERE c.\"{res_col}\" IS NOT NULL AND CAST(c.\"{res_col}\" AS VARCHAR) <> '' "
+            f'GROUP BY c."{res_col}" ORDER BY cost DESC LIMIT {limit}'
         ).fetchall()
         return [
             {
