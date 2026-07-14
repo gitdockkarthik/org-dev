@@ -287,15 +287,15 @@ _LARGE_FILE_BYTES = 200 * 1024 * 1024  # 200 MB
 
 
 def _is_large_file(report_id: int) -> bool:
-    """True when the report's on-disk CUR exceeds the large-file threshold."""
-    import os
+    """True when the report's row count exceeds the large-file threshold.
+    Row count is used instead of file size since gz files are stored compressed
+    (281MB gz vs 2.2GB decompressed) — file size is no longer a reliable signal."""
+    from report_store import list_reports
 
-    from report_store import get_report_path
-
-    path = get_report_path(report_id)
-    if not path or not os.path.exists(path):
+    meta = next((r for r in list_reports() if r["id"] == report_id), None)
+    if meta is None:
         return False
-    return os.path.getsize(path) > _LARGE_FILE_BYTES
+    return (meta.get("row_count") or 0) > 200_000
 
 
 def _quote_ident(name: str) -> str:
@@ -399,6 +399,20 @@ async def ds_cur_upload(file: UploadFile) -> dict:
     from fastapi.responses import JSONResponse
 
     filename = file.filename or "upload.csv"
+    _fname_lower = filename.lower()
+    _MAX_FLAT_CSV_BYTES = 200 * 1024 * 1024  # 200 MB — flat CSV only; gz has no cap
+    if _fname_lower.endswith(".csv") and not _fname_lower.endswith(".csv.gz"):
+        if file.size and file.size > _MAX_FLAT_CSV_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"Flat CSV files are limited to 200 MB. Your file is "
+                    f"{round(file.size / 1024 / 1024, 1)} MB. "
+                    f"Please compress it first using PowerShell: "
+                    f"Compress-Archive -Path '<filename>.csv' -DestinationPath '<filename>.csv.zip' "
+                    f"or on Linux: gzip -k '<filename>.csv' — then upload the compressed file."
+                ),
+            )
     try:
         tmp_path, file_size = await stream_upload_to_temp(
             file, max_bytes=_MAX_CUR_BYTES

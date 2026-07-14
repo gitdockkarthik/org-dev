@@ -272,15 +272,22 @@ def materialize_cur(filename: str, src_path: str) -> tuple[str, str, str]:
             raise ValueError("Invalid ZIP file") from exc
 
     if fname_lower.endswith(".csv.gz") or fname_lower.endswith(".gz"):
-        fd, out_path = tempfile.mkstemp(suffix=".csv")
+        # Validate gz is readable by peeking at the header — no full decompression.
+        # Store the gz as-is; DuckDB reads compressed files natively via read_csv_auto.
         try:
-            with os.fdopen(fd, "wb") as out, gzip.open(src_path, "rb") as src:
-                shutil.copyfileobj(src, out, length=8 * 1024 * 1024)
+            with gzip.open(src_path, "rt", encoding="utf-8-sig", errors="replace") as f:
+                header = f.readline()
+            if not header.strip():
+                raise ValueError("GZ file appears empty or unreadable")
         except Exception as exc:
-            os.unlink(out_path)
             raise ValueError(f"Invalid GZ file: {exc}") from exc
-        resolved = filename[:-3] if fname_lower.endswith(".csv.gz") else filename
-        return out_path, resolved, ".csv"
+        # Copy to a new temp file so the caller's finally block can safely delete
+        # src_path (tmp_path) without touching our gz before shutil.move saves it.
+        fd, out_path = tempfile.mkstemp(suffix=".csv.gz")
+        os.close(fd)
+        shutil.copy2(src_path, out_path)
+        resolved = filename if fname_lower.endswith(".csv.gz") else filename
+        return out_path, resolved, ".csv.gz"
 
     raise ValueError(
         "Unsupported file format. Supported: .csv, .zip (containing CSV), .csv.gz, .parquet"
