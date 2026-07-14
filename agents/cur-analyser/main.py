@@ -40,12 +40,13 @@ import uuid as _uuid_mod
 from enum import Enum as _Enum
 
 class UploadStatus(_Enum):
-    UPLOADING    = "uploading"
+    UPLOADING     = "uploading"
     DECOMPRESSING = "decompressing"
-    PROCESSING   = "processing"
-    READY        = "ready"
-    FAILED       = "failed"
-    CANCELLED    = "cancelled"
+    PROCESSING    = "processing"
+    INGESTING     = "ingesting"
+    READY         = "ready"
+    FAILED        = "failed"
+    CANCELLED     = "cancelled"
 
 _upload_jobs: dict[str, dict] = {}  # job_id -> job record
 
@@ -351,9 +352,24 @@ async def _process_upload_job(job: dict, tmp_path: str, filename: str, file_size
             file_path=mat_path,
         )
         _ensure_data_dir()
-        perm_path = report_file_path(report["id"], ext)
-        shutil.move(mat_path, perm_path)
-        mat_path = None
+        # Ingest into persistent DuckDB file for instant queries.
+        _job_update(job, UploadStatus.INGESTING)
+        duckdb_path = report_file_path(report["id"], ".duckdb")
+        try:
+            from tools.duckdb_engine import ingest_to_duckdb
+            ingest_to_duckdb(mat_path, duckdb_path)
+        except Exception as exc:
+            # Ingestion failed — fall back to storing gz directly.
+            logger.warning("ingest_to_duckdb failed, storing gz instead: %s", exc)
+            duckdb_path = None
+        if duckdb_path and os.path.exists(duckdb_path):
+            # Ingestion succeeded — use .duckdb, discard gz temp file.
+            perm_path = duckdb_path
+        else:
+            # Fallback — store gz as before.
+            perm_path = report_file_path(report["id"], ext)
+            shutil.move(mat_path, perm_path)
+            mat_path = None
         set_report_path(report["id"], perm_path)
 
         await persist_report(report["id"])

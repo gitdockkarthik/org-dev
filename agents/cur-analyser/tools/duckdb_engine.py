@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -23,6 +24,23 @@ from tools.data_sources.registry import get_registry
 from tools.inventory_enricher import build_enricher
 
 logger = logging.getLogger(__name__)
+
+def ingest_to_duckdb(src_path: str, duckdb_path: str) -> None:
+    """Ingest a CSV or gz file into a persistent DuckDB database file.
+    Uses ZSTD compression for optimal storage and query performance.
+    The source file is read via read_csv_auto — supports .csv and .csv.gz.
+    Raises on any error so the caller can clean up."""
+    path_sql = str(src_path).replace("'", "''")
+    if str(src_path).lower().endswith(".parquet"):
+        reader = f"read_parquet('{path_sql}')"
+    else:
+        reader = f"read_csv_auto('{path_sql}', ignore_errors=true)"
+    con = duckdb.connect(database=duckdb_path)
+    try:
+        con.execute("PRAGMA threads=4")
+        con.execute(f"CREATE TABLE cur_data AS SELECT * FROM {reader}")
+    finally:
+        con.close()
 
 # ── Column detection helpers ──────────────────────────────────────────────────
 
@@ -663,16 +681,26 @@ def _load_df(
     ``filters`` (optional) restricts ``cur_data`` so every aggregation operates
     on the filtered subset.
     """
+    if file_path is not None:
+        # Prefer persistent DuckDB file if available — instant queries, no gz decompression.
+        _duckdb_path = str(file_path).replace(".csv.gz", ".duckdb").replace(".csv", ".duckdb")
+        if not str(file_path).endswith(".duckdb") and os.path.exists(_duckdb_path):
+            file_path = _duckdb_path
     con = duckdb.connect(database=":memory:")
     con.execute("PRAGMA memory_limit='500MB'")
     if file_path is not None:
         # ── File-path pipeline: DuckDB native view straight off disk ──
         path_sql = str(file_path).replace("'", "''")
-        if str(file_path).lower().endswith(".parquet"):
+        if str(file_path).lower().endswith(".duckdb"):
+            # Persistent DuckDB file — attach and use cur_data table directly.
+            con.execute(f"ATTACH '{path_sql}' AS src (READ_ONLY)")
+            con.execute("CREATE VIEW cur_data AS SELECT * FROM src.cur_data")
+        elif str(file_path).lower().endswith(".parquet"):
             reader = f"read_parquet('{path_sql}')"
+            con.execute(f"CREATE VIEW cur_data AS SELECT * FROM {reader}")
         else:
             reader = f"read_csv_auto('{path_sql}', ignore_errors=true)"
-        con.execute(f"CREATE VIEW cur_data AS SELECT * FROM {reader}")
+            con.execute(f"CREATE VIEW cur_data AS SELECT * FROM {reader}")
         if filters:
             filter_sql = _build_filter_sql(filters, con)
             if filter_sql:
