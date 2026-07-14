@@ -596,7 +596,7 @@ async def ds_inventory_coverage(report_id: int = Query(default=None)) -> dict:
             "joinable": True,
             "inventory_loaded": True,
             "enabled": True,
-            "enrichment_level": "account",
+            "enrichment_level": "resource" if (has_resource_col and bool(getattr(enricher, '_lookup', {}))) else "account",
             "has_resource_column": has_resource_col,
             "matched_accounts": len(matched),
             "total_accounts": len(cur_accounts),
@@ -799,13 +799,16 @@ async def ds_enriched_summary(report_id: int) -> dict:
                 _con.close()
             except Exception:
                 pass
+        from tools.duckdb_engine import _detect_resource_col
+        _has_res_col = _detect_resource_col(_cols) is not None if '_cols' in dir() else False
+        _has_res_inv = bool(_enricher and _enricher.active and getattr(_enricher, '_lookup', {}))
+        _enrichment_level = "resource" if (_has_res_col and _has_res_inv) else "account"
         return {
             "report_id": report_id,
             "active": True,
             "joinable": True,
-            "enrichment_level": "account",
-            "has_resource_column": False,
-            "reason": "Account-level enrichment — resource IDs not in this CUR format",
+            "enrichment_level": _enrichment_level,
+            "has_resource_column": _has_res_col,
             "spend_match_rate_pct": _spend_match_pct,
             "matched_count": round(_inv_cost, 2),
             "unmatched_count": round(_total_cost - _inv_cost, 2),
