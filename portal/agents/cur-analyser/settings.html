@@ -855,7 +855,9 @@
           ? '<td class="cur-cell-match" data-match-for="' + escapeHtml(reportId) + '">' + muted('checking…') + '</td>'
           : '<td class="cur-cell-match">' + muted('—') + '</td>';
         const actions =
-          ''
+          (s.active
+            ? '<span class="badge" style="background:#dcfce7;color:#15803d">Active</span>'
+            : '<button class="btn btn-secondary btn-sm cur-set-active" data-sid="' + sid + '">Set Active</button>')
           + '<button class="btn btn-danger btn-sm cur-remove" data-sid="' + sid + '">Remove</button>';
         return '<tr class="cur-row' + (s.active ? ' active' : '') + '" data-sid="' + sid + '">'
           + '<td><div class="cur-cell-name" title="' + nameAttr + '">'
@@ -919,7 +921,7 @@
               ? muted(c.account_match_rate + '% (' + c.matched_accounts + '/' + c.total_accounts + ' accounts)')
               : muted('Account-level only');
           } else {
-            cell.innerHTML = '<strong>' + c.match_rate_pct + '%</strong> '
+            cell.innerHTML = '<strong>' + c.account_match_rate + '%</strong> '
               + '<span style="color:#94a3b8">(' + c.spend_match_rate_pct + '% spend)</span>';
           }
         } catch (e) {

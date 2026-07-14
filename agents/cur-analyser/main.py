@@ -513,6 +513,21 @@ async def ds_inventory_upload(file: UploadFile) -> dict:
     }
 
 
+@app.get("/data-sources/active-report-id")
+async def ds_active_report_id() -> dict:
+    """Return the report_id of the currently active CUR source in the registry."""
+    try:
+        reg = _require_registry()
+        active = reg.get_active_cur()
+        if not active:
+            return {"report_id": None}
+        meta = active[0]
+        report_id = (meta.extra or {}).get("report_id")
+        return {"report_id": report_id}
+    except Exception:
+        return {"report_id": None}
+
+
 @app.get("/data-sources/status")
 async def ds_status() -> dict:
     """Registry status — sources, active selection, staleness, archives."""

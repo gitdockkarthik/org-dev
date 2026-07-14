@@ -3025,6 +3025,13 @@ ${JSON.stringify(payload, null, 2)}
       await portalReady;
       startLoadingMessages();
       REPORT_ID = getReportIdParam();
+      // If no report_id in URL, use the registry's active report.
+      if (REPORT_ID === null) {
+        try {
+          const _active = await api('/data-sources/active-report-id');
+          if (_active && _active.report_id != null) REPORT_ID = _active.report_id;
+        } catch (_) {}
+      }
       // Detect inventory enrichment state — reveals the enriched filter group and
       // switches the row stream to the enriched endpoint. Inert by default.
       try {
