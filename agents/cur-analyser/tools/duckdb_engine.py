@@ -76,10 +76,11 @@ DATE_COL_CANDIDATES = [
     "usage_start_date",           # synthetic
 ]
 REGION_COL_CANDIDATES = [
-    "product/region",   # real CUR 2.0
-    "product_region",   # normalised
-    "AvailabilityZone", # legacy CUR fallback (AZ not region but closest)
-    "region",           # synthetic
+    "product/region",        # real CUR 2.0 slash format
+    "product_region_code",   # CUR 2.0 Athena/snake_case format
+    "product_region",        # normalised
+    "AvailabilityZone",      # legacy CUR fallback (AZ not region but closest)
+    "region",                # synthetic
 ]
 ACCOUNT_COL_CANDIDATES = [
     "lineItem/UsageAccountId",      # real AWS CUR (current format)
@@ -855,6 +856,7 @@ def get_cost_by_region(csv_text: str | None = None, file_path: str | None = None
         return [
             {"region": reg, "cost": round(c, 4)}
             for reg, c in sorted(agg.items(), key=lambda kv: kv[1], reverse=True)
+            if round(c, 4) != 0.0
         ]
     finally:
         con.close()
@@ -1369,12 +1371,15 @@ def get_cost_by_pricing_term(csv_text: str | None = None, file_path: str | None 
             return []
         total = float(con.execute(f'SELECT SUM("{cost_col}") FROM cur_data').fetchone()[0] or 0)
         rows = con.execute(
-            f'SELECT "pricing_term", SUM("{cost_col}") AS cost, COUNT(*) AS rc '
-            f'FROM cur_data GROUP BY "pricing_term" ORDER BY cost DESC'
+            f'SELECT '
+            f'CASE WHEN "pricing_term" IS NULL OR TRIM("pricing_term") = \'\' '
+            f'THEN \'Credits / Discounts\' ELSE "pricing_term" END AS term, '
+            f'SUM("{cost_col}") AS cost, COUNT(*) AS rc '
+            f'FROM cur_data GROUP BY term ORDER BY cost DESC'
         ).fetchall()
         return [
             {
-                "pricing_term": str(r[0]) if r[0] is not None else "",
+                "pricing_term": str(r[0]),
                 "cost": round(float(r[1] or 0), 4),
                 "pct_of_total": round(float(r[1] or 0) / total * 100, 2) if total else 0.0,
                 "row_count": int(r[2] or 0),
