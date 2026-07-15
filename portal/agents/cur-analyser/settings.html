@@ -345,6 +345,15 @@
         <div class="card-title">CUR Files</div>
         <div class="card-subtitle">AWS Cost &amp; Usage Report files loaded for analysis.
           Match rate is measured against the currently loaded inventory.</div>
+        <div id="ds-storage-bar" style="margin-bottom:12px;display:none">
+          <div style="display:flex;justify-content:space-between;font-size:.78rem;color:var(--text-muted);margin-bottom:4px">
+            <span>Storage used</span>
+            <span id="ds-storage-label">—</span>
+          </div>
+          <div style="background:var(--navy-2);border-radius:4px;height:8px;overflow:hidden">
+            <div id="ds-storage-fill" style="height:100%;border-radius:4px;background:#22c55e;transition:width .3s"></div>
+          </div>
+        </div>
         <div id="ds-cur-grid" style="font-size:0.875rem;color:#475569">Loading…</div>
         <div class="actions" style="margin-top:1rem;display:flex;gap:8px;flex-wrap:wrap">
           <label class="btn btn-primary" id="ds-cur-upload-btn" style="cursor:pointer">
@@ -831,9 +840,6 @@
       }
 
       async function loadDataSources() {
-        // Wait for the portal API-key bootstrap before issuing authenticated
-        // proxy calls — otherwise the request races ahead of _authHeaders() and
-        // the proxy rejects it with 403 (same pattern loadSettings() uses).
         await portalReady;
         try {
           const res = await fetch(`${PROXY}/data-sources/status`, { headers: authHeaders() });
@@ -844,6 +850,23 @@
         } catch (e) {
           if ($('ds-cur-grid')) $('ds-cur-grid').textContent = 'Failed to load data sources: ' + e.message;
         }
+        // Update storage usage bar
+        try {
+          const su = await fetch(`${PROXY}/data-sources/storage-usage`, { headers: authHeaders() });
+          if (su.ok) {
+            const s = await su.json();
+            const bar = $('ds-storage-bar');
+            const fill = $('ds-storage-fill');
+            const label = $('ds-storage-label');
+            if (bar && fill && label) {
+              bar.style.display = 'block';
+              const pct = Math.min(s.used_pct || 0, 100);
+              fill.style.width = pct + '%';
+              fill.style.background = pct > 80 ? '#ef4444' : pct > 60 ? '#f59e0b' : '#22c55e';
+              label.textContent = (s.cur_used_gb || 0).toFixed(2) + ' GB / ' + (s.cap_gb || 10) + ' GB (' + pct + '%)';
+            }
+          }
+        } catch (_) {}
       }
 
       const muted = t => '<span style="color:#94a3b8">' + escapeHtml(t) + '</span>';

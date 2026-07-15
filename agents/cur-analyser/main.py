@@ -284,7 +284,8 @@ async def _active_cur_csv(reg) -> str | None:
 # endpoints (a 5.4M-row CUR is ~14 GB once parsed). They fall back to DuckDB
 # account-level sampling / server-side aggregation instead. Matches the
 # file-path pipeline threshold used by the dashboard.
-_LARGE_FILE_BYTES = 200 * 1024 * 1024  # 200 MB
+_LARGE_FILE_BYTES = 200 * 1024 * 1024   # 200 MB
+_CUR_STORAGE_CAP_BYTES = 10 * 1024 ** 3  # 10 GB default cap for CUR data directory
 
 
 def _is_large_file(report_id: int) -> bool:
@@ -353,6 +354,12 @@ async def _process_upload_job(job: dict, tmp_path: str, filename: str, file_size
         )
         _ensure_data_dir()
         # Ingest into persistent DuckDB file for instant queries.
+        # Storage cap check before ingestion
+        from report_store import get_cur_storage_usage
+        _storage = get_cur_storage_usage()
+        if _storage["cur_used_bytes"] + os.path.getsize(mat_path) * 4 > _CUR_STORAGE_CAP_BYTES:
+            _job_update(job, UploadStatus.FAILED, error=f"Storage cap of 10 GB reached ({_storage['cur_used_gb']:.1f} GB used). Remove older reports to free space.")
+            return
         _job_update(job, UploadStatus.INGESTING)
         duckdb_path = report_file_path(report["id"], ".duckdb")
         try:
@@ -450,6 +457,26 @@ async def _process_folder_upload_job(job: dict, tmp_paths: list[str], filenames:
         if len(set(tuple(h) for h in headers)) > 1:
             _job_update(job, UploadStatus.FAILED, error="Part files have mismatched schemas — all parts must be from the same S3 export folder.")
             return
+        # Validate all parts are from the same billing period
+        billing_periods = set()
+        for mat_path in mat_paths:
+            con = duckdb.connect(":memory:")
+            try:
+                safe = mat_path.replace("'", "''")
+                cols = [r[0] for r in con.execute(
+                    f"DESCRIBE SELECT * FROM read_csv_auto('{safe}', ignore_errors=true)"
+                ).fetchall()]
+                if "bill_billing_period_start_date" in cols:
+                    row = con.execute(
+                        f"SELECT DISTINCT bill_billing_period_start_date FROM read_csv_auto('{safe}', ignore_errors=true) LIMIT 1"
+                    ).fetchone()
+                    if row and row[0]:
+                        billing_periods.add(str(row[0]))
+            finally:
+                con.close()
+        if len(billing_periods) > 1:
+            _job_update(job, UploadStatus.FAILED, error=f"Part files span multiple billing periods ({', '.join(sorted(billing_periods))}) — all parts must be from the same S3 export folder.")
+            return
 
         # Get summary from first part
         summary = get_total_cost(file_path=mat_paths[0])
@@ -476,6 +503,13 @@ async def _process_folder_upload_job(job: dict, tmp_paths: list[str], filenames:
         )
         _ensure_data_dir()
 
+        # Storage cap check before ingestion
+        from report_store import get_cur_storage_usage
+        _storage = get_cur_storage_usage()
+        _est_size = sum(os.path.getsize(p) for p in mat_paths) * 4
+        if _storage["cur_used_bytes"] + _est_size > _CUR_STORAGE_CAP_BYTES:
+            _job_update(job, UploadStatus.FAILED, error=f"Storage cap of 10 GB reached ({_storage['cur_used_gb']:.1f} GB used). Remove older reports to free space.")
+            return
         _job_update(job, UploadStatus.INGESTING)
         duckdb_path = report_file_path(report["id"], ".duckdb")
         try:
@@ -485,6 +519,18 @@ async def _process_folder_upload_job(job: dict, tmp_paths: list[str], filenames:
             con = duckdb.connect(database=duckdb_path)
             con.execute("PRAGMA threads=4")
             con.execute(f"CREATE TABLE cur_data AS SELECT * FROM read_csv_auto({paths_sql}, ignore_errors=true)")
+            # Validate no duplicate line item IDs across parts
+            try:
+                total_rows_check = con.execute("SELECT COUNT(*) FROM cur_data").fetchone()[0]
+                distinct_rows = con.execute("SELECT COUNT(DISTINCT identity_line_item_id) FROM cur_data").fetchone()[0]
+                if distinct_rows < total_rows_check:
+                    con.close()
+                    if os.path.exists(duckdb_path):
+                        os.unlink(duckdb_path)
+                    _job_update(job, UploadStatus.FAILED, error=f"Duplicate rows detected across parts ({total_rows_check - distinct_rows:,} duplicates). Ensure all parts are from the same S3 export folder.")
+                    return
+            except Exception:
+                pass  # Column may not exist in all CUR formats — skip check
             con.close()
         except Exception as exc:
             logger.warning("folder ingest failed: %s", exc)
@@ -674,6 +720,17 @@ async def ds_inventory_upload(file: UploadFile) -> dict:
         "unmatched_count": provider.unmatched_count,
         "enrichment_enabled": settings.enable_inventory_enrichment,
     }
+
+
+@app.get("/data-sources/storage-usage")
+async def ds_storage_usage() -> dict:
+    """Return CUR data storage usage and cap."""
+    from report_store import get_cur_storage_usage
+    usage = get_cur_storage_usage()
+    usage["cap_bytes"] = _CUR_STORAGE_CAP_BYTES
+    usage["cap_gb"] = round(_CUR_STORAGE_CAP_BYTES / 1024**3, 1)
+    usage["used_pct"] = round(usage["cur_used_bytes"] / _CUR_STORAGE_CAP_BYTES * 100, 1) if _CUR_STORAGE_CAP_BYTES else 0.0
+    return usage
 
 
 @app.get("/data-sources/active-report-id")

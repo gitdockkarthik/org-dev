@@ -17,6 +17,26 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+def get_cur_storage_usage() -> dict:
+    """Return current CUR data directory disk usage."""
+    import shutil
+    try:
+        total_disk, used_disk, free_disk = shutil.disk_usage(CUR_DATA_DIR)
+        cur_used = sum(
+            os.path.getsize(os.path.join(CUR_DATA_DIR, f))
+            for f in os.listdir(CUR_DATA_DIR)
+            if os.path.isfile(os.path.join(CUR_DATA_DIR, f))
+        ) if os.path.exists(CUR_DATA_DIR) else 0
+        return {
+            "cur_used_bytes": cur_used,
+            "disk_free_bytes": free_disk,
+            "disk_total_bytes": total_disk,
+            "cur_used_gb": round(cur_used / 1024**3, 2),
+            "disk_free_gb": round(free_disk / 1024**3, 2),
+        }
+    except Exception:
+        return {"cur_used_bytes": 0, "disk_free_bytes": 0, "disk_total_bytes": 0, "cur_used_gb": 0.0, "disk_free_gb": 0.0}
+
 _lock = threading.Lock()
 _reports: list[dict[str, Any]] = []
 _counter = 0
