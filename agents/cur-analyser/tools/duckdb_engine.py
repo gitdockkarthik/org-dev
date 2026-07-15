@@ -1659,6 +1659,19 @@ def get_savings_opportunities(csv_text: str | None = None, file_path: str | None
                 f'SELECT SUM("{cost_col}") FROM cur_data '
                 f"WHERE \"{owner_col}\" IS NULL OR CAST(\"{owner_col}\" AS VARCHAR) = ''"
             ).fetchone()[0] or 0)
+        elif "tags" in cols:
+            # CUR 2.0 — tags stored as JSON string; use LIKE to detect ownership tags
+            try:
+                untagged_cost = float(con.execute(
+                    f'SELECT SUM("{cost_col}") FROM cur_data '
+                    f"WHERE tags IS NULL OR tags = '{{}}' OR ("
+                    f"  tags NOT LIKE '%user:Owner%' "
+                    f"  AND tags NOT LIKE '%user:Team%' "
+                    f"  AND tags NOT LIKE '%user:ManagedBy%'"
+                    f")"
+                ).fetchone()[0] or 0)
+            except Exception:
+                pass
         untagged_pct = round(untagged_cost / total * 100, 1) if total else 0.0
 
         # c) Single-AZ heuristic — region with no trailing -[a-c] AZ suffix
