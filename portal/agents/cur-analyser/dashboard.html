@@ -1838,6 +1838,12 @@
           <div class="data-table-wrap" style="border:none;margin:0"><table class="data-table">
             <thead><tr><th>Category</th><th>Owner Team</th><th>Owner Email</th><th>Cost</th><th>% of Total</th></tr></thead>
             <tbody>${catRows}</tbody></table></div>
+          ${cat.length === 0 || cat.every(c => !c.owner_team && !c.owner_email) ? `
+          <div style="margin:8px 16px 16px;padding:10px 14px;background:#fef9ec;border:1px solid #fde68a;border-radius:6px;font-size:.82rem;color:#92400e">
+            <strong>ℹ️ Ownership data not available.</strong> To populate Owner Team and Email, add
+            <code>service_owner_team</code> and <code>service_owner_email</code> columns to your AWS CUR export
+            configuration, or define a service-to-team mapping in the inventory file.
+          </div>` : ''}
         </div>
         <div class="section-title">Full Service Breakdown</div>
         <div class="data-table-wrap"><table class="data-table">
@@ -1851,7 +1857,7 @@
         </table></div>
         <div class="section-title">Top 10 Resources</div>
         <div class="data-table-wrap"><table class="data-table">
-          <thead><tr><th>Resource ID</th><th>Service</th><th>Region</th><th>Environment</th><th>Team</th><th>Cost</th></tr></thead>
+          <thead><tr><th>Resource ID</th><th>Service</th><th>Region</th><th>Environment</th><th>Managed By</th><th>Cost</th></tr></thead>
           <tbody>${resRows}</tbody></table></div>`;
 
       hbar('cat', 'catChart', cat.map(c => `${c.category} · ${c.owner_team || ''}`.trim()), cat.map(c => c.cost),
