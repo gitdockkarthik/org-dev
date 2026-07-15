@@ -737,6 +737,10 @@
             has_tag_columns: true,
           };
         }
+        // Store per_service, unmatched_top, before_after for Inventory Enrichment panel.
+        if (s.per_service !== undefined) DASH._inv_per_service = s.per_service || [];
+        if (s.unmatched_top !== undefined) DASH._inv_unmatched_top = s.unmatched_top || [];
+        if (s.before_after !== undefined) DASH._inv_before_after = s.before_after || {};
       } catch (e) {
         console.warn('enriched-summary failed:', e);
       }
@@ -2007,7 +2011,7 @@
       const matchedN = c.matched_count || 0;
       const totalN = matchedN + (c.unmatched_count || 0);
 
-      const ba = c.before_after || {};
+      const ba = c.before_after || DASH._inv_before_after || {};
       const baRows = Object.keys(ba).map(k => {
         const b = ba[k];
         return `<tr><td style="font-weight:600">${escapeHtml(k.replace(/_/g, ' '))}</td>
@@ -2016,14 +2020,14 @@
           <td style="color:var(--success);font-weight:600">+${fmtPct(b.improvement_pct)}</td></tr>`;
       }).join('') || emptyTable(4, 'No comparison available');
 
-      const psRows = (c.per_service || []).map(s => `<tr>
+      const psRows = (c.per_service || DASH._inv_per_service || []).map(s => `<tr>
           <td style="font-weight:600">${escapeHtml(s.service)}</td>
           <td style="text-align:right">${fmtNum(s.in_cur)}</td>
           <td style="text-align:right">${fmtNum(s.matched)}</td>
           <td style="text-align:right">${fmtNum(s.unmatched)}</td>
           <td>${fmtPct(s.match_rate_pct)}</td></tr>`).join('') || emptyTable(5, 'No services');
 
-      const umRows = (c.unmatched_top || []).map(u => `<tr>
+      const umRows = (c.unmatched_top || DASH._inv_unmatched_top || []).map(u => `<tr>
           <td style="font-family:monospace;font-size:.78rem">${escapeHtml(u.resource_id)}</td>
           <td>${escapeHtml(u.service || '—')}</td>
           <td style="color:var(--accent);font-weight:600">${fmtUSD(u.cost)}</td>

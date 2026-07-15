@@ -46,6 +46,136 @@ def ingest_to_duckdb(src_path: str, duckdb_path: str) -> None:
     finally:
         con.close()
 
+def get_per_service_match_rate(file_path: str, enricher) -> tuple[list[dict], list[dict]]:
+    """Compute per-service resource match rate and top unmatched resources.
+    Returns (per_service, unmatched_top) for the Inventory Enrichment panel."""
+    if not file_path or enricher is None or not getattr(enricher, "active", False):
+        return [], []
+    try:
+        con = duckdb.connect(":memory:")
+        safe = str(file_path).replace("'", "''")
+        if str(file_path).lower().endswith(".duckdb"):
+            con.execute(f"ATTACH '{safe}' AS src (READ_ONLY)")
+            con.execute("CREATE VIEW cur_data AS SELECT * FROM src.cur_data")
+        else:
+            con.execute(f"CREATE VIEW cur_data AS SELECT * FROM read_csv_auto('{safe}', ignore_errors=true)")
+        _register_resource_lookup(con, enricher)
+        _register_account_lookup(con, enricher)
+        cols = [r[0] for r in con.execute("DESCRIBE cur_data").fetchall()]
+        cost_col = _detect_cost_col(cols)
+        svc_col = _detect_service_col(cols)
+        res_col = _detect_resource_col(cols)
+        if not cost_col or not svc_col or not res_col:
+            return [], []
+        # Per-service match rate
+        rows = con.execute(
+            f'SELECT c."{svc_col}" AS svc, '
+            f'COUNT(*) AS in_cur, '
+            f'COUNT(r.resource_id) AS matched, '
+            f'SUM(c."{cost_col}") AS cost '
+            f'FROM cur_data c '
+            f'LEFT JOIN inv_resource_lookup r ON '
+            f'SPLIT_PART(CAST(c."{res_col}" AS VARCHAR), \':\', -1) = r.resource_id '
+            f'WHERE c."{res_col}" IS NOT NULL AND c."{res_col}" != \'\' '
+            f'GROUP BY svc ORDER BY in_cur DESC LIMIT 20'
+        ).fetchall()
+        per_service = [
+            {
+                "service": str(r[0] or "Unknown"),
+                "in_cur": int(r[1] or 0),
+                "matched": int(r[2] or 0),
+                "unmatched": int(r[1] or 0) - int(r[2] or 0),
+                "match_rate_pct": round(int(r[2] or 0) / int(r[1]) * 100, 1) if r[1] else 0.0,
+            }
+            for r in rows
+        ]
+        # Top unmatched resources by cost
+        unmatched_rows = con.execute(
+            f'SELECT c."{res_col}", c."{svc_col}", SUM(c."{cost_col}") AS cost '
+            f'FROM cur_data c '
+            f'LEFT JOIN inv_resource_lookup r ON '
+            f'SPLIT_PART(CAST(c."{res_col}" AS VARCHAR), \':\', -1) = r.resource_id '
+            f'WHERE c."{res_col}" IS NOT NULL AND c."{res_col}" != \'\' '
+            f'AND r.resource_id IS NULL '
+            f'GROUP BY c."{res_col}", c."{svc_col}" '
+            f'ORDER BY cost DESC LIMIT 10'
+        ).fetchall()
+        unmatched_top = [
+            {
+                "resource_id": str(r[0] or ""),
+                "service": str(r[1] or ""),
+                "cost": round(float(r[2] or 0), 4),
+                "reason": "Not in inventory",
+            }
+            for r in unmatched_rows
+        ]
+        con.close()
+        return per_service, unmatched_top
+    except Exception:
+        logger.exception("get_per_service_match_rate failed")
+        return [], []
+
+def get_before_after_coverage(file_path: str, enricher) -> dict:
+    """Compute before/after cost attribution improvement from inventory enrichment.
+    Returns dict keyed by attribute name with before_pct, after_pct, improvement_pct."""
+    if not file_path or enricher is None or not getattr(enricher, "active", False):
+        return {}
+    try:
+        con = duckdb.connect(":memory:")
+        safe = str(file_path).replace("'", "''")
+        if str(file_path).lower().endswith(".duckdb"):
+            con.execute(f"ATTACH '{safe}' AS src (READ_ONLY)")
+            con.execute("CREATE VIEW cur_data AS SELECT * FROM src.cur_data")
+        else:
+            con.execute(f"CREATE VIEW cur_data AS SELECT * FROM read_csv_auto('{safe}', ignore_errors=true)")
+        _register_account_lookup(con, enricher)
+        cols = [r[0] for r in con.execute("DESCRIBE cur_data").fetchall()]
+        cost_col = _detect_cost_col(cols)
+        acct_col = _detect_account_col(cols)
+        if not cost_col or not acct_col:
+            return {}
+        total = float(con.execute(f'SELECT SUM("{cost_col}") FROM cur_data').fetchone()[0] or 0)
+        if not total:
+            return {}
+        # Check each INV_FIELD_MAP attribute
+        from tools.inventory_enricher import INV_FIELD_MAP
+        result = {}
+        inv_attrs = {
+            "Environment": "inv_environment",
+            "Customer": "inv_customer",
+            "Cost Centre": "inv_budget_code",
+        }
+        for label, inv_col in inv_attrs.items():
+            # Before: cost with native AWS tag for this attribute
+            tag_col = _resolve_tag_col(SimpleNamespace(columns=cols), f"tag_{label.replace(' ', '')}")
+            before_cost = 0.0
+            if tag_col:
+                before_cost = float(con.execute(
+                    f'SELECT SUM("{cost_col}") FROM cur_data '
+                    f'WHERE "{tag_col}" IS NOT NULL AND TRIM("{tag_col}") != \'\''
+                ).fetchone()[0] or 0)
+            # After: cost attributed via inventory JOIN
+            try:
+                after_cost = float(con.execute(
+                    f'SELECT SUM(c."{cost_col}") FROM cur_data c '
+                    f'LEFT JOIN inv_account_lookup i ON CAST(c."{acct_col}" AS VARCHAR) = i.account_id '
+                    f'WHERE i."{inv_col}" IS NOT NULL AND TRIM(i."{inv_col}") != \'\''
+                ).fetchone()[0] or 0)
+            except Exception:
+                after_cost = 0.0
+            before_pct = round(before_cost / total * 100, 1)
+            after_pct = round(after_cost / total * 100, 1)
+            result[label] = {
+                "before_pct": before_pct,
+                "after_pct": after_pct,
+                "improvement_pct": round(after_pct - before_pct, 1),
+            }
+        con.close()
+        return result
+    except Exception:
+        logger.exception("get_before_after_coverage failed")
+        return {}
+
 # ── Column detection helpers ──────────────────────────────────────────────────
 
 QueryType = Literal["total_cost", "cost_by_service", "daily_trend", "cost_by_region", "cost_by_environment", "cost_by_account", "cost_by_tag"]

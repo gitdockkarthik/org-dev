@@ -814,10 +814,13 @@ async def ds_enriched_summary(report_id: int) -> dict:
                 _con.close()
             except Exception:
                 pass
-        from tools.duckdb_engine import _detect_resource_col
+        from tools.duckdb_engine import _detect_resource_col, get_per_service_match_rate, get_before_after_coverage
         _has_res_col = _detect_resource_col(_cols) is not None if '_cols' in dir() else False
         _has_res_inv = bool(_enricher and _enricher.active and getattr(_enricher, '_lookup', {}))
         _enrichment_level = "resource" if (_has_res_col and _has_res_inv) else "account"
+        _path = get_report_path(report_id)
+        _per_service, _unmatched_top = get_per_service_match_rate(_path, _enricher) if _has_res_inv else ([], [])
+        _before_after = get_before_after_coverage(_path, _enricher) if _enricher and _enricher.active else {}
         return {
             "report_id": report_id,
             "active": True,
@@ -827,6 +830,9 @@ async def ds_enriched_summary(report_id: int) -> dict:
             "spend_match_rate_pct": _spend_match_pct,
             "matched_count": round(_inv_cost, 2),
             "unmatched_count": round(_total_cost - _inv_cost, 2),
+            "per_service": _per_service,
+            "unmatched_top": _unmatched_top,
+            "before_after": _before_after,
         }
 
     from report_store import get_report_csv, get_report_path
