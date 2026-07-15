@@ -406,6 +406,124 @@ async def _process_upload_job(job: dict, tmp_path: str, filename: str, file_size
                     pass
 
 
+async def _process_folder_upload_job(job: dict, tmp_paths: list[str], filenames: list[str], total_size: int) -> None:
+    """Background task: validate schemas, ingest all parts into one DuckDB file."""
+    import os
+    import shutil
+    from report_store import _ensure_data_dir, add_report, persist_report, report_file_path, set_report_path
+    from routes_dashboard import invalidate_dashboard_cache
+    from tools.data_sources.file_providers import FileUploadCURProvider, materialize_cur
+    from tools.duckdb_engine import get_total_cost, ingest_to_duckdb
+    import duckdb
+    reg = _require_registry()
+    mat_paths: list[str] = []
+    try:
+        _job_update(job, UploadStatus.DECOMPRESSING)
+        if job["cancel"]:
+            _job_update(job, UploadStatus.CANCELLED)
+            return
+        # Materialize each part (validate gz, copy to temp)
+        for i, (tmp_path, filename) in enumerate(zip(tmp_paths, filenames)):
+            if job["cancel"]:
+                _job_update(job, UploadStatus.CANCELLED)
+                return
+            try:
+                mat_path, resolved, ext = materialize_cur(filename, tmp_path)
+                mat_paths.append(mat_path)
+            except ValueError as exc:
+                _job_update(job, UploadStatus.FAILED, error=f"Part {filename}: {exc}")
+                return
+
+        _job_update(job, UploadStatus.PROCESSING)
+        # Validate all parts have identical schema
+        headers = []
+        for mat_path in mat_paths:
+            con = duckdb.connect(":memory:")
+            try:
+                safe = mat_path.replace("'", "''")
+                cols = [r[0] for r in con.execute(
+                    f"DESCRIBE SELECT * FROM read_csv_auto('{safe}', ignore_errors=true)"
+                ).fetchall()]
+                headers.append(cols)
+            finally:
+                con.close()
+        if len(set(tuple(h) for h in headers)) > 1:
+            _job_update(job, UploadStatus.FAILED, error="Part files have mismatched schemas — all parts must be from the same S3 export folder.")
+            return
+
+        # Get summary from first part
+        summary = get_total_cost(file_path=mat_paths[0])
+        if "error" in summary:
+            _job_update(job, UploadStatus.FAILED, error=summary["error"])
+            return
+
+        # Compute combined row count from all parts
+        total_rows = 0
+        total_cost = 0.0
+        for mat_path in mat_paths:
+            s = get_total_cost(file_path=mat_path)
+            total_rows += s.get("row_count", 0)
+            total_cost += s.get("total_cost", 0.0)
+
+        folder_name = job["filename"]
+        report = add_report(
+            filename=folder_name,
+            csv_text="",
+            row_count=total_rows,
+            total_cost=round(total_cost, 4),
+            file_size=total_size,
+            file_path=mat_paths[0],
+        )
+        _ensure_data_dir()
+
+        _job_update(job, UploadStatus.INGESTING)
+        duckdb_path = report_file_path(report["id"], ".duckdb")
+        try:
+            # Ingest all parts into one DuckDB file
+            safe_paths = [p.replace("'", "''") for p in mat_paths]
+            paths_sql = "['" + "', '".join(safe_paths) + "']"
+            con = duckdb.connect(database=duckdb_path)
+            con.execute("PRAGMA threads=4")
+            con.execute(f"CREATE TABLE cur_data AS SELECT * FROM read_csv_auto({paths_sql}, ignore_errors=true)")
+            con.close()
+        except Exception as exc:
+            logger.warning("folder ingest failed: %s", exc)
+            duckdb_path = None
+
+        perm_path = duckdb_path if duckdb_path and os.path.exists(duckdb_path) else None
+        if not perm_path:
+            _job_update(job, UploadStatus.FAILED, error="Failed to ingest folder parts into database.")
+            return
+
+        set_report_path(report["id"], perm_path)
+        await persist_report(report["id"])
+        invalidate_dashboard_cache(report["id"])
+        invalidate_dashboard_cache(None)
+
+        provider = FileUploadCURProvider(
+            source_id=f"cur-{report['id']}",
+            filename=folder_name,
+            csv_text="",
+            record_count=total_rows,
+            total_cost=round(total_cost, 4),
+            file_size=total_size,
+            report_id=report["id"],
+            file_path=perm_path,
+        )
+        await reg.register_cur(provider)
+        _job_update(job, UploadStatus.READY, report_id=report["id"])
+
+    except Exception as exc:
+        _job_update(job, UploadStatus.FAILED, error=f"Unexpected error: {exc}")
+    finally:
+        for p in tmp_paths + mat_paths:
+            if p and os.path.exists(p):
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
+
+
 @app.post("/data-sources/cur/upload")
 async def ds_cur_upload(file: UploadFile) -> dict:
     """Upload a new CUR file (CSV / CSV.zip / Parquet) and register it as a
@@ -442,6 +560,51 @@ async def ds_cur_upload(file: UploadFile) -> dict:
         content={"job_id": job["job_id"], "filename": filename},
         background=BackgroundTask(
             _process_upload_job, job, tmp_path, filename, file_size
+        ),
+    )
+
+
+@app.post("/data-sources/cur/upload-folder")
+async def ds_cur_upload_folder(files: list[UploadFile]) -> dict:
+    """Upload multiple CUR part files from one S3 export folder and ingest into one DuckDB report."""
+    from tools.data_sources.file_providers import UploadTooLarge, stream_upload_to_temp
+    from starlette.background import BackgroundTask
+    from fastapi.responses import JSONResponse
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+    _MAX_FOLDER_BYTES = 10 * 1024 * 1024 * 1024  # 10 GB total
+    tmp_paths = []
+    filenames = []
+    total_size = 0
+    for file in files:
+        filename = file.filename or "upload.csv.gz"
+        try:
+            tmp_path, file_size = await stream_upload_to_temp(file, max_bytes=_MAX_CUR_BYTES)
+            tmp_paths.append(tmp_path)
+            filenames.append(filename)
+            total_size += file_size
+        except UploadTooLarge:
+            for p in tmp_paths:
+                import os
+                if os.path.exists(p): os.unlink(p)
+            raise HTTPException(status_code=413, detail=f"Part file {filename} too large (max 2 GB per part)")
+        if total_size > _MAX_FOLDER_BYTES:
+            for p in tmp_paths:
+                import os
+                if os.path.exists(p): os.unlink(p)
+            raise HTTPException(status_code=413, detail="Total folder size exceeds 10 GB limit")
+    # Use common filename prefix as the report name
+    import re, os as _os
+    base = _os.path.basename(filenames[0])
+    prefix = base.replace('.csv.gz', '').replace('.gz', '').replace('.csv', '')
+    prefix = re.sub(r'-\d+$', '', prefix)
+    folder_name = f"{prefix} ({len(files)} parts)"
+    job = _make_job(folder_name)
+    return JSONResponse(
+        status_code=202,
+        content={"job_id": job["job_id"], "filename": folder_name},
+        background=BackgroundTask(
+            _process_folder_upload_job, job, tmp_paths, filenames, total_size
         ),
     )
 

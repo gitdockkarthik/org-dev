@@ -346,13 +346,17 @@
         <div class="card-subtitle">AWS Cost &amp; Usage Report files loaded for analysis.
           Match rate is measured against the currently loaded inventory.</div>
         <div id="ds-cur-grid" style="font-size:0.875rem;color:#475569">Loading…</div>
-        <div class="actions" style="margin-top:1rem">
-          <label class="btn btn-primary" style="cursor:pointer">
+        <div class="actions" style="margin-top:1rem;display:flex;gap:8px;flex-wrap:wrap">
+          <label class="btn btn-primary" id="ds-cur-upload-btn" style="cursor:pointer">
             + Upload CUR file
-            <input type="file" id="ds-cur-file" accept=".csv,.zip,.parquet,.gz" multiple style="display:none" />
+            <input type="file" id="ds-cur-file" accept=".csv,.zip,.parquet,.gz" style="display:none" />
+          </label>
+          <label class="btn btn-secondary" id="ds-cur-folder-btn" style="cursor:pointer">
+            📁 Upload CUR folder
+            <input type="file" id="ds-cur-folder" accept=".gz,.csv" multiple webkitdirectory style="display:none" />
           </label>
         </div>
-        <p class="hint" style="margin-top:0.5rem">Upload multiple CUR files to enable comparison mode. Large files (>50 MB) may take several minutes to upload over VPN.</p>
+        <p class="hint" style="margin-top:0.5rem">Large files (>50 MB) may take several minutes to upload over VPN. Use "Upload CUR folder" to upload all parts from an S3 export folder at once.</p>
         <div id="ds-cur-msg" class="action-msg hidden"></div>
       </div>
 
@@ -859,8 +863,11 @@
             ? '<span class="badge" style="background:#dcfce7;color:#15803d">Active</span>'
             : '<button class="btn btn-secondary btn-sm cur-set-active" data-sid="' + sid + '">Set Active</button>')
           + '<button class="btn btn-danger btn-sm cur-remove" data-sid="' + sid + '">Remove</button>';
+        const isMultiPart = name.includes('parts)') || name.includes('part)');
+        const fileIcon = isMultiPart ? '🗂️' : '📄';
         return '<tr class="cur-row' + (s.active ? ' active' : '') + '" data-sid="' + sid + '">'
           + '<td><div class="cur-cell-name" title="' + nameAttr + '">'
+          +   '<span style="margin-right:4px">' + fileIcon + '</span>'
           +   '<span class="cur-fname">' + name + '</span>'
           +   '<button class="cur-copy" title="Copy filename">📋</button>'
           + '</div></td>'
@@ -1037,18 +1044,28 @@
       }
 
       function _setCurUploadLocked(locked) {
-        const label = document.querySelector('label.btn-primary');
+        const uploadBtn = $('ds-cur-upload-btn');
+        const folderBtn = $('ds-cur-folder-btn');
         const input = $('ds-cur-file');
+        const folderInput = $('ds-cur-folder');
+        [uploadBtn, folderBtn].forEach(btn => {
+          if (!btn) return;
+          if (locked) {
+            btn.style.opacity = '0.5';
+            btn.style.pointerEvents = 'none';
+            btn.title = 'Upload in progress — wait or cancel the current upload';
+          } else {
+            btn.style.opacity = '';
+            btn.style.pointerEvents = '';
+            btn.title = '';
+          }
+        });
         if (locked) {
-          label.style.opacity = '0.5';
-          label.style.pointerEvents = 'none';
-          label.title = 'Upload in progress — wait or cancel the current upload';
           if (input) input.disabled = true;
+          if (folderInput) folderInput.disabled = true;
         } else {
-          label.style.opacity = '';
-          label.style.pointerEvents = '';
-          label.title = '';
           if (input) input.disabled = false;
+          if (folderInput) folderInput.disabled = false;
           localStorage.removeItem('cur_upload_job');
         }
       }
@@ -1178,12 +1195,90 @@
           const row = document.getElementById('cur-inprogress-row');
           if (row) row.dataset.jobId = job.job_id;
           localStorage.setItem('cur_upload_job', JSON.stringify({ jobId: job.job_id, filename: job.filename }));
-          _pollUploadJob(job.job_id, job.filename);
+          // Check status immediately once before starting the 3s polling loop
+          try {
+            const immediate = await api('/data-sources/cur/upload-status/' + job.job_id);
+            if (immediate && immediate.status === 'ready') {
+              if (row) row.remove();
+              _setCurUploadLocked(false);
+              await loadDataSources();
+            } else {
+              _pollUploadJob(job.job_id, job.filename);
+            }
+          } catch (_) {
+            _pollUploadJob(job.job_id, job.filename);
+          }
         } catch (e) {
           const row = document.getElementById('cur-inprogress-row');
           if (row) row.remove();
           _setCurUploadLocked(false);
           showMsg(msgEl, 'Upload failed: ' + e.message, 'err');
+        }
+      });
+
+      $('ds-cur-folder').addEventListener('change', async (ev) => {
+        const allFiles = [...ev.target.files];
+        ev.target.value = '';
+        if (!allFiles.length) return;
+        // Filter to gz/csv files only — ignore manifest, metadata files from S3 folder
+        const files = allFiles.filter(f => f.name.endsWith('.gz') || f.name.endsWith('.csv'));
+        if (!files.length) {
+          showMsg($('ds-cur-msg'), 'No .gz or .csv files found in the selected folder.', 'err');
+          return;
+        }
+        const msgEl = $('ds-cur-msg');
+        showMsg(msgEl, files.length + ' part file(s) detected — uploading folder...', 'info', 60000);
+        _setCurUploadLocked(true);
+        const baseName = files[0].name.split('/').pop().split('\\').pop();
+        const folderName = baseName.replace(/-\d+\.csv\.gz$/, '').replace(/\.csv\.gz$/, '').replace(/-\d+$/, '') + ' (' + files.length + ' parts)';
+        _addInProgressRow('pending', folderName);
+        try {
+          const fd = new FormData();
+          files.forEach(f => fd.append('files', f));
+          const job = await new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', `${PROXY}/data-sources/cur/upload-folder`);
+            const hdrs = authHeaders();
+            Object.keys(hdrs).forEach(k => xhr.setRequestHeader(k, hdrs[k]));
+            xhr.upload.addEventListener('progress', ev => {
+              if (!ev.lengthComputable) return;
+              const pct = Math.round(ev.loaded / ev.total * 100);
+              const row = document.getElementById('cur-inprogress-row');
+              if (row) row.querySelector('.cur-inprogress-status').textContent = 'Uploading ' + pct + '%…';
+            });
+            xhr.addEventListener('load', () => {
+              if (xhr.status === 202) {
+                try { resolve(JSON.parse(xhr.responseText)); }
+                catch (e) { reject(new Error('Invalid server response')); }
+              } else {
+                let detail = 'HTTP ' + xhr.status;
+                try { const j = JSON.parse(xhr.responseText); if (j.detail) detail = j.detail; } catch (_) {}
+                reject(new Error(detail));
+              }
+            });
+            xhr.addEventListener('error', () => reject(new Error('Network error')));
+            xhr.send(fd);
+          });
+          const row = document.getElementById('cur-inprogress-row');
+          if (row) row.dataset.jobId = job.job_id;
+          localStorage.setItem('cur_upload_job', JSON.stringify({ jobId: job.job_id, filename: job.filename }));
+          try {
+            const immediate = await api('/data-sources/cur/upload-status/' + job.job_id);
+            if (immediate && immediate.status === 'ready') {
+              if (row) row.remove();
+              _setCurUploadLocked(false);
+              await loadDataSources();
+            } else {
+              _pollUploadJob(job.job_id, job.filename);
+            }
+          } catch (_) {
+            _pollUploadJob(job.job_id, job.filename);
+          }
+        } catch (e) {
+          const row = document.getElementById('cur-inprogress-row');
+          if (row) row.remove();
+          _setCurUploadLocked(false);
+          showMsg(msgEl, 'Folder upload failed: ' + e.message, 'err');
         }
       });
 
