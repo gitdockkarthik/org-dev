@@ -1905,19 +1905,22 @@
                   ${fmtPct(invPct)}
                 </div>
               </div>
+              <div style="font-size:.75rem;color:var(--text-muted);margin-top:6px">
+                Row coverage: % of billing line items with at least one AWS resource tag vs covered by inventory enrichment.
+              </div>
               <div style="display:flex;margin-top:10px;gap:24px;flex-wrap:wrap">
                 <div style="display:flex;align-items:center;gap:8px">
                   <div style="width:12px;height:12px;border-radius:2px;background:#22c55e;flex-shrink:0"></div>
                   <div>
                     <div style="font-weight:600;font-size:.85rem">AWS Resource Tags</div>
-                    <div style="color:var(--text-muted);font-size:.78rem">${fmtPct(awsPct)} of rows tagged in AWS · ${fmtUSD0(taggedCost)} attributed</div>
+                    <div style="color:var(--text-muted);font-size:.78rem">${fmtPct(awsPct)} of rows tagged in AWS (${fmtNum(ut.total_rows - (ut.tag_coverage?.[0]?.untagged_count ?? 0))} rows) · ${fmtUSD0(taggedCost)} attributed</div>
                   </div>
                 </div>
                 <div style="display:flex;align-items:center;gap:8px">
                   <div style="width:12px;height:12px;border-radius:2px;background:#f59e0b;flex-shrink:0"></div>
                   <div>
                     <div style="font-weight:600;font-size:.85rem">Inventory Enrichment</div>
-                    <div style="color:var(--text-muted);font-size:.78rem">${fmtPct(invPct)} covered by inventory · ${fmtUSD0(invCost)} attributed</div>
+                    <div style="color:var(--text-muted);font-size:.78rem">${fmtPct(invPct)} of untagged rows enriched via account mapping (${fmtNum(ut.tag_coverage?.[0]?.untagged_count ?? 0)} rows) · ${fmtUSD0(invCost)} attributed — every AWS account mapped to environment, customer &amp; cost centre</div>
                   </div>
                 </div>
               </div>
@@ -2055,8 +2058,15 @@
             <div style="color:${scol};font-weight:700">${fmtPct(spend)}</div>
             <div class="cov-row__cost" style="color:var(--text-muted);font-size:.8rem">${fmtNum(matchedN)} / ${fmtNum(totalN)} resources</div>
           </div>
+          ${((DASH.untagged_resources?.tag_coverage?.[0]?.untagged_count) ?? 0) > 0 ? `
+          <div style="margin-top:12px;padding:10px 14px;background:#fef9ec;border:1px solid #fde68a;border-radius:6px;font-size:.82rem;color:#92400e">
+            💡 <strong>${fmtNum(DASH.untagged_resources?.tag_coverage?.[0]?.untagged_count ?? 0)} rows had no AWS tags in CUR</strong> —
+            inventory covered <strong>${fmtUSD0(DASH.untagged_resources?.tag_coverage?.[0]?.untagged_cost ?? 0)}</strong> in spend attribution
+            via account-level mapping.
+          </div>` : ''}
           ${!isAccountLevelOnly ? `<div style="margin-top:16px">
             <div class="chart-card__title">Tag coverage — with vs without inventory</div>
+            <div style="font-size:.75rem;color:var(--text-muted);margin-bottom:6px">Cost attribution per attribute: % of total spend attributable before and after inventory enrichment.</div>
             <div class="data-table-wrap" style="margin-top:8px"><table class="data-table">
               <thead><tr><th>Attribute</th><th>Without inventory</th><th>With inventory</th><th>Improvement</th></tr></thead>
               <tbody>${baRows}</tbody></table></div>

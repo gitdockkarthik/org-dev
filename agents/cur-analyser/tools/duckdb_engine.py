@@ -145,6 +145,12 @@ def get_before_after_coverage(file_path: str, enricher) -> dict:
             "Customer": "inv_customer",
             "Cost Centre": "inv_budget_code",
         }
+        # Map label to AWS tag key suffix for JSON LIKE search
+        _tag_key_map = {
+            "Environment": "user:Environment",
+            "Customer": "user:Customer",
+            "Cost Centre": "user:CostCentre",
+        }
         for label, inv_col in inv_attrs.items():
             # Before: cost with native AWS tag for this attribute
             tag_col = _resolve_tag_col(SimpleNamespace(columns=cols), f"tag_{label.replace(' ', '')}")
@@ -154,6 +160,16 @@ def get_before_after_coverage(file_path: str, enricher) -> dict:
                     f'SELECT SUM("{cost_col}") FROM cur_data '
                     f'WHERE "{tag_col}" IS NOT NULL AND TRIM("{tag_col}") != \'\''
                 ).fetchone()[0] or 0)
+            elif "tags" in cols:
+                # CUR 2.0 — tags stored as JSON string; use LIKE to detect tag presence
+                tag_key = _tag_key_map.get(label, f"user:{label}")
+                try:
+                    before_cost = float(con.execute(
+                        f'SELECT SUM("{cost_col}") FROM cur_data '
+                        f"WHERE tags IS NOT NULL AND tags LIKE '%{tag_key}%'"
+                    ).fetchone()[0] or 0)
+                except Exception:
+                    pass
             # After: cost attributed via inventory JOIN
             try:
                 after_cost = float(con.execute(
