@@ -280,6 +280,7 @@
       document.getElementById('edit-model').value = agent.model || '';
       document.getElementById('edit-invoke-url').value = agent.invoke_url || '';
       document.getElementById('edit-landing-page-url').value = agent.landing_page_url || '';
+      document.getElementById('edit-uses-uap-llm').checked = agent.uses_uap_llm || false;
       document.getElementById('edit-system-prompt').value = agent.system_prompt || '';
       document.getElementById('edit-temperature').value = agent.temperature ?? 0.7;
       document.getElementById('edit-tools').value = JSON.stringify(agent.tools || [], null, 2);
@@ -307,6 +308,7 @@
         model: document.getElementById('edit-model').value,
         invoke_url: document.getElementById('edit-invoke-url').value,
         landing_page_url: document.getElementById('edit-landing-page-url').value,
+        uses_uap_llm: document.getElementById('edit-uses-uap-llm').checked,
         system_prompt: document.getElementById('edit-system-prompt').value,
         temperature: parseFloat(document.getElementById('edit-temperature').value),
         tools: tools,
@@ -602,6 +604,13 @@
       <div class="form-field">
         <label class="form-label" for="edit-landing-page-url">Landing Page URL</label>
         <input id="edit-landing-page-url" type="url" class="form-input" placeholder="For externally-built agents">
+      </div>
+      <div class="form-field">
+        <label class="form-label" for="edit-uses-uap-llm" style="display:flex;align-items:center;gap:10px;cursor:pointer">
+          <input id="edit-uses-uap-llm" type="checkbox" style="width:16px;height:16px;cursor:pointer">
+          Use UAP-managed LLM
+        </label>
+        <span class="form-hint" style="font-size:.78rem;color:var(--text-muted)">Agent uses the platform's shared LLM credentials via the token vending API.</span>
       </div>
       <div class="form-field">
         <label class="form-label" for="edit-system-prompt">System Prompt</label>

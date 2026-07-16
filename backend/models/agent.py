@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from sqlalchemy import DateTime, Float, String, Text
+from sqlalchemy import Boolean, DateTime, Float, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as pgUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -36,6 +36,7 @@ class Agent(Base):
     )
     invoke_url: Mapped[str | None] = mapped_column(String, nullable=True)
     landing_page_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    uses_uap_llm: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
     model: Mapped[str] = mapped_column(
         String, nullable=False, default="claude-sonnet-4-6"

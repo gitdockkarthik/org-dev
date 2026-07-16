@@ -209,6 +209,7 @@
       const usesUapLlm = document.getElementById('f-uses-uap-llm').checked;
       const payload = { name, slug, description: desc, version, invoke_url: invokeUrl,
         landing_page_url: landingPageUrl || '',
+        uses_uap_llm: usesUapLlm,
         system_prompt: sysprompt, model, temperature, tools };
 
       const btn = document.getElementById('submit-btn');
