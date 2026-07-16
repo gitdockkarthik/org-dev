@@ -37,6 +37,34 @@ def get_cur_storage_usage() -> dict:
     except Exception:
         return {"cur_used_bytes": 0, "disk_free_bytes": 0, "disk_total_bytes": 0, "cur_used_gb": 0.0, "disk_free_gb": 0.0}
 
+def _compute_date_range_for_report(report: dict) -> tuple[str | None, str | None]:
+    """Compute date range from the report's DuckDB file. Returns (start, end) ISO strings."""
+    path = report.get("_file_path")
+    if not path or not os.path.exists(path) or not path.endswith(".duckdb"):
+        return None, None
+    try:
+        import duckdb as _duckdb
+        from tools.duckdb_engine import _detect_date_col
+        con = _duckdb.connect(":memory:")
+        safe = path.replace("'", "''")
+        con.execute(f"ATTACH '{safe}' AS src (READ_ONLY)")
+        con.execute("CREATE VIEW cur_data AS SELECT * FROM src.cur_data")
+        cols = [r[0] for r in con.execute("DESCRIBE cur_data").fetchall()]
+        date_col = _detect_date_col(cols)
+        if not date_col:
+            con.close()
+            return None, None
+        row = con.execute(
+            f'SELECT MIN("{date_col}"), MAX("{date_col}") FROM cur_data '
+            f'WHERE "{date_col}" IS NOT NULL'
+        ).fetchone()
+        con.close()
+        if row and row[0] and row[1]:
+            return str(row[0])[:10], str(row[1])[:10]
+    except Exception:
+        pass
+    return None, None
+
 _lock = threading.Lock()
 _reports: list[dict[str, Any]] = []
 _counter = 0
@@ -186,6 +214,15 @@ def get_latest_path() -> str | None:
 
 
 def list_reports() -> list[dict[str, Any]]:
+    with _lock:
+        reports_copy = list(_reports)
+    # Compute date ranges outside the lock to avoid blocking other threads
+    for r in reports_copy:
+        if "date_range_start" not in r:
+            start, end = _compute_date_range_for_report(r)
+            with _lock:
+                r["date_range_start"] = start
+                r["date_range_end"] = end
     with _lock:
         return [_public(r) for r in _reports]
 

@@ -2530,7 +2530,9 @@ ${JSON.stringify(payload, null, 2)}
             [${r.id}] ${r.filename}
             <span style="font-size:.72rem;color:var(--text-muted);
                          display:block">
-              ${r.row_count} rows ·
+              ${r.date_range_start && r.date_range_end
+                ? `${r.date_range_start} → ${r.date_range_end} · `
+                : ''}${Number(r.row_count).toLocaleString()} rows ·
               ${new Date(r.created_at).toLocaleDateString()}
             </span>
           </span>
@@ -2555,7 +2557,7 @@ ${JSON.stringify(payload, null, 2)}
       } else if (checked.length === 1) {
         const r = _allReports.find(x => x.id === checked[0]);
         label.textContent = r ?
-          `${r.filename} — $${Number(r.total_cost)
+          `${r.filename}${r.date_range_start ? ` (${r.date_range_start} → ${r.date_range_end})` : ''} — $${Number(r.total_cost)
             .toLocaleString('en-US',{maximumFractionDigits:0})}`
           : `Report ${checked[0]}`;
       } else {
