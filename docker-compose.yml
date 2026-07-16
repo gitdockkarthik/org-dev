@@ -168,6 +168,23 @@ services:
       - backend
       - postgres
 
+  # ── Agent: Mock Agent ───────────────────────────────────────────────────────
+  # Demonstrates UAP LLM gateway integration — uses token vending instead of direct key.
+  mock-agent:
+    build: ./agents/mock-agent
+    ports:
+      - "8099:8099"
+    environment:
+      - UAP_URL=http://backend:8000
+      - BACKEND_API_KEY=${BACKEND_API_KEY}
+      - REGISTRY_URL=http://backend:8000
+      - AGENT_SLUG=mock-agent
+      - AGENT_NAME=Mock Agent
+      - PORT=8099
+    depends_on:
+      - backend
+    restart: unless-stopped
+
   # ── Portal ──────────────────────────────────────────────────────────────────
   # Knows only BACKEND_URL and BACKEND_API_KEY — no DB, no Anthropic, no agents.
   portal:
