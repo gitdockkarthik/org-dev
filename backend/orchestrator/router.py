@@ -1,4 +1,9 @@
+import hashlib
+import hmac
 import json
+import os
+import secrets
+import time
 import uuid
 from typing import Any
 
@@ -279,6 +284,99 @@ async def get_session_history(session_id: str, db: AsyncSession = Depends(get_db
 @router.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@router.post("/llm/token", dependencies=[Depends(require_api_key)])
+async def vend_llm_token(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    from core.platform_cache import get_anthropic_key
+    from core.config import settings as _settings
+    from models.agent import Agent, AgentStatus
+
+    slug = body.get("agent_slug", "")
+    if not slug:
+        raise HTTPException(status_code=400, detail="agent_slug is required")
+
+    result = await db.execute(select(Agent).where(Agent.slug == slug))
+    agent = result.scalar_one_or_none()
+    if not agent or agent.status != AgentStatus.published:
+        raise HTTPException(status_code=403, detail=f"Agent '{slug}' is not registered or not published")
+
+    if not get_anthropic_key():
+        raise HTTPException(status_code=503, detail="LLM credentials not configured on this platform")
+
+    issued_at = int(time.time())
+    expires_at = issued_at + 300
+    payload = f"{slug}:{issued_at}:{expires_at}"
+    signature = hmac.new(
+        _settings.secret_key.encode(),
+        payload.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    token = f"{payload}:{signature}"
+
+    return {
+        "token": token,
+        "provider": os.environ.get("LLM_PROVIDER", "anthropic"),
+        "model": os.environ.get("LLM_MODEL", "claude-sonnet-4-6"),
+        "expires_in": 300,
+        "issued_at": issued_at,
+    }
+
+
+@router.post("/llm/invoke", dependencies=[Depends(require_api_key)])
+async def llm_invoke(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    from core.platform_cache import get_anthropic_key
+    from core.config import settings as _settings
+
+    token = body.get("token", "")
+    try:
+        slug, issued_at_str, expires_at_str, signature = token.rsplit(":", 3)
+        issued_at = int(issued_at_str)
+        expires_at = int(expires_at_str)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token format")
+
+    if int(time.time()) > expires_at:
+        raise HTTPException(status_code=401, detail="Token expired")
+
+    payload = f"{slug}:{issued_at_str}:{expires_at_str}"
+    expected = hmac.new(
+        _settings.secret_key.encode(),
+        payload.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(expected, signature):
+        raise HTTPException(status_code=401, detail="Invalid token signature")
+
+    messages = body.get("messages", [])
+    system = body.get("system", "")
+    model = body.get("model") or os.environ.get("LLM_MODEL", "claude-sonnet-4-6")
+    max_tokens = body.get("max_tokens", 4096)
+
+    api_key = get_anthropic_key()
+    response = await llm_create_message(
+        model=model,
+        max_tokens=max_tokens,
+        system=system,
+        messages=messages,
+        api_key=api_key,
+    )
+
+    text = next((b.text for b in response.content if hasattr(b, "text")), "")
+    return {
+        "response": text,
+        "model": model,
+        "usage": {
+            "input_tokens": response.usage.input_tokens,
+            "output_tokens": response.usage.output_tokens,
+        }
+    }
 
 
 @router.api_route(
