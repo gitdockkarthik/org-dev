@@ -289,41 +289,59 @@ curl http://localhost:8004/health
     </div>
   </div>
 
-  <h2>8. UAP LLM Gateway — Centralized Key Management</h2>
-  <p>External agents no longer need to hold or configure LLM API keys. UAP acts as the LLM governance layer — agents call two endpoints to get a short-lived token and proxy LLM calls through the platform.</p>
-  <h3>Token Vending Flow</h3>
+  <h2>8. LLM Integration Options</h2>
+  <p>External agents have three options for LLM access. Choose based on your deployment context.</p>
+
+  <h3>Option 1 — Self-managed LLM Credentials <span style="background:#dcfce7;color:#16a34a;font-size:11px;padding:2px 6px;border-radius:4px;font-weight:600">Available</span></h3>
+  <p>Agent team manages their own LLM credentials via <code>.env</code>. No UAP dependency.</p>
+
+  <p><strong>a) Anthropic Direct</strong></p>
+  <p>Generate your API key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>.</p>
   <div class="code-block"><pre>
-# Step 1 — Fetch a short-lived HMAC-signed token (5 min TTL)
+ANTHROPIC_API_KEY=sk-ant-...
+LLM_MODEL=claude-sonnet-4-6</pre></div>
+
+  <p><strong>b) AWS Bedrock (IAM access key pair)</strong></p>
+  <p>Requires the Anthropic SDK's Bedrock client (<code>AsyncAnthropicBedrock</code>) — a code dependency, not just configuration. The SDK resolves credentials from env vars automatically.</p>
+  <div class="code-block"><pre>
+LLM_PROVIDER=bedrock
+LLM_MODEL=us.anthropic.claude-sonnet-5
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=AKIAW*****
+AWS_SECRET_ACCESS_KEY=F9***</pre></div>
+  <p>Verify connectivity before configuring your agent:</p>
+  <div class="code-block"><pre>
+curl -sS -X POST \
+  "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-5/invoke" \
+  -H "Authorization: Bearer &lt;your-bedrock-api-key&gt;" \
+  -H "Content-Type: application/json" \
+  -d '{"anthropic_version":"bedrock-2023-05-31","max_tokens":100,"messages":[{"role":"user","content":"Say hello."}]}'</pre></div>
+
+  <h3>Option 2 — UAP-managed LLM <span style="background:#fef3c7;color:#d97706;font-size:11px;padding:2px 6px;border-radius:4px;font-weight:600">In Progress</span></h3>
+  <p>Agent calls UAP's token vending endpoint using the platform's <code>BACKEND_API_KEY</code>. The raw LLM key never leaves UAP. Requires code changes in the agent backend to call the gateway instead of the LLM SDK directly.</p>
+  <div class="code-block"><pre>
+UAP_URL=https://&lt;uap-platform-url&gt;
+BACKEND_API_KEY=&lt;provided by platform team&gt;</pre></div>
+  <div class="code-block"><pre>
+# Step 1 — Fetch short-lived token (5 min TTL)
 POST /api/llm/token
 Headers: X-API-Key: &lt;BACKEND_API_KEY&gt;
 Body:    {"agent_slug": "your-agent-slug"}
-Response: {"token": "...", "provider": "bedrock", "model": "us.anthropic.claude-sonnet-5", "expires_in": 300}
 
-# Step 2 — Proxy LLM call through UAP (raw key never leaves the platform)
+# Step 2 — Proxy LLM call
 POST /api/llm/invoke
 Headers: X-API-Key: &lt;BACKEND_API_KEY&gt;
-Body:    {"token": "&lt;token from step 1&gt;", "messages": [...], "system": "..."}
-Response: {"response": "...", "model": "...", "usage": {...}}</pre></div>
-  <h3>Key Benefits</h3>
-  <ul>
-    <li>Agent teams never see or store the LLM API key</li>
-    <li>UAP controls model, provider, and parameters centrally</li>
-    <li>Tokens are short-lived (5 min), HMAC-signed, bound to agent slug</li>
-    <li>Fallback: agents use .env values when running outside UAP</li>
-  </ul>
+Body:    {"token": "&lt;token&gt;", "messages": [...], "system": "..."}</pre></div>
+  <p>See <code>agents/mock-agent/llm_gateway.py</code> for a reference implementation with automatic fallback to Option 1 when UAP is unavailable.</p>
 
-  <div style="margin-top:16px;padding:12px 16px;background:#fef3c7;border:1px solid #d97706;border-radius:6px;font-size:13px;">
-    <strong>⚠️ In Progress — Agent Key Management</strong><br>
-    The UAP LLM Gateway endpoints (<code>/api/llm/token</code> and <code>/api/llm/invoke</code>) are built and working.
-    However, per-agent self-service key generation (decoupled from registration) is not yet implemented.
-    Currently the gateway uses the shared <code>BACKEND_API_KEY</code> for authentication — not suitable for production multi-tenant use.
-    <br><br>
-    <strong>Coming next:</strong>
-    <ul style="margin-top:6px;padding-left:16px">
-      <li>Self-service "Developer Keys" section — agent owners generate their own <code>UAP_AGENT_KEY</code> independently of registration, fully revocable, per-agent scoped</li>
-      <li>RBAC extension — key generation restricted to a new "Developer" role (between user and admin). Current roles: user, admin. New role needed before self-service keys can be safely opened to agent teams</li>
-    </ul>
-  </div>
+  <h3>Option 3 — Self-service Agent Keys <span style="background:#f3e8ff;color:#9333ea;font-size:11px;padding:2px 6px;border-radius:4px;font-weight:600">Planned</span></h3>
+  <p>Agent owners generate their own scoped API key from the UAP portal (Developer Settings) — no platform team involvement. Key is per-agent, revocable, and decoupled from registration.</p>
+  <ul>
+    <li>New "Developer" role in UAP RBAC</li>
+    <li>Self-service key generation UI in portal</li>
+    <li>Keys stored encrypted in UAP DB, per-agent scoped</li>
+    <li>Switching from Option 2 → 3 requires only replacing <code>BACKEND_API_KEY</code> with <code>UAP_AGENT_KEY</code> — minimal code change</li>
+  </ul>
 
   <h2>9. Registration — New Fields</h2>
   <p>The registration and edit forms now include two new fields:</p>
