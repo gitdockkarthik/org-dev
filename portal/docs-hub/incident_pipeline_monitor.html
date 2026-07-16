@@ -202,12 +202,20 @@
   <div class="oi-sidebar__group collapsed">
     <div class="oi-sidebar__group-label">CUR Analyser <span class="oi-caret">▾</span></div>
     <div class="oi-sidebar__links">
-    <span class="oi-sidebar__link oi-sidebar__link--disabled">Coming soon</span>
+    <a class="oi-sidebar__link" href="cur_analyser.html">CUR Analyser Overview</a>
+    <a class="oi-sidebar__link" href="cur_analyser_api.html">API Reference</a>
   </div></div>
   <div class="oi-sidebar__group collapsed">
     <div class="oi-sidebar__group-label">Kafka Analyser <span class="oi-caret">▾</span></div>
     <div class="oi-sidebar__links">
-    <span class="oi-sidebar__link oi-sidebar__link--disabled">Coming soon</span>
+    <a class="oi-sidebar__link" href="kafka_analyser.html">Kafka Analyser Overview</a>
+    <a class="oi-sidebar__link" href="kafka_analyser_api.html">API Reference</a>
+  </div></div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">Alert Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="alert_analyser.html">Alert Analyser Overview</a>
+    <a class="oi-sidebar__link" href="alert_analyser_api.html">API Reference</a>
   </div></div>
 </div>
 <div class="oi-main">
@@ -657,9 +665,14 @@
 </div>
 </div>
 <script>
-  document.querySelectorAll('.oi-sidebar__group-label').forEach(function(label) {
-    label.addEventListener('click', function() {
-      label.parentElement.classList.toggle('collapsed');
+  document.querySelectorAll('.oi-sidebar__group-label').forEach(label => {
+    label.addEventListener('click', () => {
+      const group = label.parentElement;
+      const isCollapsed = group.classList.contains('collapsed');
+      // Collapse all groups
+      document.querySelectorAll('.oi-sidebar__group').forEach(g => g.classList.add('collapsed'));
+      // Expand clicked group if it was collapsed
+      if (isCollapsed) group.classList.remove('collapsed');
     });
   });
 </script>

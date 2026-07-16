@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Alert Analyser — Agent Documentation</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+      line-height: 1.6;
+      color: #333;
+      background: #f5f5f5;
+    }
+    .oi-container { display: flex; min-height: 100vh; }
+    .oi-sidebar { width: 220px; background: #ffffff; border-right: 1px solid #e2e5ea; padding: 20px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; flex-shrink: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .oi-sidebar__brand { font-size: 13px; font-weight: 700; padding: 0 20px 16px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #e2e5ea; margin-bottom: 10px; color: #1a1d23; }
+    .oi-sidebar__brand .dot { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; flex-shrink: 0; }
+    .oi-sidebar__group-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #98a2b3; padding: 10px 20px 6px; }
+    .oi-sidebar__link { display: block; padding: 6px 20px; font-size: 12px; color: #667085; text-decoration: none; border-left: 2px solid transparent; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .oi-sidebar__link:hover { background: #f0f1f4; color: #1a1d23; }
+    .oi-sidebar__link.active { color: #2563eb; border-left-color: #2563eb; background: #f0f1f4; font-weight: 600; }
+    .oi-sidebar__link--disabled { color: #98a2b3; font-style: italic; cursor: default; }
+    .oi-sidebar__group-label { cursor: pointer; display: flex; align-items: center; justify-content: space-between; user-select: none; }
+    .oi-sidebar__group-label .oi-caret { transition: transform .15s; font-size: 9px; }
+    .oi-sidebar__group.collapsed .oi-caret { transform: rotate(-90deg); }
+    .oi-sidebar__group.collapsed .oi-sidebar__links { display: none; }
+    .oi-main { flex: 1; min-width: 0; overflow-x: auto; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 40px 20px; }
+    header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 60px 0;
+      margin-bottom: 40px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    header .container { padding: 60px 20px; }
+    h1 { font-size: 2.5rem; margin-bottom: 10px; }
+    .header-sub { font-size: 1.1rem; opacity: 0.9; margin-bottom: 20px; }
+    .badges {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 15px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      background: rgba(255,255,255,0.2);
+      color: white;
+      border: 1px solid rgba(255,255,255,0.3);
+    }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 20px;
+      margin-bottom: 50px;
+    }
+    .kpi-card {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .kpi-card h3 { font-size: 1.1rem; font-weight: 700; color: #667eea; margin-bottom: 12px; }
+    .kpi-card p { font-size: 0.9rem; color: #666; line-height: 1.5; }
+    section {
+      background: white;
+      padding: 40px;
+      margin-bottom: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    h2 { font-size: 1.8rem; margin-bottom: 20px; color: #333; border-bottom: 2px solid #667eea; padding-bottom: 10px; }
+    h3 { font-size: 1.3rem; margin-top: 25px; margin-bottom: 15px; color: #555; }
+    code { font-family: 'Monaco', 'Courier New', monospace; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 20px 0;
+    }
+    th {
+      background: #f0f0f0;
+      padding: 12px;
+      text-align: left;
+      font-weight: 600;
+      border-bottom: 2px solid #ddd;
+    }
+    td {
+      padding: 12px;
+      border-bottom: 1px solid #eee;
+    }
+    tr:hover { background: #fafafa; }
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+      margin: 20px 0;
+    }
+    .feature-card {
+      background: #f8f9fa;
+      padding: 20px;
+      border-radius: 6px;
+      border-left: 4px solid #667eea;
+    }
+    .feature-card h4 { color: #667eea; margin-bottom: 8px; font-size: 1.1rem; }
+    .feature-card p { font-size: 0.95rem; color: #666; }
+    .status-working { color: #27ae60; font-weight: 600; }
+    .status-planned { color: #e67e22; font-weight: 600; }
+    .data-flow {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 15px;
+      margin: 30px 0;
+      overflow-x: auto;
+      padding: 20px;
+      background: #f8f9fa;
+      border-radius: 8px;
+    }
+    .flow-box {
+      background: white;
+      border: 2px solid #ddd;
+      border-radius: 6px;
+      padding: 15px 20px;
+      min-width: 140px;
+      text-align: center;
+      font-size: 0.9rem;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+    .flow-box.primary { background: #667eea; color: white; border-color: #667eea; }
+    .flow-box.secondary { background: #0EA5E9; color: white; border-color: #0EA5E9; }
+    .flow-box.accent { background: #FF6B35; color: white; border-color: #FF6B35; }
+    .flow-arrow {
+      flex-shrink: 0;
+      color: #667eea;
+      font-size: 1.5rem;
+      font-weight: bold;
+    }
+    .schema-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 20px;
+      margin: 20px 0;
+    }
+    .schema-card {
+      background: white;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .schema-card-header {
+      background: #667eea;
+      color: white;
+      padding: 15px;
+      font-weight: 700;
+      font-size: 1.05rem;
+    }
+    .schema-row {
+      display: grid;
+      grid-template-columns: 120px 1fr;
+      gap: 12px;
+      padding: 10px 15px;
+      border-bottom: 1px solid #f0f0f0;
+      font-size: 0.85rem;
+    }
+    .schema-row:last-child { border-bottom: none; }
+    .schema-row-name {
+      font-weight: 600;
+      color: #333;
+      font-family: 'Monaco', monospace;
+    }
+    .schema-row-type {
+      font-size: 0.75rem;
+      color: #666;
+      font-family: 'Monaco', monospace;
+    }
+    .scoring-table {
+      background: #f8f9fa;
+      border-radius: 6px;
+      padding: 20px;
+      margin: 20px 0;
+    }
+    .scoring-row {
+      display: grid;
+      grid-template-columns: 100px 1fr;
+      gap: 15px;
+      padding: 10px 0;
+      border-bottom: 1px solid #e0e0e0;
+      font-size: 0.95rem;
+    }
+    .scoring-row:last-child { border-bottom: none; }
+    .scoring-score {
+      font-weight: 700;
+      font-size: 1.1rem;
+      color: #667eea;
+    }
+    .scoring-positive { color: #27ae60; }
+    .scoring-negative { color: #dc2626; }
+    .status-flow {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      background: #f8f9fa;
+      border-radius: 6px;
+      padding: 20px;
+      margin: 20px 0;
+    }
+    .status-pill {
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      background: white;
+      border: 1px solid #ddd;
+    }
+    .status-arrow { color: #667eea; font-size: 16px; font-weight: bold; }
+    @media (max-width: 768px) {
+      h1 { font-size: 1.8rem; }
+      .data-flow { flex-direction: column; gap: 10px; }
+      .flow-arrow { transform: rotate(90deg); }
+      .schema-grid { grid-template-columns: 1fr; }
+      .oi-container { flex-direction: column; }
+      .oi-sidebar { width: 100%; height: auto; position: relative; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="oi-container">
+<div class="oi-sidebar">
+  <div class="oi-sidebar__brand"><span class="dot"></span> Operative Intelligence</div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">Incident Response <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="operative_intelligence_agentic_pipeline.html">Agentic Pipeline Concept</a>
+    <a class="oi-sidebar__link" href="operative_intelligence_pipeline.html">Agent Pipeline Overview</a>
+    <a class="oi-sidebar__link" href="incident_pipeline_monitor.html">Pipeline Monitor (Mockup)</a>
+    <a class="oi-sidebar__link" href="alert_ticketing_functional_spec.html">Functional Specification</a>
+    <a class="oi-sidebar__link" href="alert_ticketing_future_work_tracker.html">Future Work Tracker</a>
+  </div></div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">CUR Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="cur_analyser.html">CUR Analyser Overview</a>
+    <a class="oi-sidebar__link" href="cur_analyser_api.html">API Reference</a>
+  </div></div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">Kafka Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="kafka_analyser.html">Kafka Analyser Overview</a>
+    <a class="oi-sidebar__link" href="kafka_analyser_api.html">API Reference</a>
+  </div></div>
+  <div class="oi-sidebar__group">
+    <div class="oi-sidebar__group-label">Alert Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="alert_analyser.html">Alert Analyser Overview</a>
+    <a class="oi-sidebar__link active" href="alert_analyser_api.html">API Reference</a>
+  </div></div>
+</div>
+<div class="oi-main">
+
+<header>
+  <div class="container">
+    <h1>🚨 Alert Analyser</h1>
+    <p class="header-sub">OpsGenie alert triage, noise classification, suppression recommendations and incident ticket management</p>
+    <div class="badges">
+      <span class="badge">v1.2.0</span>
+      <span class="badge">Internal</span>
+      <span class="badge">FastAPI + PostgreSQL</span>
+      <span class="badge">Updated 2026-07-16</span>
+      <span class="badge">Port 8001</span>
+    </div>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- KPI Row -->
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <h3>4 Data Sources</h3>
+      <p>OpsGenie standalone, OpsGenie Cloud, Atlassian JSM, and file upload (JSON/CSV) for alert ingestion and enrichment.</p>
+    </div>
+    <div class="kpi-card">
+      <h3>Classification Engine</h3>
+      <p>Rule-based noise detector scoring repeat rate, auto-close time, priority, and open duration to classify genuine vs noise vs suspect.</p>
+    </div>
+    <div class="kpi-card">
+      <h3>Incident Pipeline</h3>
+      <p>Automated ticket creation and state progression: ESCALATED → INVESTIGATING → RCA_COMPLETE → REMEDIATING → RESOLVED / MANUAL.</p>
+    </div>
+  </div>
+
+  <!-- Technical Architecture -->
+  <section>
+    <h2>Technical Architecture</h2>
+    <h3>Stack</h3>
+    <ul style="margin-left: 20px; line-height: 1.8;">
+      <li><strong>Compute:</strong> FastAPI (Python 3.11) on Operative platform (port 8001)</li>
+      <li><strong>Storage:</strong> PostgreSQL — alert_reports (uploaded data), incident_management.incidents (ticket pipeline), agent_config (settings)</li>
+      <li><strong>Classification:</strong> Rule-based noise detector (noise_detector.py) with configurable thresholds</li>
+      <li><strong>Data Sources:</strong> OpsGenie API (standalone + cloud), Atlassian JSM, file upload (JSON/CSV)</li>
+      <li><strong>Optional backends:</strong> Redis (cache), Vector DB (embeddings for RAG), Neo4j (graph) — configured via env</li>
+    </ul>
+
+    <h3>Data Flow</h3>
+    <div class="data-flow">
+      <div class="flow-box secondary">OpsGenie / JSM / File</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box accent">Alert Analyser (8001)</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box accent">noise_detector.py</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box secondary">Genuine Alerts</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box primary">incident_management.incidents</div>
+    </div>
+    <div class="data-flow">
+      <div class="flow-box primary">Browser (Portal)</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box secondary">Backend</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box accent">Alert Analyser</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box primary">Claude tool-use</div>
+    </div>
+  </section>
+
+  <!-- Database Schema -->
+  <section>
+    <h2>Database Schema</h2>
+    <h3>PostgreSQL Tables</h3>
+    <div class="schema-grid">
+      <div class="schema-card">
+        <div class="schema-card-header">alert_reports</div>
+        <div class="schema-row"><div class="schema-row-name">id</div><div class="schema-row-type">INTEGER (PK)</div></div>
+        <div class="schema-row"><div class="schema-row-name">agent_slug</div><div class="schema-row-type">VARCHAR</div></div>
+        <div class="schema-row"><div class="schema-row-name">filename</div><div class="schema-row-type">VARCHAR</div></div>
+        <div class="schema-row"><div class="schema-row-name">total_alerts</div><div class="schema-row-type">INTEGER</div></div>
+        <div class="schema-row"><div class="schema-row-name">genuine_count</div><div class="schema-row-type">INTEGER</div></div>
+        <div class="schema-row"><div class="schema-row-name">noise_count</div><div class="schema-row-type">INTEGER</div></div>
+        <div class="schema-row"><div class="schema-row-name">suspect_count</div><div class="schema-row-type">INTEGER</div></div>
+        <div class="schema-row"><div class="schema-row-name">status</div><div class="schema-row-type">VARCHAR</div></div>
+        <div class="schema-row"><div class="schema-row-name">report_data</div><div class="schema-row-type">TEXT/JSON</div></div>
+        <div class="schema-row"><div class="schema-row-name">stats_data</div><div class="schema-row-type">TEXT/JSON</div></div>
+        <div class="schema-row"><div class="schema-row-name">created_at</div><div class="schema-row-type">TIMESTAMPTZ</div></div>
+      </div>
+
+      <div class="schema-card">
+        <div class="schema-card-header">incident_management.incidents</div>
+        <div class="schema-row"><div class="schema-row-name">id</div><div class="schema-row-type">UUID (PK)</div></div>
+        <div class="schema-row"><div class="schema-row-name">alert_id</div><div class="schema-row-type">TEXT (dedup key)</div></div>
+        <div class="schema-row"><div class="schema-row-name">alert_signature</div><div class="schema-row-type">TEXT</div></div>
+        <div class="schema-row"><div class="schema-row-name">status</div><div class="schema-row-type">TEXT</div></div>
+        <div class="schema-row"><div class="schema-row-name">priority</div><div class="schema-row-type">TEXT (P1-P4)</div></div>
+        <div class="schema-row"><div class="schema-row-name">title</div><div class="schema-row-type">TEXT</div></div>
+        <div class="schema-row"><div class="schema-row-name">alert_payload</div><div class="schema-row-type">JSONB</div></div>
+        <div class="schema-row"><div class="schema-row-name">rca_findings</div><div class="schema-row-type">JSONB</div></div>
+        <div class="schema-row"><div class="schema-row-name">action_outcome</div><div class="schema-row-type">JSONB</div></div>
+        <div class="schema-row"><div class="schema-row-name">recurrence_count</div><div class="schema-row-type">INTEGER (default 1)</div></div>
+        <div class="schema-row"><div class="schema-row-name">escalated_at</div><div class="schema-row-type">TIMESTAMPTZ</div></div>
+        <div class="schema-row"><div class="schema-row-name">resolved_at</div><div class="schema-row-type">TIMESTAMPTZ</div></div>
+      </div>
+
+      <div class="schema-card">
+        <div class="schema-card-header">agent_config</div>
+        <div class="schema-row"><div class="schema-row-name">id</div><div class="schema-row-type">INTEGER (PK)</div></div>
+        <div class="schema-row"><div class="schema-row-name">agent_slug</div><div class="schema-row-type">VARCHAR</div></div>
+        <div class="schema-row"><div class="schema-row-name">key</div><div class="schema-row-type">VARCHAR</div></div>
+        <div class="schema-row"><div class="schema-row-name">value</div><div class="schema-row-type">TEXT</div></div>
+        <div class="schema-row"><div class="schema-row-name">updated_at</div><div class="schema-row-type">TIMESTAMPTZ</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Noise Classification Rules -->
+  <section>
+    <h2>Noise Classification Rules</h2>
+    <p>Alert Analyser uses rule-based scoring to classify alerts as NOISE, GENUINE, or SUSPECT. The scoring function sums points for each rule:</p>
+    <div class="scoring-table">
+      <div class="scoring-row">
+        <div class="scoring-score">+2</div>
+        <div>Alert fires more than 3 times within 1 hour (high repeat rate)</div>
+      </div>
+      <div class="scoring-row">
+        <div class="scoring-score">+2</div>
+        <div>Alert auto-closes in less than 5 minutes without acknowledgement</div>
+      </div>
+      <div class="scoring-row">
+        <div class="scoring-score">+1</div>
+        <div>Alert was never acknowledged (no human interaction)</div>
+      </div>
+      <div class="scoring-row">
+        <div class="scoring-score scoring-negative">-3</div>
+        <div>Priority is P1 or P2 (high severity overrides noise signals)</div>
+      </div>
+      <div class="scoring-row">
+        <div class="scoring-score scoring-negative">-2</div>
+        <div>Alert open more than 30 minutes (active issue, not noise)</div>
+      </div>
+      <div class="scoring-row">
+        <div class="scoring-score scoring-positive">Threshold</div>
+        <div><strong>NOISE if net score > 0</strong> · Otherwise <strong>GENUINE</strong></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Dashboard Features -->
+  <section>
+    <h2>Dashboard Features</h2>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <h4>📊 Overview Tab</h4>
+        <p>Total alerts, genuine %, noise %, MTTR trend, alert volume chart, team breakdown, top noisy alert aliases.</p>
+      </div>
+      <div class="feature-card">
+        <h4>✓ Genuine Alerts Tab</h4>
+        <p>Filtered genuine alerts with priority distribution, open duration analysis, top patterns for RCA.</p>
+      </div>
+      <div class="feature-card">
+        <h4>🔕 Noise Alerts Tab</h4>
+        <p>Noise patterns, top offending aliases, suppression candidates, auto-close time distribution.</p>
+      </div>
+      <div class="feature-card">
+        <h4>📈 Trends Tab</h4>
+        <p>Alert volume over time, month-over-month comparison, period summary KPIs, spike detection.</p>
+      </div>
+      <div class="feature-card">
+        <h4>🎯 Escalated Incidents Tab</h4>
+        <p>KPI panels (Pipeline Flow, Ticket Aging, Resolution Method, Recurrence Signal), Priority lanes kanban, ticket detail popup with alert_payload.</p>
+      </div>
+      <div class="feature-card">
+        <h4>🤖 AI Insights</h4>
+        <p>Claude tool-use loop: classify_alerts, build_dashboard, get_suppression_recommendations with context from full alert history.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Incident Pipeline -->
+  <section>
+    <h2>Incident Pipeline</h2>
+    <div class="status-flow">
+      <div class="status-pill">ESCALATED</div>
+      <div class="status-arrow">→</div>
+      <div class="status-pill">INVESTIGATING</div>
+      <div class="status-arrow">→</div>
+      <div class="status-pill">RCA_COMPLETE</div>
+      <div class="status-arrow">→</div>
+      <div class="status-pill">REMEDIATING</div>
+      <div class="status-arrow">→</div>
+      <div class="status-pill">RESOLVED</div>
+    </div>
+    <h3>Key Features</h3>
+    <ul style="margin-left: 20px; line-height: 1.8;">
+      <li><strong>Dedup key:</strong> alert_id (not alert_signature) — same alert across multiple sources is one ticket</li>
+      <li><strong>Recurrence:</strong> If alert_id fires again during remediation, bumps recurrence_count on existing ticket</li>
+      <li><strong>Related tickets:</strong> Links new ticket to prior resolved ticket for same alert_id for pattern tracking</li>
+      <li><strong>Auto-reconciliation:</strong> Stale ESCALATED tickets auto-resolved when alert clears in source system</li>
+      <li><strong>Manual fallback:</strong> If no automation available, ticket remains MANUAL for human triage</li>
+    </ul>
+  </section>
+
+  <!-- SLA Policy -->
+  <section>
+    <h2>SLA Policy</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Priority</th>
+          <th>Severity</th>
+          <th>Response SLA</th>
+          <th>Resolution SLA</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>P1</strong></td>
+          <td>Critical</td>
+          <td>15 minutes</td>
+          <td>2 hours</td>
+        </tr>
+        <tr>
+          <td><strong>P2</strong></td>
+          <td>Major</td>
+          <td>30 minutes</td>
+          <td>4 hours</td>
+        </tr>
+        <tr>
+          <td><strong>P3</strong></td>
+          <td>Minor</td>
+          <td>60 minutes</td>
+          <td>8 hours</td>
+        </tr>
+        <tr>
+          <td><strong>P4</strong></td>
+          <td>Internal</td>
+          <td>240 minutes (4 hours)</td>
+          <td>3 business days</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- What's Working vs Planned -->
+  <section>
+    <h2>What's Working vs Planned</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Feature</th>
+          <th>Status</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>File upload (JSON/CSV)</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>OpsGenie export format support, validation, batch processing</td>
+        </tr>
+        <tr>
+          <td><strong>OpsGenie standalone sync</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>API key auth, periodic sync, alert history pull</td>
+        </tr>
+        <tr>
+          <td><strong>OpsGenie Cloud sync</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>OAuth2 flow, multi-region support, real-time webhook</td>
+        </tr>
+        <tr>
+          <td><strong>Atlassian JSM sync</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>Issue type mapping, custom field extraction, queue sync</td>
+        </tr>
+        <tr>
+          <td><strong>Noise classification (rule-based)</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>5 scoring rules, configurable thresholds, real-time classification</td>
+        </tr>
+        <tr>
+          <td><strong>Suppression recommendations</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>Top noisy aliases, suggested alert rules for suppression</td>
+        </tr>
+        <tr>
+          <td><strong>Dashboard: Overview, Genuine, Noise, Trends tabs</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>Real-time KPIs, charts, filtering by priority/team/source</td>
+        </tr>
+        <tr>
+          <td><strong>Escalated Incidents dashboard (kanban + KPI)</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>Priority lanes, ticket aging, SLA breach highlighting, detail popup</td>
+        </tr>
+        <tr>
+          <td><strong>Incident ticket creation with dedup</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>alert_id as dedup key, recurrence counter, related ticket linking</td>
+        </tr>
+        <tr>
+          <td><strong>SLA breach tracking (P1-P4)</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>Real-time aging panel, color-coded breach status, MTTR calculation</td>
+        </tr>
+        <tr>
+          <td><strong>Ticket detail popup with raw alert_payload</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>Full JSONB rendering, searchable content, export option</td>
+        </tr>
+        <tr>
+          <td><strong>Auto-migration on startup (idempotent)</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>Alembic schema migrations, backwards compatibility, safe rollback</td>
+        </tr>
+        <tr>
+          <td><strong>Teams escalation via shared notifier</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>Adaptive Card format, P1/P2 critical alerts, webhook routing</td>
+        </tr>
+        <tr>
+          <td><strong>OpsGenie status field resolution detection</strong></td>
+          <td><span class="status-planned">⏳ Planned</span></td>
+          <td>Currently unreliable; needs message field parsing (pending bracket-format standardisation)</td>
+        </tr>
+        <tr>
+          <td><strong>Resolution ring auto vs action split</strong></td>
+          <td><span class="status-planned">⏳ Planned</span></td>
+          <td>Needs explicit resolution_type field (Action Agent not yet built)</td>
+        </tr>
+        <tr>
+          <td><strong>P5 priority SLA threshold</strong></td>
+          <td><span class="status-planned">⏳ Planned</span></td>
+          <td>Not yet defined; waiting on org SLA policy</td>
+        </tr>
+        <tr>
+          <td><strong>Search/filter/sort in kanban lanes</strong></td>
+          <td><span class="status-planned">⏳ Planned</span></td>
+          <td>UX enhancement for large incident queues</td>
+        </tr>
+        <tr>
+          <td><strong>RCA Agent (polls incident_management.incidents)</strong></td>
+          <td><span class="status-planned">⏳ Planned</span></td>
+          <td>Not yet built; waits on incident pipeline stabilisation</td>
+        </tr>
+        <tr>
+          <td><strong>Action Agent (closes tickets)</strong></td>
+          <td><span class="status-planned">⏳ Planned</span></td>
+          <td>Not yet built; waits on RCA Agent findings schema</td>
+        </tr>
+        <tr>
+          <td><strong>RAG knowledge base</strong></td>
+          <td><span class="status-planned">⏳ Planned</span></td>
+          <td>Pattern matching across historical incidents via embeddings</td>
+        </tr>
+        <tr>
+          <td><strong>Environment and affected_resource enrichment</strong></td>
+          <td><span class="status-planned">⏳ Planned</span></td>
+          <td>Pending bracket-format standardisation across sources</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Key Business Outcomes -->
+  <section>
+    <h2>Key Business Outcomes</h2>
+    <ul style="margin-left: 20px; line-height: 1.8;">
+      <li><strong>Reduces alert fatigue:</strong> Noise alerts identified and suppressed before reaching on-call engineers. Team productivity improves immediately post-deployment.</li>
+      <li><strong>Automated ticket creation:</strong> Genuine alerts create traceable incident tickets without manual intervention. Eliminates "who created this ticket?" visibility gap.</li>
+      <li><strong>SLA visibility:</strong> Real-time aging panel shows which tickets are breaching response targets. Enables priority-aware work queueing.</li>
+      <li><strong>Recurrence detection:</strong> Tickets that re-fire during remediation are surfaced immediately. Fix validation catches broken patches in minutes, not days.</li>
+      <li><strong>Audit trail:</strong> Full alert_payload preserved in ticket for RCA teams. Enables forensic analysis and pattern discovery after resolution.</li>
+      <li><strong>Future-ready:</strong> incident_management schema is shared with planned RCA and Action agents via polling model. New agents can be added without data model changes.</li>
+    </ul>
+  </section>
+
+</div>
+
+</div>
+
+<script>
+// Toggle sidebar groups on click (accordion behavior)
+document.querySelectorAll('.oi-sidebar__group-label').forEach(label => {
+  label.addEventListener('click', () => {
+    const group = label.parentElement;
+    const isCollapsed = group.classList.contains('collapsed');
+    // Collapse all groups
+    document.querySelectorAll('.oi-sidebar__group').forEach(g => g.classList.add('collapsed'));
+    // Expand clicked group if it was collapsed
+    if (isCollapsed) group.classList.remove('collapsed');
+  });
+});
+</script>
+
+</body>
+</html>

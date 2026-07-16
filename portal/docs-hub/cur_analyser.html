@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CUR Analyser — Agent Documentation</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+      line-height: 1.6;
+      color: #333;
+      background: #f5f5f5;
+    }
+    .oi-container { display: flex; min-height: 100vh; }
+    .oi-sidebar { width: 220px; background: #ffffff; border-right: 1px solid #e2e5ea; padding: 20px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; flex-shrink: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .oi-sidebar__brand { font-size: 13px; font-weight: 700; padding: 0 20px 16px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #e2e5ea; margin-bottom: 10px; color: #1a1d23; }
+    .oi-sidebar__brand .dot { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; flex-shrink: 0; }
+    .oi-sidebar__group-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #98a2b3; padding: 10px 20px 6px; }
+    .oi-sidebar__link { display: block; padding: 6px 20px; font-size: 12px; color: #667085; text-decoration: none; border-left: 2px solid transparent; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .oi-sidebar__link:hover { background: #f0f1f4; color: #1a1d23; }
+    .oi-sidebar__link.active { color: #2563eb; border-left-color: #2563eb; background: #f0f1f4; font-weight: 600; }
+    .oi-sidebar__link--disabled { color: #98a2b3; font-style: italic; cursor: default; }
+    .oi-sidebar__group-label { cursor: pointer; display: flex; align-items: center; justify-content: space-between; user-select: none; }
+    .oi-sidebar__group-label .oi-caret { transition: transform .15s; font-size: 9px; }
+    .oi-sidebar__group.collapsed .oi-caret { transform: rotate(-90deg); }
+    .oi-sidebar__group.collapsed .oi-sidebar__links { display: none; }
+    .oi-main { flex: 1; min-width: 0; overflow-x: auto; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 40px 20px; }
+    header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 60px 0;
+      margin-bottom: 40px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    header .container { padding: 60px 20px; }
+    h1 { font-size: 2.5rem; margin-bottom: 10px; }
+    .header-sub { font-size: 1.1rem; opacity: 0.9; margin-bottom: 20px; }
+    .badges {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 15px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      background: rgba(255,255,255,0.2);
+      color: white;
+      border: 1px solid rgba(255,255,255,0.3);
+    }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 20px;
+      margin-bottom: 50px;
+    }
+    .kpi-card {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      text-align: center;
+    }
+    .kpi-value { font-size: 2.2rem; font-weight: 700; color: #667eea; margin-bottom: 5px; }
+    .kpi-label { font-size: 0.9rem; color: #666; text-transform: uppercase; letter-spacing: 0.5px; }
+    section {
+      background: white;
+      padding: 40px;
+      margin-bottom: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    h2 { font-size: 1.8rem; margin-bottom: 20px; color: #333; border-bottom: 2px solid #667eea; padding-bottom: 10px; }
+    h3 { font-size: 1.3rem; margin-top: 25px; margin-bottom: 15px; color: #555; }
+    code { font-family: 'Monaco', 'Courier New', monospace; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 20px 0;
+    }
+    th {
+      background: #f0f0f0;
+      padding: 12px;
+      text-align: left;
+      font-weight: 600;
+      border-bottom: 2px solid #ddd;
+    }
+    td {
+      padding: 12px;
+      border-bottom: 1px solid #eee;
+    }
+    tr:hover { background: #fafafa; }
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px;
+      margin: 20px 0;
+    }
+    .feature-card {
+      background: #f8f9fa;
+      padding: 20px;
+      border-radius: 6px;
+      border-left: 4px solid #667eea;
+    }
+    .feature-card h4 { color: #667eea; margin-bottom: 8px; font-size: 1.1rem; }
+    .feature-card p { font-size: 0.95rem; color: #666; }
+    .comparison-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin: 20px 0;
+    }
+    .comparison-box {
+      background: #f8f9fa;
+      padding: 20px;
+      border-radius: 6px;
+      border-left: 4px solid #667eea;
+    }
+    .comparison-box h4 { color: #667eea; margin-bottom: 10px; }
+    .comparison-box ul { margin-left: 20px; }
+    .comparison-box li { margin-bottom: 8px; }
+    .status-working { color: #27ae60; font-weight: 600; }
+    .status-planned { color: #e67e22; font-weight: 600; }
+    .data-flow {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 15px;
+      margin: 30px 0;
+      overflow-x: auto;
+      padding: 20px;
+      background: #f8f9fa;
+      border-radius: 8px;
+    }
+    .flow-box {
+      background: white;
+      border: 2px solid #ddd;
+      border-radius: 6px;
+      padding: 15px 20px;
+      min-width: 140px;
+      text-align: center;
+      font-size: 0.9rem;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+    .flow-box.primary { background: #667eea; color: white; border-color: #667eea; }
+    .flow-box.secondary { background: #0EA5E9; color: white; border-color: #0EA5E9; }
+    .flow-box.accent { background: #FF6B35; color: white; border-color: #FF6B35; }
+    .flow-arrow {
+      flex-shrink: 0;
+      color: #667eea;
+      font-size: 1.5rem;
+      font-weight: bold;
+    }
+    .schema-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+      gap: 20px;
+      margin: 20px 0;
+    }
+    .schema-card {
+      background: white;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .schema-card-header {
+      background: #667eea;
+      color: white;
+      padding: 15px;
+      font-weight: 700;
+      font-size: 1.1rem;
+    }
+    .schema-card-body {
+      padding: 0;
+    }
+    .schema-row {
+      display: grid;
+      grid-template-columns: 140px 1fr;
+      gap: 15px;
+      padding: 12px 15px;
+      border-bottom: 1px solid #f0f0f0;
+      font-size: 0.9rem;
+    }
+    .schema-row:last-child { border-bottom: none; }
+    .schema-row-name {
+      font-weight: 600;
+      color: #333;
+      font-family: 'Monaco', monospace;
+    }
+    .schema-row-info {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .schema-row-type {
+      font-size: 0.8rem;
+      color: #666;
+      font-family: 'Monaco', monospace;
+    }
+    .schema-row-desc {
+      font-size: 0.85rem;
+      color: #888;
+    }
+    @media (max-width: 768px) {
+      h1 { font-size: 1.8rem; }
+      .comparison-grid { grid-template-columns: 1fr; }
+      .data-flow { flex-direction: column; gap: 10px; }
+      .flow-arrow { transform: rotate(90deg); }
+      .schema-grid { grid-template-columns: 1fr; }
+      .oi-container { flex-direction: column; }
+      .oi-sidebar { width: 100%; height: auto; position: relative; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="oi-container">
+<div class="oi-sidebar">
+  <div class="oi-sidebar__brand"><span class="dot"></span> Operative Intelligence</div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">Incident Response <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="operative_intelligence_agentic_pipeline.html">Agentic Pipeline Concept</a>
+    <a class="oi-sidebar__link" href="operative_intelligence_pipeline.html">Agent Pipeline Overview</a>
+    <a class="oi-sidebar__link" href="incident_pipeline_monitor.html">Pipeline Monitor (Mockup)</a>
+    <a class="oi-sidebar__link" href="alert_ticketing_functional_spec.html">Functional Specification</a>
+    <a class="oi-sidebar__link" href="alert_ticketing_future_work_tracker.html">Future Work Tracker</a>
+  </div></div>
+  <div class="oi-sidebar__group">
+    <div class="oi-sidebar__group-label">CUR Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link active" href="cur_analyser.html">CUR Analyser Overview</a>
+    <a class="oi-sidebar__link" href="cur_analyser_api.html">API Reference</a>
+  </div></div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">Kafka Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="kafka_analyser.html">Kafka Analyser Overview</a>
+    <a class="oi-sidebar__link" href="kafka_analyser_api.html">API Reference</a>
+  </div></div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">Alert Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="alert_analyser.html">Alert Analyser Overview</a>
+    <a class="oi-sidebar__link" href="alert_analyser_api.html">API Reference</a>
+  </div></div>
+</div>
+<div class="oi-main">
+
+<header>
+  <div class="container">
+    <h1>📊 CUR Analyser</h1>
+    <p class="header-sub">AWS Cost & Usage Report analysis agent for Operative Intelligence platform</p>
+    <div class="badges">
+      <span class="badge">v1.1.0</span>
+      <span class="badge">Production</span>
+      <span class="badge">DuckDB + PostgreSQL</span>
+      <span class="badge">Updated 2026-07-16</span>
+    </div>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- KPI Row -->
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-value">2.8M</div>
+      <div class="kpi-label">Cost Line Items Indexed</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-value">261MB</div>
+      <div class="kpi-label">Persistent Storage</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-value">0.3s</div>
+      <div class="kpi-label">Median Query Latency</div>
+    </div>
+  </div>
+
+  <!-- Technical Architecture -->
+  <section>
+    <h2>Technical Architecture</h2>
+    <h3>Stack</h3>
+    <ul style="margin-left: 20px; line-height: 1.8;">
+      <li><strong>Compute:</strong> FastAPI (Python 3.11) on Operative platform</li>
+      <li><strong>Storage:</strong> PostgreSQL (metadata) + persistent volume (CUR files)</li>
+      <li><strong>Query Engine:</strong> DuckDB (in-memory OLAP + file-path mode for large CUR)</li>
+      <li><strong>Data Sources:</strong> CSV (.csv), Compressed (.gz, .zip), Parquet (.parquet), CUR 2.0 JSON tags blob</li>
+      <li><strong>Enrichment:</strong> Inventory spreadsheet (XLSX) with ARN-tail matching</li>
+    </ul>
+
+    <h3>Data Flow</h3>
+    <div class="data-flow">
+      <div class="flow-box primary">🌐 Browser (VPN)</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box secondary">Portal (nginx)</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box secondary">Backend Orchestrator</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box accent">CUR Analyser Agent</div>
+    </div>
+    <div class="data-flow">
+      <div class="flow-box accent">PostgreSQL</div>
+      <div class="flow-arrow">↔</div>
+      <div class="flow-box accent">CUR Files (Disk)</div>
+      <div class="flow-arrow">↔</div>
+      <div class="flow-box accent">MCP Gateway (SSE)</div>
+    </div>
+  </section>
+
+  <!-- Database ERD -->
+  <section>
+    <h2>Database Schema</h2>
+    <h3>PostgreSQL Tables</h3>
+    <div class="schema-grid">
+      <div class="schema-card">
+        <div class="schema-card-header">CurReport</div>
+        <div class="schema-card-body">
+          <div class="schema-row">
+            <div class="schema-row-name">id</div>
+            <div class="schema-row-info">
+              <div class="schema-row-type">INTEGER (PK)</div>
+              <div class="schema-row-desc">Report unique identifier</div>
+            </div>
+          </div>
+          <div class="schema-row">
+            <div class="schema-row-name">agent_slug</div>
+            <div class="schema-row-info">
+              <div class="schema-row-type">VARCHAR</div>
+              <div class="schema-row-desc">Agent identifier (cur-analyser)</div>
+            </div>
+          </div>
+          <div class="schema-row">
+            <div class="schema-row-name">filename</div>
+            <div class="schema-row-info">
+              <div class="schema-row-type">VARCHAR</div>
+              <div class="schema-row-desc">Original upload filename</div>
+            </div>
+          </div>
+          <div class="schema-row">
+            <div class="schema-row-name">csv_data</div>
+            <div class="schema-row-info">
+              <div class="schema-row-type">LONGBLOB</div>
+              <div class="schema-row-desc">Legacy in-memory CSV text (optional)</div>
+            </div>
+          </div>
+          <div class="schema-row">
+            <div class="schema-row-name">row_count</div>
+            <div class="schema-row-info">
+              <div class="schema-row-type">INTEGER</div>
+              <div class="schema-row-desc">Number of cost line items</div>
+            </div>
+          </div>
+          <div class="schema-row">
+            <div class="schema-row-name">total_cost</div>
+            <div class="schema-row-info">
+              <div class="schema-row-type">DECIMAL</div>
+              <div class="schema-row-desc">Sum of all costs in report</div>
+            </div>
+          </div>
+          <div class="schema-row">
+            <div class="schema-row-name">file_size</div>
+            <div class="schema-row-info">
+              <div class="schema-row-type">INTEGER</div>
+              <div class="schema-row-desc">Bytes on disk</div>
+            </div>
+          </div>
+          <div class="schema-row">
+            <div class="schema-row-name">status</div>
+            <div class="schema-row-info">
+              <div class="schema-row-type">VARCHAR</div>
+              <div class="schema-row-desc">ready / processing / error</div>
+            </div>
+          </div>
+          <div class="schema-row">
+            <div class="schema-row-name">created_at</div>
+            <div class="schema-row-info">
+              <div class="schema-row-type">TIMESTAMP</div>
+              <div class="schema-row-desc">Upload timestamp (UTC)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="schema-card">
+        <div class="schema-card-header">DataSourceRegistry (JSON in agent_config)</div>
+        <div class="schema-card-body">
+          <div class="schema-row">
+            <div class="schema-row-name">id</div>
+            <div class="schema-row-info">
+              <div class="schema-row-type">INTEGER (PK)</div>
+              <div class="schema-row-desc">Registry entry ID</div>
+            </div>
+          </div>
+          <div class="schema-row">
+            <div class="schema-row-name">report_id</div>
+            <div class="schema-row-info">
+              <div class="schema-row-type">INTEGER (FK)</div>
+              <div class="schema-row-desc">Links to CurReport.id</div>
+            </div>
+          </div>
+          <div class="schema-row">
+            <div class="schema-row-name">source_type</div>
+            <div class="schema-row-info">
+              <div class="schema-row-type">VARCHAR</div>
+              <div class="schema-row-desc">file / s3 / database</div>
+            </div>
+          </div>
+          <div class="schema-row">
+            <div class="schema-row-name">location</div>
+            <div class="schema-row-info">
+              <div class="schema-row-type">VARCHAR</div>
+              <div class="schema-row-desc">Path or S3 URI</div>
+            </div>
+          </div>
+          <div class="schema-row">
+            <div class="schema-row-name">provider_type</div>
+            <div class="schema-row-info">
+              <div class="schema-row-type">VARCHAR</div>
+              <div class="schema-row-desc">csv / parquet / xlsx / cur2.0</div>
+            </div>
+          </div>
+          <div class="schema-row">
+            <div class="schema-row-name">created_at</div>
+            <div class="schema-row-info">
+              <div class="schema-row-type">TIMESTAMP</div>
+              <div class="schema-row-desc">Registration timestamp</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Dashboard Features -->
+  <section>
+    <h2>Dashboard Features</h2>
+    <p>Six-tab interface for cost analysis and insights:</p>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <h4>📌 Overview</h4>
+        <p><strong>KPI Summary:</strong> Total cost, row count, service breakdown. <strong>Daily Trend:</strong> Cost-per-day heatmap (13-week rolling window). <strong>Tag Coverage:</strong> AWS tag + inventory enrichment coverage %.</p>
+      </div>
+      <div class="feature-card">
+        <h4>🏢 By Account</h4>
+        <p>Cost-per-AWS-account with account name (from inventory) and environment context. Supports multi-account rollups and linked-account breakdowns.</p>
+      </div>
+      <div class="feature-card">
+        <h4>🌍 By Environment</h4>
+        <p>Cost-per-environment (prod/staging/nonprod/dev) with per-environment owner team and email. Inventory enrichment fallback when native tags absent.</p>
+      </div>
+      <div class="feature-card">
+        <h4>⚙️ By Service</h4>
+        <p>Top 15 services (EC2, S3, RDS, etc.) by cost, service category breakdown (Compute, Storage, Network, …), and owner team per service.</p>
+      </div>
+      <div class="feature-card">
+        <h4>🏷️ Cost Centres &amp; Tags</h4>
+        <p>Cost by Product tag, Managed By (inventory), Customer tag, Cost Centre. Native AWS tags OR inventory fallback for untagged resources.</p>
+      </div>
+      <div class="feature-card">
+        <h4>📈 Trends &amp; Insights</h4>
+        <p><strong>Trends:</strong> MoM comparison by service. <strong>AI Insights:</strong> Claude-generated recommendations for tagging, cost optimization, and anomalies.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Inventory Enrichment -->
+  <section>
+    <h2>Inventory Enrichment</h2>
+    <h3>How It Works</h3>
+    <p>When an inventory spreadsheet (XLSX) is uploaded alongside a CUR file:</p>
+    <ol style="margin-left: 20px; line-height: 1.8;">
+      <li><strong>Parse inventory:</strong> Extract 9 join keys (account ID, resource ARN, resource type, …) and 10 enrichment fields (environment, customer, budget code, team, …).</li>
+      <li><strong>ARN-tail matching:</strong> Extract resource ID from CUR `lineItem/ResourceId` (e.g. `i-0123456789abcdef0` from `arn:aws:ec2:…`) and match against inventory.</li>
+      <li><strong>Account-level fallback:</strong> When resource not found, fall back to account-level enrichment (same environment/customer for all resources in that account).</li>
+      <li><strong>Cross-CUR reuse:</strong> Single inventory file enriches all uploaded CUR files; data persisted in Postgres and re-used across sessions.</li>
+    </ol>
+
+    <h3>Before/After Coverage</h3>
+    <div class="comparison-grid">
+      <div class="comparison-box">
+        <h4>Before Enrichment</h4>
+        <ul>
+          <li>Environment: 45% coverage (native tags only)</li>
+          <li>Customer: 23% coverage (inconsistent tagging)</li>
+          <li>Budget Code: 18% coverage (legacy migration gap)</li>
+        </ul>
+      </div>
+      <div class="comparison-box">
+        <h4>After Enrichment</h4>
+        <ul>
+          <li>Environment: 98% coverage (+53 pp)</li>
+          <li>Customer: 91% coverage (+68 pp)</li>
+          <li>Budget Code: 89% coverage (+71 pp)</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Key Decisions</h3>
+    <ul style="margin-left: 20px; line-height: 1.8;">
+      <li><code>inv_*</code> columns are primary tag source; CUR native tags are fallback only.</li>
+      <li>Account-level enrichment triggers only when resource-level match fails (reduces false-positive generalization).</li>
+      <li>Single inventory file applies to all CUR reports in the upload session (cost-efficient, user-friendly).</li>
+      <li>Registry persists via PostgreSQL across restarts; no re-upload required.</li>
+    </ul>
+  </section>
+
+  <!-- What's Working vs Planned -->
+  <section>
+    <h2>What's Working vs Planned</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Feature</th>
+          <th>Status</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>CUR parsing (CSV, ZIP, Parquet)</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>All formats auto-detected; ZIP with -resources-and-tags variant prioritized</td>
+        </tr>
+        <tr>
+          <td><strong>DuckDB file-path mode</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>Files &gt;10MB streamed from disk; no in-memory materialization</td>
+        </tr>
+        <tr>
+          <td><strong>Inventory enrichment (ARN + account fallback)</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>Resource + account-level joins; 89–98% coverage gain</td>
+        </tr>
+        <tr>
+          <td><strong>Server-side filtering &amp; aggregation</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>7 base filters + 3 enriched filters; ~0.3s median latency</td>
+        </tr>
+        <tr>
+          <td><strong>Dashboard (6 tabs + comparison mode)</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>Overview, Accounts, Environments, Services, Tags, Trends, AI Insights</td>
+        </tr>
+        <tr>
+          <td><strong>Reports &amp; export</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>List, delete, compare across multiple CUR files</td>
+        </tr>
+        <tr>
+          <td><strong>CUR 2.0 JSON tags (native Team tag extraction)</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>Regex extraction of <code>resourceTags/user:Team</code> from JSON blob</td>
+        </tr>
+        <tr>
+          <td><strong>Date range inference from CUR</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>Computed on-demand from min/max usage date; cached in-memory per report</td>
+        </tr>
+        <tr>
+          <td><strong>Real CUR validation (non-anonymised)</strong></td>
+          <td><span class="status-planned">⏳ Planned</span></td>
+          <td>Pending test data from inventory accounts (382638150166, 516133168505, …)</td>
+        </tr>
+        <tr>
+          <td><strong>S3 direct read (httpfs)</strong></td>
+          <td><span class="status-planned">⏳ Planned</span></td>
+          <td>Skip local disk; DuckDB reads directly from S3 URIs</td>
+        </tr>
+        <tr>
+          <td><strong>Rate limiting &amp; quota enforcement</strong></td>
+          <td><span class="status-planned">⏳ Planned</span></td>
+          <td>Max concurrent uploads, storage cap, file size limits</td>
+        </tr>
+        <tr>
+          <td><strong>Anomaly detection &amp; cost attribution ML</strong></td>
+          <td><span class="status-planned">⏳ Planned</span></td>
+          <td>Identify cost spikes; propose owner reassignment</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Key Business Outcomes -->
+  <section>
+    <h2>Key Business Outcomes</h2>
+    <h3>DBR (Detailed Billing Record) vs CUR 2.0 Comparison</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Dimension</th>
+          <th>DBR (Legacy)</th>
+          <th>CUR 2.0 (Modern)</th>
+          <th>Operative CUR Analyser Support</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Format</strong></td>
+          <td>Tab-separated, fixed columns</td>
+          <td>Parquet + JSON blobs for tags</td>
+          <td>✓ Both; auto-detects and normalises</td>
+        </tr>
+        <tr>
+          <td><strong>Tag storage</strong></td>
+          <td>Per-tag column (resourceTags/user:X)</td>
+          <td>JSON object in `tags` column</td>
+          <td>✓ Handles both; regex extraction for JSON</td>
+        </tr>
+        <tr>
+          <td><strong>Compression</strong></td>
+          <td>Gzip only</td>
+          <td>Snappy (faster decompression)</td>
+          <td>✓ Transparent via DuckDB</td>
+        </tr>
+        <tr>
+          <td><strong>Row count (typical)</strong></td>
+          <td>5–50M rows/month</td>
+          <td>8–100M rows/month (more granular)</td>
+          <td>✓ Tested to 2.8M rows; scales to 100M+</td>
+        </tr>
+        <tr>
+          <td><strong>File size</strong></td>
+          <td>500MB–2GB/month</td>
+          <td>1–5GB/month (higher fidelity)</td>
+          <td>✓ File-path pipeline handles up to 10GB</td>
+        </tr>
+        <tr>
+          <td><strong>Time-to-insight</strong></td>
+          <td>T+3 days (AWS processing)</td>
+          <td>T+1 day</td>
+          <td>✓ On-demand upload; results in &lt;60s</td>
+        </tr>
+        <tr>
+          <td><strong>Inventory enrichment</strong></td>
+          <td>❌ Not supported</td>
+          <td>❌ Not built-in</td>
+          <td>✓ Operative Innovation: XLSX inventory + ARN matching</td>
+        </tr>
+        <tr>
+          <td><strong>AI-driven insights</strong></td>
+          <td>❌ Manual analysis only</td>
+          <td>❌ Manual analysis only</td>
+          <td>✓ CUR Analyser agent: tagging recommendations, savings opportunities, untagged resource alerts</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Impact Summary</h3>
+    <ul style="margin-left: 20px; line-height: 1.8;">
+      <li><strong>Cost attribution accuracy:</strong> 45% → 98% coverage (inventory enrichment + AWS tags).</li>
+      <li><strong>Time-to-action:</strong> 3 days (AWS DBR) → &lt;60 seconds (on-demand upload + analysis).</li>
+      <li><strong>Operational overhead:</strong> Manual pivot tables → automated dashboard with 6 cost dimensions + AI insights.</li>
+      <li><strong>Compliance readiness:</strong> Supports cost-centre allocation audits, budget forecasting, chargeback automation.</li>
+    </ul>
+  </section>
+
+</div>
+
+
+</div>
+</div>
+
+<script>
+// Toggle sidebar groups on click (accordion behavior)
+document.querySelectorAll('.oi-sidebar__group-label').forEach(label => {
+  label.addEventListener('click', () => {
+    const group = label.parentElement;
+    const isCollapsed = group.classList.contains('collapsed');
+    // Collapse all groups
+    document.querySelectorAll('.oi-sidebar__group').forEach(g => g.classList.add('collapsed'));
+    // Expand clicked group if it was collapsed
+    if (isCollapsed) group.classList.remove('collapsed');
+  });
+});
+</script>
+
+</body>
+</html>

@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kafka Analyser API Reference</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+      line-height: 1.6;
+      color: #333;
+      background: #f5f5f5;
+    }
+    .oi-container { display: flex; min-height: 100vh; }
+    .oi-sidebar { width: 220px; background: #ffffff; border-right: 1px solid #e2e5ea; padding: 20px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; flex-shrink: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .oi-sidebar__brand { font-size: 13px; font-weight: 700; padding: 0 20px 16px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #e2e5ea; margin-bottom: 10px; color: #1a1d23; }
+    .oi-sidebar__brand .dot { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; flex-shrink: 0; }
+    .oi-sidebar__group-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #98a2b3; padding: 10px 20px 6px; }
+    .oi-sidebar__link { display: block; padding: 6px 20px; font-size: 12px; color: #667085; text-decoration: none; border-left: 2px solid transparent; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .oi-sidebar__link:hover { background: #f0f1f4; color: #1a1d23; }
+    .oi-sidebar__link.active { color: #2563eb; border-left-color: #2563eb; background: #f0f1f4; font-weight: 600; }
+    .oi-sidebar__link--disabled { color: #98a2b3; font-style: italic; cursor: default; }
+    .oi-sidebar__group-label { cursor: pointer; display: flex; align-items: center; justify-content: space-between; user-select: none; }
+    .oi-sidebar__group-label .oi-caret { transition: transform .15s; font-size: 9px; }
+    .oi-sidebar__group.collapsed .oi-caret { transform: rotate(-90deg); }
+    .oi-sidebar__group.collapsed .oi-sidebar__links { display: none; }
+    .oi-main { flex: 1; min-width: 0; overflow-x: auto; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 40px 20px; }
+    header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 60px 0;
+      margin-bottom: 40px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    header .container { padding: 60px 20px; }
+    h1 { font-size: 2.5rem; margin-bottom: 10px; }
+    .header-sub { font-size: 1.1rem; opacity: 0.9; margin-bottom: 20px; }
+    .badges {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 15px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      background: rgba(255,255,255,0.2);
+      color: white;
+      border: 1px solid rgba(255,255,255,0.3);
+    }
+    section {
+      background: white;
+      padding: 40px;
+      margin-bottom: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    h2 { font-size: 1.8rem; margin-bottom: 20px; color: #333; border-bottom: 2px solid #667eea; padding-bottom: 10px; }
+    h3 { font-size: 1.1rem; margin-top: 20px; margin-bottom: 15px; color: #555; }
+    .api-endpoint {
+      background: #f8f9fa;
+      padding: 24px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      border-left: 4px solid #667eea;
+    }
+    .endpoint-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .method-badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      min-width: 50px;
+      text-align: center;
+    }
+    .method-get { background: #3b82f6; color: white; }
+    .method-post { background: #10b981; color: white; }
+    .method-delete { background: #ef4444; color: white; }
+    .endpoint-path {
+      font-family: 'Monaco', 'Courier New', monospace;
+      font-size: 1rem;
+      font-weight: 600;
+      color: #1f2937;
+      flex: 1;
+    }
+    .endpoint-desc {
+      font-size: 0.95rem;
+      color: #666;
+      margin-bottom: 12px;
+      line-height: 1.5;
+    }
+    .endpoint-section {
+      margin-top: 16px;
+    }
+    .endpoint-section-title {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #667eea;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .endpoint-code {
+      background: white;
+      border: 1px solid #e5e7eb;
+      border-radius: 4px;
+      padding: 12px 16px;
+      font-family: 'Monaco', 'Courier New', monospace;
+      font-size: 0.85rem;
+      overflow-x: auto;
+      color: #1f2937;
+      line-height: 1.5;
+    }
+    .endpoint-params, .endpoint-response {
+      background: white;
+      border: 1px solid #e5e7eb;
+      border-radius: 4px;
+      padding: 12px 16px;
+      font-size: 0.85rem;
+    }
+    .param-item, .response-item {
+      margin-bottom: 8px;
+      line-height: 1.5;
+    }
+    .param-name, .response-field {
+      font-family: 'Monaco', monospace;
+      font-weight: 600;
+      color: #667eea;
+    }
+    .param-type {
+      font-family: 'Monaco', monospace;
+      font-size: 0.8rem;
+      color: #999;
+      margin-left: 8px;
+    }
+    .auth-note {
+      background: #f0f9ff;
+      border-left: 3px solid #3b82f6;
+      padding: 16px;
+      margin-bottom: 20px;
+      border-radius: 4px;
+      font-size: 0.95rem;
+      color: #0369a1;
+    }
+    code { font-family: 'Monaco', 'Courier New', monospace; }
+    ul { margin-left: 20px; line-height: 1.8; }
+    @media (max-width: 768px) {
+      h1 { font-size: 1.8rem; }
+      .endpoint-header { flex-direction: column; align-items: flex-start; }
+      .oi-container { flex-direction: column; }
+      .oi-sidebar { width: 100%; height: auto; position: relative; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="oi-container">
+<div class="oi-sidebar">
+  <div class="oi-sidebar__brand"><span class="dot"></span> Operative Intelligence</div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">Incident Response <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="operative_intelligence_agentic_pipeline.html">Agentic Pipeline Concept</a>
+    <a class="oi-sidebar__link" href="operative_intelligence_pipeline.html">Agent Pipeline Overview</a>
+    <a class="oi-sidebar__link" href="incident_pipeline_monitor.html">Pipeline Monitor (Mockup)</a>
+    <a class="oi-sidebar__link" href="alert_ticketing_functional_spec.html">Functional Specification</a>
+    <a class="oi-sidebar__link" href="alert_ticketing_future_work_tracker.html">Future Work Tracker</a>
+  </div></div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">CUR Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="cur_analyser.html">CUR Analyser Overview</a>
+    <a class="oi-sidebar__link" href="cur_analyser_api.html">API Reference</a>
+  </div></div>
+  <div class="oi-sidebar__group">
+    <div class="oi-sidebar__group-label">Kafka Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="kafka_analyser.html">Kafka Analyser Overview</a>
+    <a class="oi-sidebar__link active" href="kafka_analyser_api.html">API Reference</a>
+  </div></div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">Alert Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="alert_analyser.html">Alert Analyser Overview</a>
+    <a class="oi-sidebar__link" href="alert_analyser_api.html">API Reference</a>
+  </div></div>
+</div>
+<div class="oi-main">
+
+<header>
+  <div class="container">
+    <h1>📚 Kafka Analyser API Reference</h1>
+    <p class="header-sub">REST API endpoints for Kafka cluster monitoring, analysis and configuration</p>
+    <div class="badges">
+      <span class="badge">v1.1.0</span>
+      <span class="badge">Port 8003</span>
+      <span class="badge">FastAPI</span>
+      <span class="badge">Base URL: http://&lt;host&gt;:8003</span>
+    </div>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- Authentication -->
+  <section>
+    <h2>Authentication</h2>
+    <div class="auth-note">
+      <strong>All endpoints require:</strong> <code>X-API-Key: &lt;BACKEND_API_KEY&gt;</code> header
+    </div>
+    <p>The backend orchestrator injects the Anthropic API key per-request; agents never store secrets.</p>
+  </section>
+
+  <!-- Health & Chat -->
+  <section>
+    <h2>Health & Chat</h2>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/health</span>
+      </div>
+      <div class="endpoint-desc">Agent health check. Used by backend registry to verify agent is running.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-code">{
+  "status": "ok",
+  "agent": "kafka-analyser",
+  "version": "0.1.0"
+}</div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Example</div>
+        <div class="endpoint-code">curl -X GET http://localhost:8003/health</div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-post">POST</span>
+        <span class="endpoint-path">/invoke</span>
+      </div>
+      <div class="endpoint-desc">Chat invoke (non-streaming). Runs Claude tool-use loop for question answering.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Request Body</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">session_id</span> <span class="param-type">(string)</span> — Chat session ID for history tracking</div>
+          <div class="param-item"><span class="param-name">user_message</span> <span class="param-type">(string)</span> — User question or command</div>
+          <div class="param-item"><span class="param-name">context</span> <span class="param-type">(object)</span> — Query context (optional)
+            <ul style="margin-top: 4px; margin-bottom: 0;">
+              <li><span class="param-name">cluster_id</span> — ID of target cluster (optional)</li>
+              <li><span class="param-name">has_data</span> — Boolean flag if cluster has loaded data</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">response</span> — Claude's text response</div>
+          <div class="response-item"><span class="response-field">metadata.tokens_used</span> — Token count for billing</div>
+          <div class="response-item"><span class="response-field">chart</span> <span class="param-type">(object, optional)</span> — Chart data if response includes visualization</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Example</div>
+        <div class="endpoint-code">curl -X POST http://localhost:8003/invoke \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "abc123",
+    "user_message": "What is the consumer lag trend?",
+    "context": {"cluster_id": 1, "has_data": true}
+  }'</div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-post">POST</span>
+        <span class="endpoint-path">/invoke/stream</span>
+      </div>
+      <div class="endpoint-desc">Streaming chat invoke. Response is SSE (Server-Sent Events) stream of text chunks.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Request Body</div>
+        <div class="endpoint-params">Same as <code>/invoke</code></div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">SSE stream of chunks ending with <code>[DONE]</code></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Dashboard Overview -->
+  <section>
+    <h2>Dashboard Overview</h2>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/dashboard/overview</span>
+      </div>
+      <div class="endpoint-desc">Cluster health overview with broker counts, topic metrics, and anomaly summary.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cluster_id</span> <span class="param-type">(integer, optional)</span> — Cluster to query (uses first if not provided)</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">cluster</span> — Cluster metadata (name, health_score, broker/topic/partition counts, URP count)</div>
+          <div class="response-item"><span class="response-field">brokers</span> — Array of broker summaries</div>
+          <div class="response-item"><span class="response-field">anomaly_count</span> — Total active anomalies</div>
+          <div class="response-item"><span class="response-field">critical_count</span> — Critical severity anomalies</div>
+          <div class="response-item"><span class="response-field">warning_count</span> — Warning severity anomalies</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/dashboard/counts</span>
+      </div>
+      <div class="endpoint-desc">Alert and anomaly counts summary for quick KPI rendering.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">total_brokers</span> — Total brokers in cluster</div>
+          <div class="response-item"><span class="response-field">active_brokers</span> — Currently healthy brokers</div>
+          <div class="response-item"><span class="response-field">total_topics</span> — Topic count</div>
+          <div class="response-item"><span class="response-field">total_consumer_groups</span> — Consumer group count</div>
+          <div class="response-item"><span class="response-field">active_anomalies</span> — Unresolved anomalies</div>
+          <div class="response-item"><span class="response-field">critical_anomalies</span> — Critical severity count</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Dashboard Metrics -->
+  <section>
+    <h2>Dashboard Metrics</h2>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/dashboard/brokers</span>
+      </div>
+      <div class="endpoint-desc">Per-broker metrics sorted by broker ID.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cluster_id</span> <span class="param-type">(integer)</span> — Cluster to query</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">Array of broker objects with: broker_id, cpu_pct, heap_pct, gc_pause_ms, request_handler_idle_pct, urp_count, messages_in_per_sec, disk_pct</div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/dashboard/consumer-groups</span>
+      </div>
+      <div class="endpoint-desc">Consumer group lag analysis sorted worst-first.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cluster_id</span> <span class="param-type">(integer)</span> — Cluster to query</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">Array of groups with: group_name, total_lag, lag_trend (growing|stable|recovering), lag_rate_per_min, state, topics subscribed</div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/dashboard/topics</span>
+      </div>
+      <div class="endpoint-desc">Topic metrics sorted by message rate (throughput worst-first).</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cluster_id</span> <span class="param-type">(integer)</span> — Cluster to query</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">Array of topics with: topic name, partition/replication counts, messages_in_per_sec, bytes in/out per sec, retention_pct, size_bytes</div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/dashboard/topics/detail</span>
+      </div>
+      <div class="endpoint-desc">Detailed topic view with historical metrics.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cluster_id</span> <span class="param-type">(integer)</span> — Cluster ID</div>
+          <div class="param-item"><span class="param-name">topic</span> <span class="param-type">(string)</span> — Topic name</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">topic</span> — Topic name</div>
+          <div class="response-item"><span class="response-field">metrics</span> — Current metrics snapshot</div>
+          <div class="response-item"><span class="response-field">history</span> — Time-series history (last 24 hours)</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Ecosystem -->
+  <section>
+    <h2>Kafka Ecosystem</h2>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/dashboard/connectors</span>
+      </div>
+      <div class="endpoint-desc">KafkaConnect connector status and task health.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cluster_id</span> <span class="param-type">(integer)</span> — Cluster to query</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">Array of connectors with: connector_name, connector_type (source/sink), state (running/failed/paused), failed_tasks, total_tasks</div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/dashboard/schema-registry</span>
+      </div>
+      <div class="endpoint-desc">Schema Registry subjects and version tracking.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cluster_id</span> <span class="param-type">(integer)</span> — Cluster to query</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">subjects</span> — Array of {subject, version, compatibility level}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/dashboard/zookeeper</span>
+      </div>
+      <div class="endpoint-desc">ZooKeeper cluster health and leader status.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cluster_id</span> <span class="param-type">(integer)</span> — Cluster to query</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">status</span> — healthy | degraded | down</div>
+          <div class="response-item"><span class="response-field">leader</span> — Current leader node</div>
+          <div class="response-item"><span class="response-field">followers</span> — List of follower nodes</div>
+          <div class="response-item"><span class="response-field">outstanding_requests</span> — Pending requests count</div>
+          <div class="response-item"><span class="response-field">avg_latency_ms</span> — Average request latency</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/dashboard/kafka-connect</span>
+      </div>
+      <div class="endpoint-desc">KafkaConnect cluster info and connector status.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cluster_id</span> <span class="param-type">(integer)</span> — Cluster to query</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">version</span> — KafkaConnect version</div>
+          <div class="response-item"><span class="response-field">commit</span> — Git commit hash</div>
+          <div class="response-item"><span class="response-field">kafka_cluster_id</span> — Cluster UUID</div>
+          <div class="response-item"><span class="response-field">connectors</span> — List of running connectors</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/dashboard/mirrormaker</span>
+      </div>
+      <div class="endpoint-desc">MirrorMaker cross-cluster replication status.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cluster_id</span> <span class="param-type">(integer)</span> — Cluster to query</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">source_cluster</span> — Source cluster name</div>
+          <div class="response-item"><span class="response-field">target_cluster</span> — Target cluster name</div>
+          <div class="response-item"><span class="response-field">replication_lag</span> — Lag in messages</div>
+          <div class="response-item"><span class="response-field">mirror_mode</span> — active | passive</div>
+          <div class="response-item"><span class="response-field">topics_mirrored</span> — Count of replicated topics</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- AI Insights & Trends -->
+  <section>
+    <h2>AI Insights & Trends</h2>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/dashboard/insights</span>
+      </div>
+      <div class="endpoint-desc">AI-generated cluster insights and detected anomalies.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cluster_id</span> <span class="param-type">(integer)</span> — Cluster to analyze</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">insights</span> — Array of Claude-generated insights</div>
+          <div class="response-item"><span class="response-field">anomalies</span> — Array of {severity, category, description, detected_at, resolved_at}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/dashboard/overview/lag-trend</span>
+      </div>
+      <div class="endpoint-desc">Consumer lag trend over time window.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cluster_id</span> <span class="param-type">(integer)</span> — Cluster to query</div>
+          <div class="param-item"><span class="param-name">window_minutes</span> <span class="param-type">(integer, default 60)</span> — History window</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">data_points</span> — Array of {timestamp, total_lag, groups_growing}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/dashboard/topics/history</span>
+      </div>
+      <div class="endpoint-desc">Topic throughput history over time period.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cluster_id</span> <span class="param-type">(integer)</span> — Cluster ID</div>
+          <div class="param-item"><span class="param-name">topic</span> <span class="param-type">(string)</span> — Topic name</div>
+          <div class="param-item"><span class="param-name">hours</span> <span class="param-type">(integer, default 24)</span> — History depth</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">topic</span> — Topic name</div>
+          <div class="response-item"><span class="response-field">history</span> — Array of {hour_bucket, avg_msgs, max_msgs}</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Search -->
+  <section>
+    <h2>Search & Discovery</h2>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/dashboard/topics/search</span>
+      </div>
+      <div class="endpoint-desc">Search topics by name pattern.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cluster_id</span> <span class="param-type">(integer)</span> — Cluster to search</div>
+          <div class="param-item"><span class="param-name">q</span> <span class="param-type">(string)</span> — Search term (partial match)</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">topics</span> — Array of matching topics with partition_count, messages_in_per_sec</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/dashboard/groups/search</span>
+      </div>
+      <div class="endpoint-desc">Search consumer groups by name pattern.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cluster_id</span> <span class="param-type">(integer)</span> — Cluster to search</div>
+          <div class="param-item"><span class="param-name">q</span> <span class="param-type">(string)</span> — Search term (partial match)</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">groups</span> — Array of matching groups with total_lag, state</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Settings -->
+  <section>
+    <h2>Settings & Configuration</h2>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/settings</span>
+      </div>
+      <div class="endpoint-desc">Get current cluster configuration.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">clusters</span> — Array of configured clusters with id, name, environment, source_type, bootstrap_servers, enabled, status</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-post">POST</span>
+        <span class="endpoint-path">/settings/clusters</span>
+      </div>
+      <div class="endpoint-desc">Add or update a Kafka cluster connection.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Request Body</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">name</span> <span class="param-type">(string)</span> — Display name</div>
+          <div class="param-item"><span class="param-name">environment</span> <span class="param-type">(string)</span> — prod, staging, dev</div>
+          <div class="param-item"><span class="param-name">source_type</span> <span class="param-type">(string)</span> — synthetic, real, prometheus</div>
+          <div class="param-item"><span class="param-name">bootstrap_servers</span> <span class="param-type">(string)</span> — Kafka bootstrap address(es)</div>
+          <div class="param-item"><span class="param-name">auth_type</span> <span class="param-type">(string)</span> — none, sasl, tls</div>
+          <div class="param-item"><span class="param-name">sasl_username</span> <span class="param-type">(string, optional)</span> — SASL credentials</div>
+          <div class="param-item"><span class="param-name">sasl_password</span> <span class="param-type">(string, optional)</span> — SASL credentials (encrypted)</div>
+          <div class="param-item"><span class="param-name">tls_enabled</span> <span class="param-type">(boolean)</span> — TLS encryption</div>
+          <div class="param-item"><span class="param-name">schema_registry_url</span> <span class="param-type">(string, optional)</span> — Schema Registry endpoint</div>
+          <div class="param-item"><span class="param-name">zookeeper_url</span> <span class="param-type">(string, optional)</span> — ZooKeeper endpoint</div>
+          <div class="param-item"><span class="param-name">kafka_connect_url</span> <span class="param-type">(string, optional)</span> — KafkaConnect endpoint</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">ok</span> — Boolean success</div>
+          <div class="response-item"><span class="response-field">cluster_id</span> — ID of created/updated cluster</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-delete">DELETE</span>
+        <span class="endpoint-path">/settings/clusters/{cluster_id}</span>
+      </div>
+      <div class="endpoint-desc">Remove a cluster connection.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">ok</span> — Boolean success</div>
+          <div class="response-item"><span class="response-field">deleted</span> — Cluster ID that was removed</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-post">POST</span>
+        <span class="endpoint-path">/settings/clusters/{cluster_id}/test</span>
+      </div>
+      <div class="endpoint-desc">Test cluster connectivity and collect basic info.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">ok</span> — Boolean success (connection works)</div>
+          <div class="response-item"><span class="response-field">latency_ms</span> — Round-trip time to broker</div>
+          <div class="response-item"><span class="response-field">broker_count</span> — Number of brokers discovered</div>
+          <div class="response-item"><span class="response-field">kafka_version</span> — Kafka broker version</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-post">POST</span>
+        <span class="endpoint-path">/settings/generate-synthetic</span>
+      </div>
+      <div class="endpoint-desc">Generate synthetic cluster data for demo and testing.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Request Body</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">broker_count</span> <span class="param-type">(integer, default 3)</span> — Number of brokers</div>
+          <div class="param-item"><span class="param-name">topic_count</span> <span class="param-type">(integer, default 10)</span> — Number of topics</div>
+          <div class="param-item"><span class="param-name">consumer_groups</span> <span class="param-type">(integer, default 5)</span> — Consumer groups to create</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">ok</span> — Boolean success</div>
+          <div class="response-item"><span class="response-field">cluster_id</span> — ID of synthetic cluster</div>
+          <div class="response-item"><span class="response-field">brokers</span> — Count created</div>
+          <div class="response-item"><span class="response-field">topics</span> — Count created</div>
+          <div class="response-item"><span class="response-field">consumer_groups</span> — Count created</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Status Codes -->
+  <section>
+    <h2>HTTP Status Codes</h2>
+    <ul>
+      <li><strong>200 OK</strong> — Request succeeded</li>
+      <li><strong>202 Accepted</strong> — Async operation accepted (future enhancement)</li>
+      <li><strong>400 Bad Request</strong> — Invalid parameters or malformed request</li>
+      <li><strong>401 Unauthorized</strong> — Missing or invalid X-API-Key header</li>
+      <li><strong>404 Not Found</strong> — Resource not found (cluster, topic, group)</li>
+      <li><strong>500 Internal Server Error</strong> — Server error or Kafka connectivity issue</li>
+    </ul>
+  </section>
+
+</div>
+
+</div>
+
+<script>
+// Toggle sidebar groups on click (accordion behavior)
+document.querySelectorAll('.oi-sidebar__group-label').forEach(label => {
+  label.addEventListener('click', () => {
+    const group = label.parentElement;
+    const isCollapsed = group.classList.contains('collapsed');
+    // Collapse all groups
+    document.querySelectorAll('.oi-sidebar__group').forEach(g => g.classList.add('collapsed'));
+    // Expand clicked group if it was collapsed
+    if (isCollapsed) group.classList.remove('collapsed');
+  });
+});
+</script>
+
+</body>
+</html>

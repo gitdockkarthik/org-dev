@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kafka Analyser — Agent Documentation</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+      line-height: 1.6;
+      color: #333;
+      background: #f5f5f5;
+    }
+    .oi-container { display: flex; min-height: 100vh; }
+    .oi-sidebar { width: 220px; background: #ffffff; border-right: 1px solid #e2e5ea; padding: 20px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; flex-shrink: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .oi-sidebar__brand { font-size: 13px; font-weight: 700; padding: 0 20px 16px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #e2e5ea; margin-bottom: 10px; color: #1a1d23; }
+    .oi-sidebar__brand .dot { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; flex-shrink: 0; }
+    .oi-sidebar__group-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #98a2b3; padding: 10px 20px 6px; }
+    .oi-sidebar__link { display: block; padding: 6px 20px; font-size: 12px; color: #667085; text-decoration: none; border-left: 2px solid transparent; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .oi-sidebar__link:hover { background: #f0f1f4; color: #1a1d23; }
+    .oi-sidebar__link.active { color: #2563eb; border-left-color: #2563eb; background: #f0f1f4; font-weight: 600; }
+    .oi-sidebar__link--disabled { color: #98a2b3; font-style: italic; cursor: default; }
+    .oi-sidebar__group-label { cursor: pointer; display: flex; align-items: center; justify-content: space-between; user-select: none; }
+    .oi-sidebar__group-label .oi-caret { transition: transform .15s; font-size: 9px; }
+    .oi-sidebar__group.collapsed .oi-caret { transform: rotate(-90deg); }
+    .oi-sidebar__group.collapsed .oi-sidebar__links { display: none; }
+    .oi-main { flex: 1; min-width: 0; overflow-x: auto; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 40px 20px; }
+    header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 60px 0;
+      margin-bottom: 40px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    header .container { padding: 60px 20px; }
+    h1 { font-size: 2.5rem; margin-bottom: 10px; }
+    .header-sub { font-size: 1.1rem; opacity: 0.9; margin-bottom: 20px; }
+    .badges {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 15px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      background: rgba(255,255,255,0.2);
+      color: white;
+      border: 1px solid rgba(255,255,255,0.3);
+    }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 20px;
+      margin-bottom: 50px;
+    }
+    .kpi-card {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .kpi-card h3 { font-size: 1.1rem; font-weight: 700; color: #667eea; margin-bottom: 12px; }
+    .kpi-card p { font-size: 0.9rem; color: #666; line-height: 1.5; }
+    section {
+      background: white;
+      padding: 40px;
+      margin-bottom: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    h2 { font-size: 1.8rem; margin-bottom: 20px; color: #333; border-bottom: 2px solid #667eea; padding-bottom: 10px; }
+    h3 { font-size: 1.3rem; margin-top: 25px; margin-bottom: 15px; color: #555; }
+    code { font-family: 'Monaco', 'Courier New', monospace; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 20px 0;
+    }
+    th {
+      background: #f0f0f0;
+      padding: 12px;
+      text-align: left;
+      font-weight: 600;
+      border-bottom: 2px solid #ddd;
+    }
+    td {
+      padding: 12px;
+      border-bottom: 1px solid #eee;
+    }
+    tr:hover { background: #fafafa; }
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+      margin: 20px 0;
+    }
+    .feature-card {
+      background: #f8f9fa;
+      padding: 20px;
+      border-radius: 6px;
+      border-left: 4px solid #667eea;
+    }
+    .feature-card h4 { color: #667eea; margin-bottom: 8px; font-size: 1.1rem; }
+    .feature-card p { font-size: 0.95rem; color: #666; }
+    .status-working { color: #27ae60; font-weight: 600; }
+    .status-planned { color: #e67e22; font-weight: 600; }
+    .data-flow {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 15px;
+      margin: 30px 0;
+      overflow-x: auto;
+      padding: 20px;
+      background: #f8f9fa;
+      border-radius: 8px;
+    }
+    .flow-box {
+      background: white;
+      border: 2px solid #ddd;
+      border-radius: 6px;
+      padding: 15px 20px;
+      min-width: 140px;
+      text-align: center;
+      font-size: 0.9rem;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+    .flow-box.primary { background: #667eea; color: white; border-color: #667eea; }
+    .flow-box.secondary { background: #0EA5E9; color: white; border-color: #0EA5E9; }
+    .flow-box.accent { background: #FF6B35; color: white; border-color: #FF6B35; }
+    .flow-arrow {
+      flex-shrink: 0;
+      color: #667eea;
+      font-size: 1.5rem;
+      font-weight: bold;
+    }
+    .schema-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 20px;
+      margin: 20px 0;
+    }
+    .schema-card {
+      background: white;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .schema-card-header {
+      background: #667eea;
+      color: white;
+      padding: 15px;
+      font-weight: 700;
+      font-size: 1.05rem;
+    }
+    .schema-row {
+      display: grid;
+      grid-template-columns: 120px 1fr;
+      gap: 12px;
+      padding: 10px 15px;
+      border-bottom: 1px solid #f0f0f0;
+      font-size: 0.85rem;
+    }
+    .schema-row:last-child { border-bottom: none; }
+    .schema-row-name {
+      font-weight: 600;
+      color: #333;
+      font-family: 'Monaco', monospace;
+    }
+    .schema-row-type {
+      font-size: 0.75rem;
+      color: #666;
+      font-family: 'Monaco', monospace;
+    }
+    @media (max-width: 768px) {
+      h1 { font-size: 1.8rem; }
+      .data-flow { flex-direction: column; gap: 10px; }
+      .flow-arrow { transform: rotate(90deg); }
+      .schema-grid { grid-template-columns: 1fr; }
+      .oi-container { flex-direction: column; }
+      .oi-sidebar { width: 100%; height: auto; position: relative; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="oi-container">
+<div class="oi-sidebar">
+  <div class="oi-sidebar__brand"><span class="dot"></span> Operative Intelligence</div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">Incident Response <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="operative_intelligence_agentic_pipeline.html">Agentic Pipeline Concept</a>
+    <a class="oi-sidebar__link" href="operative_intelligence_pipeline.html">Agent Pipeline Overview</a>
+    <a class="oi-sidebar__link" href="incident_pipeline_monitor.html">Pipeline Monitor (Mockup)</a>
+    <a class="oi-sidebar__link" href="alert_ticketing_functional_spec.html">Functional Specification</a>
+    <a class="oi-sidebar__link" href="alert_ticketing_future_work_tracker.html">Future Work Tracker</a>
+  </div></div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">CUR Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="cur_analyser.html">CUR Analyser Overview</a>
+    <a class="oi-sidebar__link" href="cur_analyser_api.html">API Reference</a>
+  </div></div>
+  <div class="oi-sidebar__group">
+    <div class="oi-sidebar__group-label">Kafka Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="kafka_analyser.html">Kafka Analyser Overview</a>
+    <a class="oi-sidebar__link active" href="kafka_analyser_api.html">API Reference</a>
+  </div></div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">Alert Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="alert_analyser.html">Alert Analyser Overview</a>
+    <a class="oi-sidebar__link" href="alert_analyser_api.html">API Reference</a>
+  </div></div>
+</div>
+<div class="oi-main">
+
+<header>
+  <div class="container">
+    <h1>📊 Kafka Analyser</h1>
+    <p class="header-sub">Kafka cluster health monitoring, consumer lag detection, broker metrics and anomaly intelligence agent</p>
+    <div class="badges">
+      <span class="badge">v1.1.0</span>
+      <span class="badge">Internal</span>
+      <span class="badge">FastAPI + PostgreSQL</span>
+      <span class="badge">Updated 2026-07-16</span>
+      <span class="badge">Port 8003</span>
+    </div>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- KPI Row -->
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <h3>Real-time Monitoring</h3>
+      <p>Consumer lag, broker metrics (CPU, heap, GC), topic throughput (msg/sec), partition counts, and replica sync status.</p>
+    </div>
+    <div class="kpi-card">
+      <h3>6 Data Sources</h3>
+      <p>Synthetic, Real Kafka (bootstrap), Prometheus JMX, Schema Registry, ZooKeeper, KafkaConnect, MirrorMaker replication tracking.</p>
+    </div>
+    <div class="kpi-card">
+      <h3>5 AI Tools</h3>
+      <p><code>cluster_overview</code>, <code>consumer_lag</code>, <code>broker_metrics</code>, <code>topic_metrics</code>, <code>detect_anomalies</code> with Claude tool-use loop.</p>
+    </div>
+  </div>
+
+  <!-- Technical Architecture -->
+  <section>
+    <h2>Technical Architecture</h2>
+    <h3>Stack</h3>
+    <ul style="margin-left: 20px; line-height: 1.8;">
+      <li><strong>Compute:</strong> FastAPI (Python 3.11) on Operative platform (port 8003)</li>
+      <li><strong>Storage:</strong> PostgreSQL (cluster config, metrics history, anomalies, connectors)</li>
+      <li><strong>In-memory:</strong> kafka_store (current cluster snapshot, consumer groups, topics, brokers)</li>
+      <li><strong>Data Sources:</strong> Real Kafka, Synthetic generator, Prometheus JMX, Schema Registry, ZooKeeper, KafkaConnect, MirrorMaker</li>
+      <li><strong>Optional backends:</strong> Redis (cache), Vector DB (embeddings), Neo4j (graph topology) — configured via env</li>
+    </ul>
+
+    <h3>Data Flow</h3>
+    <div class="data-flow">
+      <div class="flow-box primary">🌐 Browser (VPN)</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box secondary">Portal (nginx)</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box secondary">Backend</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box accent">Kafka Analyser (8003)</div>
+    </div>
+    <div class="data-flow">
+      <div class="flow-box accent">Real Kafka / Prometheus</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box accent">kafka_store snapshot</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box accent">Claude tool-use loop</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box accent">Response</div>
+    </div>
+  </section>
+
+  <!-- Database Schema -->
+  <section>
+    <h2>Database Schema</h2>
+    <h3>PostgreSQL Tables</h3>
+    <div class="schema-grid">
+      <div class="schema-card">
+        <div class="schema-card-header">kafka_clusters</div>
+        <div class="schema-row"><div class="schema-row-name">id</div><div class="schema-row-type">INTEGER (PK)</div></div>
+        <div class="schema-row"><div class="schema-row-name">agent_slug</div><div class="schema-row-type">VARCHAR</div></div>
+        <div class="schema-row"><div class="schema-row-name">name</div><div class="schema-row-type">VARCHAR</div></div>
+        <div class="schema-row"><div class="schema-row-name">environment</div><div class="schema-row-type">VARCHAR</div></div>
+        <div class="schema-row"><div class="schema-row-name">bootstrap_servers</div><div class="schema-row-type">VARCHAR</div></div>
+        <div class="schema-row"><div class="schema-row-name">auth_type</div><div class="schema-row-type">VARCHAR (none/sasl/tls)</div></div>
+        <div class="schema-row"><div class="schema-row-name">sasl_username</div><div class="schema-row-type">VARCHAR (encrypted)</div></div>
+        <div class="schema-row"><div class="schema-row-name">sasl_password</div><div class="schema-row-type">VARCHAR (encrypted)</div></div>
+        <div class="schema-row"><div class="schema-row-name">tls_enabled</div><div class="schema-row-type">BOOLEAN</div></div>
+        <div class="schema-row"><div class="schema-row-name">schema_registry_url</div><div class="schema-row-type">VARCHAR</div></div>
+        <div class="schema-row"><div class="schema-row-name">zookeeper_url</div><div class="schema-row-type">VARCHAR</div></div>
+        <div class="schema-row"><div class="schema-row-name">kafka_connect_url</div><div class="schema-row-type">VARCHAR</div></div>
+        <div class="schema-row"><div class="schema-row-name">status</div><div class="schema-row-type">VARCHAR (active/inactive)</div></div>
+        <div class="schema-row"><div class="schema-row-name">created_at</div><div class="schema-row-type">TIMESTAMP</div></div>
+      </div>
+
+      <div class="schema-card">
+        <div class="schema-card-header">kafka_broker_metrics</div>
+        <div class="schema-row"><div class="schema-row-name">id</div><div class="schema-row-type">INTEGER (PK)</div></div>
+        <div class="schema-row"><div class="schema-row-name">time</div><div class="schema-row-type">TIMESTAMP</div></div>
+        <div class="schema-row"><div class="schema-row-name">cluster_id</div><div class="schema-row-type">INTEGER (FK)</div></div>
+        <div class="schema-row"><div class="schema-row-name">broker_id</div><div class="schema-row-type">INTEGER</div></div>
+        <div class="schema-row"><div class="schema-row-name">heap_pct</div><div class="schema-row-type">DECIMAL (0-100)</div></div>
+        <div class="schema-row"><div class="schema-row-name">gc_pause_ms</div><div class="schema-row-type">DECIMAL</div></div>
+        <div class="schema-row"><div class="schema-row-name">request_handler_idle_pct</div><div class="schema-row-type">DECIMAL</div></div>
+        <div class="schema-row"><div class="schema-row-name">urp_count</div><div class="schema-row-type">INTEGER</div></div>
+        <div class="schema-row"><div class="schema-row-name">cpu_pct</div><div class="schema-row-type">DECIMAL</div></div>
+        <div class="schema-row"><div class="schema-row-name">disk_pct</div><div class="schema-row-type">DECIMAL</div></div>
+      </div>
+
+      <div class="schema-card">
+        <div class="schema-card-header">kafka_consumer_lag</div>
+        <div class="schema-row"><div class="schema-row-name">id</div><div class="schema-row-type">INTEGER (PK)</div></div>
+        <div class="schema-row"><div class="schema-row-name">time</div><div class="schema-row-type">TIMESTAMP</div></div>
+        <div class="schema-row"><div class="schema-row-name">cluster_id</div><div class="schema-row-type">INTEGER (FK)</div></div>
+        <div class="schema-row"><div class="schema-row-name">group_name</div><div class="schema-row-type">VARCHAR</div></div>
+        <div class="schema-row"><div class="schema-row-name">topic</div><div class="schema-row-type">VARCHAR</div></div>
+        <div class="schema-row"><div class="schema-row-name">partition</div><div class="schema-row-type">INTEGER</div></div>
+        <div class="schema-row"><div class="schema-row-name">lag</div><div class="schema-row-type">INTEGER</div></div>
+        <div class="schema-row"><div class="schema-row-name">consumer_offset</div><div class="schema-row-type">INTEGER</div></div>
+        <div class="schema-row"><div class="schema-row-name">log_end_offset</div><div class="schema-row-type">INTEGER</div></div>
+        <div class="schema-row"><div class="schema-row-name">group_state</div><div class="schema-row-type">VARCHAR</div></div>
+      </div>
+
+      <div class="schema-card">
+        <div class="schema-card-header">kafka_topic_metrics</div>
+        <div class="schema-row"><div class="schema-row-name">id</div><div class="schema-row-type">INTEGER (PK)</div></div>
+        <div class="schema-row"><div class="schema-row-name">time</div><div class="schema-row-type">TIMESTAMP</div></div>
+        <div class="schema-row"><div class="schema-row-name">cluster_id</div><div class="schema-row-type">INTEGER (FK)</div></div>
+        <div class="schema-row"><div class="schema-row-name">topic</div><div class="schema-row-type">VARCHAR</div></div>
+        <div class="schema-row"><div class="schema-row-name">partition_count</div><div class="schema-row-type">INTEGER</div></div>
+        <div class="schema-row"><div class="schema-row-name">replication_factor</div><div class="schema-row-type">INTEGER</div></div>
+        <div class="schema-row"><div class="schema-row-name">messages_in_per_sec</div><div class="schema-row-type">DECIMAL</div></div>
+        <div class="schema-row"><div class="schema-row-name">bytes_in_per_sec</div><div class="schema-row-type">DECIMAL</div></div>
+        <div class="schema-row"><div class="schema-row-name">bytes_out_per_sec</div><div class="schema-row-type">DECIMAL</div></div>
+        <div class="schema-row"><div class="schema-row-name">size_bytes</div><div class="schema-row-type">INTEGER</div></div>
+        <div class="schema-row"><div class="schema-row-name">retention_pct</div><div class="schema-row-type">DECIMAL</div></div>
+      </div>
+
+      <div class="schema-card">
+        <div class="schema-card-header">kafka_anomalies</div>
+        <div class="schema-row"><div class="schema-row-name">id</div><div class="schema-row-type">INTEGER (PK)</div></div>
+        <div class="schema-row"><div class="schema-row-name">cluster_id</div><div class="schema-row-type">INTEGER (FK)</div></div>
+        <div class="schema-row"><div class="schema-row-name">detected_at</div><div class="schema-row-type">TIMESTAMP</div></div>
+        <div class="schema-row"><div class="schema-row-name">severity</div><div class="schema-row-type">VARCHAR (critical/warning)</div></div>
+        <div class="schema-row"><div class="schema-row-name">category</div><div class="schema-row-type">VARCHAR</div></div>
+        <div class="schema-row"><div class="schema-row-name">description</div><div class="schema-row-type">TEXT</div></div>
+        <div class="schema-row"><div class="schema-row-name">resolved_at</div><div class="schema-row-type">TIMESTAMP (nullable)</div></div>
+      </div>
+
+      <div class="schema-card">
+        <div class="schema-card-header">kafka_connector_status</div>
+        <div class="schema-row"><div class="schema-row-name">id</div><div class="schema-row-type">INTEGER (PK)</div></div>
+        <div class="schema-row"><div class="schema-row-name">time</div><div class="schema-row-type">TIMESTAMP</div></div>
+        <div class="schema-row"><div class="schema-row-name">cluster_id</div><div class="schema-row-type">INTEGER (FK)</div></div>
+        <div class="schema-row"><div class="schema-row-name">connector_name</div><div class="schema-row-type">VARCHAR</div></div>
+        <div class="schema-row"><div class="schema-row-name">connector_type</div><div class="schema-row-type">VARCHAR (source/sink)</div></div>
+        <div class="schema-row"><div class="schema-row-name">state</div><div class="schema-row-type">VARCHAR (running/failed/paused)</div></div>
+        <div class="schema-row"><div class="schema-row-name">failed_tasks</div><div class="schema-row-type">INTEGER</div></div>
+        <div class="schema-row"><div class="schema-row-name">total_tasks</div><div class="schema-row-type">INTEGER</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Dashboard Features -->
+  <section>
+    <h2>Dashboard Features</h2>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <h4>📌 Overview</h4>
+        <p>Cluster health score, broker status summary, URP count, active anomalies, consumer lag trend chart.</p>
+      </div>
+      <div class="feature-card">
+        <h4>👥 Consumer Groups</h4>
+        <p>All groups sorted by lag (worst-first), lag trend (growing/stable/recovering), messages/min, group state.</p>
+      </div>
+      <div class="feature-card">
+        <h4>📝 Topics</h4>
+        <p>Topic throughput (msg/sec, bytes in/out), retention usage %, partition count, replication factor, history.</p>
+      </div>
+      <div class="feature-card">
+        <h4>🖥️ Brokers</h4>
+        <p>Per-broker CPU%, heap%, GC pause ms, request handler idle%, URP count, disk%, metrics trend.</p>
+      </div>
+      <div class="feature-card">
+        <h4>🔗 KafkaConnect</h4>
+        <p>Connector status (running/failed/paused), failed task count, connector type (source/sink), state history.</p>
+      </div>
+      <div class="feature-card">
+        <h4>🗃️ Schema Registry</h4>
+        <p>Schema versions, compatibility levels per subject, schema evolution tracking, subject listing.</p>
+      </div>
+      <div class="feature-card">
+        <h4>🌳 ZooKeeper</h4>
+        <p>ZooKeeper node health, leader election status, broker registration state, config changes.</p>
+      </div>
+      <div class="feature-card">
+        <h4>↔️ MirrorMaker</h4>
+        <p>Cross-cluster replication lag, checkpoint offsets, mirror mode (active/passive), replication rate.</p>
+      </div>
+      <div class="feature-card">
+        <h4>🤖 AI Insights</h4>
+        <p>Anomaly detection (critical/warning severity), remediation steps, chat Q&A with tool-use, pattern learning.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- What's Working vs Planned -->
+  <section>
+    <h2>What's Working vs Planned</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Feature</th>
+          <th>Status</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Synthetic data generation</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>Demo/testing mode with realistic broker, consumer, topic metrics</td>
+        </tr>
+        <tr>
+          <td><strong>Real Kafka cluster connection</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>Bootstrap servers, SASL/TLS auth, dynamic broker discovery</td>
+        </tr>
+        <tr>
+          <td><strong>Consumer lag monitoring</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>Real-time lag, trend detection (growing/stable/recovering)</td>
+        </tr>
+        <tr>
+          <td><strong>Broker metrics collection</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>CPU, heap, GC pause, URP, request handler idle%, disk%</td>
+        </tr>
+        <tr>
+          <td><strong>Topic throughput monitoring</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>Messages/sec, bytes in/out, retention %, partition/replication tracking</td>
+        </tr>
+        <tr>
+          <td><strong>Anomaly detection engine</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>High GC pause, URP spikes, consumer lag breach, broker degradation</td>
+        </tr>
+        <tr>
+          <td><strong>KafkaConnect status</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>Connector state, failed task tracking, task count per connector</td>
+        </tr>
+        <tr>
+          <td><strong>Schema Registry integration</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>Schema versions, compatibility modes, subject tracking</td>
+        </tr>
+        <tr>
+          <td><strong>ZooKeeper health monitoring</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>Node health, leader election, broker registration</td>
+        </tr>
+        <tr>
+          <td><strong>MirrorMaker replication lag</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>Checkpoint offset tracking, replication rate, lag trend</td>
+        </tr>
+        <tr>
+          <td><strong>AI tool-use loop (5 functions)</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>cluster_overview, consumer_lag, broker_metrics, topic_metrics, detect_anomalies</td>
+        </tr>
+        <tr>
+          <td><strong>PostgreSQL metrics history</strong></td>
+          <td><span class="status-working">✓ Working</span></td>
+          <td>Time-series storage for trend analysis beyond real-time</td>
+        </tr>
+        <tr>
+          <td><strong>Prometheus JMX integration</strong></td>
+          <td><span class="status-planned">⏳ Planned</span></td>
+          <td>Collector exists, wiring to kafka_store pending</td>
+        </tr>
+        <tr>
+          <td><strong>Vector/RAG knowledge base</strong></td>
+          <td><span class="status-planned">⏳ Planned</span></td>
+          <td>Embeddings for anomaly pattern matching, historical context</td>
+        </tr>
+        <tr>
+          <td><strong>Graph topology (Neo4j)</strong></td>
+          <td><span class="status-planned">⏳ Planned</span></td>
+          <td>Broker → topic → consumer group DAG visualization</td>
+        </tr>
+        <tr>
+          <td><strong>Automated remediation (Action Agent)</strong></td>
+          <td><span class="status-planned">⏳ Planned</span></td>
+          <td>Trigger remediation steps (rebalance, pause connector, etc.)</td>
+        </tr>
+        <tr>
+          <td><strong>Multi-cluster comparison</strong></td>
+          <td><span class="status-planned">⏳ Planned</span></td>
+          <td>Side-by-side lag/throughput comparison across clusters</td>
+        </tr>
+        <tr>
+          <td><strong>Alert escalation to Teams</strong></td>
+          <td><span class="status-planned">⏳ Planned</span></td>
+          <td>Via shared escalation notifier (incident_management integration)</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Key Business Outcomes -->
+  <section>
+    <h2>Key Business Outcomes</h2>
+    <ul style="margin-left: 20px; line-height: 1.8;">
+      <li><strong>Reduces MTTR:</strong> Consumer lag trends surfaced before SLA breach; anomaly alerts on GC spikes, URP growth.</li>
+      <li><strong>Unified interface:</strong> 6 data sources (Kafka, Prometheus, Schema Registry, ZK, KafkaConnect, MirrorMaker) in one place — no tool-switching.</li>
+      <li><strong>Early detection:</strong> Broker degradation (high GC%, URP, heap) caught in real-time; historical trends enable trend-based alerting.</li>
+      <li><strong>PostgreSQL history:</strong> Long-term metrics enable root-cause analysis beyond real-time dashboards.</li>
+      <li><strong>7-source support:</strong> Synthetic, Real Kafka, Prometheus JMX, Schema Registry, ZooKeeper, KafkaConnect, MirrorMaker — flexible deployment.</li>
+      <li><strong>AI chat:</strong> 5 tool-use functions enable operators to ask natural-language questions about cluster health without leaving the chat.</li>
+    </ul>
+  </section>
+
+</div>
+
+</div>
+
+<script>
+// Toggle sidebar groups on click (accordion behavior)
+document.querySelectorAll('.oi-sidebar__group-label').forEach(label => {
+  label.addEventListener('click', () => {
+    const group = label.parentElement;
+    const isCollapsed = group.classList.contains('collapsed');
+    // Collapse all groups
+    document.querySelectorAll('.oi-sidebar__group').forEach(g => g.classList.add('collapsed'));
+    // Expand clicked group if it was collapsed
+    if (isCollapsed) group.classList.remove('collapsed');
+  });
+});
+</script>
+
+</body>
+</html>
