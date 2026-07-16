@@ -1358,7 +1358,7 @@ def get_cost_by_tag(csv_text: str | None = None, tag_col: str = "", file_path: s
             "tag_Customer":    "inv_customer",
             "tag_Product":     "inv_application",
             "tag_CostCentre":  "inv_budget_code",
-            "tag_Team":        None,  # no inventory equivalent
+            "tag_Team":        "inv_managed_by",  # inventory ManagedBy as team fallback
         }
         inv_fallback = _TAG_TO_INV.get(tag_col)
 

@@ -1003,7 +1003,7 @@
       buildMultiSelect('fProductWrap', 'Product Tag',
         pick(D.tag_product_breakdown, t => t.tag_value),
         'tagProducts', true);
-      buildMultiSelect('fTeamWrap', 'Team Tag',
+      buildMultiSelect('fTeamWrap', 'Managed By',
         pick(D.tag_team_breakdown, t => t.tag_value),
         'tagTeams', true);
     }
@@ -1233,7 +1233,7 @@
       addChips(f.regions,      'regions',      'Region');
       addChips(f.pricingTerms, 'pricingTerms', 'Pricing');
       addChips(f.tagProducts,  'tagProducts',  'Product');
-      addChips(f.tagTeams,     'tagTeams',     'Team');
+      addChips(f.tagTeams,     'tagTeams',     'Managed By');
       addChips(f.invApplications, 'invApplications', 'Application');
       addChips(f.invBudgetCodes,  'invBudgetCodes',  'Budget Code');
       addChips(f.invCustomers,    'invCustomers',    'Customer');
@@ -1976,7 +1976,7 @@
         </div>
         <div class="chart-grid chart-grid--2">
           ${tagSection('By Product', DASH.tag_product_breakdown, 'tagProdChart')}
-          ${tagSection('By Team', DASH.tag_team_breakdown, 'tagTeamChart')}
+          ${tagSection('By Managed By', DASH.tag_team_breakdown, 'tagTeamChart')}
           ${tagSection('By Customer', DASH.tag_customer_breakdown, 'tagCustChart')}
           ${tagSection('By Cost Centre', DASH.tag_costcentre_breakdown, 'tagCCChart')}
         </div>
@@ -3177,7 +3177,7 @@ ${JSON.stringify(payload, null, 2)}
               buildMultiSelect('fProductWrap', 'Product Tag',
                 getDistinctValues(rows, fProduct),
                 'tagProducts', true);
-              buildMultiSelect('fTeamWrap', 'Team Tag',
+              buildMultiSelect('fTeamWrap', 'Managed By',
                 getDistinctValues(rows, fTeam),
                 'tagTeams', true);
             }
