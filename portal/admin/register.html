@@ -78,6 +78,19 @@
             <span class="form-hint">Leave blank to call Anthropic directly using the config below.</span>
           </div>
         </div>
+        <div class="form-field">
+          <label class="form-label" for="f-landing-page-url">Landing Page URL</label>
+          <input id="f-landing-page-url" name="landing_page_url" type="url" class="form-input"
+            placeholder="https://your-agent-app.example.com">
+          <span class="form-hint">For externally-built agents. Shows a "Launch Agent" button on the catalogue card.</span>
+        </div>
+        <div class="form-field">
+          <label class="form-label" for="f-uses-uap-llm" style="display:flex;align-items:center;gap:10px;cursor:pointer">
+            <input id="f-uses-uap-llm" name="uses_uap_llm" type="checkbox" style="width:16px;height:16px;cursor:pointer">
+            Use UAP-managed LLM
+          </label>
+          <span class="form-hint">Agent will use the platform's shared LLM credentials via the token vending API. Recommended for all agents onboarded to UAP.</span>
+        </div>
       </div>
 
       <!-- AI config -->
@@ -192,7 +205,10 @@
         if (!Array.isArray(tools)) { setError('Tools must be a JSON array.'); return; }
       }
 
+      const landingPageUrl = document.getElementById('f-landing-page-url').value.trim();
+      const usesUapLlm = document.getElementById('f-uses-uap-llm').checked;
       const payload = { name, slug, description: desc, version, invoke_url: invokeUrl,
+        landing_page_url: landingPageUrl || '',
         system_prompt: sysprompt, model, temperature, tools };
 
       const btn = document.getElementById('submit-btn');
