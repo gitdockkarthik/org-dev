@@ -293,29 +293,30 @@ curl http://localhost:8004/health
   <p>External agents have three options for LLM access. Choose based on your deployment context.</p>
 
   <h3>Option 1 — Self-managed LLM Credentials <span style="background:#dcfce7;color:#16a34a;font-size:11px;padding:2px 6px;border-radius:4px;font-weight:600">Available</span></h3>
-  <p>Agent team manages their own LLM credentials via <code>.env</code>. No UAP dependency.</p>
+  <p>Agent team manages their own LLM credentials. No UAP dependency. Two approaches available:</p>
 
-  <p><strong>a) Anthropic Direct</strong></p>
-  <p>Generate your API key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>.</p>
+  <p><strong>a) AWS Bedrock — Bearer Token</strong></p>
+  <p>Uses a Bedrock API key (Bearer token) issued by your AWS administrator. No SDK changes required — plain HTTP call to the Bedrock runtime endpoint.</p>
   <div class="code-block"><pre>
-ANTHROPIC_API_KEY=sk-ant-...
-LLM_MODEL=claude-sonnet-4-6</pre></div>
+BEDROCK_API_KEY=ABSKYmV*****=
+AWS_REGION=us-east-1
+LLM_MODEL=us.anthropic.claude-sonnet-5</pre></div>
+  <p>Verify connectivity:</p>
+  <div class="code-block"><pre>
+curl -sS -X POST \
+  "https://bedrock-runtime.${AWS_REGION}.amazonaws.com/model/${LLM_MODEL}/invoke" \
+  -H "Authorization: Bearer ${BEDROCK_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{"anthropic_version":"bedrock-2023-05-31","max_tokens":100,"messages":[{"role":"user","content":"Say hello."}]}'</pre></div>
 
-  <p><strong>b) AWS Bedrock (IAM access key pair)</strong></p>
-  <p>Requires the Anthropic SDK's Bedrock client (<code>AsyncAnthropicBedrock</code>) — a code dependency, not just configuration. The SDK resolves credentials from env vars automatically.</p>
+  <p><strong>b) AWS Bedrock — IAM Access Key Pair</strong></p>
+  <p>Uses IAM credentials. Requires the Anthropic SDK's Bedrock client (<code>AsyncAnthropicBedrock</code>) — a code dependency in addition to env configuration.</p>
   <div class="code-block"><pre>
 LLM_PROVIDER=bedrock
 LLM_MODEL=us.anthropic.claude-sonnet-5
 AWS_REGION=us-east-1
 AWS_ACCESS_KEY_ID=AKIAW*****
 AWS_SECRET_ACCESS_KEY=F9***</pre></div>
-  <p>Verify connectivity before configuring your agent:</p>
-  <div class="code-block"><pre>
-curl -sS -X POST \
-  "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-5/invoke" \
-  -H "Authorization: Bearer &lt;your-bedrock-api-key&gt;" \
-  -H "Content-Type: application/json" \
-  -d '{"anthropic_version":"bedrock-2023-05-31","max_tokens":100,"messages":[{"role":"user","content":"Say hello."}]}'</pre></div>
 
   <h3>Option 2 — UAP-managed LLM <span style="background:#fef3c7;color:#d97706;font-size:11px;padding:2px 6px;border-radius:4px;font-weight:600">In Progress</span></h3>
   <p>Agent calls UAP's token vending endpoint using the platform's <code>BACKEND_API_KEY</code>. The raw LLM key never leaves UAP. Requires code changes in the agent backend to call the gateway instead of the LLM SDK directly.</p>
