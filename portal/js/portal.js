@@ -50,6 +50,8 @@ function _authHeaders() {
   return _apiKey ? { 'X-API-Key': _apiKey } : {};
 }
 
+function getApiKey() { return _apiKey; }
+
 async function initPortal() {
   try {
     const data = await _json(await fetch(`${BACKEND_URL}/api/platform/bootstrap`));

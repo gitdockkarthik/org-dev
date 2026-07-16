@@ -312,6 +312,19 @@ Response: {"response": "...", "model": "...", "usage": {...}}</pre></div>
     <li>Fallback: agents use .env values when running outside UAP</li>
   </ul>
 
+  <div style="margin-top:16px;padding:12px 16px;background:#fef3c7;border:1px solid #d97706;border-radius:6px;font-size:13px;">
+    <strong>⚠️ In Progress — Agent Key Management</strong><br>
+    The UAP LLM Gateway endpoints (<code>/api/llm/token</code> and <code>/api/llm/invoke</code>) are built and working.
+    However, per-agent self-service key generation (decoupled from registration) is not yet implemented.
+    Currently the gateway uses the shared <code>BACKEND_API_KEY</code> for authentication — not suitable for production multi-tenant use.
+    <br><br>
+    <strong>Coming next:</strong>
+    <ul style="margin-top:6px;padding-left:16px">
+      <li>Self-service "Developer Keys" section — agent owners generate their own <code>UAP_AGENT_KEY</code> independently of registration, fully revocable, per-agent scoped</li>
+      <li>RBAC extension — key generation restricted to a new "Developer" role (between user and admin). Current roles: user, admin. New role needed before self-service keys can be safely opened to agent teams</li>
+    </ul>
+  </div>
+
   <h2>9. Registration — New Fields</h2>
   <p>The registration and edit forms now include two new fields:</p>
   <ul>
