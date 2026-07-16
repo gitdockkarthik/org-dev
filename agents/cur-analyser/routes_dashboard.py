@@ -292,16 +292,18 @@ async def get_tab_tags(report_id: int = Query(default=None)) -> dict:
     loop = asyncio.get_running_loop()
     def run(fn, *args, **kwargs):
         return loop.run_in_executor(_executor, lambda: fn(*args, **kwargs))
-    tag_product, tag_team, tag_customer, tag_costcentre, untagged_resources = await asyncio.gather(
+    tag_product, tag_team, tag_customer, tag_costcentre, tag_team_native, untagged_resources = await asyncio.gather(
         run(get_cost_by_tag, csv_text, "tag_Product", file_path=file_path, enricher=enricher),
         run(get_cost_by_tag, csv_text, "tag_Team", file_path=file_path, enricher=enricher),
         run(get_cost_by_tag, csv_text, "tag_Customer", file_path=file_path, enricher=enricher),
         run(get_cost_by_tag, csv_text, "tag_CostCentre", file_path=file_path, enricher=enricher),
+        run(get_cost_by_tag, csv_text, "tag_Team", file_path=file_path, enricher=enricher, native_only=True),
         run(get_untagged_resources, csv_text, file_path=file_path, enricher=enricher),
     )
     result = {
         "tag_product_breakdown": tag_product,
         "tag_team_breakdown": tag_team,
+        "tag_team_native_breakdown": tag_team_native,
         "tag_customer_breakdown": tag_customer,
         "tag_costcentre_breakdown": tag_costcentre,
         "untagged_resources": untagged_resources,

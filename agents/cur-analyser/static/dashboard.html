@@ -1978,6 +1978,9 @@
           ${tagSection('By Product', DASH.tag_product_breakdown, 'tagProdChart')}
           ${tagSection('By Managed By', DASH.tag_team_breakdown, 'tagTeamChart')}
           ${tagSection('By Customer', DASH.tag_customer_breakdown, 'tagCustChart')}
+          ${DASH.tag_team_native_breakdown && DASH.tag_team_native_breakdown.length > 0
+            ? tagSection('By Team (AWS Tag)', DASH.tag_team_native_breakdown, 'tagTeamNativeChart')
+            : ''}
           ${tagSection('By Cost Centre', DASH.tag_costcentre_breakdown, 'tagCCChart')}
         </div>
         <div class="panel-card" style="border-color:var(--accent)">
@@ -1993,6 +1996,8 @@
       bar('tagTeamChart', DASH.tag_team_breakdown);
       bar('tagCustChart', DASH.tag_customer_breakdown);
       bar('tagCCChart', DASH.tag_costcentre_breakdown);
+      if (DASH.tag_team_native_breakdown && DASH.tag_team_native_breakdown.length > 0)
+        bar('tagTeamNativeChart', DASH.tag_team_native_breakdown);
       renderInvEnrichment();
     }
 

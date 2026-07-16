@@ -1343,7 +1343,7 @@ def get_cost_by_service_category(csv_text: str | None = None, file_path: str | N
         con.close()
 
 
-def get_cost_by_tag(csv_text: str | None = None, tag_col: str = "", file_path: str | None = None, filters: dict | None = None, enricher=None) -> list[dict]:
+def get_cost_by_tag(csv_text: str | None = None, tag_col: str = "", file_path: str | None = None, filters: dict | None = None, enricher=None, native_only: bool = False) -> list[dict]:
     df, con = _load_df(csv_text, enricher=enricher, file_path=file_path, filters=filters)
     try:
         cols = list(df.columns)
@@ -1367,7 +1367,7 @@ def get_cost_by_tag(csv_text: str | None = None, tag_col: str = "", file_path: s
 
         total = float(con.execute(f'SELECT SUM("{cost_col}") FROM cur_data').fetchone()[0] or 0)
 
-        if has_inv and acct_col and not actual_tag and inv_fallback:
+        if has_inv and acct_col and not actual_tag and inv_fallback and not native_only:
             # No native tag column — derive from inventory JOIN.
             rows = con.execute(
                 f'SELECT COALESCE(NULLIF(i.{inv_fallback}, \'\'), \'Untagged\') AS tag_val, '
@@ -1386,6 +1386,26 @@ def get_cost_by_tag(csv_text: str | None = None, tag_col: str = "", file_path: s
             ]
 
         if not actual_tag:
+            # For CUR 2.0 with native_only, try reading from JSON tags column
+            if native_only and "tags" in cols and cost_col:
+                try:
+                    rows = con.execute(
+                        f'SELECT regexp_extract(tags, \'"resourceTags/user:Team":"([^"]+)"\', 1) AS team_val, '
+                        f'SUM("{cost_col}") AS cost '
+                        f'FROM cur_data '
+                        f'WHERE tags LIKE \'%user:Team%\' '
+                        f'GROUP BY team_val ORDER BY cost DESC'
+                    ).fetchall()
+                    return [
+                        {
+                            "tag_value": str(r[0]) if r[0] else "Untagged",
+                            "cost": round(float(r[1] or 0), 4),
+                            "pct_of_total": round(float(r[1] or 0) / total * 100, 2) if total else 0.0,
+                        }
+                        for r in rows if r[0]
+                    ]
+                except Exception:
+                    pass
             return []
 
         rows = con.execute(
