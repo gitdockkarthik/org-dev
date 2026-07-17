@@ -191,6 +191,7 @@ async function invokeAgent(slug, message, sessionId, context, onChunk, onDone, o
         if (!line.startsWith('data: ')) continue;
         const data = line.slice(6);
         if (data === '[DONE]') { onDone({}); return; }
+        if (data.startsWith('[STOP_REASON]')) continue;
         if (data.startsWith('[ERROR]')) { onError(new Error(data.slice(7).trim())); return; }
         const text = data.replace(/\\n/g, '\n');
         onChunk(text);
