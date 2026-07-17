@@ -13,6 +13,7 @@ from core.auth import (
     get_current_user,
     hash_password,
     require_admin,
+    require_developer,
     verify_password,
 )
 from core.database import AsyncSessionLocal
@@ -32,7 +33,7 @@ class UserOut(BaseModel):
     id: int
     name: str
     email: str
-    role: str
+    roles: str
     created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
@@ -42,7 +43,13 @@ class CreateUserRequest(BaseModel):
     name: str
     email: EmailStr
     password: str
-    role: str = "user"
+    roles: str = "user"
+
+
+class UpdateUserRequest(BaseModel):
+    name: str | None = None
+    roles: str | None = None
+    is_active: bool | None = None
 
 
 class ResetPasswordRequest(BaseModel):
@@ -116,8 +123,9 @@ async def create_user(
 ):
     require_admin(current_user)
 
-    if body.role not in ("admin", "user"):
-        raise HTTPException(status_code=400, detail="role must be 'admin' or 'user'")
+    valid_roles = {"admin", "developer", "user"}
+    if not all(r.strip() in valid_roles for r in body.roles.split(",")):
+        raise HTTPException(status_code=400, detail="roles must be comma-separated list of: admin, developer, user")
 
     async with AsyncSessionLocal() as session:
         existing = await session.execute(select(User).where(User.email == body.email))
@@ -128,7 +136,7 @@ async def create_user(
             name=body.name,
             email=body.email,
             password_hash=hash_password(body.password),
-            role=body.role,
+            roles=body.roles,
         )
         session.add(new_user)
         await session.commit()
@@ -150,11 +158,48 @@ async def list_users(current_user: User = Depends(get_current_user)):
             id=u.id,
             name=u.name,
             email=u.email,
-            role=u.role,
+            roles=u.roles,
             created_at=u.created_at,
         )
         for u in users
     ]
+
+
+@router.put("/api/admin/users/{user_id}", response_model=UserOut)
+async def update_user(
+    user_id: int,
+    body: UpdateUserRequest,
+    current_user: User = Depends(get_current_user),
+):
+    require_admin(current_user)
+
+    if body.roles is not None:
+        valid_roles = {"admin", "developer", "user"}
+        if not all(r.strip() in valid_roles for r in body.roles.split(",")):
+            raise HTTPException(status_code=400, detail="roles must be comma-separated list of: admin, developer, user")
+
+    async with AsyncSessionLocal() as session:
+        user = await session.get(User, user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        if body.name is not None:
+            user.name = body.name
+        if body.roles is not None:
+            user.roles = body.roles
+        if body.is_active is not None:
+            if user_id == current_user.id and body.is_active is False:
+                raise HTTPException(status_code=400, detail="Cannot deactivate your own account")
+            user.is_active = body.is_active
+        await session.commit()
+        await session.refresh(user)
+
+    return UserOut(
+        id=user.id,
+        name=user.name,
+        email=user.email,
+        roles=user.roles,
+        created_at=user.created_at,
+    )
 
 
 @router.delete("/api/admin/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

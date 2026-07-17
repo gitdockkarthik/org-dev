@@ -178,6 +178,7 @@ img { display: block; max-width: 100%; }
 .badge--draft { background: var(--warn-bg); color: var(--warn); }
 .badge--published { background: var(--success-bg); color: var(--success); }
 .badge--deprecated { background: var(--danger-bg); color: var(--danger); }
+.badge--info { background: #1e3a5f; color: #60a5fa; }
 
 /* ── Form elements ──────────────────────────────────────────────────────────── */
 .form-field { display: flex; flex-direction: column; gap: 6px; }
@@ -708,7 +709,7 @@ img { display: block; max-width: 100%; }
 .agents-table .name-cell { font-weight: 600; }
 .agents-table .slug-cell { font-family: var(--mono); font-size: .78rem; color: var(--text-muted); }
 .agents-table .model-cell { font-family: var(--mono); font-size: .78rem; color: var(--text-muted); }
-.agents-table .actions-cell { display: flex; align-items: center; gap: 6px; }
+.agents-table .actions-cell { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 220px; }
 .agents-table__empty { padding: 48px; text-align: center; color: var(--text-dim); }
 
 /* Register form */

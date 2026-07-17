@@ -37,6 +37,7 @@
     <button class="admin-tab admin-tab--active" id="tab-agents" onclick="switchTab('agents')" style="padding:13px 18px;background:transparent;border:none;border-bottom:2px solid var(--accent);color:var(--accent);font-size:.88rem;font-weight:600;cursor:pointer;margin-bottom:-1px;">Agents</button>
     <button class="admin-tab" id="tab-platform" onclick="switchTab('platform')" style="padding:13px 18px;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--text-muted);font-size:.88rem;font-weight:500;cursor:pointer;margin-bottom:-1px;">Platform</button>
     <button class="admin-tab" id="tab-users" onclick="switchTab('users')" style="display:none;padding:13px 18px;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--text-muted);font-size:.88rem;font-weight:500;cursor:pointer;margin-bottom:-1px;">Users</button>
+    <button class="admin-tab" id="tab-keys" onclick="switchTab('keys')" style="display:none;padding:13px 18px;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--text-muted);font-size:.88rem;font-weight:500;cursor:pointer;margin-bottom:-1px;">API Keys</button>
   </div>
 
   <!-- Agents panel -->
@@ -127,7 +128,7 @@
   </div>
 
   <!-- Users panel -->
-  <div id="panel-users" class="admin-content" style="display:none;max-width:800px;">
+  <div id="panel-users" class="admin-content" style="display:none;">
     <h1 class="admin-title">Users</h1>
     <p class="admin-subtitle" style="margin-bottom:20px">Manage portal access. Admin creates all accounts — no self-signup.</p>
 
@@ -151,12 +152,18 @@
             style="width:100%;padding:9px 12px;background:var(--navy-2);border:1.5px solid var(--border-hi);border-radius:6px;font-size:.88rem;color:var(--text);outline:none;">
         </div>
         <div>
-          <label style="display:block;font-size:.83rem;font-weight:600;color:var(--text-muted);margin-bottom:6px;">Role</label>
-          <select id="new-role"
-            style="width:100%;padding:9px 12px;background:var(--navy-2);border:1.5px solid var(--border-hi);border-radius:6px;font-size:.88rem;color:var(--text);outline:none;">
-            <option value="user">user</option>
-            <option value="admin">admin</option>
-          </select>
+          <label style="display:block;font-size:.83rem;font-weight:600;color:var(--text-muted);margin-bottom:6px;">Roles</label>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <label style="display:flex;align-items:center;gap:6px;font-size:.88rem;cursor:pointer;">
+              <input type="checkbox" id="new-role-user" value="user" checked> user
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:.88rem;cursor:pointer;">
+              <input type="checkbox" id="new-role-developer" value="developer"> developer
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:.88rem;cursor:pointer;">
+              <input type="checkbox" id="new-role-admin" value="admin"> admin
+            </label>
+          </div>
         </div>
       </div>
       <div style="display:flex;gap:10px;align-items:center;">
@@ -185,6 +192,61 @@
         </thead>
         <tbody id="users-table-body">
           <tr><td colspan="5"><div class="agents-table__empty">Loading…</div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- API Keys panel -->
+  <div id="panel-keys" class="admin-content" style="display:none;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+      <div>
+        <h2 style="margin:0 0 4px 0;font-size:1.15rem;font-weight:700;">API Keys</h2>
+        <p style="margin:0;font-size:.85rem;color:var(--text-muted);">Scoped developer keys for agent access.</p>
+      </div>
+      <button onclick="showCreateKeyForm()" style="padding:8px 16px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:.85rem;font-weight:600;cursor:pointer;">+ New Key</button>
+    </div>
+
+    <div id="create-key-form" style="display:none;background:var(--navy-2);border:1.5px solid var(--border-hi);border-radius:8px;padding:20px;margin-bottom:20px;">
+      <h3 style="margin:0 0 14px 0;font-size:.95rem;">New API Key</h3>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+        <div style="flex:1;min-width:180px;">
+          <label style="display:block;font-size:.83rem;font-weight:600;color:var(--text-muted);margin-bottom:6px;">Agent</label>
+          <select id="key-agent-slug" class="form-select"></select>
+        </div>
+        <div style="flex:1;min-width:180px;">
+          <label style="display:block;font-size:.83rem;font-weight:600;color:var(--text-muted);margin-bottom:6px;">Label (optional)</label>
+          <input id="key-label" type="text" class="form-input" placeholder="e.g. ci-pipeline">
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;">
+        <button onclick="submitCreateKey()" style="padding:9px 20px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:.88rem;font-weight:600;cursor:pointer;">Generate</button>
+        <button onclick="document.getElementById('create-key-form').style.display='none'" style="padding:9px 16px;background:transparent;color:var(--text-muted);border:1.5px solid var(--border-hi);border-radius:6px;font-size:.88rem;cursor:pointer;">Cancel</button>
+        <span id="create-key-status" style="font-size:.83rem;"></span>
+      </div>
+    </div>
+
+    <div id="new-key-reveal" style="display:none;background:#0f2d1a;border:1.5px solid var(--success);border-radius:8px;padding:16px;margin-bottom:20px;">
+      <p style="margin:0 0 8px 0;font-size:.85rem;color:var(--success);font-weight:600;">⚠ Copy this key now — it will not be shown again.</p>
+      <code id="new-key-value" style="font-size:.85rem;word-break:break-all;color:#86efac;"></code>
+      <button onclick="copyNewKey()" style="display:block;margin-top:10px;padding:6px 14px;background:var(--success);color:#fff;border:none;border-radius:6px;font-size:.82rem;font-weight:600;cursor:pointer;">Copy</button>
+    </div>
+
+    <div class="agents-table-wrap">
+      <table class="agents-table">
+        <thead>
+          <tr>
+            <th>Agent</th>
+            <th>Label</th>
+            <th>Prefix</th>
+            <th>Created By</th>
+            <th>Created</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="keys-table-body">
+          <tr><td colspan="7"><div class="agents-table__empty">Loading…</div></td></tr>
         </tbody>
       </table>
     </div>
@@ -386,7 +448,7 @@
 
     // ── Admin tab switching ────────────────────────────────────────────────────
     function switchTab(tab) {
-      ['agents', 'platform', 'users'].forEach(t => {
+      ['agents', 'platform', 'users', 'keys'].forEach(t => {
         const panel = document.getElementById(`panel-${t}`);
         const tabEl = document.getElementById(`tab-${t}`);
         if (panel) panel.style.display = t === tab ? '' : 'none';
@@ -398,6 +460,7 @@
       });
       if (tab === 'platform') loadPlatformStatus();
       if (tab === 'users') loadUsers();
+      if (tab === 'keys') loadKeys();
     }
 
     // ── Users tab ──────────────────────────────────────────────────────────────
@@ -435,9 +498,10 @@
           <tr>
             <td class="name-cell">${u.name}</td>
             <td>${u.email}</td>
-            <td><span class="badge badge--${u.role === 'admin' ? 'published' : 'draft'}">${u.role}</span></td>
+            <td>${(u.roles||'user').split(',').map(r => `<span class="badge badge--${r === 'admin' ? 'published' : r === 'developer' ? 'info' : 'draft'}">${r}</span>`).join(' ')}</td>
             <td class="text-muted">${created}</td>
             <td class="actions-cell">
+              <button class="btn btn--ghost btn--sm" onclick="promptEditRoles(${u.id}, '${safeName}', '${u.roles||'user'}')">Roles</button>
               <button class="btn btn--ghost btn--sm" onclick="promptResetPassword(${u.id}, '${safeName}')">Reset PW</button>
               <button class="btn btn--danger btn--sm" onclick="deleteUser(${u.id}, '${safeName}')">Delete</button>
             </td>
@@ -449,7 +513,9 @@
       const name     = document.getElementById('new-name').value.trim();
       const email    = document.getElementById('new-email').value.trim();
       const password = document.getElementById('new-password').value;
-      const role     = document.getElementById('new-role').value;
+      const roles = ['user','developer','admin']
+        .filter(r => document.getElementById(`new-role-${r}`)?.checked)
+        .join(',') || 'user';
       const statusEl = document.getElementById('add-user-status');
 
       if (!name || !email || !password) {
@@ -465,7 +531,7 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ..._authHeaders() },
           credentials: 'include',
-          body: JSON.stringify({ name, email, password, role }),
+          body: JSON.stringify({ name, email, password, roles }),
         });
         if (!r.ok) {
           const d = await r.json().catch(() => ({}));
@@ -522,12 +588,161 @@
       }
     }
 
+    let _editRolesUserId = null;
+
+    function promptEditRoles(userId, userName, currentRoles) {
+      _editRolesUserId = userId;
+      document.getElementById('edit-roles-username').textContent = userName;
+      const active = currentRoles.split(',').map(r => r.trim());
+      ['user','developer','admin'].forEach(r => {
+        document.getElementById(`er-${r}`).checked = active.includes(r);
+      });
+      document.getElementById('edit-roles-status').textContent = '';
+      document.getElementById('edit-roles-overlay').style.display = 'flex';
+    }
+
+    function closeEditRoles() {
+      document.getElementById('edit-roles-overlay').style.display = 'none';
+      _editRolesUserId = null;
+    }
+
+    async function saveEditRoles() {
+      const newRoles = ['user','developer','admin'].filter(r => document.getElementById(`er-${r}`).checked).join(',');
+      if (!newRoles) {
+        document.getElementById('edit-roles-status').textContent = 'Select at least one role.';
+        document.getElementById('edit-roles-status').style.color = 'var(--danger)';
+        return;
+      }
+      const statusEl = document.getElementById('edit-roles-status');
+      statusEl.textContent = 'Saving…';
+      statusEl.style.color = 'var(--text-muted)';
+      try {
+        const r = await fetch(`${BACKEND_URL}/api/admin/users/${_editRolesUserId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+          credentials: 'include',
+          body: JSON.stringify({ roles: newRoles }),
+        });
+        if (!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || `HTTP ${r.status}`);
+        closeEditRoles();
+        await loadUsers();
+        showToast('Roles updated', 'success');
+      } catch (err) {
+        statusEl.textContent = err.message;
+        statusEl.style.color = 'var(--danger)';
+      }
+    }
+
     async function logout() {
       await fetch('/api/auth/logout', {
         method: 'POST',
         credentials: 'include',
       });
       window.location.href = '/login';
+    }
+
+    async function loadKeys() {
+      const tbody = document.getElementById('keys-table-body');
+      try {
+        const r = await fetch(`${BACKEND_URL}/api/developer/keys`, {
+          headers: _authHeaders(), credentials: 'include'
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const keys = await r.json();
+        if (!keys.length) {
+          tbody.innerHTML = '<tr><td colspan="7"><div class="agents-table__empty">No API keys yet.</div></td></tr>';
+          return;
+        }
+        tbody.innerHTML = keys.map(k => `
+          <tr>
+            <td class="name-cell">${k.agent_slug}</td>
+            <td>${k.label || '—'}</td>
+            <td><code style="font-size:.82rem;">${k.key_prefix}…</code></td>
+            <td class="text-muted">${k.created_by}</td>
+            <td class="text-muted">${k.created_at ? new Date(k.created_at).toLocaleDateString() : '—'}</td>
+            <td><span class="badge badge--${k.is_active ? 'published' : 'deprecated'}">${k.is_active ? 'active' : 'inactive'}</span></td>
+            <td class="actions-cell">
+              <button class="btn btn--ghost btn--sm" onclick="rotateKey(${k.id})">Rotate</button>
+              <button class="btn btn--${k.is_active ? 'ghost' : 'ghost'} btn--sm" onclick="toggleKey(${k.id}, ${k.is_active})">${k.is_active ? 'Disable' : 'Enable'}</button>
+              <button class="btn btn--danger btn--sm" onclick="deleteKey(${k.id})">Delete</button>
+            </td>
+          </tr>`).join('');
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="7"><div class="agents-table__empty" style="color:var(--danger)">${err.message}</div></td></tr>`;
+      }
+    }
+
+    async function showCreateKeyForm() {
+      const sel = document.getElementById('key-agent-slug');
+      const r = await fetch(`${BACKEND_URL}/api/registry/agents`, { headers: _authHeaders(), credentials: 'include' });
+      const agents = await r.json();
+      sel.innerHTML = agents.map(a => `<option value="${a.slug}">${a.name}</option>`).join('');
+      document.getElementById('create-key-form').style.display = '';
+      document.getElementById('new-key-reveal').style.display = 'none';
+    }
+
+    async function submitCreateKey() {
+      const slug = document.getElementById('key-agent-slug').value;
+      const label = document.getElementById('key-label').value.trim() || null;
+      const statusEl = document.getElementById('create-key-status');
+      statusEl.textContent = 'Generating…';
+      try {
+        const r = await fetch(`${BACKEND_URL}/api/developer/keys`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+          credentials: 'include',
+          body: JSON.stringify({ agent_slug: slug, label }),
+        });
+        if (!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || `HTTP ${r.status}`);
+        const key = await r.json();
+        document.getElementById('create-key-form').style.display = 'none';
+        document.getElementById('new-key-reveal').style.display = '';
+        document.getElementById('new-key-value').textContent = key.raw_key;
+        statusEl.textContent = '';
+        await loadKeys();
+      } catch (err) {
+        statusEl.textContent = err.message;
+        statusEl.style.color = 'var(--danger)';
+      }
+    }
+
+    function copyNewKey() {
+      navigator.clipboard.writeText(document.getElementById('new-key-value').textContent);
+      showToast('Key copied', 'success');
+    }
+
+    async function rotateKey(keyId) {
+      if (!confirm('Rotate this key? The old key will stop working immediately.')) return;
+      const r = await fetch(`${BACKEND_URL}/api/developer/keys/${keyId}/rotate`, {
+        method: 'POST', headers: _authHeaders(), credentials: 'include'
+      });
+      if (!r.ok) { showToast('Rotate failed', 'error'); return; }
+      const key = await r.json();
+      document.getElementById('new-key-reveal').style.display = '';
+      document.getElementById('new-key-value').textContent = key.raw_key;
+      await loadKeys();
+      showToast('Key rotated', 'success');
+    }
+
+    async function toggleKey(keyId, isActive) {
+      const r = await fetch(`${BACKEND_URL}/api/developer/keys/${keyId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+        credentials: 'include',
+        body: JSON.stringify({ is_active: !isActive }),
+      });
+      if (!r.ok) { showToast('Update failed', 'error'); return; }
+      await loadKeys();
+    }
+
+    async function deleteKey(keyId) {
+      if (!confirm('Delete this API key? This cannot be undone.')) return;
+      const r = await fetch(`${BACKEND_URL}/api/developer/keys/${keyId}`, {
+        method: 'DELETE', headers: _authHeaders(), credentials: 'include'
+      });
+      if (!r.ok) { showToast('Delete failed', 'error'); return; }
+      await loadKeys();
+      showToast('Key deleted', 'success');
     }
 
     // Show logout button and Users tab only when AUTH_MODE=local
@@ -537,6 +752,8 @@
       if (btn) btn.style.display = '';
       const tabUsers = document.getElementById('tab-users');
       if (tabUsers) tabUsers.style.display = '';
+      const tabKeys = document.getElementById('tab-keys');
+      if (tabKeys) tabKeys.style.display = '';
     }
 
     async function loadPlatformStatus() {
@@ -644,6 +861,29 @@
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
         <button class="btn btn--ghost btn--sm" onclick="closeEditModal()">Cancel</button>
         <button class="btn btn--primary btn--sm" onclick="submitEditModal()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="edit-roles-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1100;align-items:center;justify-content:center;">
+    <div style="background:var(--navy-1,#fff);border-radius:8px;padding:28px;width:360px;">
+      <h3 style="margin:0 0 18px 0;font-size:1.1rem;">Edit Roles</h3>
+      <p id="edit-roles-username" style="font-size:.88rem;color:var(--text-muted);margin:0 0 16px 0;"></p>
+      <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px;">
+        <label style="display:flex;align-items:center;gap:8px;font-size:.9rem;cursor:pointer;">
+          <input type="checkbox" id="er-user" value="user"> user
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:.9rem;cursor:pointer;">
+          <input type="checkbox" id="er-developer" value="developer"> developer
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:.9rem;cursor:pointer;">
+          <input type="checkbox" id="er-admin" value="admin"> admin
+        </label>
+      </div>
+      <div style="display:flex;gap:10px;">
+        <button onclick="saveEditRoles()" style="padding:9px 20px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:.88rem;font-weight:600;cursor:pointer;">Save</button>
+        <button onclick="closeEditRoles()" style="padding:9px 16px;background:transparent;color:var(--text-muted);border:1.5px solid var(--border-hi);border-radius:6px;font-size:.88rem;cursor:pointer;">Cancel</button>
+        <span id="edit-roles-status" style="font-size:.83rem;align-self:center;"></span>
       </div>
     </div>
   </div>

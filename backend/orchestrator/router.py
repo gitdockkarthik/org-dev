@@ -22,6 +22,7 @@ from core.security import require_api_key
 from models.agent import Agent, AgentStatus
 from models.chat_message import ChatMessage
 from models.chat_session import ChatSession
+from models.developer_key import DeveloperKey
 from orchestrator.schemas import (
     ChatMessageResponse,
     InvokeRequest,
@@ -168,18 +169,55 @@ async def _persist(
     await db.commit()
 
 
+async def _check_developer_key(request: Request, agent_slug: str, db: AsyncSession) -> bool:
+    """
+    Check if request carries a valid developer key for this agent_slug.
+    Returns True if authorised via developer key.
+    Raises 403 if key exists but is wrong slug or inactive.
+    Raises nothing if no developer key present (falls through to require_api_key).
+    """
+    from core.platform_cache import get_backend_api_key
+    api_key = request.headers.get("X-API-Key", "")
+    if not api_key or api_key == get_backend_api_key():
+        return False  # not a developer key — handled by require_api_key
+    hashed = hashlib.sha256(api_key.encode()).hexdigest()
+    result = await db.execute(
+        select(DeveloperKey).where(DeveloperKey.key_hash == hashed)
+    )
+    dev_key = result.scalar_one_or_none()
+    if dev_key is None:
+        raise HTTPException(status_code=403, detail="Invalid API key")
+    if not dev_key.is_active:
+        raise HTTPException(status_code=403, detail="API key is inactive")
+    if dev_key.agent_slug != agent_slug:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Developer key slug mismatch: key scoped to '%s', invoked for '%s'",
+            dev_key.agent_slug, agent_slug,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=f"API key is not authorised for agent '{agent_slug}'",
+        )
+    return True
+
+
 # ── endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post(
     "/invoke/{agent_slug}",
     response_model=InvokeResponse,
-    dependencies=[Depends(require_api_key)],
 )
 async def invoke_agent(
     agent_slug: str,
     body: InvokeRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> InvokeResponse:
+    from core.platform_cache import get_backend_api_key
+    api_key = request.headers.get("X-API-Key", "")
+    if api_key != get_backend_api_key():
+        await _check_developer_key(request, agent_slug, db)
     agent = await _require_published(db, agent_slug)
 
     try:

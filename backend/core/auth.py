@@ -64,9 +64,23 @@ async def get_current_user(request: Request) -> User:
 
 
 def require_admin(user: User) -> User:
-    if user.role != "admin":
+    if "admin" not in (user.roles or "").split(","):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required",
         )
     return user
+
+
+def require_developer(user: User) -> User:
+    roles = (user.roles or "").split(",")
+    if "admin" not in roles and "developer" not in roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Developer or admin access required",
+        )
+    return user
+
+
+def has_role(user: User, role: str) -> bool:
+    return role in (user.roles or "").split(",")
