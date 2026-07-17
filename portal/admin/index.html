@@ -832,12 +832,14 @@
         </div>
       </div>
       <div class="form-field">
-        <label class="form-label" for="edit-invoke-url">Invoke URL</label>
-        <input id="edit-invoke-url" type="url" class="form-input">
+        <label class="form-label" for="edit-invoke-url">Agent Base URL</label>
+        <input id="edit-invoke-url" type="url" class="form-input" placeholder="http://agent-service:8001">
+        <span class="form-hint" style="font-size:.78rem;color:var(--text-muted);margin-top:4px;display:block;">The agent's host and port. The backend appends /invoke and /health automatically. Leave blank for direct LLM call.</span>
       </div>
       <div class="form-field">
         <label class="form-label" for="edit-landing-page-url">Landing Page URL</label>
-        <input id="edit-landing-page-url" type="url" class="form-input" placeholder="For externally-built agents">
+        <input id="edit-landing-page-url" type="url" class="form-input" placeholder="https://your-agent-app.example.com">
+        <span class="form-hint" style="font-size:.78rem;color:var(--text-muted);margin-top:4px;display:block;">The URL users are directed to when clicking "Launch Agent". For native agents, use the dashboard URL (e.g. http://host:3000/agents/my-agent/dashboard). For standalone agents, use the agent's own UI URL.</span>
       </div>
       <div class="form-field">
         <label class="form-label" for="edit-uses-uap-llm" style="display:flex;align-items:center;gap:10px;cursor:pointer">

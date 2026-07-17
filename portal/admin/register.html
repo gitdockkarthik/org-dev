@@ -72,17 +72,17 @@
               value="0.1.0" placeholder="0.1.0">
           </div>
           <div class="form-field">
-            <label class="form-label" for="f-invoke-url">Invoke URL</label>
+            <label class="form-label" for="f-invoke-url">Agent Base URL</label>
             <input id="f-invoke-url" name="invoke_url" type="url" class="form-input"
-              placeholder="http://agent-service:8001 (leave blank for direct Anthropic)">
-            <span class="form-hint">Leave blank to call Anthropic directly using the config below.</span>
+              placeholder="http://agent-service:8001">
+            <span class="form-hint">The agent's host and port. The backend appends /invoke and /health automatically. Leave blank for direct LLM call.</span>
           </div>
         </div>
         <div class="form-field">
           <label class="form-label" for="f-landing-page-url">Landing Page URL</label>
           <input id="f-landing-page-url" name="landing_page_url" type="url" class="form-input"
             placeholder="https://your-agent-app.example.com">
-          <span class="form-hint">For externally-built agents. Shows a "Launch Agent" button on the catalogue card.</span>
+          <span class="form-hint">The URL users are directed to when clicking "Launch Agent". For native agents, use the dashboard URL (e.g. http://host:3000/agents/my-agent/dashboard). For standalone agents, use the agent's own UI URL.</span>
         </div>
         <div class="form-field">
           <label class="form-label" for="f-uses-uap-llm" style="display:flex;align-items:center;gap:10px;cursor:pointer">
