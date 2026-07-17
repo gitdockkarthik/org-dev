@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent — Unified Agent Platform</title>
+  <link rel="stylesheet" href="/css/style.css?v=3">
+  <style>
+    html, body { height: 100%; margin: 0; padding: 0; display: flex; flex-direction: column; }
+    .agent-shell { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+    .agent-shell__bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 24px;
+      background: var(--navy-2);
+      border-bottom: 1px solid var(--border);
+      font-size: .85rem;
+    }
+    .agent-shell__name { font-weight: 600; color: var(--text); }
+    .agent-shell__back {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: .82rem;
+    }
+    .agent-shell__back:hover { color: var(--accent); }
+    .agent-shell__iframe {
+      flex: 1;
+      border: none;
+      width: 100%;
+      min-height: 0;
+    }
+    .agent-shell__error {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      font-size: .9rem;
+    }
+  </style>
+</head>
+<body>
+  <!-- Top bar -->
+  <header class="topbar">
+    <a href="/" class="topbar__brand">
+      <span style="font-size:1.3rem;font-weight:700;color:#ffffff;letter-spacing:1px;font-family:inherit;">OPERATIVE</span>
+    </a>
+    <nav class="topbar__nav">
+      <a href="/" class="topbar__link">Agents</a>
+      <a href="/admin/" class="topbar__link">Admin</a>
+      <a href="/docs-hub/" class="topbar__link" target="_blank">📚 Docs</a>
+    </nav>
+    <div class="topbar__right">
+      <button id="logout-btn" onclick="logout()" class="btn btn--ghost btn--sm" style="display:none;margin-right:8px">Sign out</button>
+    </div>
+  </header>
+
+  <div class="agent-shell">
+    <div class="agent-shell__bar">
+      <span class="agent-shell__name" id="agent-name">Loading…</span>
+      <span id="agent-badge" class="badge" style="display:none;"></span>
+    </div>
+    <iframe id="agent-frame" class="agent-shell__iframe" src="about:blank" allowfullscreen></iframe>
+    <div id="agent-error" class="agent-shell__error" style="display:none;">
+      Unable to load agent. The agent may not be available or may not allow embedding.
+      <a id="agent-fallback-link" href="#" target="_blank" style="margin-left:8px;color:var(--accent);">Open directly →</a>
+    </div>
+  </div>
+
+  <script>
+    const BACKEND_URL = '';
+
+    async function _json(resp) {
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      return resp.json();
+    }
+
+    async function _authHeaders() {
+      try {
+        const d = await _json(await fetch(`${BACKEND_URL}/api/platform/bootstrap`));
+        return { 'X-API-Key': d.api_key || '' };
+      } catch { return {}; }
+    }
+
+    async function init() {
+      const params = new URLSearchParams(window.location.search);
+      const slug = params.get('slug');
+      if (!slug) { window.location.href = '/'; return; }
+
+      document.title = `${slug} — Unified Agent Platform`;
+
+      try {
+        const headers = await _authHeaders();
+        const agents = await _json(await fetch(`${BACKEND_URL}/api/registry/agents`, { headers, credentials: 'include' }));
+        const agent = agents.find(a => a.slug === slug);
+
+        if (!agent) { window.location.href = '/'; return; }
+
+        document.getElementById('agent-name').textContent = agent.name;
+        document.title = `${agent.name} — Unified Agent Platform`;
+
+        const portalHost = window.location.host;
+        const isNative = agent.landing_page_url && new URL(agent.landing_page_url).host === portalHost;
+        const badge = document.getElementById('agent-badge');
+        badge.style.display = '';
+        badge.style.background = isNative ? 'rgba(99,102,241,.12)' : 'rgba(217,119,6,.12)';
+        badge.style.color = isNative ? '#6366f1' : '#d97706';
+        badge.textContent = isNative ? 'Native' : 'Standalone';
+
+        const url = agent.landing_page_url;
+        if (!url || !/^https?:\/\//i.test(url)) {
+          document.getElementById('agent-error').style.display = 'flex';
+          return;
+        }
+
+        // Native agents are portal-hosted (same origin/port 3000) — navigate directly to avoid double topbar
+        // Standalone agents are on different ports — load in iframe
+        const urlHost = new URL(url).host;
+        if (urlHost === portalHost) {
+          window.location.href = url;
+          return;
+        }
+
+        document.getElementById('agent-fallback-link').href = url;
+        const frame = document.getElementById('agent-frame');
+        frame.src = url;
+        frame.onerror = () => {
+          frame.style.display = 'none';
+          document.getElementById('agent-error').style.display = 'flex';
+        };
+      } catch (err) {
+        document.getElementById('agent-name').textContent = slug;
+        document.getElementById('agent-error').style.display = 'flex';
+      }
+    }
+
+    const authMode = window.__CONFIG__?.AUTH_MODE || 'none';
+    if (authMode === 'local') {
+      document.getElementById('logout-btn').style.display = '';
+    }
+
+    async function logout() {
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+      window.location.href = '/login';
+    }
+
+    init();
+  </script>
+</body>
+</html>
