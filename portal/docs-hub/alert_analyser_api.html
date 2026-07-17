@@ -480,7 +480,8 @@
         <div class="endpoint-section-title">Response</div>
         <div class="endpoint-response">
           <div class="response-item"><span class="response-field">pipeline_flow</span> — Counts: escalated, investigating, rca_complete, remediating, resolved, manual</div>
-          <div class="response-item"><span class="response-field">aging</span> — Ticket age buckets, SLA breach count, longest open time</div>
+          <div class="response-item"><span class="response-field">aging_buckets</span> — Priority-based age bands: array of {priority, bands:[{bucket, count}]} for P1/P2/P3/P4 with per-priority time bands</div>
+          <div class="response-item"><span class="response-field">sla_breach</span> — {breached_count, within_sla_count, breach_pct, per_priority: {P1..P4: {breached, within, breach_pct, sla_minutes}}}</div>
           <div class="response-item"><span class="response-field">resolution_method</span> — auto_resolved_pct, action_resolved_pct, manual_pct</div>
           <div class="response-item"><span class="response-field">recurrence_signal</span> — Alerts that re-fired during remediation</div>
         </div>
@@ -496,10 +497,10 @@
       <div class="endpoint-section">
         <div class="endpoint-section-title">Query Parameters</div>
         <div class="endpoint-params">
-          <div class="param-item"><span class="param-name">priority</span> <span class="param-type">(P1|P2|P3|P4)</span> — Filter by priority (optional)</div>
-          <div class="param-item"><span class="param-name">status</span> <span class="param-type">(string)</span> — Filter by status (optional)</div>
-          <div class="param-item"><span class="param-name">limit</span> <span class="param-type">(integer, default 6)</span> — Results per page</div>
-          <div class="param-item"><span class="param-name">offset</span> <span class="param-type">(integer)</span> — Pagination offset</div>
+          <div class="param-item"><span class="param-name">limit</span> <span class="param-type">(integer, default 200)</span> — Max tickets to return</div>
+          <div class="param-item"><span class="param-name">offset</span> <span class="param-type">(integer, default 0)</span> — Pagination offset</div>
+          <div class="param-item"><span class="param-name">status</span> <span class="param-type">(string, optional)</span> — Filter by status (ESCALATED, INVESTIGATING, RCA_COMPLETE, REMEDIATING, RESOLVED, MANUAL). PURGED excluded by default.</div>
+          <div class="param-item"><span class="param-name">priority</span> <span class="param-type">(string, optional)</span> — Filter by priority (P1-P5)</div>
         </div>
       </div>
       <div class="endpoint-section">
@@ -507,6 +508,46 @@
         <div class="endpoint-response">
           <div class="response-item"><span class="response-field">tickets</span> — Array of {id, alert_id, priority, status, title, escalated_at, recurrence_count, sla_breached}</div>
           <div class="response-item"><span class="response-field">total</span> — Total matching tickets (for pagination)</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/dashboard/incidents/purge-preview</span>
+      </div>
+      <div class="endpoint-desc">Returns count of ESCALATED tickets eligible for purge based on current threshold setting. No changes made.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">eligible_count</span> — Total tickets eligible for purge</div>
+          <div class="response-item"><span class="response-field">by_priority</span> — Count by priority (P1-P5)</div>
+          <div class="response-item"><span class="response-field">purge_days</span> — Current threshold in days</div>
+          <div class="response-item"><span class="response-field">enabled</span> — Whether purge is enabled</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-post">POST</span>
+        <span class="endpoint-path">/dashboard/incidents/purge?dry_run=true</span>
+      </div>
+      <div class="endpoint-desc">Purge stale ESCALATED tickets. Set dry_run=false to execute. Requires purge enabled in settings.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">dry_run</span> <span class="param-type">(boolean, default true)</span> — Preview only if true, execute if false</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">purged_count</span> — Number of tickets purged (or would be purged in dry-run)</div>
+          <div class="response-item"><span class="response-field">dry_run</span> — Whether this was a preview only</div>
+          <div class="response-item"><span class="response-field">purge_days</span> — Threshold used</div>
+          <div class="response-item"><span class="response-field">purge_reason</span> — Reason code for audit trail</div>
         </div>
       </div>
     </div>

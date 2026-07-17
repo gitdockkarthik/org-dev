@@ -173,6 +173,42 @@
 
   <div class="item item--low">
     <div class="item__header">
+      <div class="item__title">Incident ticket purge system with stale-ticket cleanup</div>
+      <span class="badge badge--low">Done</span>
+    </div>
+    <div class="item__desc">Prevents unbounded growth of stale ESCALATED tickets. Marks tickets <code>status=PURGED</code> when they remain ESCALATED beyond configurable threshold (default 7 days) with no downstream action. Includes audit trail (<code>purged_at</code>, <code>purge_reason</code> columns added to schema), configurable via Settings UI with dry-run and execute modes, and excluded from all active dashboard views.</div>
+    <div class="item__meta"><span>Status: <strong style="color:var(--green)">Resolved 17 Jul 2026</strong></span><span>Location: <code>backend/migrations/0005_incident_purge_audit.py</code>, <code>routes_dashboard.py</code> (endpoints), <code>routes_settings.py</code> (config)</span></div>
+  </div>
+
+  <div class="item item--low">
+    <div class="item__header">
+      <div class="item__title">Priority-based ticket aging chart with SLA band visualization</div>
+      <span class="badge badge--low">Done</span>
+    </div>
+    <div class="item__desc">Replaced flat time-bucket aging view with stacked bar chart showing P1–P4 with priority-specific age bands: P1 [&lt;2h, 2-6h, 6-24h, 24h+], P2 [&lt;4h, 4-12h, 12-48h, 48h+], P3 [&lt;8h, 8-24h, 24-72h, 72h+], P4 [&lt;72h, 72-168h, 168-720h, 720h+]. Stacked with color-coded band bars (green, amber, orange, red) and aggregated total labels on top of each stack.</div>
+    <div class="item__meta"><span>Status: <strong style="color:var(--green)">Resolved 17 Jul 2026</strong></span><span>Location: <code>routes_dashboard.py</code> (aging_buckets), <code>dashboard.html</code> (chart)</span></div>
+  </div>
+
+  <div class="item item--low">
+    <div class="item__header">
+      <div class="item__title">Per-priority SLA breach metrics with rate tracking</div>
+      <span class="badge badge--low">Done</span>
+    </div>
+    <div class="item__desc">Extended SLA breach response to include per-priority breakdown: <code>sla_breach.per_priority[P1..P4]</code> with <code>breached</code>, <code>within</code>, <code>breach_pct</code>, and <code>sla_minutes</code> fields. Dashboard displays overall summary plus per-priority rows with color-coded breach rates (red &gt;80%, amber &gt;20%, green ≤20%) and within-SLA percentages, enforcing SLA pressure on downstream agents.</div>
+    <div class="item__meta"><span>Status: <strong style="color:var(--green)">Resolved 17 Jul 2026</strong></span><span>Location: <code>routes_dashboard.py</code> (sla_breach calculation), <code>dashboard.html</code> (per-priority display)</span></div>
+  </div>
+
+  <div class="item item--low">
+    <div class="item__header">
+      <div class="item__title">incidents/list pagination and filtering with limit/offset</div>
+      <span class="badge badge--low">Done</span>
+    </div>
+    <div class="item__desc">Implemented pagination parameters on <code>GET /dashboard/incidents/list</code> with <code>limit</code> (default 200) and <code>offset</code> (default 0) to support large ticket result sets. Includes optional <code>status</code> and <code>priority</code> filter parameters, total count in response for pagination UI, and all PURGED tickets excluded from results.</div>
+    <div class="item__meta"><span>Status: <strong style="color:var(--green)">Resolved 17 Jul 2026</strong></span><span>Location: <code>routes_dashboard.py</code>, API docs updated</span></div>
+  </div>
+
+  <div class="item item--low">
+    <div class="item__header">
       <div class="item__title">Backlog volume management for RCA/Action agent consumption</div>
       <span class="badge badge--low">Deferred</span>
     </div>

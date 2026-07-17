@@ -163,7 +163,13 @@
     <tr><td>resolved_externally</td><td>BOOLEAN</td><td>True if the ticket was reconciled/closed by the sync process rather than an Action agent</td></tr>
     <tr><td>detected_at / escalated_at / rca_completed_at / resolved_at</td><td>TIMESTAMPTZ</td><td>Lifecycle timestamps</td></tr>
     <tr><td>created_at / updated_at</td><td>TIMESTAMPTZ</td><td>Row bookkeeping</td></tr>
+    <tr><td>purged_at</td><td>TIMESTAMPTZ</td><td>When the ticket was purged (PURGED status only)</td></tr>
+    <tr><td>purge_reason</td><td>TEXT</td><td>Audit reason code (e.g., <code>SLA_BREACH_NO_ACTION_7D</code>)</td></tr>
   </table>
+
+  <h2>4.1 PURGED Status &amp; Lifecycle</h2>
+  <p>In addition to the primary statuses (ESCALATED → INVESTIGATING → RCA_COMPLETE → REMEDIATING → RESOLVED/MANUAL), a ticket can reach a terminal <code>PURGED</code> status when it remains <code>ESCALATED</code> beyond a configurable threshold (default 7 days) with no downstream action taken (i.e., no transition to INVESTIGATING or beyond). This prevents unbounded growth of stale escalations in the active queue.</p>
+  <p><strong>Purge Behavior:</strong> The ticket is marked <code>status=PURGED</code> and audited with <code>purged_at</code> (timestamp) and <code>purge_reason</code> (format: <code>SLA_BREACH_NO_ACTION_{N}D</code>, e.g., <code>SLA_BREACH_NO_ACTION_7D</code>). <strong>PURGED tickets are excluded from all active dashboard views and API queries</strong> but retained in the database for audit and historical analysis. Purge can be enabled/disabled and threshold configured via the Settings UI; dry-run and execute modes are available via dedicated API endpoints.</p>
 
   <h2>5. SLA Policy</h2>
   <p>Priority-based response-time targets, applied to the Aging panel and per-ticket breach flag (proposed policy — not yet formally adopted org-wide):</p>
@@ -198,10 +204,12 @@
   <h2>8. API Endpoints</h2>
   <table class="data">
     <tr><th>Endpoint</th><th>Purpose</th></tr>
-    <tr><td><code>GET /dashboard/incidents</code></td><td>Aggregated KPI data: pipeline_flow, aging_buckets, aging_longest_wait, resolution_ring, recurrence_signal, sla_breach</td></tr>
+    <tr><td><code>GET /dashboard/incidents</code></td><td>Aggregated KPI data: pipeline_flow, aging_buckets (priority-based age bands per P1-P4), aging_longest_wait, resolution_ring, recurrence_signal, sla_breach (overall + per_priority breakdown)</td></tr>
     <tr><td><code>GET /dashboard/incidents/list</code></td><td>Individual tickets (optionally filtered by status/priority), including <code>sla_breached</code> and <code>resolved_externally</code>, sorted oldest-first — powers the kanban lanes</td></tr>
     <tr><td><code>GET /dashboard/period-summary</code></td><td>Row 2 "Alerts in Period" KPI cards; extended this session with <code>new_incidents_count</code> / <code>recurring_incidents_count</code> sourced from the incidents table (true new-vs-recurring split, replacing the previously misleading "new genuine" alert-event count)</td></tr>
     <tr><td><code>GET /dashboard</code></td><td>Main dashboard stats; also extended with the same new/recurring incident fields for the Genuine Alerts tab</td></tr>
+    <tr><td><code>GET /dashboard/incidents/purge-preview</code></td><td>Returns count of ESCALATED tickets eligible for purge by priority. No changes made. Used for dry-run preview in Settings UI.</td></tr>
+    <tr><td><code>POST /dashboard/incidents/purge?dry_run=true|false</code></td><td>Purge stale ESCALATED tickets. Sets status=PURGED with purged_at + purge_reason audit fields. Requires enable_purge=true in settings.</td></tr>
   </table>
 
   <h2>9. Known Simplifications</h2>

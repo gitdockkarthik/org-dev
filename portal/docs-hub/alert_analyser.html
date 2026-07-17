@@ -507,6 +507,17 @@
         </tr>
       </tbody>
     </table>
+    <h3>SLA Breach Thresholds (Resolution)</h3>
+    <p>The dashboard tracks breach against <strong>resolution SLAs</strong> (not response SLAs). A ticket is considered breached if it has been ESCALATED beyond the following thresholds without progressing:</p>
+    <table>
+      <thead><tr><th>Priority</th><th>Resolution SLA</th><th>Breach Color</th></tr></thead>
+      <tbody>
+        <tr><td>P1</td><td>2 hours</td><td>🔴 Red (&gt;80% breach rate)</td></tr>
+        <tr><td>P2</td><td>4 hours</td><td>🟡 Amber (&gt;20% breach rate)</td></tr>
+        <tr><td>P3</td><td>8 hours</td><td>🟡 Amber (&gt;20% breach rate)</td></tr>
+        <tr><td>P4</td><td>3 days</td><td>🟢 Green (≤20% breach rate)</td></tr>
+      </tbody>
+    </table>
   </section>
 
   <!-- What's Working vs Planned -->
@@ -559,7 +570,7 @@
         <tr>
           <td><strong>Escalated Incidents dashboard (kanban + KPI)</strong></td>
           <td><span class="status-working">✓ Working</span></td>
-          <td>Priority lanes, ticket aging, SLA breach highlighting, detail popup</td>
+          <td>Priority lanes, priority-based ticket aging chart (P1/P2/P3/P4 age bands), per-priority SLA breach rates, detail popup</td>
         </tr>
         <tr>
           <td><strong>Incident ticket creation with dedup</strong></td>
@@ -641,6 +652,28 @@
       <li><strong>Audit trail:</strong> Full alert_payload preserved in ticket for RCA teams. Enables forensic analysis and pattern discovery after resolution.</li>
       <li><strong>Future-ready:</strong> incident_management schema is shared with planned RCA and Action agents via polling model. New agents can be added without data model changes.</li>
     </ul>
+  </section>
+
+  <!-- Incident Ticket Purge -->
+  <section>
+    <h2>Incident Ticket Purge</h2>
+    <p>Stale ESCALATED tickets with no downstream action are purged on a configurable schedule to prevent unbounded growth and enforce SLA discipline.</p>
+    <h3>Purge Behaviour</h3>
+    <ul style="margin-left: 20px; line-height: 1.8;">
+      <li>Tickets are <strong>not deleted</strong> — status is set to <code>PURGED</code> with <code>purged_at</code> timestamp and <code>purge_reason</code> for full audit trail</li>
+      <li>Only <code>ESCALATED</code> tickets older than the configured threshold are eligible</li>
+      <li>PURGED tickets are excluded from all active views (pipeline flow, kanban, aging, SLA breach)</li>
+      <li>Default threshold: <strong>7 days</strong> — configurable in Settings → Incident Mgmt</li>
+      <li>Purge reason format: <code>SLA_BREACH_NO_ACTION_{N}D</code> where N is the configured days</li>
+    </ul>
+    <h3>Purge Controls</h3>
+    <ul style="margin-left: 20px; line-height: 1.8;">
+      <li><strong>Dry Run</strong> — shows count of eligible tickets by priority without making changes</li>
+      <li><strong>Run Purge</strong> — executes purge (requires "Enable automatic purge" to be checked in settings)</li>
+      <li><strong>Purge Audit</strong> — full history queryable via DB: <code>SELECT * FROM incident_management.incidents WHERE status = 'PURGED' ORDER BY purged_at DESC</code></li>
+    </ul>
+    <h3>Pipeline Context</h3>
+    <p>Purge enforces SLA pressure on the downstream pipeline. When RCA and Remediation agents are active, tickets must be processed within the threshold or they will be purged. This prevents stale tickets accumulating indefinitely while downstream agents are under development.</p>
   </section>
 
 </div>
