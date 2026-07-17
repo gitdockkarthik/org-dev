@@ -167,24 +167,13 @@
         const accentOverrides = {
           'kafka-analyser': '#FF6B35',
         };
-        const acStyle = accentOverrides[slug]
-          ? `--ca:${accentOverrides[slug]};${agentLinks[slug] ? 'cursor:pointer' : ''}`
-          : (agentLinks[slug] ? 'cursor:pointer' : '');
-        const extras = agentLinks[slug]
-          ? agentLinks[slug].map(l =>
-              `<a href="${l.href}" class="btn btn--ghost btn--sm" onclick="event.stopPropagation()">${l.label}</a>`
-            ).join('')
-          : (() => {
-              const safeUrl = /^https?:\/\//i.test(agent.landing_page_url)
-                ? agent.landing_page_url.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
-                : '';
-              return safeUrl
-                ? `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="btn btn--primary btn--sm" onclick="event.stopPropagation()">Launch Agent</a>`
-                : '';
-            })();
-
+        const acStyle = accentOverrides[slug] ? `--ca:${accentOverrides[slug]}` : '';
+        const isNative = !!agentLinks[slug];
+        const safeUrl = /^https?:\/\//i.test(agent.landing_page_url)
+          ? agent.landing_page_url.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+          : '';
         return `
-          <div class="agent-card ${ac}" ${agentLinks[slug] ? `onclick="window.location='/chat?agent=${encodeURIComponent(slug)}'"` : ''} style="${acStyle}">
+          <div class="agent-card ${ac}" style="${acStyle}">
             <div class="agent-card__accent"></div>
             <div class="agent-card__body">
               <div class="agent-card__icon">${initial}</div>
@@ -194,18 +183,15 @@
               </div>
             </div>
             <div class="agent-card__footer">
-              <div class="agent-card__meta">
-                <span class="badge badge--published">published</span>
-                <span class="badge" style="background:${agentLinks[slug] ? 'rgba(99,102,241,.12);color:#6366f1' : 'rgba(217,119,6,.12);color:#d97706'}">${agentLinks[slug] ? 'Native' : 'Stand-alone'}</span>
+              <div style="display:flex;flex-direction:column;gap:4px;">
+                <div class="agent-card__meta">
+                  <span class="badge badge--published">published</span>
+                  <span class="badge" style="background:${isNative ? 'rgba(99,102,241,.12);color:#6366f1' : 'rgba(217,119,6,.12);color:#d97706'}">${isNative ? 'Native' : 'Standalone'}</span>
+                </div>
                 ${model ? `<span class="agent-card__model">${model}</span>` : ''}
               </div>
-              <div style="display:flex;gap:6px;flex-wrap:wrap">
-                ${extras}
-                ${agentLinks[slug] ? `
-                <a href="/chat?agent=${encodeURIComponent(slug)}"
-                   class="btn btn--primary btn--sm"
-                   onclick="event.stopPropagation()">Chat →</a>
-                ` : ''}
+              <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                ${safeUrl ? `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="btn btn--primary btn--sm" onclick="event.stopPropagation()">Launch Agent</a>` : ''}
               </div>
             </div>
           </div>`;
