@@ -318,7 +318,7 @@ AWS_REGION=us-east-1
 AWS_ACCESS_KEY_ID=AKIAW*****
 AWS_SECRET_ACCESS_KEY=F9***</pre></div>
 
-  <h3>Option 2 — UAP-managed LLM <span style="background:#fef3c7;color:#d97706;font-size:11px;padding:2px 6px;border-radius:4px;font-weight:600">In Progress</span></h3>
+  <h3>Option 2 — UAP-managed LLM <span style="background:#dcfce7;color:#16a34a;font-size:11px;padding:2px 6px;border-radius:4px;font-weight:600">Available</span></h3>
   <p>Agent calls UAP's token vending endpoint using the platform's <code>BACKEND_API_KEY</code>. The raw LLM key never leaves UAP. Requires code changes in the agent backend to call the gateway instead of the LLM SDK directly.</p>
   <div class="code-block"><pre>
 UAP_URL=https://&lt;uap-platform-url&gt;
@@ -333,16 +333,43 @@ Body:    {"agent_slug": "your-agent-slug"}
 POST /api/llm/invoke
 Headers: X-API-Key: &lt;BACKEND_API_KEY&gt;
 Body:    {"token": "&lt;token&gt;", "messages": [...], "system": "..."}</pre></div>
-  <p>See <code>agents/mock-agent/llm_gateway.py</code> for a reference implementation with automatic fallback to Option 1 when UAP is unavailable.</p>
-
-  <h3>Option 3 — Self-service Agent Keys <span style="background:#f3e8ff;color:#9333ea;font-size:11px;padding:2px 6px;border-radius:4px;font-weight:600">Planned</span></h3>
-  <p>Agent owners generate their own scoped API key from the UAP portal (Developer Settings) — no platform team involvement. Key is per-agent, revocable, and decoupled from registration.</p>
+  <p><strong>Agent-side implementation:</strong></p>
   <ul>
-    <li>New "Developer" role in UAP RBAC</li>
-    <li>Self-service key generation UI in portal</li>
-    <li>Keys stored encrypted in UAP DB, per-agent scoped</li>
-    <li>Switching from Option 2 → 3 requires only replacing <code>BACKEND_API_KEY</code> with <code>UAP_AGENT_KEY</code> — minimal code change</li>
+    <li><strong>Step 1</strong> — At runtime, fetch a short-lived token (5 min TTL) using your <code>BACKEND_API_KEY</code> (or Option 3 agent key): <code>POST /api/llm/token</code> with <code>X-API-Key: &lt;key&gt;</code> and body <code>{"agent_slug": "your-agent-slug"}</code></li>
+    <li><strong>Step 2</strong> — Proxy the LLM call via UAP: <code>POST /api/llm/invoke</code> with the same <code>X-API-Key</code> header and body <code>{"token": "&lt;token&gt;", "messages": [...], "system": "..."}</code></li>
+    <li>The raw platform LLM key never leaves UAP — the agent owner only holds their own access key, not the platform's credentials</li>
+    <li>Fetch a fresh token per request or cache for up to 5 minutes</li>
   </ul>
+  <p><strong>Fallback (UAP unavailable):</strong> If UAP is unreachable, the agent falls back to Option 1 using its own independently obtained Bedrock Bearer token (<code>BEDROCK_API_KEY</code>). This is the agent owner's own key — separate from and not related to the platform's LLM credentials. See <code>agents/mock-agent/llm_gateway.py</code> for a reference implementation pattern.</p>
+  <p><strong>⚠ Note:</strong> Fallback will not work unless the agent owner has independently obtained and configured their own <code>BEDROCK_API_KEY</code>. Without it, the agent will fail if UAP becomes unavailable. Agent owners who require resilience should request a Bedrock Bearer token from their AWS administrator and configure it as a fallback credential.</p>
+
+  <h3>Option 3 — Self-service Agent Keys <span style="background:#dcfce7;color:#16a34a;font-size:11px;padding:2px 6px;border-radius:4px;font-weight:600">Available</span></h3>
+  <p>Agent owners generate their own scoped API key from the UAP Admin portal (API Keys tab) — no platform team involvement. Key is per-agent, revocable, and decoupled from registration.</p>
+  <p><strong>How it works:</strong></p>
+  <ol>
+    <li>Admin or Developer role user navigates to <strong>Admin → API Keys</strong></li>
+    <li>Click <strong>+ New Key</strong>, select the agent slug, add an optional label</li>
+    <li>Copy the generated key immediately — it is shown only once</li>
+    <li>Set the key as <code>UAP_AGENT_KEY</code> in the agent's environment</li>
+    <li>Agent uses the key as <code>X-API-Key</code> when calling <code>POST /api/invoke/{slug}</code></li>
+  </ol>
+  <p><strong>Key properties:</strong></p>
+  <ul>
+    <li>Scoped to a single agent slug — cannot be used to invoke other agents (returns 403)</li>
+    <li>Revocable and rotatable from the portal without redeployment</li>
+    <li>Created and managed by Developer or Admin role — no platform team required</li>
+    <li>Switching from Option 2 → 3 requires only replacing <code>BACKEND_API_KEY</code> with the generated key — minimal code change</li>
+  </ul>
+  <p><strong>Enforcement:</strong> UAP validates the key's <code>agent_slug</code> matches the invoked slug. Mismatches are rejected with <code>403 API key is not authorised for agent '{slug}'</code> and logged as warnings.</p>
+  <div class="code-block"><pre>
+# Agent .env
+UAP_AGENT_KEY=opk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# Invoke example
+curl -X POST https://uap-host/api/invoke/my-agent \
+  -H "X-API-Key: ${UAP_AGENT_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"...","user_message":"hello","context":{}}'</pre></div>
 
   <h2>9. Registration — New Fields</h2>
   <p>The registration and edit forms now include two new fields:</p>
