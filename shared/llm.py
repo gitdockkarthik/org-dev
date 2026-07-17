@@ -3,7 +3,7 @@ import logging
 import os
 from typing import Any
 
-DEFAULT_MODEL = "claude-sonnet-4-6"
+DEFAULT_MODEL = os.environ.get("LLM_MODEL", "us.anthropic.claude-sonnet-5")
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ async def create_message(
     Model resolution order:
       1. ``model`` argument
       2. ``LLM_MODEL`` env var
-      3. Default: ``claude-sonnet-4-6``
+      3. Default: ``us.anthropic.claude-sonnet-5``
     """
     resolved_provider = (provider or _provider()).lower()
     # LLM_MODEL env var takes precedence when explicitly set;

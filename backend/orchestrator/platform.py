@@ -18,11 +18,12 @@ from core.platform_cache import (
 from core.security import require_api_key
 from models.agent import Agent, AgentStatus
 from models.platform_config import PlatformConfig
+from shared.llm import DEFAULT_MODEL
 
 router = APIRouter(prefix="/api/platform", tags=["platform"])
 
 _VERSION = "0.2.0"
-_DEFAULT_MODEL = "claude-sonnet-4-6"
+_DEFAULT_MODEL = DEFAULT_MODEL
 
 
 @router.get("/bootstrap")
@@ -53,6 +54,18 @@ async def platform_status(db: AsyncSession = Depends(get_db)) -> dict:
         "model": _DEFAULT_MODEL,
         "version": _VERSION,
     }
+
+
+@router.get("/models")
+async def get_models() -> dict:
+    """Return available models and current default (driven by LLM_MODEL env var)."""
+    available = [
+        {"id": "us.anthropic.claude-sonnet-5", "label": "claude-sonnet-5"},
+        {"id": "us.anthropic.claude-sonnet-4-6", "label": "claude-sonnet-4-6"},
+        {"id": "us.anthropic.claude-opus-4-7", "label": "claude-opus-4-7"},
+        {"id": "us.anthropic.claude-haiku-4-5", "label": "claude-haiku-4-5"},
+    ]
+    return {"default": _DEFAULT_MODEL, "models": available}
 
 
 @router.get("/config", dependencies=[Depends(require_api_key)])

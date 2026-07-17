@@ -267,6 +267,21 @@
       }).join('');
     }
 
+    // ── Load models for edit modal ────────────────────────────────────────────
+    async function loadEditModels(currentModel) {
+      try {
+        const res = await fetch('/api/platform/models');
+        const data = await res.json();
+        const sel = document.getElementById('edit-model');
+        const active = currentModel || data.default;
+        sel.innerHTML = data.models.map(m =>
+          `<option value="${m.id}"${m.id === active ? ' selected' : ''}>${m.label}${m.id === data.default ? ' (default)' : ''}</option>`
+        ).join('');
+      } catch (e) {
+        console.error('Failed to load models', e);
+      }
+    }
+
     // ── Edit modal ──────────────────────────────────────────────────────────────
     let _editingAgentId = null;
 
@@ -277,7 +292,7 @@
       document.getElementById('edit-name').value = agent.name || '';
       document.getElementById('edit-description').value = agent.description || '';
       document.getElementById('edit-version').value = agent.version || '';
-      document.getElementById('edit-model').value = agent.model || '';
+      loadEditModels(agent.model);
       document.getElementById('edit-invoke-url').value = agent.invoke_url || '';
       document.getElementById('edit-landing-page-url').value = agent.landing_page_url || '';
       document.getElementById('edit-uses-uap-llm').checked = agent.uses_uap_llm || false;
@@ -594,7 +609,9 @@
         </div>
         <div class="form-field">
           <label class="form-label" for="edit-model">Model</label>
-          <input id="edit-model" type="text" class="form-input">
+          <select id="edit-model" class="form-select">
+            <option value="">Loading models...</option>
+          </select>
         </div>
       </div>
       <div class="form-field">

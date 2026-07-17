@@ -5,6 +5,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from models.agent import AgentStatus
+from shared.llm import DEFAULT_MODEL
 
 
 class AgentCreate(BaseModel):
@@ -16,7 +17,7 @@ class AgentCreate(BaseModel):
     landing_page_url: str | None = None
     uses_uap_llm: bool = False
     system_prompt: str = ""
-    model: str = "claude-sonnet-4-6"
+    model: str = DEFAULT_MODEL
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
     tools: list[dict[str, Any]] = Field(default_factory=list)
 

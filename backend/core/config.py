@@ -1,5 +1,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from shared.llm import DEFAULT_MODEL
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -8,7 +10,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     backend_api_key: str = ""
     llm_provider: str = "anthropic"
-    llm_model: str = "claude-sonnet-4-6"
+    llm_model: str = DEFAULT_MODEL
     aws_region: str = "us-east-1"
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
