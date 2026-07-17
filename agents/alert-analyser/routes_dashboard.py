@@ -570,42 +570,76 @@ async def get_incidents() -> dict:
                 for s in ["ESCALATED", "INVESTIGATING", "RCA_COMPLETE", "REMEDIATING", "RESOLVED", "MANUAL"]
             ]
 
-            # 2. Aging buckets: only non-resolved/manual, bucketed by time waiting
+            # 2. Aging buckets: priority-based age bands
             result = await sess.execute(text("""
-                SELECT EXTRACT(EPOCH FROM (NOW() - COALESCE(escalated_at, created_at)))/60 as minutes_waiting
+                SELECT priority,
+                       EXTRACT(EPOCH FROM (NOW() - COALESCE(escalated_at, created_at)))/3600 as hours_waiting
                 FROM incident_management.incidents
-                WHERE status NOT IN ('RESOLVED', 'MANUAL')
+                WHERE status NOT IN ('RESOLVED', 'MANUAL', 'PURGED')
+                AND priority IN ('P1', 'P2', 'P3', 'P4')
             """))
             aging_rows = result.fetchall()
-            bucket_0_5 = sum(1 for r in aging_rows if r.minutes_waiting is not None and 0 <= r.minutes_waiting < 5)
-            bucket_5_15 = sum(1 for r in aging_rows if r.minutes_waiting is not None and 5 <= r.minutes_waiting < 15)
-            bucket_15_plus = sum(1 for r in aging_rows if r.minutes_waiting is not None and r.minutes_waiting >= 15)
+
+            # Priority-based age bands (hours)
+            # P1: <2h, 2-6h, 6-24h, 24h+
+            # P2: <4h, 4-12h, 12-48h, 48h+
+            # P3: <8h, 8-24h, 24-72h, 72h+
+            # P4: <72h, 72-168h, 168-720h, 720h+
+            priority_bands = {
+                'P1': [('< 2h', 0, 2), ('2–6h', 2, 6), ('6–24h', 6, 24), ('24h+', 24, None)],
+                'P2': [('< 4h', 0, 4), ('4–12h', 4, 12), ('12–48h', 12, 48), ('48h+', 48, None)],
+                'P3': [('< 8h', 0, 8), ('8–24h', 8, 24), ('24–72h', 24, 72), ('72h+', 72, None)],
+                'P4': [('< 3d', 0, 72), ('3–7d', 72, 168), ('7–30d', 168, 720), ('30d+', 720, None)],
+            }
+            priority_aging = {p: {band[0]: 0 for band in bands} for p, bands in priority_bands.items()}
+            for row in aging_rows:
+                p = row.priority
+                h = row.hours_waiting or 0
+                if p in priority_bands:
+                    for label, low, high in priority_bands[p]:
+                        if high is None and h >= low:
+                            priority_aging[p][label] += 1
+                            break
+                        elif high is not None and low <= h < high:
+                            priority_aging[p][label] += 1
+                            break
             aging_buckets = [
-                {"bucket": "0-5m", "count": bucket_0_5},
-                {"bucket": "5-15m", "count": bucket_5_15},
-                {"bucket": "15m+", "count": bucket_15_plus},
+                {"priority": p, "bands": [{"bucket": k, "count": v} for k, v in bands.items()]}
+                for p, bands in priority_aging.items()
             ]
 
-            # 2b. SLA breach detection: priority-based response time policy (minutes)
-            sla_thresholds = {"P1": 15, "P2": 30, "P3": 60, "P4": 240}
+            # 2b. SLA breach detection: priority-based resolution time thresholds (minutes)
+            sla_thresholds = {"P1": 120, "P2": 240, "P3": 480, "P4": 4320}  # resolution SLAs
             breached_count = 0
             within_sla_count = 0
+            per_priority_breach = {}
             try:
-                # Query active tickets with minutes_waiting and priority
                 result = await sess.execute(text("""
                     SELECT priority,
                            EXTRACT(EPOCH FROM (NOW() - COALESCE(escalated_at, created_at)))/60 as minutes_waiting
                     FROM incident_management.incidents
-                    WHERE status NOT IN ('RESOLVED', 'MANUAL')
+                    WHERE status NOT IN ('RESOLVED', 'MANUAL', 'PURGED')
+                    AND priority IN ('P1', 'P2', 'P3', 'P4')
                 """))
                 sla_rows = result.fetchall()
+                priority_counts = {"P1": {"breached": 0, "within": 0}, "P2": {"breached": 0, "within": 0}, "P3": {"breached": 0, "within": 0}, "P4": {"breached": 0, "within": 0}}
                 for row in sla_rows:
-                    if row.minutes_waiting is not None:
-                        threshold = sla_thresholds.get(row.priority, 240)
+                    if row.minutes_waiting is not None and row.priority in priority_counts:
+                        threshold = sla_thresholds.get(row.priority, 4320)
                         if row.minutes_waiting > threshold:
                             breached_count += 1
+                            priority_counts[row.priority]["breached"] += 1
                         else:
                             within_sla_count += 1
+                            priority_counts[row.priority]["within"] += 1
+                for p, counts in priority_counts.items():
+                    total_p = counts["breached"] + counts["within"]
+                    per_priority_breach[p] = {
+                        "breached": counts["breached"],
+                        "within": counts["within"],
+                        "breach_pct": round(counts["breached"] / total_p * 100, 1) if total_p > 0 else 0,
+                        "sla_minutes": sla_thresholds[p],
+                    }
             except Exception as _sla_e:
                 _log.error(f"SLA breach calculation error: {_sla_e}")
 
@@ -615,6 +649,7 @@ async def get_incidents() -> dict:
                 "breached_count": breached_count,
                 "within_sla_count": within_sla_count,
                 "breach_pct": round(breach_pct, 1),
+                "per_priority": per_priority_breach,
             }
 
             # 3. Aging longest wait: single ticket with max age (non-resolved/manual)
@@ -622,7 +657,7 @@ async def get_incidents() -> dict:
                 SELECT id, alert_id, title,
                        EXTRACT(EPOCH FROM (NOW() - COALESCE(escalated_at, created_at)))/60 as minutes_waiting
                 FROM incident_management.incidents
-                WHERE status NOT IN ('RESOLVED', 'MANUAL')
+                WHERE status NOT IN ('RESOLVED', 'MANUAL', 'PURGED')
                 ORDER BY minutes_waiting DESC
                 LIMIT 1
             """))
@@ -696,6 +731,8 @@ async def get_incidents() -> dict:
 async def get_incidents_list(
     status: str | None = None,
     priority: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
 ) -> dict:
     """Return filtered list of incident tickets, ordered oldest-first (longest-waiting first)."""
     from database import SessionLocal
@@ -712,7 +749,7 @@ async def get_incidents_list(
             sql = """
                 SELECT id, alert_id, priority, status, title, escalated_at, created_at, recurrence_count, related_ticket_id, resolved_externally, resolved_at
                 FROM incident_management.incidents
-                WHERE 1=1
+                WHERE status != 'PURGED'
             """
             params = {}
 
@@ -725,31 +762,42 @@ async def get_incidents_list(
                 params["priority"] = priority
 
             sql += " ORDER BY COALESCE(escalated_at, created_at) ASC"
-
+            if limit is not None:
+                sql += " LIMIT :limit OFFSET :offset"
+                params["limit"] = limit
+                params["offset"] = offset
             result = await sess.execute(text(sql), params)
             rows = result.fetchall()
 
-        # SLA thresholds for ticket prioritization (minutes)
+        # Get total count
+        count_sql = "SELECT COUNT(*) FROM incident_management.incidents WHERE status != 'PURGED'"
+        count_params = {}
+        if status:
+            count_sql += " AND status = :status"
+            count_params["status"] = status
+        if priority:
+            count_sql += " AND priority = :priority"
+            count_params["priority"] = priority
+        async with SessionLocal() as sess2:
+            count_result = await sess2.execute(text(count_sql), count_params)
+            total = count_result.scalar() or 0
+
         sla_thresholds = {"P1": 15, "P2": 30, "P3": 60, "P4": 240}
         from datetime import datetime, timezone
-
+        now = datetime.now(timezone.utc)
         tickets = []
         for row in rows:
-            # Calculate SLA breach status for active tickets
             sla_breached = False
             if row.status not in ('RESOLVED', 'MANUAL'):
                 try:
-                    now = datetime.now(timezone.utc)
                     waiting_since = row.escalated_at or row.created_at
                     if waiting_since:
-                        # Ensure waiting_since is timezone-aware
                         if waiting_since.tzinfo is None:
                             waiting_since = waiting_since.replace(tzinfo=timezone.utc)
                         minutes_waiting = (now - waiting_since).total_seconds() / 60
-                        threshold = sla_thresholds.get(row.priority, 240)
-                        sla_breached = minutes_waiting > threshold
+                        sla_breached = minutes_waiting > sla_thresholds.get(row.priority, 240)
                 except Exception:
-                    sla_breached = False
+                    pass
 
             tickets.append({
                 "id": str(row.id),
@@ -765,10 +813,96 @@ async def get_incidents_list(
                 "resolved_at": str(row.resolved_at) if row.resolved_at else None,
                 "sla_breached": sla_breached,
             })
-        return {"tickets": tickets}
+        return {"tickets": tickets, "total": total, "offset": offset, "limit": limit}
     except Exception as e:
         _log.error(f"incidents/list error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/dashboard/incidents/purge-preview")
+async def get_purge_preview() -> dict:
+    """Return count of tickets that would be purged based on current purge settings."""
+    from database import SessionLocal
+    from sqlalchemy import text
+    from routes_settings import _config
+    import logging
+    _log = logging.getLogger(__name__)
+    if SessionLocal is None:
+        return {"eligible_count": 0, "purge_days": 7, "enabled": False}
+    purge_days = int(_config.get("incident_purge_days", 7))
+    enabled = bool(_config.get("incident_purge_enabled", False))
+    try:
+        async with SessionLocal() as sess:
+            result = await sess.execute(text("""
+                SELECT COUNT(*), priority
+                FROM incident_management.incidents
+                WHERE status = 'ESCALATED'
+                AND purged_at IS NULL
+                AND COALESCE(escalated_at, created_at) < NOW() - INTERVAL '1 day' * :days
+                GROUP BY priority
+            """).bindparams(days=purge_days))
+            rows = result.fetchall()
+        by_priority = {row.priority: row.count for row in rows}
+        total = sum(by_priority.values())
+        return {
+            "eligible_count": total,
+            "by_priority": by_priority,
+            "purge_days": purge_days,
+            "enabled": enabled,
+        }
+    except Exception as e:
+        _log.error(f"purge-preview error: {e}")
+        return {"eligible_count": 0, "purge_days": purge_days, "enabled": enabled, "error": str(e)}
+
+
+@router.post("/dashboard/incidents/purge")
+async def run_purge(dry_run: bool = True) -> dict:
+    """Purge stale ESCALATED tickets. dry_run=true shows what would be purged without making changes."""
+    from database import SessionLocal
+    from sqlalchemy import text
+    from routes_settings import _config
+    from datetime import datetime, timezone
+    import logging
+    _log = logging.getLogger(__name__)
+    if SessionLocal is None:
+        return {"purged_count": 0, "dry_run": dry_run}
+    purge_days = int(_config.get("incident_purge_days", 7))
+    enabled = bool(_config.get("incident_purge_enabled", False))
+    if not enabled and not dry_run:
+        return {"purged_count": 0, "dry_run": dry_run, "error": "Purge is disabled. Enable in Settings first."}
+    purge_reason = f"SLA_BREACH_NO_ACTION_{purge_days}D"
+    try:
+        async with SessionLocal() as sess:
+            if dry_run:
+                result = await sess.execute(text("""
+                    SELECT COUNT(*) FROM incident_management.incidents
+                    WHERE status = 'ESCALATED'
+                    AND purged_at IS NULL
+                    AND COALESCE(escalated_at, created_at) < NOW() - INTERVAL '1 day' * :days
+                """).bindparams(days=purge_days))
+                count = result.scalar() or 0
+                return {"purged_count": count, "dry_run": True, "purge_days": purge_days, "purge_reason": purge_reason}
+            else:
+                now = datetime.now(timezone.utc)
+                result = await sess.execute(text("""
+                    UPDATE incident_management.incidents
+                    SET status = 'PURGED',
+                        purged_at = :now,
+                        purge_reason = :reason,
+                        updated_at = :now
+                    WHERE status = 'ESCALATED'
+                    AND purged_at IS NULL
+                    AND COALESCE(escalated_at, created_at) < NOW() - INTERVAL '1 day' * :days
+                    RETURNING id
+                """).bindparams(now=now, reason=purge_reason, days=purge_days))
+                purged_ids = result.fetchall()
+                await sess.commit()
+                count = len(purged_ids)
+                _log.info(f"Purged {count} stale ESCALATED tickets older than {purge_days} days")
+                return {"purged_count": count, "dry_run": False, "purge_days": purge_days, "purge_reason": purge_reason}
+    except Exception as e:
+        _log.error(f"purge error: {e}")
+        return {"purged_count": 0, "dry_run": dry_run, "error": str(e)}
 
 
 @router.get("/dashboard/incidents/{ticket_id}")

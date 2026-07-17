@@ -271,6 +271,7 @@
       <button class="tab-btn active" data-tab="data-source" role="tab">Data Source</button>
       <button class="tab-btn" data-tab="noise-tuning" role="tab">Noise Tuning</button>
       <button class="tab-btn" data-tab="escalation" role="tab">Escalation</button>
+      <button class="tab-btn" data-tab="incident-mgmt" role="tab">Incident Mgmt</button>
       <button class="tab-btn" data-tab="rag" role="tab">
         RAG &amp; Reasoning <span class="phase-badge">Phase 3</span>
       </button>
@@ -735,6 +736,55 @@
       </div>
     </div><!-- /#panel-autonomous -->
 
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- TAB 6: Incident Management                                -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <div class="tab-panel" id="panel-incident-mgmt">
+      <div class="card">
+        <div class="card-title">Incident Ticket Purge</div>
+        <div class="card-subtitle">Auto-purge stale ESCALATED tickets with no downstream action. Preserves audit trail — purged tickets are marked PURGED, not deleted.</div>
+
+        <div class="card-section">
+          <div class="card-section-title">Purge Settings</div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px;">
+            <div style="flex:1;min-width:200px;">
+              <label style="display:block;font-size:.83rem;font-weight:600;color:#475569;margin-bottom:6px;">Stale Ticket Threshold (days)</label>
+              <input type="number" id="purge-days" min="1" max="90" value="7"
+                style="width:100%;padding:8px 12px;border:1.5px solid #e2e8f0;border-radius:6px;font-size:.88rem;">
+              <div class="hint">ESCALATED tickets older than this many days will be eligible for purge.</div>
+            </div>
+            <div style="flex:1;min-width:200px;display:flex;align-items:center;gap:10px;padding-top:20px;">
+              <label style="display:flex;align-items:center;gap:8px;font-size:.88rem;cursor:pointer;">
+                <input type="checkbox" id="purge-enabled" style="width:16px;height:16px;cursor:pointer;">
+                Enable automatic purge
+              </label>
+            </div>
+          </div>
+          <button onclick="savePurgeSettings()" class="btn-primary" style="padding:8px 20px;background:#6366f1;color:#fff;border:none;border-radius:6px;font-size:.88rem;font-weight:600;cursor:pointer;">Save Settings</button>
+          <span id="purge-save-status" style="font-size:.83rem;margin-left:12px;"></span>
+        </div>
+
+        <div class="card-section">
+          <div class="card-section-title">Purge Preview</div>
+          <div id="purge-preview" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:16px;margin-bottom:12px;">
+            <div style="color:#64748b;font-size:.85rem;">Loading preview…</div>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <button onclick="runPurge(true)" style="padding:8px 16px;background:#f1f5f9;color:#475569;border:1.5px solid #e2e8f0;border-radius:6px;font-size:.85rem;font-weight:600;cursor:pointer;">🔍 Dry Run</button>
+            <button onclick="runPurge(false)" style="padding:8px 16px;background:#dc2626;color:#fff;border:none;border-radius:6px;font-size:.85rem;font-weight:600;cursor:pointer;">⚠ Run Purge</button>
+            <span id="purge-run-status" style="font-size:.83rem;color:#64748b;"></span>
+          </div>
+        </div>
+
+        <div class="card-section">
+          <div class="card-section-title">Purge Audit</div>
+          <div id="purge-audit" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:16px;">
+            <div style="color:#64748b;font-size:.85rem;">Loading audit stats…</div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /#panel-incident-mgmt -->
+
   </div><!-- /.container -->
   </div><!-- /.content -->
 
@@ -1106,6 +1156,10 @@
         if ($('esc-p2')) $('esc-p2').checked = escPriorities.includes('P2');
         if ($('esc-p3')) $('esc-p3').checked = escPriorities.includes('P3');
 
+        // Incident purge settings
+        if ($('purge-days')) $('purge-days').value = cfg.incident_purge_days || 7;
+        if ($('purge-enabled')) $('purge-enabled').checked = !!cfg.incident_purge_enabled;
+
         // Sync status section
         renderSyncStatus(cfg);
 
@@ -1117,6 +1171,104 @@
     }
 
     loadSettings();
+
+    // ── Incident Management / Purge ──────────────────────────────────────
+
+    const apiFetch = (path, opts = {}) => fetch(`${PROXY}${path}`, {
+      ...opts,
+      headers: { ...authHeaders(), ...opts.headers },
+    }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
+
+    async function loadPurgePreview() {
+      try {
+        const d = await apiFetch('/dashboard/incidents/purge-preview');
+        const el = $('purge-preview');
+        if (d.eligible_count === 0) {
+          el.innerHTML = '<div style="color:#16a34a;font-size:.85rem;">✓ No tickets eligible for purge.</div>';
+          return;
+        }
+        const byP = d.by_priority || {};
+        const rows = Object.entries(byP).sort().map(([p, c]) =>
+          `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #e2e8f0;font-size:.83rem;">
+            <span style="font-weight:600;">${p}</span><span>${c} tickets</span>
+          </div>`).join('');
+        el.innerHTML = `
+          <div style="font-size:.9rem;font-weight:600;color:#dc2626;margin-bottom:8px;">
+            ${d.eligible_count} tickets eligible for purge (older than ${d.purge_days} days)
+          </div>
+          ${rows}
+          <div style="font-size:.78rem;color:#64748b;margin-top:8px;">Purge is currently ${d.enabled ? '<span style="color:#16a34a">enabled</span>' : '<span style="color:#dc2626">disabled</span>'}.</div>
+        `;
+      } catch(e) {
+        $('purge-preview').innerHTML = '<div style="color:#dc2626;font-size:.83rem;">Failed to load preview.</div>';
+      }
+    }
+
+    async function loadPurgeAudit() {
+      try {
+        const d = await apiFetch('/dashboard/incidents/purge-preview');
+        const el = $('purge-audit');
+        el.innerHTML = `
+          <div style="font-size:.83rem;color:#475569;">
+            <div style="margin-bottom:4px;">Threshold: <strong>${d.purge_days} days</strong></div>
+            <div style="margin-bottom:4px;">Auto-purge: <strong>${d.enabled ? 'Enabled' : 'Disabled'}</strong></div>
+            <div style="color:#64748b;font-size:.78rem;margin-top:8px;">Full purge history visible in DB: <code>SELECT * FROM incident_management.incidents WHERE status = 'PURGED' ORDER BY purged_at DESC</code></div>
+          </div>
+        `;
+      } catch(e) {}
+    }
+
+    async function savePurgeSettings() {
+      const days = parseInt($('purge-days').value) || 7;
+      const enabled = $('purge-enabled').checked;
+      const statusEl = $('purge-save-status');
+      statusEl.textContent = 'Saving…';
+      try {
+        await apiFetch('/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ incident_purge_days: days, incident_purge_enabled: enabled }),
+        });
+        statusEl.textContent = '✓ Saved';
+        statusEl.style.color = '#16a34a';
+        await loadPurgePreview();
+        await loadPurgeAudit();
+      } catch(e) {
+        statusEl.textContent = 'Failed to save';
+        statusEl.style.color = '#dc2626';
+      }
+    }
+
+    async function runPurge(dryRun) {
+      const statusEl = $('purge-run-status');
+      statusEl.textContent = dryRun ? 'Running dry run…' : 'Purging…';
+      statusEl.style.color = '#64748b';
+      try {
+        const d = await apiFetch(`/dashboard/incidents/purge?dry_run=${dryRun}`, { method: 'POST' });
+        if (dryRun) {
+          statusEl.textContent = `Dry run: ${d.purged_count} tickets would be purged (reason: ${d.purge_reason})`;
+          statusEl.style.color = '#d97706';
+        } else {
+          statusEl.textContent = `✓ Purged ${d.purged_count} tickets (reason: ${d.purge_reason})`;
+          statusEl.style.color = '#16a34a';
+          await loadPurgePreview();
+          await loadPurgeAudit();
+        }
+      } catch(e) {
+        statusEl.textContent = 'Purge failed';
+        statusEl.style.color = '#dc2626';
+      }
+    }
+
+    // Wire tab switching to load purge data
+    const origTabClick = document.querySelectorAll('.tab-btn')[0]?.onclick;
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tab = btn.dataset.tab;
+        if (tab === 'incident-mgmt') { loadPurgePreview(); loadPurgeAudit(); }
+      });
+    });
+
   </script>
   <script>
     // ── Fix nav links in standalone mode ──────────────────────────────────

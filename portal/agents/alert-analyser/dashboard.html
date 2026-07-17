@@ -1533,8 +1533,9 @@
         const resolutionRing = data.resolution_ring || {};
         const recurrenceSignal = data.recurrence_signal || [];
 
-        const listData = await api('/dashboard/incidents/list').catch(() => ({ tickets: [] }));
+        const listData = await api('/dashboard/incidents/list?limit=200').catch(() => ({ tickets: [], total: 0 }));
         const tickets = listData.tickets || [];
+        const totalTickets = listData.total || tickets.length;
 
         // Store for filtering/sorting
         _allIncidentTickets = tickets;
@@ -1570,9 +1571,19 @@
         const pipelineData = pipelineFlow.map(p => p.count);
         const pipelineColors = pipelineFlow.map(p => statusColors[p.status] || '#64748b');
 
-        const agingLabels = agingBuckets.map(b => b.bucket);
-        const agingData = agingBuckets.map(b => b.count);
-        const agingColors = ['#0EA5E9', '#f59e0b', '#dc2626'];
+        // Priority-based aging chart data
+        const agingBandLabels = ['< SLA', 'Mild', 'Moderate', 'Critical'];
+        const agingPriorityColors = { P1: '#dc2626', P2: '#f59e0b', P3: '#6366f1', P4: '#0EA5E9' };
+        const agingPriorityNames = (agingBuckets || []).map(pb => pb.priority);
+        const agingBandCount = agingBuckets?.[0]?.bands?.length || 4;
+        const agingBandColors = ['#16a34a', '#f59e0b', '#f97316', '#dc2626'];
+        const agingBandDatasets = Array.from({ length: agingBandCount }, (_, i) => ({
+          label: agingBuckets?.[0]?.bands?.[i]?.bucket || `Band ${i+1}`,
+          data: (agingBuckets || []).map(pb => pb.bands[i]?.count || 0),
+          backgroundColor: agingBandColors[i],
+          borderRadius: 0,
+          borderWidth: 0,
+        }));
 
         const agingCallout = agingLongest ? `
           <div style="margin-top:12px;padding:10px;background:var(--navy-2);border-radius:6px;font-size:.8rem;border-left:3px solid #dc2626">
@@ -1583,9 +1594,21 @@
         ` : '';
 
         const slaBreachColor = slaBreachData.breach_pct > 50 ? '#dc2626' : (slaBreachData.breach_pct >= 20 ? '#f59e0b' : '#16a34a');
+        const perPriority = slaBreachData.per_priority || {};
+        const priorityRows = ['P1','P2','P3','P4'].filter(p => perPriority[p]).map(p => {
+          const pd = perPriority[p];
+          const color = pd.breach_pct > 80 ? '#dc2626' : pd.breach_pct > 20 ? '#f59e0b' : '#16a34a';
+          const slaHours = pd.sla_minutes >= 60 ? (pd.sla_minutes/60 >= 24 ? `${Math.round(pd.sla_minutes/60/24)}d` : `${Math.round(pd.sla_minutes/60)}h`) : `${pd.sla_minutes}m`;
+          const withinPct = pd.breach_pct > 0 ? (100 - pd.breach_pct).toFixed(1) : 100;
+          return `<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:1px solid var(--border);font-size:.75rem">
+            <span style="font-weight:600;color:var(--text)">${p} <span style="color:var(--text-dim);font-weight:400">(SLA ${slaHours})</span></span>
+            <span><strong style="color:${color}">${pd.breached.toLocaleString()}</strong> <span style="color:${color}">(breach rate: ${pd.breach_pct}%)</span> · <strong style="color:#16a34a">${pd.within.toLocaleString()}</strong> <span style="color:#16a34a">(within SLA: ${withinPct}%)</span></span>
+          </div>`;
+        }).join('');
         const slaBreachSummary = slaBreachData.breached_count !== undefined ? `
           <div style="margin-top:12px;padding:10px;background:var(--navy-2);border-radius:6px;font-size:.8rem;border-left:3px solid ${slaBreachColor}">
-            <div style="color:var(--text-muted);font-size:.75rem">SLA Breach: <strong style="color:${slaBreachColor}">${slaBreachData.breached_count}</strong> breached · <strong style="color:#16a34a">${slaBreachData.within_sla_count}</strong> within SLA <strong style="color:${slaBreachColor}">(${slaBreachData.breach_pct}%)</strong></div>
+            <div style="color:var(--text-muted);font-size:.75rem;margin-bottom:6px">Overall: <strong style="color:${slaBreachColor}">${slaBreachData.breached_count.toLocaleString()}</strong> <span style="color:${slaBreachColor}">(breach rate: ${slaBreachData.breach_pct}%)</span> · <strong style="color:#16a34a">${slaBreachData.within_sla_count.toLocaleString()}</strong> <span style="color:#16a34a">(within SLA: ${(100 - slaBreachData.breach_pct).toFixed(1)}%)</span></div>
+            ${priorityRows}
           </div>
         ` : '';
 
@@ -1691,7 +1714,7 @@
             </div>
             <div class="chart-card">
               <div class="chart-card__title">Ticket Aging</div>
-              <div class="chart-wrap" style="max-height:240px"><canvas id="agingChart"></canvas></div>
+              <div class="chart-wrap" style="max-height:300px"><canvas id="agingChart"></canvas></div>
               ${agingCallout}
               ${slaBreachSummary}
             </div>
@@ -1752,17 +1775,17 @@
               plugins: {
                 legend: { display: false },
                 datalabels: {
-                  color: '#ffffff',
-                  textStrokeColor: 'rgba(0,0,0,0.6)',
-                  textStrokeWidth: 3,
-                  font: { size: 11 },
+                  color: 'var(--text)',
+                  font: { size: 11, weight: '600' },
                   anchor: 'end',
                   align: 'right',
-                  clamp: true,
-                  formatter: function(value) { return value > 0 ? value : ''; }
+                  clamp: false,
+                  clip: false,
+                  formatter: function(value) { return value > 0 ? value.toLocaleString() : ''; }
                 }
               },
               scales: { x: { beginAtZero: true } },
+              layout: { padding: { right: 60 } },
             },
           });
 
@@ -1781,19 +1804,35 @@
           if (ac) charts['aging'] = new Chart(ac, {
             type: 'bar',
             data: {
-              labels: agingLabels,
-              datasets: [{
-                label: 'Tickets',
-                data: agingData,
-                backgroundColor: agingColors,
-                borderWidth: 0,
-              }],
+              labels: agingPriorityNames,
+              datasets: agingBandDatasets,
             },
             options: {
-              indexAxis: 'y',
               responsive: true,
-              plugins: { legend: { display: false }, datalabels: { display: true, color: '#ffffff', textStrokeColor: 'rgba(0,0,0,0.6)', textStrokeWidth: 3, font: { size: 11 }, anchor: 'end', align: 'right', clamp: true, formatter: function(value) { return value > 0 ? value : ''; } } },
-              scales: { x: { beginAtZero: true } },
+              plugins: {
+                legend: { display: true, position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+                datalabels: {
+                  display: function(context) {
+                    // Only show label on the last (top) dataset for each bar
+                    const datasetCount = context.chart.data.datasets.length;
+                    return context.datasetIndex === datasetCount - 1;
+                  },
+                  color: 'var(--text)',
+                  font: { size: 11, weight: '700' },
+                  anchor: 'end',
+                  align: 'top',
+                  formatter: function(value, context) {
+                    // Sum all datasets for this index to get stack total
+                    const total = context.chart.data.datasets.reduce((sum, ds) => sum + (ds.data[context.dataIndex] || 0), 0);
+                    return total > 0 ? total.toLocaleString() : '';
+                  }
+                }
+              },
+              layout: { padding: { top: 24 } },
+              scales: {
+                x: { beginAtZero: true, stacked: true },
+                y: { beginAtZero: true, stacked: true }
+              },
             },
           });
 

@@ -395,6 +395,8 @@ class SettingsPayload(BaseModel):
     noise_threshold_window_mins: int = 60
     noise_threshold_close_secs: int = 300
     sync_window_days: int = 7
+    incident_purge_days: int = 7
+    incident_purge_enabled: bool = False
     priority_weights: dict = {"P1": -3, "P2": -2, "P3": 0, "P4": 1, "P5": 2}
     noise_classification_threshold: int = 0
     noise_suspect_threshold: int = -2
@@ -412,6 +414,8 @@ async def get_settings() -> dict:
         if _config.get("api_key") else ""
     )
     result["sync_window_days"] = _config.get("sync_window_days", 7)
+    result["incident_purge_days"] = _config.get("incident_purge_days", 7)
+    result["incident_purge_enabled"] = _config.get("incident_purge_enabled", False)
     result["priority_weights"] = _config.get(
         "priority_weights", {"P1": -3, "P2": -2, "P3": 0, "P4": 1, "P5": 2}
     )
