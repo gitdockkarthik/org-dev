@@ -255,8 +255,37 @@ async def _sync_loop() -> None:
             logger.debug("Auto-sync: OpsGenie not fully configured — skipping tick")
 
 
+async def _ensure_database() -> None:
+    """Create the agent's database if it does not exist."""
+    import asyncpg
+    if not settings.database_url:
+        return
+    try:
+        db_name = settings.database_url.split('/')[-1]
+        postgres_url = settings.database_url.rsplit('/', 1)[0] + '/postgres'
+        postgres_url = postgres_url.replace('postgresql+asyncpg://', 'postgresql://')
+        conn = await asyncpg.connect(postgres_url)
+        try:
+            exists = await conn.fetchval(
+                "SELECT 1 FROM pg_database WHERE datname=$1", db_name
+            )
+            if not exists:
+                await conn.execute(f'CREATE DATABASE "{db_name}"')
+                logger.info("_ensure_database: created database %s", db_name)
+            else:
+                logger.info("_ensure_database: database %s already exists", db_name)
+        finally:
+            await conn.close()
+    except Exception as e:
+        logger.warning("_ensure_database: failed: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    try:
+        await _ensure_database()
+    except Exception:
+        logger.exception("_ensure_database failed")
     try:
         await _run_migrations()
     except Exception:
@@ -305,8 +334,18 @@ app.include_router(settings_router)
 
 
 @app.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok", "agent": settings.agent_slug}
+async def health():
+    from database import SessionLocal
+    from sqlalchemy import text
+    from fastapi.responses import JSONResponse
+    if SessionLocal is None:
+        return JSONResponse(status_code=503, content={"status": "error", "reason": "database not configured", "agent": settings.agent_slug})
+    try:
+        async with SessionLocal() as session:
+            await session.execute(text("SELECT 1"))
+        return {"status": "ok", "agent": settings.agent_slug}
+    except Exception as e:
+        return JSONResponse(status_code=503, content={"status": "error", "reason": "database unavailable", "agent": settings.agent_slug})
 
 
 @app.post("/invoke", response_model=InvokeResponse)
