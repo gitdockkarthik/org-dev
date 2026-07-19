@@ -621,11 +621,12 @@ async def lifespan(app: FastAPI):
                                             data["cluster"]["under_replicated_partitions"] = total_urp
                                             data["cluster"]["partition_count"] = total_partitions
 
-                                        # Keep top 500 for display: anomalous first (already sorted by describe_all_topics)
-                                        data["topics"] = []  # KPI counts computed above; topics populated after Prometheus
+                                        # Store top 500 topics from describe for display (Prometheus enriches later)
+                                        top_topics = described_topics[:500]
+                                        data["topics"] = top_topics
                                         _ks.update_topics_structure(
                                             str(c.get("id", "default")),
-                                            [],
+                                            top_topics,
                                             {k: data["counts"][k] for k in
                                              ["total_topics","total_rf1","total_urp","total_partitions","total_brokers","total_groups"]
                                              if k in data.get("counts",{})}
