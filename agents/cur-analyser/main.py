@@ -965,7 +965,9 @@ async def ds_enriched_values(report_id: int) -> dict:
         from tools.duckdb_engine import _detect_account_col
 
         path = get_report_path(report_id)
-        con = duckdb.connect(":memory:")
+        import tempfile, os
+        _tmp_db = tempfile.mktemp(suffix=".duckdb")
+        con = duckdb.connect(_tmp_db)
         values: dict[str, list] = {}
         try:
             safe_path = str(path).replace("'", "''")
@@ -984,6 +986,10 @@ async def ds_enriched_values(report_id: int) -> dict:
                 values["accounts"] = [r[0] for r in rows]
         finally:
             con.close()
+            try:
+                os.unlink(_tmp_db)
+            except Exception:
+                pass
         return {"report_id": report_id, "values": values}
 
     from report_store import get_report_csv
