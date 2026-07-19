@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr
@@ -39,10 +40,13 @@ class UserOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class UserCreated(UserOut):
+    generated_password: str
+
+
 class CreateUserRequest(BaseModel):
     name: str
     email: EmailStr
-    password: str
     roles: str = "user"
 
 
@@ -50,10 +54,6 @@ class UpdateUserRequest(BaseModel):
     name: str | None = None
     roles: str | None = None
     is_active: bool | None = None
-
-
-class ResetPasswordRequest(BaseModel):
-    new_password: str
 
 
 # ── Auth mode (public) ────────────────────────────────────────────────────
@@ -116,7 +116,7 @@ async def me(current_user: User = Depends(get_current_user)):
 # ── Admin user management ──────────────────────────────────────────────────
 
 
-@router.post("/api/admin/users", response_model=UserOut, status_code=status.HTTP_201_CREATED)
+@router.post("/api/admin/users", response_model=UserCreated, status_code=status.HTTP_201_CREATED)
 async def create_user(
     body: CreateUserRequest,
     current_user: User = Depends(get_current_user),
@@ -127,6 +127,7 @@ async def create_user(
     if not all(r.strip() in valid_roles for r in body.roles.split(",")):
         raise HTTPException(status_code=400, detail="roles must be comma-separated list of: admin, developer, user")
 
+    generated_password = secrets.token_urlsafe(12)
     async with AsyncSessionLocal() as session:
         existing = await session.execute(select(User).where(User.email == body.email))
         if existing.scalar_one_or_none():
@@ -135,14 +136,22 @@ async def create_user(
         new_user = User(
             name=body.name,
             email=body.email,
-            password_hash=hash_password(body.password),
+            password_hash=hash_password(generated_password),
             roles=body.roles,
+            must_change_password=True,
         )
         session.add(new_user)
         await session.commit()
         await session.refresh(new_user)
 
-    return new_user
+    return UserCreated(
+        id=new_user.id,
+        name=new_user.name,
+        email=new_user.email,
+        roles=new_user.roles,
+        created_at=new_user.created_at,
+        generated_password=generated_password,
+    )
 
 
 @router.get("/api/admin/users", response_model=list[UserOut])
@@ -217,20 +226,51 @@ async def delete_user(user_id: int, current_user: User = Depends(get_current_use
         await session.commit()
 
 
-@router.put("/api/admin/users/{user_id}/password", response_model=UserOut)
-async def reset_password(
+class PasswordRevealed(BaseModel):
+    generated_password: str
+
+
+@router.put("/api/admin/users/{user_id}/password", response_model=PasswordRevealed)
+async def reset_user_password(
     user_id: int,
-    body: ResetPasswordRequest,
     current_user: User = Depends(get_current_user),
 ):
     require_admin(current_user)
 
+    generated_password = secrets.token_urlsafe(12)
     async with AsyncSessionLocal() as session:
         user = await session.get(User, user_id)
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
-        user.password_hash = hash_password(body.new_password)
+        user.password_hash = hash_password(generated_password)
+        user.must_change_password = True
         await session.commit()
-        await session.refresh(user)
 
-    return user
+    return PasswordRevealed(generated_password=generated_password)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+    confirm_password: str
+
+
+@router.put("/api/auth/me/password")
+async def change_own_password(
+    body: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+):
+    if body.new_password != body.confirm_password:
+        raise HTTPException(status_code=400, detail="Passwords do not match")
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    if not verify_password(body.current_password, current_user.password_hash):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+
+    async with AsyncSessionLocal() as session:
+        user = await session.get(User, current_user.id)
+        user.password_hash = hash_password(body.new_password)
+        user.must_change_password = False
+        await session.commit()
+
+    return {"ok": True}

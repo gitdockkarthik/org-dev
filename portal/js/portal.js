@@ -63,6 +63,153 @@ async function initPortal() {
 // Expose as a Promise so pages can await portalReady before making authenticated calls.
 const portalReady = initPortal();
 
+// ── Current user cache ──────────────────────────────────────────────────────
+let _currentUser = null;
+
+async function fetchCurrentUser() {
+  if (_currentUser) return _currentUser;
+  try {
+    const res = await fetch('/api/auth/me', { credentials: 'include' });
+    if (!res.ok) return null;
+    _currentUser = await res.json();
+    return _currentUser;
+  } catch {
+    return null;
+  }
+}
+
+// ── Auth gate ───────────────────────────────────────────────────────────────
+async function requireAuth() {
+  const mode = window.__CONFIG__?.AUTH_MODE || 'none';
+  if (mode !== 'local') return null;
+  const user = await fetchCurrentUser();
+  if (!user) {
+    window.location.replace('/login');
+    return null;
+  }
+  return user;
+}
+
+// ── User badge ──────────────────────────────────────────────────────────────
+function mountUserBadge(slotSelector) {
+  const mode = window.__CONFIG__?.AUTH_MODE || 'none';
+  const slot = document.querySelector(slotSelector);
+  if (!slot) return;
+  if (mode !== 'local') { slot.style.display = 'none'; return; }
+
+  fetchCurrentUser().then(user => {
+    if (!user) return;
+    const initial = (user.name || user.email || '?')[0].toUpperCase();
+    const roles = (user.roles || 'user').split(',').map(r => r.trim());
+    const rolePills = roles.map(r =>
+      `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:.72rem;font-weight:600;background:${
+        r === 'admin' ? 'rgba(16,185,129,.15)' : r === 'developer' ? 'rgba(99,102,241,.15)' : 'rgba(217,119,6,.15)'
+      };color:${
+        r === 'admin' ? '#10b981' : r === 'developer' ? '#6366f1' : '#d97706'
+      }">${r}</span>`
+    ).join(' ');
+
+    slot.innerHTML = `
+      <div style="position:relative;display:inline-block;">
+        <button id="user-badge-btn" style="width:32px;height:32px;border-radius:50%;background:var(--accent);border:none;color:#fff;font-weight:700;font-size:.88rem;cursor:pointer;display:flex;align-items:center;justify-content:center;" onclick="document.getElementById('user-badge-dropdown').classList.toggle('open')">
+          ${initial}
+        </button>
+        <div id="user-badge-dropdown" style="display:none;position:absolute;right:0;top:40px;background:#ffffff;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;min-width:220px;z-index:1000;box-shadow:0 4px 16px rgba(0,0,0,.15);">
+          <div style="font-weight:600;color:#1e293b;font-size:.9rem;margin-bottom:2px;">${user.name}</div>
+          <div style="color:#64748b;font-size:.78rem;margin-bottom:8px;">${user.email}</div>
+          <div style="margin-bottom:12px;">${rolePills}</div>
+          <hr style="border:none;border-top:1px solid #e2e8f0;margin-bottom:10px;">
+          <a href="#" onclick="openChangePasswordModal();return false;" style="display:block;color:#475569;font-size:.83rem;margin-bottom:8px;text-decoration:none;">🔑 Change Password</a>
+          <a href="#" onclick="portalLogout();return false;" style="display:block;color:var(--danger, #dc2626);font-size:.83rem;text-decoration:none;">Sign out</a>
+        </div>
+      </div>`;
+
+    // Close dropdown on outside click
+    document.addEventListener('click', e => {
+      const btn = document.getElementById('user-badge-btn');
+      const dd = document.getElementById('user-badge-dropdown');
+      if (dd && btn && !btn.contains(e.target) && !dd.contains(e.target)) {
+        dd.classList.remove('open');
+        dd.style.display = 'none';
+      }
+    });
+
+    // Toggle display on open class
+    const observer = new MutationObserver(() => {
+      const dd = document.getElementById('user-badge-dropdown');
+      if (dd) dd.style.display = dd.classList.contains('open') ? 'block' : 'none';
+    });
+    const dd = document.getElementById('user-badge-dropdown');
+    if (dd) observer.observe(dd, { attributes: true, attributeFilter: ['class'] });
+  });
+}
+
+async function portalLogout() {
+  await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+  window.location.href = '/login';
+}
+
+// ── Change Password Modal ───────────────────────────────────────────────────
+function openChangePasswordModal() {
+  const dd = document.getElementById('user-badge-dropdown');
+  if (dd) { dd.classList.remove('open'); dd.style.display = 'none'; }
+
+  let modal = document.getElementById('change-pw-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'change-pw-modal';
+    modal.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;align-items:center;justify-content:center;';
+    modal.innerHTML = `
+      <div style="background:var(--navy-1);border-radius:8px;padding:28px;width:360px;border:1px solid var(--border);">
+        <h3 style="margin:0 0 18px 0;font-size:1rem;color:var(--text);">Change Password</h3>
+        <div style="margin-bottom:12px;">
+          <label style="display:block;font-size:.83rem;font-weight:600;color:var(--text-muted);margin-bottom:6px;">Current Password</label>
+          <input id="cp-current" type="password" style="width:100%;padding:8px 12px;background:var(--navy-2);border:1.5px solid var(--border-hi);border-radius:6px;color:var(--text);font-size:.88rem;box-sizing:border-box;">
+        </div>
+        <div style="margin-bottom:12px;">
+          <label style="display:block;font-size:.83rem;font-weight:600;color:var(--text-muted);margin-bottom:6px;">New Password</label>
+          <input id="cp-new" type="password" style="width:100%;padding:8px 12px;background:var(--navy-2);border:1.5px solid var(--border-hi);border-radius:6px;color:var(--text);font-size:.88rem;box-sizing:border-box;">
+        </div>
+        <div style="margin-bottom:16px;">
+          <label style="display:block;font-size:.83rem;font-weight:600;color:var(--text-muted);margin-bottom:6px;">Confirm New Password</label>
+          <input id="cp-confirm" type="password" style="width:100%;padding:8px 12px;background:var(--navy-2);border:1.5px solid var(--border-hi);border-radius:6px;color:var(--text);font-size:.88rem;box-sizing:border-box;">
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <button onclick="submitChangePassword()" style="padding:9px 20px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:.88rem;font-weight:600;cursor:pointer;">Save</button>
+          <button onclick="document.getElementById('change-pw-modal').style.display='none'" style="padding:9px 16px;background:transparent;color:var(--text-muted);border:1.5px solid var(--border-hi);border-radius:6px;font-size:.88rem;cursor:pointer;">Cancel</button>
+          <span id="cp-status" style="font-size:.83rem;"></span>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+  }
+  modal.style.display = 'flex';
+}
+
+async function submitChangePassword() {
+  const current = document.getElementById('cp-current').value;
+  const newPw = document.getElementById('cp-new').value;
+  const confirm = document.getElementById('cp-confirm').value;
+  const statusEl = document.getElementById('cp-status');
+  statusEl.textContent = 'Saving…';
+  statusEl.style.color = 'var(--text-muted)';
+  try {
+    const r = await fetch('/api/auth/me/password', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ current_password: current, new_password: newPw, confirm_password: confirm }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+    statusEl.textContent = '✓ Password changed';
+    statusEl.style.color = 'var(--success, #16a34a)';
+    setTimeout(() => { document.getElementById('change-pw-modal').style.display = 'none'; }, 1500);
+  } catch (err) {
+    statusEl.textContent = err.message;
+    statusEl.style.color = 'var(--danger, #dc2626)';
+  }
+}
+
 // ── Public API ──────────────────────────────────────────────────────────────────
 
 /** Fetch published agents (no auth required). */
@@ -75,6 +222,7 @@ async function fetchAllAgents({ status } = {}) {
   const qs = status ? `?status=${encodeURIComponent(status)}` : '';
   return _json(await fetch(`${BACKEND_URL}/api/registry/agents${qs}`, {
     headers: _authHeaders(),
+    credentials: 'include',
   }));
 }
 

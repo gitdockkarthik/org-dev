@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.auth import get_current_user, require_admin, require_developer
 from core.database import get_db
 from models.developer_key import DeveloperKey
+from models.agent_owner import AgentOwner
 from models.user import User
 
 router = APIRouter()
@@ -93,7 +94,20 @@ async def list_keys(
     current_user: User = Depends(get_current_user),
 ):
     require_developer(current_user)
-    result = await db.execute(select(DeveloperKey).order_by(DeveloperKey.created_at.desc()))
+    roles = (current_user.roles or "").split(",")
+    # Admin sees all keys; developer sees only keys for agents they own
+    if "admin" in roles:
+        result = await db.execute(select(DeveloperKey).order_by(DeveloperKey.created_at.desc()))
+    else:
+        owned = await db.execute(
+            select(AgentOwner.agent_slug).where(AgentOwner.user_email == current_user.email)
+        )
+        owned_slugs = [r[0] for r in owned.fetchall()]
+        result = await db.execute(
+            select(DeveloperKey)
+            .where(DeveloperKey.agent_slug.in_(owned_slugs))
+            .order_by(DeveloperKey.created_at.desc())
+        )
     return result.scalars().all()
 
 

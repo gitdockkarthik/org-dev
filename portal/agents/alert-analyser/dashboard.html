@@ -106,7 +106,7 @@
     .ticket-modal-details pre { margin: 0; padding: 10px 14px; overflow-x: auto; font-size: .8rem; color: var(--text-muted); background: var(--navy-3); font-family: 'Courier New', monospace; }
   </style>
 </head>
-<body>
+<body style="visibility:hidden">
 
   <header class="topbar">
     <a href="/" class="topbar__brand">
@@ -117,10 +117,13 @@
     </a>
     <nav class="topbar__nav">
       <a href="/" class="topbar__link">Agents</a>
-      <a href="/admin/" class="topbar__link">Admin</a>
+      <a href="/admin/" class="topbar__link" id="nav-admin" style="display:none">Admin</a>
       <a href="/docs-hub/" class="topbar__link" target="_blank">📚 Docs</a>
     </nav>
-    <div class="topbar__right" style="font-size:.85rem;color:var(--text-muted)">Alert Analyser</div>
+    <div class="topbar__right" style="display:flex;align-items:center;gap:12px;">
+      <span style="font-size:.85rem;color:var(--text-muted)">Alert Analyser</span>
+      <div id="user-badge-slot"></div>
+    </div>
   </header>
 
   <nav class="subnav">
@@ -2048,6 +2051,28 @@
         el.href = el.dataset.standaloneHref;
       });
     }
+
+    mountUserBadge('#user-badge-slot');
+    (function() {
+      const authMode = window.__CONFIG__?.AUTH_MODE || 'none';
+      const adminLink = document.getElementById('nav-admin');
+      if (authMode !== 'local') {
+        if (adminLink) adminLink.style.display = '';
+        document.body.style.visibility = 'visible';
+        return;
+      }
+      fetchCurrentUser().then(user => {
+        if (!adminLink) { document.body.style.visibility = 'visible'; return; }
+        if (!user) { adminLink.style.display = 'none'; document.body.style.visibility = 'visible'; return; }
+        const roles = (user.roles || '').split(',');
+        if (roles.includes('admin') || roles.includes('developer')) {
+          adminLink.style.display = '';
+        } else {
+          adminLink.style.display = 'none';
+        }
+        document.body.style.visibility = 'visible';
+      });
+    })();
   </script>
 </body>
 </html>

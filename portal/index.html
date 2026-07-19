@@ -6,7 +6,7 @@
   <title>Unified Agent Platform</title>
   <link rel="stylesheet" href="/css/style.css?v=3">
 </head>
-<body class="catalogue-page">
+<body class="catalogue-page" style="visibility:hidden">
 
   <!-- Top bar -->
   <header class="topbar">
@@ -18,16 +18,12 @@
     </a>
     <nav class="topbar__nav">
       <a href="/" class="topbar__link topbar__link--active">Agents</a>
-      <a href="/admin/" class="topbar__link">Admin</a>
+      <a href="/admin/" class="topbar__link" id="nav-admin" style="display:none">Admin</a>
       <a href="/docs-hub/" class="topbar__link" target="_blank">📚 Docs</a>
     </nav>
-    <div class="topbar__right">
-      <button id="logout-btn" onclick="logout()"
-        class="btn btn--ghost btn--sm"
-        style="display:none;margin-right:8px">
-        Sign out
-      </button>
-      <a href="/admin/register" class="btn btn--primary btn--sm">+ Register Agent</a>
+    <div class="topbar__right" style="display:flex;align-items:center;gap:12px;">
+      <a href="/admin/register" class="btn btn--primary btn--sm" id="btn-register-agent" style="display:none">+ Register Agent</a>
+      <div id="user-badge-slot"></div>
     </div>
   </header>
 
@@ -81,15 +77,19 @@
     (async function checkAuth() {
       try {
         const modeRes = await fetch('/api/auth/mode', { credentials: 'include' });
-        if (!modeRes.ok) return;
+        if (!modeRes.ok) { document.body.style.visibility = 'visible'; return; }
         const { mode } = await modeRes.json();
         if (mode === 'local') {
           const meRes = await fetch('/api/auth/me', { credentials: 'include' });
           if (meRes.status === 401) {
             window.location.replace('/login');
+          } else {
+            document.body.style.visibility = 'visible';
           }
+        } else {
+          document.body.style.visibility = 'visible';
         }
-      } catch (_) { /* backend unreachable — let portal load and show its own error */ }
+      } catch (_) { document.body.style.visibility = 'visible'; /* backend unreachable — let portal load and show its own error */ }
     })();
 
     let allAgents = [];
@@ -208,17 +208,28 @@
       ));
     });
 
+    mountUserBadge('#user-badge-slot');
     const authMode = window.__CONFIG__?.AUTH_MODE || 'none';
     if (authMode === 'local') {
-      document.getElementById('logout-btn').style.display = '';
-    }
-
-    async function logout() {
-      await fetch('/api/auth/logout', {
-        method: 'POST',
-        credentials: 'include',
+      fetchCurrentUser().then(user => {
+        const adminLink = document.getElementById('nav-admin');
+        if (!adminLink) return;
+        if (!user) { adminLink.style.display = 'none'; return; }
+        const roles = (user.roles || '').split(',');
+        if (roles.includes('admin') || roles.includes('developer')) {
+          adminLink.style.display = '';
+        } else {
+          adminLink.style.display = 'none';
+        }
+        const registerBtn = document.getElementById('btn-register-agent');
+        if (registerBtn && (roles.includes('admin') || roles.includes('developer'))) {
+          registerBtn.style.display = '';
+        }
       });
-      window.location.href = '/login';
+    } else {
+      const adminLink = document.getElementById('nav-admin');
+      if (adminLink) { adminLink.style.display = ''; adminLink.style.display = ''; }
+      document.body.style.visibility = 'visible';
     }
 
     load();

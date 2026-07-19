@@ -249,7 +249,7 @@
     @media (max-width: 768px) { .subnav { padding: 0 20px; } .content { padding: 1rem; } }
   </style>
 </head>
-<body>
+<body style="visibility:hidden">
 
   <header class="topbar">
     <a href="/" class="topbar__brand">
@@ -260,10 +260,13 @@
     </a>
     <nav class="topbar__nav">
       <a href="/" class="topbar__link">Agents</a>
-      <a href="/admin/" class="topbar__link">Admin</a>
+      <a href="/admin/" class="topbar__link" id="nav-admin" style="display:none">Admin</a>
       <a href="/docs-hub/" class="topbar__link" target="_blank">📚 Docs</a>
     </nav>
-    <div class="topbar__right" style="font-size:.85rem;color:var(--text-muted)">CUR Analyser</div>
+    <div class="topbar__right" style="display:flex;align-items:center;gap:12px;">
+      <span style="font-size:.85rem;color:var(--text-muted)">CUR Analyser</span>
+      <div id="user-badge-slot"></div>
+    </div>
   </header>
 
   <nav class="subnav">
@@ -1432,6 +1435,28 @@
         if (card) card.style.display = 'none';
       }
     }
+
+    mountUserBadge('#user-badge-slot');
+    (function() {
+      const authMode = window.__CONFIG__?.AUTH_MODE || 'none';
+      const adminLink = document.getElementById('nav-admin');
+      if (authMode !== 'local') {
+        if (adminLink) adminLink.style.display = '';
+        document.body.style.visibility = 'visible';
+        return;
+      }
+      fetchCurrentUser().then(user => {
+        if (!adminLink) { document.body.style.visibility = 'visible'; return; }
+        if (!user) { adminLink.style.display = 'none'; document.body.style.visibility = 'visible'; return; }
+        const roles = (user.roles || '').split(',');
+        if (roles.includes('admin') || roles.includes('developer')) {
+          adminLink.style.display = '';
+        } else {
+          adminLink.style.display = 'none';
+        }
+        document.body.style.visibility = 'visible';
+      });
+    })();
   </script>
 </body>
 </html>

@@ -15,6 +15,7 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String, nullable=False)
     roles: Mapped[str] = mapped_column(String, nullable=False, default="user")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

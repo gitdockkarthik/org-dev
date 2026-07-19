@@ -6,7 +6,7 @@
   <title>Chat — Unified Agent Platform</title>
   <link rel="stylesheet" href="/css/style.css?v=3">
 </head>
-<body class="chat-page">
+<body class="chat-page" style="visibility:hidden">
 
   <!-- Top bar -->
   <header class="topbar">
@@ -18,10 +18,13 @@
     </a>
     <nav class="topbar__nav">
       <a href="/" class="topbar__link">Agents</a>
-      <a href="/admin/" class="topbar__link">Admin</a>
+      <a href="/admin/" class="topbar__link" id="nav-admin" style="display:none">Admin</a>
       <a href="/docs-hub/" class="topbar__link" target="_blank">📚 Docs</a>
     </nav>
-    <div class="topbar__right" id="header-agent-name" style="font-size:.88rem;color:var(--text-muted)"></div>
+    <div class="topbar__right" style="display:flex;align-items:center;gap:12px;">
+      <span id="header-agent-name" style="font-size:.88rem;color:var(--text-muted)"></span>
+      <div id="user-badge-slot"></div>
+    </div>
   </header>
 
   <div class="chat-layout">
@@ -450,6 +453,27 @@
     }
 
     init();
+
+    mountUserBadge('#user-badge-slot');
+    const authMode = window.__CONFIG__?.AUTH_MODE || 'none';
+    if (authMode === 'local') {
+      fetchCurrentUser().then(user => {
+        const adminLink = document.getElementById('nav-admin');
+        if (!adminLink) return;
+        if (!user) { adminLink.style.display = 'none'; return; }
+        const roles = (user.roles || '').split(',');
+        if (roles.includes('admin') || roles.includes('developer')) {
+          adminLink.style.display = '';
+        } else {
+          adminLink.style.display = 'none';
+        }
+        document.body.style.visibility = 'visible';
+      });
+    } else {
+      const adminLink = document.getElementById('nav-admin');
+      if (adminLink) adminLink.style.display = '';
+      document.body.style.visibility = 'visible';
+    }
   </script>
 </body>
 </html>

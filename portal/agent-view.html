@@ -39,8 +39,10 @@
       font-size: .9rem;
     }
   </style>
+  <script src="/js/config.js?v=3"></script>
+  <script src="/js/portal.js?v=3"></script>
 </head>
-<body>
+<body style="visibility:hidden">
   <!-- Top bar -->
   <header class="topbar">
     <a href="/" class="topbar__brand">
@@ -48,11 +50,11 @@
     </a>
     <nav class="topbar__nav">
       <a href="/" class="topbar__link">Agents</a>
-      <a href="/admin/" class="topbar__link">Admin</a>
+      <a href="/admin/" class="topbar__link" id="nav-admin" style="display:none">Admin</a>
       <a href="/docs-hub/" class="topbar__link" target="_blank">📚 Docs</a>
     </nav>
-    <div class="topbar__right">
-      <button id="logout-btn" onclick="logout()" class="btn btn--ghost btn--sm" style="display:none;margin-right:8px">Sign out</button>
+    <div class="topbar__right" style="display:flex;align-items:center;gap:12px;">
+      <div id="user-badge-slot"></div>
     </div>
   </header>
 
@@ -69,20 +71,6 @@
   </div>
 
   <script>
-    const BACKEND_URL = '';
-
-    async function _json(resp) {
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      return resp.json();
-    }
-
-    async function _authHeaders() {
-      try {
-        const d = await _json(await fetch(`${BACKEND_URL}/api/platform/bootstrap`));
-        return { 'X-API-Key': d.api_key || '' };
-      } catch { return {}; }
-    }
-
     async function init() {
       const params = new URLSearchParams(window.location.search);
       const slug = params.get('slug');
@@ -91,8 +79,7 @@
       document.title = `${slug} — Unified Agent Platform`;
 
       try {
-        const headers = await _authHeaders();
-        const agents = await _json(await fetch(`${BACKEND_URL}/api/registry/agents`, { headers, credentials: 'include' }));
+        const agents = await _json(await fetch(`${BACKEND_URL}/api/agents`));
         const agent = agents.find(a => a.slug === slug);
 
         if (!agent) { window.location.href = '/'; return; }
@@ -135,17 +122,28 @@
       }
     }
 
+    init();
+
+    mountUserBadge('#user-badge-slot');
     const authMode = window.__CONFIG__?.AUTH_MODE || 'none';
     if (authMode === 'local') {
-      document.getElementById('logout-btn').style.display = '';
+      fetchCurrentUser().then(user => {
+        const adminLink = document.getElementById('nav-admin');
+        if (!adminLink) { document.body.style.visibility = 'visible'; return; }
+        if (!user) { adminLink.style.display = 'none'; document.body.style.visibility = 'visible'; return; }
+        const roles = (user.roles || '').split(',');
+        if (roles.includes('admin') || roles.includes('developer')) {
+          adminLink.style.display = '';
+        } else {
+          adminLink.style.display = 'none';
+        }
+        document.body.style.visibility = 'visible';
+      });
+    } else {
+      const adminLink = document.getElementById('nav-admin');
+      if (adminLink) { adminLink.style.display = ''; adminLink.style.display = ''; }
+      document.body.style.visibility = 'visible';
     }
-
-    async function logout() {
-      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
-      window.location.href = '/login';
-    }
-
-    init();
   </script>
 </body>
 </html>

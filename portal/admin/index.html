@@ -6,7 +6,7 @@
   <title>Admin — Unified Agent Platform</title>
   <link rel="stylesheet" href="/css/style.css?v=3">
 </head>
-<body class="admin-page">
+<body class="admin-page" style="visibility:hidden">
 
   <!-- Top bar -->
   <header class="topbar">
@@ -18,17 +18,12 @@
     </a>
     <nav class="topbar__nav">
       <a href="/" class="topbar__link">Agents</a>
-      <a href="/admin/" class="topbar__link topbar__link--active">Admin</a>
+      <a href="/admin/" class="topbar__link topbar__link--active" id="nav-admin" style="display:none">Admin</a>
       <a href="/docs-hub/" class="topbar__link" target="_blank">📚 Docs</a>
     </nav>
-    <div class="topbar__right">
-      <button onclick="logout()"
-        id="logout-btn"
-        class="btn btn--ghost btn--sm"
-        style="margin-right:8px;display:none">
-        Sign out
-      </button>
+    <div class="topbar__right" style="display:flex;align-items:center;gap:12px;">
       <a href="/admin/register" class="btn btn--primary btn--sm">+ Register Agent</a>
+      <div id="user-badge-slot"></div>
     </div>
   </header>
 
@@ -144,11 +139,6 @@
         <div>
           <label style="display:block;font-size:.83rem;font-weight:600;color:var(--text-muted);margin-bottom:6px;">Email</label>
           <input id="new-email" type="email" placeholder="user@example.com" autocomplete="off"
-            style="width:100%;padding:9px 12px;background:var(--navy-2);border:1.5px solid var(--border-hi);border-radius:6px;font-size:.88rem;color:var(--text);outline:none;">
-        </div>
-        <div>
-          <label style="display:block;font-size:.83rem;font-weight:600;color:var(--text-muted);margin-bottom:6px;">Password</label>
-          <input id="new-password" type="password" placeholder="••••••••" autocomplete="new-password"
             style="width:100%;padding:9px 12px;background:var(--navy-2);border:1.5px solid var(--border-hi);border-radius:6px;font-size:.88rem;color:var(--text);outline:none;">
         </div>
         <div>
@@ -362,6 +352,85 @@
       document.getElementById('edit-temperature').value = agent.temperature ?? 0.7;
       document.getElementById('edit-tools').value = JSON.stringify(agent.tools || [], null, 2);
       document.getElementById('edit-modal-overlay').style.display = 'flex';
+      loadOwners(agent.slug);
+      loadAssignableUsers();
+    }
+
+    let _editingAgentSlug = null;
+
+    async function loadOwners(slug) {
+      _editingAgentSlug = slug;
+      const el = document.getElementById('owners-list');
+      el.innerHTML = '<span style="color:var(--text-muted);font-size:.83rem;">Loading…</span>';
+      try {
+        const r = await fetch(`${BACKEND_URL}/api/registry/agents/${slug}/owners`, {
+          headers: _authHeaders(), credentials: 'include'
+        });
+        const owners = r.ok ? await r.json() : [];
+        if (!owners.length) {
+          el.innerHTML = '<span style="color:var(--text-muted);font-size:.83rem;">No owners assigned.</span>';
+          return;
+        }
+        el.innerHTML = owners.map(o => `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 8px;background:var(--navy-2);border-radius:4px;margin-bottom:4px;font-size:.83rem;">
+            <span style="color:var(--text);">${o.user_email}</span>
+            <span style="color:var(--text-muted);font-size:.75rem;margin:0 8px;">assigned by ${o.assigned_by}</span>
+            <button onclick="removeOwner('${slug}','${o.user_email}')" class="btn btn--danger btn--sm" style="padding:2px 8px;font-size:.75rem;">Remove</button>
+          </div>`).join('');
+      } catch(e) {
+        el.innerHTML = '<span style="color:var(--danger);font-size:.83rem;">Failed to load owners.</span>';
+      }
+    }
+
+    async function loadAssignableUsers() {
+      const sel = document.getElementById('owner-add-select');
+      try {
+        const r = await fetch(`${BACKEND_URL}/api/registry/assignable-users`, {
+          headers: _authHeaders(), credentials: 'include'
+        });
+        const users = r.ok ? await r.json() : [];
+        sel.innerHTML = '<option value="">Select developer to add…</option>' +
+          users.map(u => `<option value="${u.email}">${u.name} (${u.email})</option>`).join('');
+      } catch(e) {}
+    }
+
+    async function addOwner() {
+      const email = document.getElementById('owner-add-select').value;
+      const statusEl = document.getElementById('owner-status');
+      if (!email) { statusEl.textContent = 'Select a developer first.'; return; }
+      statusEl.textContent = 'Adding…';
+      try {
+        const r = await fetch(`${BACKEND_URL}/api/registry/agents/${_editingAgentSlug}/owners`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+          credentials: 'include',
+          body: JSON.stringify({ user_email: email }),
+        });
+        if (!r.ok) { const d = await r.json().catch(()=>({})); throw new Error(d.detail || `HTTP ${r.status}`); }
+        statusEl.textContent = '';
+        document.getElementById('owner-add-select').value = '';
+        await loadOwners(_editingAgentSlug);
+      } catch(e) {
+        statusEl.textContent = e.message;
+        statusEl.style.color = 'var(--danger)';
+      }
+    }
+
+    async function removeOwner(slug, email) {
+      const statusEl = document.getElementById('owner-status');
+      try {
+        const r = await fetch(`${BACKEND_URL}/api/registry/agents/${slug}/owners/${encodeURIComponent(email)}`, {
+          method: 'DELETE',
+          headers: _authHeaders(),
+          credentials: 'include',
+        });
+        if (!r.ok) { const d = await r.json().catch(()=>({})); throw new Error(d.detail || `HTTP ${r.status}`); }
+        statusEl.textContent = '';
+        await loadOwners(slug);
+      } catch(e) {
+        statusEl.textContent = e.message;
+        statusEl.style.color = 'var(--danger)';
+      }
     }
 
     function closeEditModal() {
@@ -510,16 +579,15 @@
     }
 
     async function submitAddUser() {
-      const name     = document.getElementById('new-name').value.trim();
-      const email    = document.getElementById('new-email').value.trim();
-      const password = document.getElementById('new-password').value;
+      const name  = document.getElementById('new-name').value.trim();
+      const email = document.getElementById('new-email').value.trim();
       const roles = ['user','developer','admin']
         .filter(r => document.getElementById(`new-role-${r}`)?.checked)
         .join(',') || 'user';
       const statusEl = document.getElementById('add-user-status');
 
-      if (!name || !email || !password) {
-        statusEl.textContent = 'All fields are required.';
+      if (!name || !email) {
+        statusEl.textContent = 'Name and email are required.';
         statusEl.style.color = 'var(--danger)';
         return;
       }
@@ -531,18 +599,20 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ..._authHeaders() },
           credentials: 'include',
-          body: JSON.stringify({ name, email, password, roles }),
+          body: JSON.stringify({ name, email, roles }),
         });
         if (!r.ok) {
           const d = await r.json().catch(() => ({}));
           throw new Error(d.detail || `HTTP ${r.status}`);
         }
+        const data = await r.json();
         document.getElementById('add-user-form').style.display = 'none';
-        ['new-name', 'new-email', 'new-password'].forEach(id => {
-          document.getElementById(id).value = '';
-        });
+        ['new-name', 'new-email'].forEach(id => { document.getElementById(id).value = ''; });
+        document.getElementById('new-role-user').checked = true;
+        document.getElementById('new-role-developer').checked = false;
+        document.getElementById('new-role-admin').checked = false;
         await loadUsers();
-        showToast(`User "${name}" created`, 'success');
+        showPasswordReveal(data.generated_password, `User "${name}" created. Share this password with them — it will not be shown again.`);
       } catch (err) {
         statusEl.textContent = err.message;
         statusEl.style.color = 'var(--danger)';
@@ -569,20 +639,16 @@
     }
 
     async function promptResetPassword(userId, userName) {
-      const newPassword = prompt(`New password for "${userName}":`);
-      if (!newPassword) return;
+      if (!confirm(`Reset password for "${userName}"? A new password will be generated.`)) return;
       try {
         const r = await fetch(`${BACKEND_URL}/api/admin/users/${userId}/password`, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+          headers: { ..._authHeaders() },
           credentials: 'include',
-          body: JSON.stringify({ new_password: newPassword }),
         });
-        if (!r.ok) {
-          const d = await r.json().catch(() => ({}));
-          throw new Error(d.detail || `HTTP ${r.status}`);
-        }
-        showToast(`Password reset for "${userName}"`, 'success');
+        if (!r.ok) { const d = await r.json().catch(()=>({})); throw new Error(d.detail || `HTTP ${r.status}`); }
+        const data = await r.json();
+        showPasswordReveal(data.generated_password, `Password reset for "${userName}". Share this with them — it will not be shown again.`);
       } catch (err) {
         showToast(err.message, 'error');
       }
@@ -631,14 +697,6 @@
         statusEl.textContent = err.message;
         statusEl.style.color = 'var(--danger)';
       }
-    }
-
-    async function logout() {
-      await fetch('/api/auth/logout', {
-        method: 'POST',
-        credentials: 'include',
-      });
-      window.location.href = '/login';
     }
 
     async function loadKeys() {
@@ -745,16 +803,69 @@
       showToast('Key deleted', 'success');
     }
 
-    // Show logout button and Users tab only when AUTH_MODE=local
-    const authMode = window.__CONFIG__?.AUTH_MODE || 'none';
-    if (authMode === 'local') {
-      const btn = document.getElementById('logout-btn');
-      if (btn) btn.style.display = '';
-      const tabUsers = document.getElementById('tab-users');
-      if (tabUsers) tabUsers.style.display = '';
-      const tabKeys = document.getElementById('tab-keys');
-      if (tabKeys) tabKeys.style.display = '';
+    function showPasswordReveal(password, message) {
+      let modal = document.getElementById('pw-reveal-modal');
+      if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'pw-reveal-modal';
+        modal.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;align-items:center;justify-content:center;';
+        modal.innerHTML = `
+          <div style="background:var(--navy-1);border-radius:8px;padding:28px;width:400px;border:1px solid var(--border);">
+            <h3 style="margin:0 0 12px 0;font-size:1rem;color:var(--text);">Password Generated</h3>
+            <p id="pw-reveal-msg" style="font-size:.85rem;color:var(--text-muted);margin:0 0 14px 0;"></p>
+            <div style="background:#0f2d1a;border:1.5px solid var(--success, #16a34a);border-radius:6px;padding:14px;margin-bottom:14px;">
+              <p style="margin:0 0 6px 0;font-size:.8rem;color:var(--success, #16a34a);font-weight:600;">⚠ Copy this password now — it will not be shown again.</p>
+              <code id="pw-reveal-value" style="font-size:.9rem;color:#86efac;word-break:break-all;"></code>
+            </div>
+            <div style="display:flex;gap:10px;">
+              <button onclick="copyRevealedPassword()" style="padding:8px 16px;background:var(--success,#16a34a);color:#fff;border:none;border-radius:6px;font-size:.85rem;font-weight:600;cursor:pointer;">Copy</button>
+              <button onclick="document.getElementById('pw-reveal-modal').style.display='none'" style="padding:8px 16px;background:transparent;color:var(--text-muted);border:1.5px solid var(--border-hi);border-radius:6px;font-size:.85rem;cursor:pointer;">Close</button>
+            </div>
+          </div>`;
+        document.body.appendChild(modal);
+      }
+      document.getElementById('pw-reveal-msg').textContent = message;
+      document.getElementById('pw-reveal-value').textContent = password;
+      modal.style.display = 'flex';
     }
+
+    function copyRevealedPassword() {
+      const val = document.getElementById('pw-reveal-value').textContent;
+      navigator.clipboard.writeText(val).catch(() => {
+        const el = document.getElementById('pw-reveal-value');
+        const range = document.createRange();
+        range.selectNode(el);
+        window.getSelection().removeAllRanges();
+        window.getSelection().addRange(range);
+      });
+      showToast('Password copied', 'success');
+    }
+
+    mountUserBadge('#user-badge-slot');
+    fetchCurrentUser().then(user => {
+      const adminLink = document.getElementById('nav-admin');
+      if (adminLink) adminLink.style.display = '';
+      if (!user) { window.location.replace('/'); return; }
+      const roles = (user.roles || '').split(',');
+      const isAdmin = roles.includes('admin');
+      const isDeveloper = roles.includes('developer');
+      if (!isAdmin && !isDeveloper) { window.location.replace('/'); return; }
+      document.body.style.visibility = 'visible';
+      // Tab visibility
+      const tabAgents = document.getElementById('tab-agents');
+      const tabPlatform = document.getElementById('tab-platform');
+      const tabUsers = document.getElementById('tab-users');
+      const tabKeys = document.getElementById('tab-keys');
+      if (tabAgents) tabAgents.style.display = '';
+      if (tabKeys) tabKeys.style.display = '';
+      if (isAdmin) {
+        if (tabPlatform) tabPlatform.style.display = '';
+        if (tabUsers) tabUsers.style.display = '';
+      } else {
+        if (tabPlatform) tabPlatform.style.display = 'none';
+        if (tabUsers) tabUsers.style.display = 'none';
+      }
+    });
 
     async function loadPlatformStatus() {
       try {
@@ -859,6 +970,18 @@
       <div class="form-field">
         <label class="form-label" for="edit-tools">Tools (JSON array)</label>
         <textarea id="edit-tools" class="form-input" rows="3"></textarea>
+      </div>
+      <div class="form-field" style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">
+        <label class="form-label">Agent Owners</label>
+        <span class="form-hint" style="font-size:.78rem;color:var(--text-muted);display:block;margin-bottom:8px;">Developers assigned as owners can manage this agent and its API keys. Admins always have full access.</span>
+        <div id="owners-list" style="margin-bottom:10px;min-height:32px;"></div>
+        <div style="display:flex;gap:8px;align-items:center;" id="add-owner-row">
+          <select id="owner-add-select" class="form-select" style="flex:1;">
+            <option value="">Select developer to add…</option>
+          </select>
+          <button class="btn btn--ghost btn--sm" onclick="addOwner()">+ Add</button>
+        </div>
+        <span id="owner-status" style="font-size:.78rem;color:var(--text-muted);display:block;margin-top:6px;"></span>
       </div>
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
         <button class="btn btn--ghost btn--sm" onclick="closeEditModal()">Cancel</button>

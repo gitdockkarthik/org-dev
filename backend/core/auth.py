@@ -82,5 +82,15 @@ def require_developer(user: User) -> User:
     return user
 
 
+def require_admin_or_developer(user: User) -> User:
+    roles = (user.roles or "").split(",")
+    if "admin" not in roles and "developer" not in roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin or developer access required",
+        )
+    return user
+
+
 def has_role(user: User, role: str) -> bool:
     return role in (user.roles or "").split(",")
