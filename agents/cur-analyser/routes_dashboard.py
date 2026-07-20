@@ -36,7 +36,7 @@ def _get_cached_tab(report_id, tab: str):
 def _set_cached_tab(report_id, tab: str, data: dict):
     _tab_cache[(report_id, tab)] = (data, time.time())
 
-def invalidate_tab_cache(report_id: int):
+def invalidate_tab_cache(report_id: int, enrichment_enabled: bool | None = None):
     for key in list(_tab_cache.keys()):
         if key[0] == report_id:
             del _tab_cache[key]
@@ -44,7 +44,7 @@ def invalidate_tab_cache(report_id: int):
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
-            loop.create_task(invalidate_db_tab_cache(report_id))
+            loop.create_task(invalidate_db_tab_cache(report_id, enrichment_enabled))
     except Exception:
         pass
 
@@ -70,16 +70,20 @@ def invalidate_dashboard_cache(report_id: int):
 
 
 async def _get_db_cached_tab(report_id: int, tab: str) -> dict | None:
-    """Read tab aggregation from PostgreSQL persistent cache."""
+    """Read tab aggregation from PostgreSQL persistent cache.
+    Returns None if enrichment state has changed since cache was computed."""
     from database import SessionLocal
+    from routes_settings import _config as _settings_config
     if SessionLocal is None:
         return None
     try:
+        enrichment_enabled = bool(_settings_config.get("inventory_enrichment_enabled", False))
         async with SessionLocal() as session:
             result = await session.execute(
                 select(CurTabCache).where(
                     CurTabCache.report_id == report_id,
                     CurTabCache.tab_name == tab,
+                    CurTabCache.enrichment_enabled == enrichment_enabled,
                 )
             )
             row = result.scalar_one_or_none()
@@ -98,21 +102,26 @@ async def _set_db_cached_tab(report_id: int, tab: str, data: dict) -> None:
         return
     try:
         async with SessionLocal() as session:
+            from routes_settings import _config as _settings_config
+            enrichment_enabled = bool(_settings_config.get("inventory_enrichment_enabled", False))
             existing = await session.execute(
                 select(CurTabCache).where(
                     CurTabCache.report_id == report_id,
                     CurTabCache.tab_name == tab,
+                    CurTabCache.enrichment_enabled == enrichment_enabled,
                 )
             )
             row = existing.scalar_one_or_none()
             if row:
                 row.data_json = _json.dumps(data)
                 row.computed_at = datetime.now(timezone.utc)
+                row.enrichment_enabled = enrichment_enabled
             else:
                 session.add(CurTabCache(
                     report_id=report_id,
                     tab_name=tab,
                     data_json=_json.dumps(data),
+                    enrichment_enabled=enrichment_enabled,
                 ))
             await session.commit()
     except Exception as e:
@@ -120,16 +129,18 @@ async def _set_db_cached_tab(report_id: int, tab: str, data: dict) -> None:
         logging.getLogger(__name__).warning("Failed to write tab cache to DB: %s", e)
 
 
-async def invalidate_db_tab_cache(report_id: int) -> None:
-    """Delete all PostgreSQL tab cache entries for a report."""
+async def invalidate_db_tab_cache(report_id: int, enrichment_enabled: bool | None = None) -> None:
+    """Delete PostgreSQL tab cache entries for a report.
+    If enrichment_enabled is specified, only delete entries for that state."""
     from database import SessionLocal
     if SessionLocal is None:
         return
     try:
         async with SessionLocal() as session:
-            await session.execute(
-                delete(CurTabCache).where(CurTabCache.report_id == report_id)
-            )
+            q = delete(CurTabCache).where(CurTabCache.report_id == report_id)
+            if enrichment_enabled is not None:
+                q = q.where(CurTabCache.enrichment_enabled == enrichment_enabled)
+            await session.execute(q)
             await session.commit()
     except Exception:
         pass
@@ -138,11 +149,14 @@ async def invalidate_db_tab_cache(report_id: int) -> None:
 @router.post("/dashboard/precompute")
 async def trigger_precompute(report_id: int = Query(default=None)) -> dict:
     """Manually trigger pre-aggregation of all dashboard tabs for a report."""
-    from database import SessionLocal
     if report_id is None:
         return {"error": "report_id required"}
     import asyncio
     from main import _precompute_all_tabs
+    from routes_settings import _config as _settings_config
+    enrichment_enabled = bool(_settings_config.get("inventory_enrichment_enabled", False))
+    # Clear memory cache and DB cache for current enrichment state only — preserve other state
+    invalidate_tab_cache(report_id, enrichment_enabled)
     asyncio.create_task(_precompute_all_tabs(report_id))
     return {"status": "started", "report_id": report_id, "message": "Pre-aggregation running in background — tabs will load instantly once complete"}
 
@@ -181,8 +195,8 @@ async def _resolve_report(report_id: int | None):
     if enrichment_enabled:
         enricher = await build_enricher(reg)
     else:
-        from tools.inventory_enricher import CurEnricher
-        enricher = CurEnricher(None)  # inactive enricher — pass-through
+        from tools.inventory_enricher import InventoryEnricher
+        enricher = InventoryEnricher(None)  # inactive enricher — pass-through
     return file_path, csv_text, enricher
 
 

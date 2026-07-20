@@ -39,7 +39,7 @@ class CurReport(Base):
 
 class CurTabCache(Base):
     __tablename__ = "cur_tab_cache"
-    __table_args__ = (UniqueConstraint("report_id", "tab_name", name="uq_cur_tab_cache"),)
+    __table_args__ = (UniqueConstraint("report_id", "tab_name", "enrichment_enabled", name="uq_cur_tab_cache"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     report_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)

@@ -180,11 +180,31 @@ async def _init_config() -> None:
         # This ensures tabs load instantly from DB cache after restart
         try:
             from report_store import list_reports
+            from routes_settings import _config as _sc
             reports = list_reports()
             if reports:
-                active_id = reports[0]["id"]  # most recent report
-                asyncio.create_task(_precompute_all_tabs(active_id))
-                logger.info("_init_config: triggered pre-aggregation for report_id=%d", active_id)
+                active_id = reports[0]["id"]
+                # Only pre-aggregate if DB cache is missing for current enrichment state
+                from database import SessionLocal
+                from models import CurTabCache
+                from sqlalchemy import select as _sel
+                enrichment_enabled = bool(_sc.get("inventory_enrichment_enabled", False))
+                needs_compute = True
+                if SessionLocal is not None:
+                    async with SessionLocal() as _sess:
+                        _r = await _sess.execute(
+                            _sel(CurTabCache).where(
+                                CurTabCache.report_id == active_id,
+                                CurTabCache.tab_name == "overview",
+                                CurTabCache.enrichment_enabled == enrichment_enabled,
+                            )
+                        )
+                        needs_compute = _r.scalar_one_or_none() is None
+                if needs_compute:
+                    asyncio.create_task(_precompute_all_tabs(active_id))
+                    logger.info("_init_config: triggered pre-aggregation for report_id=%d (enrichment=%s)", active_id, enrichment_enabled)
+                else:
+                    logger.info("_init_config: DB cache exists for report_id=%d (enrichment=%s) — skipping pre-aggregation", active_id, enrichment_enabled)
         except Exception as _pre_exc:
             logger.warning("_init_config: pre-aggregation trigger failed: %s", _pre_exc)
     else:
@@ -247,7 +267,8 @@ async def _precompute_all_tabs(report_id: int) -> None:
     """Background task: pre-compute all dashboard tabs and persist to PostgreSQL cache."""
     import logging
     _log = logging.getLogger(__name__)
-    _log.info("Pre-aggregation: starting for report_id=%d", report_id)
+    from routes_settings import _config as _sc
+    _log.info("Pre-aggregation: starting for report_id=%d, enrichment_enabled=%s", report_id, _sc.get("inventory_enrichment_enabled", False))
     tabs = ["overview", "accounts", "environments", "services", "tags", "trends"]
     from routes_dashboard import (
         get_tab_overview, get_tab_accounts, get_tab_environments,
