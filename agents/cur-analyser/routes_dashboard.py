@@ -157,7 +157,13 @@ async def trigger_precompute(report_id: int = Query(default=None)) -> dict:
     enrichment_enabled = bool(_settings_config.get("inventory_enrichment_enabled", False))
     # Clear memory cache and DB cache for current enrichment state only — preserve other state
     invalidate_tab_cache(report_id, enrichment_enabled)
-    asyncio.create_task(_precompute_all_tabs(report_id))
+    async def _run_precompute():
+        try:
+            await _precompute_all_tabs(report_id)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error("Precompute task failed: %s", e, exc_info=True)
+    asyncio.create_task(_run_precompute())
     return {"status": "started", "report_id": report_id, "message": "Pre-aggregation running in background — tabs will load instantly once complete"}
 
 
@@ -280,16 +286,16 @@ async def get_tab_overview(report_id: int = Query(default=None)) -> dict:
     if file_path is None and csv_text is None:
         return {"empty": True}
     from tools.duckdb_engine import (
-        get_total_cost, get_cost_by_service, get_daily_trend, get_savings_opportunities
+        get_total_cost, get_cost_by_line_item_category, get_daily_trend, get_savings_opportunities
     )
     import asyncio
     loop = asyncio.get_running_loop()
     from tools.dashboard_builder import _executor
     def run(fn, *args, **kwargs):
         return loop.run_in_executor(_executor, lambda: fn(*args, **kwargs))
-    summary, service_breakdown, daily_trend, savings_opportunities = await asyncio.gather(
+    summary, line_item_breakdown, daily_trend, savings_opportunities = await asyncio.gather(
         run(get_total_cost, csv_text, file_path=file_path),
-        run(get_cost_by_service, csv_text, limit=15, file_path=file_path),
+        run(get_cost_by_line_item_category, csv_text, file_path=file_path),
         run(get_daily_trend, csv_text, file_path=file_path),
         run(get_savings_opportunities, csv_text, file_path=file_path),
     )
@@ -298,11 +304,18 @@ async def get_tab_overview(report_id: int = Query(default=None)) -> dict:
         month = row["date"][:7]
         monthly[month] = round(monthly.get(month, 0.0) + row["cost"], 4)
     monthly_trend = [{"month": m, "cost": c} for m, c in sorted(monthly.items())]
+    # Use aws_services from line_item_breakdown for clean service names
+    aws_services = line_item_breakdown.get("aws_services", [])
     result = {
         "total_cost": summary.get("total_cost", 0),
+        "total_gross": line_item_breakdown.get("total_gross", 0),
+        "total_net": line_item_breakdown.get("total_net", 0),
+        "credits_discounts": line_item_breakdown.get("credits_discounts", 0),
+        "taxes": line_item_breakdown.get("taxes", 0),
+        "marketplace_total": sum(m["cost"] for m in line_item_breakdown.get("marketplace", [])),
         "row_count": summary.get("row_count", 0),
-        "top_service": service_breakdown[0] if service_breakdown else None,
-        "service_breakdown": service_breakdown,
+        "top_service": aws_services[0] if aws_services else None,
+        "service_breakdown": aws_services,
         "daily_trend": daily_trend,
         "monthly_trend": monthly_trend,
         "savings_opportunities": savings_opportunities,
@@ -388,17 +401,19 @@ async def get_tab_services(report_id: int = Query(default=None)) -> dict:
     file_path, csv_text, enricher = await _resolve_report(report_id)
     if file_path is None and csv_text is None:
         return {"empty": True}
-    from tools.duckdb_engine import get_cost_by_service_category, get_top_resources
+    from tools.duckdb_engine import get_cost_by_line_item_category, get_cost_by_service_category, get_top_resources
     from tools.dashboard_builder import _executor
     import asyncio
     loop = asyncio.get_running_loop()
     def run(fn, *args, **kwargs):
         return loop.run_in_executor(_executor, lambda: fn(*args, **kwargs))
-    service_category_breakdown, top_resources = await asyncio.gather(
+    line_item_breakdown, service_category_breakdown, top_resources = await asyncio.gather(
+        run(get_cost_by_line_item_category, csv_text, file_path=file_path),
         run(get_cost_by_service_category, csv_text, file_path=file_path),
         run(get_top_resources, csv_text, limit=10, file_path=file_path, enricher=enricher),
     )
     result = {
+        "line_item_breakdown": line_item_breakdown,
         "service_category_breakdown": service_category_breakdown,
         "top_resources": top_resources,
     }

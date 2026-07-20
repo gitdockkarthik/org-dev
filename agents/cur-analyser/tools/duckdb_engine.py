@@ -960,6 +960,169 @@ def get_cost_by_service(csv_text: str | None = None, limit: int = 15, file_path:
         con.close()
 
 
+def _is_marketplace_code(code: str) -> bool:
+    """True if product code looks like an opaque AWS Marketplace identifier."""
+    if not code:
+        return False
+    code = code.strip()
+    # Known AWS service prefixes
+    if code.startswith(('Amazon', 'AWS', 'aws', 'Elastic', 'Compute')):
+        return False
+    # Opaque marketplace codes are lowercase alphanumeric, 20+ chars
+    if len(code) >= 20 and code.replace('-', '').replace('_', '').isalnum() and code == code.lower():
+        return True
+    return False
+
+
+def get_cost_by_line_item_category(
+    csv_text: str | None = None,
+    file_path: str | None = None,
+    filters: dict | None = None,
+) -> dict:
+    """Break down costs by line item type category.
+    Returns structured dict with: aws_services, marketplace, reserved_instances,
+    savings_plans, taxes, credits_discounts, total_gross, total_net.
+    """
+    df, con = _load_df(csv_text, file_path=file_path, filters=filters)
+    try:
+        cols = list(df.columns)
+        cost_col = _detect_cost_col(cols)
+        svc_col = _detect_service_col(cols)
+        if not cost_col:
+            return {}
+
+        # Detect key columns
+        type_col = next((c for c in cols if c.lower() in ('line_item_line_item_type', 'lineitem/lineitemtype')), None)
+        desc_col = next((c for c in cols if c.lower() in ('line_item_line_item_description', 'lineitem/lineitemdescription')), None)
+        acct_col = next((c for c in cols if c.lower() in ('line_item_usage_account_id', 'lineitem/usageaccountid')), None)
+        acct_name_col = next((c for c in cols if c.lower() in ('line_item_usage_account_name', 'lineitem/usageaccountname')), None)
+
+        if not type_col or not svc_col:
+            return {}
+
+        # Fetch all rows grouped by service + type + description
+        rows = con.execute(
+            f'SELECT '
+            f'  COALESCE(NULLIF(TRIM(CAST("{svc_col}" AS VARCHAR)), \'\'), \'Unallocated\') AS svc, '
+            f'  COALESCE(NULLIF(TRIM(CAST("{type_col}" AS VARCHAR)), \'\'), \'Other\') AS item_type, '
+            f'  COALESCE(NULLIF(TRIM(CAST("{desc_col}" AS VARCHAR)), \'\'), \'\') AS description, '
+            f'  SUM("{cost_col}") AS cost '
+            f'FROM cur_data '
+            f'GROUP BY svc, item_type, description '
+            f'ORDER BY cost DESC'
+        ).fetchall()
+
+        aws_services: dict = {}
+        marketplace: list = []
+        reserved_instances: list = []
+        savings_plans: list = []
+        taxes: float = 0.0
+        credits_discounts: float = 0.0
+        total_gross: float = 0.0
+        total_net: float = 0.0
+
+        DISCOUNT_TYPES = {'EdpDiscount', 'BundledDiscount', 'SavingsPlanNegation', 'Refund', 'Credit'}
+        MP_TYPES = {'Fee', 'Usage'}
+        RI_TYPES = {'RIFee'}
+        SP_TYPES = {'SavingsPlanRecurringFee', 'SavingsPlanCoveredUsage'}
+
+        for svc, item_type, description, cost in rows:
+            cost = float(cost or 0)
+            total_net += cost
+
+            if item_type in DISCOUNT_TYPES:
+                credits_discounts += cost
+                continue
+
+            total_gross += cost
+
+            if item_type == 'Tax':
+                taxes += cost
+                continue
+
+            if item_type in RI_TYPES:
+                reserved_instances.append({
+                    "service": svc,
+                    "description": description,
+                    "cost": round(cost, 4),
+                })
+                continue
+
+            if item_type in SP_TYPES:
+                savings_plans.append({
+                    "service": svc,
+                    "description": description,
+                    "item_type": item_type,
+                    "cost": round(cost, 4),
+                })
+                continue
+
+            # Marketplace detection: opaque code or marketplace keyword in description
+            is_mp = _is_marketplace_code(svc) or 'marketplace' in description.lower()
+            if is_mp and item_type in MP_TYPES:
+                # Extract readable name from description
+                readable = description.split('|')[0].strip() if description else svc
+                marketplace.append({
+                    "product_code": svc,
+                    "description": readable,
+                    "item_type": item_type,
+                    "cost": round(cost, 4),
+                })
+                continue
+
+            # Regular AWS service
+            if svc not in aws_services:
+                aws_services[svc] = 0.0
+            aws_services[svc] += cost
+
+        # Sort and format aws_services
+        aws_services_list = [
+            {"service": k, "cost": round(v, 4)}
+            for k, v in sorted(aws_services.items(), key=lambda x: -x[1])
+        ]
+
+        # Aggregate marketplace by readable description
+        mp_agg: dict = {}
+        for mp in marketplace:
+            key = mp["description"]
+            mp_agg[key] = mp_agg.get(key, 0.0) + mp["cost"]
+        marketplace_list = [
+            {"description": k, "cost": round(v, 4)}
+            for k, v in sorted(mp_agg.items(), key=lambda x: -x[1])
+        ]
+
+        # Aggregate RI by service
+        ri_agg: dict = {}
+        for ri in reserved_instances:
+            ri_agg[ri["service"]] = ri_agg.get(ri["service"], 0.0) + ri["cost"]
+        ri_list = [
+            {"service": k, "cost": round(v, 4)}
+            for k, v in sorted(ri_agg.items(), key=lambda x: -x[1])
+        ]
+
+        # Aggregate SP
+        sp_agg: dict = {}
+        for sp in savings_plans:
+            sp_agg[sp["service"]] = sp_agg.get(sp["service"], 0.0) + sp["cost"]
+        sp_list = [
+            {"service": k, "cost": round(v, 4)}
+            for k, v in sorted(sp_agg.items(), key=lambda x: -x[1])
+        ]
+
+        return {
+            "aws_services": aws_services_list,
+            "marketplace": marketplace_list,
+            "reserved_instances": ri_list,
+            "savings_plans": sp_list,
+            "taxes": round(taxes, 4),
+            "credits_discounts": round(credits_discounts, 4),
+            "total_gross": round(total_gross, 4),
+            "total_net": round(total_net, 4),
+        }
+    finally:
+        con.close()
+
+
 def get_daily_trend(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None) -> list[dict]:
     df, con = _load_df(csv_text, file_path=file_path, filters=filters)
     try:
