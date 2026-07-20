@@ -185,6 +185,8 @@ async def get_settings() -> dict:
     cfg["api_key_last4"] = api_key[-4:] if api_key else ""
     cfg.pop("api_key", None)
     cfg.pop("sasl_password", None)
+    from config import settings as _settings
+    cfg["model"] = _settings.model
     return cfg
 
 

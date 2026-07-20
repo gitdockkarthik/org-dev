@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     anthropic_api_key: str = ""
-    model: str = os.environ.get("LLM_MODEL", DEFAULT_MODEL)
+    model: str = Field(default_factory=lambda: os.environ.get("LLM_MODEL", DEFAULT_MODEL), alias="LLM_MODEL")
 
     agent_id: str = ""
     agent_slug: str = "kafka-analyser"

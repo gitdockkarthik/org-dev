@@ -153,7 +153,7 @@
 
   <nav class="subnav">
     <span id="agent-label" style="display:none;position:absolute;right:1.5rem;font-size:.8rem;font-weight:600;color:var(--accent,#0891b2)">Kafka Analyser</span>
-    <a href="#" data-standalone-href="chat.html" class="subnav__link" onclick="window.open(window.location.protocol+'//'+window.location.hostname+':8003/static/chat.html','_blank');return false;">💬 Chat</a>
+    <a href="chat.html" data-standalone-href="chat.html" class="subnav__link" onclick="if(window.parent !== window){ window.parent.postMessage({type:'navigate',url:'/agents/kafka-analyser/chat'},'*'); return false; }">💬 Chat</a>
     <a href="/agents/kafka-analyser/dashboard" data-standalone-href="dashboard.html" class="subnav__link subnav__link--active">📊 Dashboard</a>
     <a href="/agents/kafka-analyser/reports" data-standalone-href="reports.html" class="subnav__link">📁 Reports</a>
     <a href="/agents/kafka-analyser/settings" data-standalone-href="settings.html" class="subnav__link">⚙ Settings</a>
