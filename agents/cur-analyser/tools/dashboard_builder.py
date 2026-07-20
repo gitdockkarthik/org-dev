@@ -201,15 +201,45 @@ class DashboardBuilderTool(ToolExecutor):
         self._report_map = report_map if report_map is not None else {}
 
     async def execute(self, session_id: str) -> str:  # type: ignore[override]
+        report_id = self._report_map.get(session_id)
+        # Try pre-aggregated PostgreSQL cache first (fast path)
+        if report_id:
+            try:
+                from database import SessionLocal
+                from models import CurTabCache
+                from sqlalchemy import select
+                import json as _json
+                from routes_dashboard import CACHE_VERSION
+                from routes_settings import _config as _sc
+                enrichment_enabled = bool(_sc.get("inventory_enrichment_enabled", False))
+                if SessionLocal is not None:
+                    async with SessionLocal() as sess:
+                        tabs = {}
+                        for tab in ["overview", "services", "accounts", "environments", "tags"]:
+                            r = await sess.execute(
+                                select(CurTabCache).where(
+                                    CurTabCache.report_id == report_id,
+                                    CurTabCache.tab_name == tab,
+                                    CurTabCache.enrichment_enabled == enrichment_enabled,
+                                    CurTabCache.cache_version == CACHE_VERSION,
+                                )
+                            )
+                            row = r.scalar_one_or_none()
+                            if row:
+                                tabs[tab] = _json.loads(row.data_json)
+                        if tabs:
+                            return _json.dumps({"source": "pre_aggregated_cache", "tabs": tabs}, default=str)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning("Pre-aggregated cache read failed: %s", e)
+        # Fallback: compute from DuckDB
         csv_text = self._cache.get(session_id)
         if csv_text:
             return json.dumps(compute_dashboard(csv_text), default=str)
-        report_id = self._report_map.get(session_id)
         if report_id:
             from report_store import get_report_path
             file_path = get_report_path(report_id)
             if file_path:
-                from tools.dashboard_builder import compute_dashboard_async
                 enricher = await build_enricher(get_registry())
                 result = await compute_dashboard_async(None, file_path=file_path, filters=None, enricher=enricher)
                 return json.dumps(result, default=str)
