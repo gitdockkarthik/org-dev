@@ -12,6 +12,9 @@ from report_store import (
 from tools.dashboard_builder import compute_dashboard_async
 from tools.data_sources.registry import get_registry
 from tools.inventory_enricher import build_enricher
+import json as _json
+from models import CurTabCache
+from sqlalchemy import select, delete
 
 router = APIRouter(tags=["dashboard"])
 
@@ -37,6 +40,13 @@ def invalidate_tab_cache(report_id: int):
     for key in list(_tab_cache.keys()):
         if key[0] == report_id:
             del _tab_cache[key]
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(invalidate_db_tab_cache(report_id))
+    except Exception:
+        pass
 
 
 def _get_cached_dashboard(report_id: int):
@@ -57,6 +67,84 @@ def _set_cached_dashboard(report_id: int, data: dict):
 def invalidate_dashboard_cache(report_id: int):
     _dashboard_cache.pop(report_id, None)
     invalidate_tab_cache(report_id)
+
+
+async def _get_db_cached_tab(report_id: int, tab: str) -> dict | None:
+    """Read tab aggregation from PostgreSQL persistent cache."""
+    from database import SessionLocal
+    if SessionLocal is None:
+        return None
+    try:
+        async with SessionLocal() as session:
+            result = await session.execute(
+                select(CurTabCache).where(
+                    CurTabCache.report_id == report_id,
+                    CurTabCache.tab_name == tab,
+                )
+            )
+            row = result.scalar_one_or_none()
+            if row is None:
+                return None
+            return _json.loads(row.data_json)
+    except Exception:
+        return None
+
+
+async def _set_db_cached_tab(report_id: int, tab: str, data: dict) -> None:
+    """Write tab aggregation to PostgreSQL persistent cache (upsert)."""
+    from database import SessionLocal
+    from datetime import datetime, timezone
+    if SessionLocal is None:
+        return
+    try:
+        async with SessionLocal() as session:
+            existing = await session.execute(
+                select(CurTabCache).where(
+                    CurTabCache.report_id == report_id,
+                    CurTabCache.tab_name == tab,
+                )
+            )
+            row = existing.scalar_one_or_none()
+            if row:
+                row.data_json = _json.dumps(data)
+                row.computed_at = datetime.now(timezone.utc)
+            else:
+                session.add(CurTabCache(
+                    report_id=report_id,
+                    tab_name=tab,
+                    data_json=_json.dumps(data),
+                ))
+            await session.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Failed to write tab cache to DB: %s", e)
+
+
+async def invalidate_db_tab_cache(report_id: int) -> None:
+    """Delete all PostgreSQL tab cache entries for a report."""
+    from database import SessionLocal
+    if SessionLocal is None:
+        return
+    try:
+        async with SessionLocal() as session:
+            await session.execute(
+                delete(CurTabCache).where(CurTabCache.report_id == report_id)
+            )
+            await session.commit()
+    except Exception:
+        pass
+
+
+@router.post("/dashboard/precompute")
+async def trigger_precompute(report_id: int = Query(default=None)) -> dict:
+    """Manually trigger pre-aggregation of all dashboard tabs for a report."""
+    from database import SessionLocal
+    if report_id is None:
+        return {"error": "report_id required"}
+    import asyncio
+    from main import _precompute_all_tabs
+    asyncio.create_task(_precompute_all_tabs(report_id))
+    return {"status": "started", "report_id": report_id, "message": "Pre-aggregation running in background — tabs will load instantly once complete"}
 
 
 def _csv_list(value: str | None) -> list[str]:
@@ -163,6 +251,10 @@ async def get_tab_overview(report_id: int = Query(default=None)) -> dict:
     cached = _get_cached_tab(report_id, "overview")
     if cached:
         return cached
+    db_cached = await _get_db_cached_tab(report_id, "overview")
+    if db_cached:
+        _set_cached_tab(report_id, "overview", db_cached)
+        return db_cached
     file_path, csv_text, enricher = await _resolve_report(report_id)
     if file_path is None and csv_text is None:
         return {"empty": True}
@@ -195,6 +287,7 @@ async def get_tab_overview(report_id: int = Query(default=None)) -> dict:
         "savings_opportunities": savings_opportunities,
     }
     _set_cached_tab(report_id, "overview", result)
+    await _set_db_cached_tab(report_id, "overview", result)
     return result
 
 
@@ -203,6 +296,10 @@ async def get_tab_accounts(report_id: int = Query(default=None)) -> dict:
     cached = _get_cached_tab(report_id, "accounts")
     if cached:
         return cached
+    db_cached = await _get_db_cached_tab(report_id, "accounts")
+    if db_cached:
+        _set_cached_tab(report_id, "accounts", db_cached)
+        return db_cached
     file_path, csv_text, enricher = await _resolve_report(report_id)
     if file_path is None and csv_text is None:
         return {"empty": True}
@@ -221,6 +318,7 @@ async def get_tab_accounts(report_id: int = Query(default=None)) -> dict:
         "org_unit_breakdown": org_unit_breakdown,
     }
     _set_cached_tab(report_id, "accounts", result)
+    await _set_db_cached_tab(report_id, "accounts", result)
     return result
 
 
@@ -229,6 +327,10 @@ async def get_tab_environments(report_id: int = Query(default=None)) -> dict:
     cached = _get_cached_tab(report_id, "environments")
     if cached:
         return cached
+    db_cached = await _get_db_cached_tab(report_id, "environments")
+    if db_cached:
+        _set_cached_tab(report_id, "environments", db_cached)
+        return db_cached
     file_path, csv_text, enricher = await _resolve_report(report_id)
     if file_path is None and csv_text is None:
         return {"empty": True}
@@ -249,6 +351,7 @@ async def get_tab_environments(report_id: int = Query(default=None)) -> dict:
         "env_category_breakdown": env_category_breakdown,
     }
     _set_cached_tab(report_id, "environments", result)
+    await _set_db_cached_tab(report_id, "environments", result)
     return result
 
 
@@ -257,6 +360,10 @@ async def get_tab_services(report_id: int = Query(default=None)) -> dict:
     cached = _get_cached_tab(report_id, "services")
     if cached:
         return cached
+    db_cached = await _get_db_cached_tab(report_id, "services")
+    if db_cached:
+        _set_cached_tab(report_id, "services", db_cached)
+        return db_cached
     file_path, csv_text, enricher = await _resolve_report(report_id)
     if file_path is None and csv_text is None:
         return {"empty": True}
@@ -275,6 +382,7 @@ async def get_tab_services(report_id: int = Query(default=None)) -> dict:
         "top_resources": top_resources,
     }
     _set_cached_tab(report_id, "services", result)
+    await _set_db_cached_tab(report_id, "services", result)
     return result
 
 
@@ -283,6 +391,10 @@ async def get_tab_tags(report_id: int = Query(default=None)) -> dict:
     cached = _get_cached_tab(report_id, "tags")
     if cached:
         return cached
+    db_cached = await _get_db_cached_tab(report_id, "tags")
+    if db_cached:
+        _set_cached_tab(report_id, "tags", db_cached)
+        return db_cached
     file_path, csv_text, enricher = await _resolve_report(report_id)
     if file_path is None and csv_text is None:
         return {"empty": True}
@@ -309,6 +421,7 @@ async def get_tab_tags(report_id: int = Query(default=None)) -> dict:
         "untagged_resources": untagged_resources,
     }
     _set_cached_tab(report_id, "tags", result)
+    await _set_db_cached_tab(report_id, "tags", result)
     return result
 
 
@@ -317,6 +430,10 @@ async def get_tab_trends(report_id: int = Query(default=None)) -> dict:
     cached = _get_cached_tab(report_id, "trends")
     if cached:
         return cached
+    db_cached = await _get_db_cached_tab(report_id, "trends")
+    if db_cached:
+        _set_cached_tab(report_id, "trends", db_cached)
+        return db_cached
     file_path, csv_text, enricher = await _resolve_report(report_id)
     if file_path is None and csv_text is None:
         return {"empty": True}
@@ -337,4 +454,5 @@ async def get_tab_trends(report_id: int = Query(default=None)) -> dict:
         "region_breakdown": region_breakdown,
     }
     _set_cached_tab(report_id, "trends", result)
+    await _set_db_cached_tab(report_id, "trends", result)
     return result

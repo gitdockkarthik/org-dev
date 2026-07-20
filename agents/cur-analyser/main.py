@@ -176,6 +176,17 @@ async def _init_config() -> None:
     report_count = await load_reports_from_db()
     if report_count:
         logger.info("_init_config: restored %d report(s) from DB", report_count)
+        # Trigger background pre-aggregation for active report on startup
+        # This ensures tabs load instantly from DB cache after restart
+        try:
+            from report_store import list_reports
+            reports = list_reports()
+            if reports:
+                active_id = reports[0]["id"]  # most recent report
+                asyncio.create_task(_precompute_all_tabs(active_id))
+                logger.info("_init_config: triggered pre-aggregation for report_id=%d", active_id)
+        except Exception as _pre_exc:
+            logger.warning("_init_config: pre-aggregation trigger failed: %s", _pre_exc)
     else:
         logger.info("_init_config: no reports found in DB")
 
@@ -230,6 +241,34 @@ async def _ensure_database() -> None:
             await conn.close()
     except Exception as e:
         logger.warning("_ensure_database: failed: %s", e)
+
+
+async def _precompute_all_tabs(report_id: int) -> None:
+    """Background task: pre-compute all dashboard tabs and persist to PostgreSQL cache."""
+    import logging
+    _log = logging.getLogger(__name__)
+    _log.info("Pre-aggregation: starting for report_id=%d", report_id)
+    tabs = ["overview", "accounts", "environments", "services", "tags", "trends"]
+    from routes_dashboard import (
+        get_tab_overview, get_tab_accounts, get_tab_environments,
+        get_tab_services, get_tab_tags, get_tab_trends,
+    )
+    tab_fns = {
+        "overview": get_tab_overview,
+        "accounts": get_tab_accounts,
+        "environments": get_tab_environments,
+        "services": get_tab_services,
+        "tags": get_tab_tags,
+        "trends": get_tab_trends,
+    }
+    for tab in tabs:
+        try:
+            _log.info("Pre-aggregation: computing tab '%s' for report_id=%d", tab, report_id)
+            await tab_fns[tab](report_id=report_id)
+            _log.info("Pre-aggregation: tab '%s' done for report_id=%d", tab, report_id)
+        except Exception as e:
+            _log.warning("Pre-aggregation: tab '%s' failed for report_id=%d: %s", tab, report_id, e)
+    _log.info("Pre-aggregation: completed for report_id=%d", report_id)
 
 
 @asynccontextmanager
@@ -440,6 +479,7 @@ async def _process_upload_job(job: dict, tmp_path: str, filename: str, file_size
         except Exception:
             pass
         _job_update(job, UploadStatus.READY, report_id=report["id"])
+        asyncio.create_task(_precompute_all_tabs(report["id"]))
 
     except Exception as exc:
         _job_update(job, UploadStatus.FAILED, error=f"Unexpected error: {exc}")
@@ -597,6 +637,7 @@ async def _process_folder_upload_job(job: dict, tmp_paths: list[str], filenames:
         )
         await reg.register_cur(provider)
         _job_update(job, UploadStatus.READY, report_id=report["id"])
+        asyncio.create_task(_precompute_all_tabs(report["id"]))
 
     except Exception as exc:
         _job_update(job, UploadStatus.FAILED, error=f"Unexpected error: {exc}")
