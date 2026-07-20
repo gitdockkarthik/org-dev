@@ -1123,6 +1123,168 @@ def get_cost_by_line_item_category(
         con.close()
 
 
+def _normalise_lifecycle(raw: str) -> str:
+    """Normalise inconsistent user_life_cycle tag values to standard categories."""
+    if not raw:
+        return "Untagged"
+    r = raw.strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+    if r in ("postgolive", "postgoelive", "postglive", "postgo", "postgoliive",
+             "postgoliive", "postgolove", "postgolive", "aftergolive", "prod"):
+        return "Post-GoLive"
+    if r in ("pregolive", "pregoelive", "preglive", "prgo", "pregoliive", "pre"):
+        return "Pre-GoLive"
+    if r in ("golive", "live"):
+        return "GoLive"
+    if r in ("test", "qatest", "qa", "aosqa", "aostestdev", "aosdev", "aosstg",
+             "aossup", "aosprod", "shortterm", "automation"):
+        return "Test"
+    if r in ("alltime", "allattime", "atalltimes", "atalltime", "alltimes",
+             "allthetime", "standard", "shared", "internal", "lifecycle",
+             "onceinmonth", "prestg"):
+        return "Shared/Always-On"
+    if r in ("na", "unknown", "operative", "pregoelive", "pregolive"):
+        return "Other"
+    return "Other"
+
+
+def get_cost_by_lifecycle(
+    csv_text: str | None = None,
+    file_path: str | None = None,
+    filters: dict | None = None,
+) -> list[dict]:
+    """Cost breakdown by normalised user_life_cycle tag from resource_tags JSON.
+    Returns list of {lifecycle, cost, pct_of_total, raw_values} sorted by cost desc.
+    Untagged resources grouped separately."""
+    df, con = _load_df(csv_text, file_path=file_path, filters=filters)
+    try:
+        cols = list(df.columns)
+        cost_col = _detect_cost_col(cols)
+        if not cost_col:
+            return []
+
+        # Check if resource_tags column exists
+        tags_col = next((c for c in cols if c.lower() in ('resource_tags', 'resourcetags')), None)
+
+        if tags_col:
+            rows = con.execute(f"""
+                SELECT
+                    json_extract_string("{tags_col}", '$.user_life_cycle') as raw_lc,
+                    SUM("{cost_col}") as cost
+                FROM cur_data
+                GROUP BY raw_lc
+                ORDER BY cost DESC
+            """).fetchall()
+        else:
+            return []
+
+        # Aggregate by normalised lifecycle
+        agg: dict[str, float] = {}
+        raw_map: dict[str, list[str]] = {}
+        for raw_lc, cost in rows:
+            cost = float(cost or 0)
+            normalised = _normalise_lifecycle(raw_lc or "")
+            agg[normalised] = agg.get(normalised, 0.0) + cost
+            if raw_lc:
+                raw_map.setdefault(normalised, [])
+                if raw_lc not in raw_map[normalised]:
+                    raw_map[normalised].append(raw_lc)
+
+        total = sum(agg.values())
+        result = [
+            {
+                "lifecycle": k,
+                "cost": round(v, 4),
+                "pct_of_total": round(v / total * 100, 2) if total else 0,
+                "raw_values": raw_map.get(k, []),
+            }
+            for k, v in sorted(agg.items(), key=lambda x: -x[1])
+        ]
+        return result
+    finally:
+        con.close()
+
+
+def _normalise_environment(raw: str) -> str:
+    """Normalise inconsistent environment tag values to standard categories."""
+    if not raw:
+        return "Untagged"
+    r = raw.strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+    if r in ("production", "prod", "prd", "aosprod", "o1prod", "nvaprod",
+             "nvaprod2", "aosqaprod", "live") or r.startswith("aosnv") or r.startswith("nvaprod"):
+        return "Production"
+    if r in ("nonproduction", "nonprod", "nonp", "nonprd"):
+        return "Non-Production"
+    if r in ("staging", "stg", "stage", "o1stg", "aostg", "aosstg", "prestg",
+             "prestaging", "nvastg"):
+        return "Staging"
+    if r in ("uat", "useracceptance"):
+        return "UAT"
+    if r in ("qa", "qatest", "aosqa", "aosqastg", "qastg"):
+        return "QA"
+    if r in ("development", "dev", "aosdev", "develop"):
+        return "Development"
+    if r in ("dr", "disasterrecovery"):
+        return "DR"
+    if r in ("performance", "perf", "load"):
+        return "Performance"
+    if r in ("demo", "training", "sandbox", "conf", "test"):
+        return "Demo/Training"
+    if r in ("sharedinfrastructure", "shared", "sharedinf", "internal",
+             "sharedinfra"):
+        return "Shared"
+    return "Other"
+
+
+def get_cost_by_hosting_environment(
+    csv_text: str | None = None,
+    file_path: str | None = None,
+    filters: dict | None = None,
+) -> list[dict]:
+    """Cost breakdown by normalised environment — uses COALESCE priority:
+    user_environment → user_hosting_environment → Untagged.
+    Each row contributes to exactly one category (no double counting).
+    Untagged included to reconcile with total spend."""
+    df, con = _load_df(csv_text, file_path=file_path, filters=filters)
+    try:
+        cols = list(df.columns)
+        cost_col = _detect_cost_col(cols)
+        if not cost_col:
+            return []
+        tags_col = next((c for c in cols if c.lower() in ('resource_tags', 'resourcetags')), None)
+        if not tags_col:
+            return []
+        rows = con.execute(f"""
+            SELECT
+                COALESCE(
+                    NULLIF(TRIM(json_extract_string("{tags_col}", '$.user_environment')), ''),
+                    NULLIF(TRIM(json_extract_string("{tags_col}", '$.user_hosting_environment')), '')
+                ) as raw_env,
+                SUM("{cost_col}") as cost
+            FROM cur_data
+            GROUP BY raw_env
+            ORDER BY cost DESC
+        """).fetchall()
+
+        agg: dict[str, float] = {}
+        for raw_env, cost in rows:
+            cost = float(cost or 0)
+            normalised = _normalise_environment(raw_env or "")
+            agg[normalised] = agg.get(normalised, 0.0) + cost
+
+        total = sum(agg.values())
+        result = [
+            {
+                "environment": k,
+                "cost": round(v, 4),
+                "pct_of_total": round(v / total * 100, 2) if total else 0,
+            }
+            for k, v in sorted(agg.items(), key=lambda x: -x[1])
+        ]
+        return result
+    finally:
+        con.close()
+
+
 def get_daily_trend(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None) -> list[dict]:
     df, con = _load_df(csv_text, file_path=file_path, filters=filters)
     try:

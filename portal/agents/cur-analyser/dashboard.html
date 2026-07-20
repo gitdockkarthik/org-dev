@@ -1701,104 +1701,147 @@
 
     // ── TAB 3: By Environment ───────────────────────────────────────────────────────
     function renderEnvironments() {
-      const env = DASH.environment_breakdown || [];
+      const lc = DASH.lifecycle_breakdown || [];
+      const he = DASH.hosting_env_breakdown || [];
       const total = DASH.total_cost || 0;
 
-      const envAgg = {};
-      env.forEach(e => {
-        const k = e.environment || 'Untagged';
-        envAgg[k] = (envAgg[k] || 0) + (e.cost || 0);
-      });
-      const kpis = Object.entries(envAgg)
-        .sort((a, b) => b[1] - a[1])
-        .map(([name, cost]) => {
-          const pct = total ? (cost / total) * 100 : 0;
-          return `<div class="kpi"><div class="kpi__label"><span class="env-badge" style="background:${envColor(name)}22;color:${envColor(name)}">${name}</span></div>
-            <div class="kpi__value" style="font-size:1.25rem">${fmtUSD0(cost)}</div>
-            <div class="kpi__sub">${fmtPct(pct)} of total</div></div>`;
-        }).join('');
+      const LC_COLORS = {
+        'Post-GoLive':     '#6366f1',
+        'Pre-GoLive':      '#f59e0b',
+        'GoLive':          '#10b981',
+        'Test':            '#0ea5e9',
+        'Shared/Always-On':'#94a3b8',
+        'Other':           '#64748b',
+        'Untagged':        '#dc2626',
+      };
 
-      const rows = env.map(e => {
-        const c = envColor((e.environment || '').toLowerCase());
-        return `<tr>
-          <td><span class="env-badge" style="background:${c}22;color:${c}">${escapeHtml(e.environment)}</span></td>
+      const lcColor = (name) => LC_COLORS[name] || '#64748b';
+
+      const ENV_COLORS = {
+        'Production':'#10b981', 'Non-Production':'#f59e0b', 'Staging':'#6366f1',
+        'UAT':'#0ea5e9', 'QA':'#f97316', 'Development':'#8b5cf6',
+        'DR':'#dc2626', 'Performance':'#14b8a6', 'Shared':'#94a3b8',
+        'Demo/Training':'#64748b', 'Other':'#64748b', 'Untagged':'#dc2626',
+      };
+      const envColor2 = (n) => ENV_COLORS[n] || '#64748b';
+      const kpiCards = he.filter(e => e.environment !== 'Untagged').map(e =>
+        `<div class="kpi">
+          <div class="kpi__label"><span class="env-badge" style="background:${envColor2(e.environment)}22;color:${envColor2(e.environment)};text-transform:none;font-size:.78rem">${escapeHtml(e.environment)}</span></div>
+          <div class="kpi__value" style="font-size:1.15rem">${fmtUSD0(e.cost)}</div>
+          <div class="kpi__sub">${fmtPct(e.pct_of_total)} of total</div>
+        </div>`
+      ).join('');
+
+      const lcRows = lc.map(e =>
+        `<tr>
+          <td><span class="env-badge" style="background:${lcColor(e.lifecycle)}22;color:${lcColor(e.lifecycle)};text-transform:none">${escapeHtml(e.lifecycle)}</span></td>
           <td style="font-weight:600;color:var(--accent)">${fmtUSD(e.cost)}</td>
           <td>${fmtPct(e.pct_of_total)}</td>
-          <td>${escapeHtml(e.env_owner_team || '—')}</td>
-          <td style="font-size:.82rem;color:var(--text-muted)">${escapeHtml(e.env_owner_email || '—')}</td>
-        </tr>`;
-      }).join('') || emptyTable(5, 'No environment data');
-
-      // env × category matrix (computed from raw rows)
-      const ec = (() => {
-        if (_filteredRows.length) return envByCategory();
-        const rows = DASH.env_category_breakdown || [];
-        if (!rows.length) return null;
-        const envs = [...new Set(rows.map(r => r.environment).filter(Boolean))];
-        const cats = [...new Set(rows.map(r => r.category).filter(Boolean))];
-        const matrix = {};
-        rows.forEach(r => {
-          matrix[r.environment] = matrix[r.environment] || {};
-          matrix[r.environment][r.category] = (matrix[r.environment][r.category] || 0) + r.cost;
-        });
-        return { envs, cats, matrix };
-      })();
-      let matrixHtml;
-      if (ec && ec.envs.length) {
-        const header = `<th>Environment</th>${ec.cats.map(c => `<th style="text-align:right">${escapeHtml(c)}</th>`).join('')}<th style="text-align:right">Total</th>`;
-        const body = ec.envs.map(en => {
-          const row = ec.matrix[en] || {};
-          let rowTotal = 0;
-          const cells = ec.cats.map(c => { const v = row[c] || 0; rowTotal += v; return `<td style="text-align:right">${v ? fmtUSD0(v) : '—'}</td>`; }).join('');
-          const ce = envColor(en.toLowerCase());
-          return `<tr><td><span class="env-badge" style="background:${ce}22;color:${ce}">${escapeHtml(en)}</span></td>${cells}<td style="text-align:right;font-weight:600">${fmtUSD0(rowTotal)}</td></tr>`;
-        }).join('');
-        matrixHtml = `<div class="data-table-wrap"><table class="data-table"><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table></div>`;
-      } else {
-        matrixHtml = `<div class="data-table__empty">Line-level data unavailable for this report.</div>`;
-      }
+          <td style="font-size:.78rem;color:var(--text-muted)">${(e.raw_values || []).slice(0,3).join(', ')}</td>
+        </tr>`
+      ).join('') || emptyTable(4, 'No lifecycle data');
 
       document.getElementById('tab-environments').innerHTML = `
-        <div class="kpi-grid">${kpis}</div>
-        <div class="chart-card"><div class="chart-card__title">Cost by Environment per Month</div>
-          <div class="chart-wrap chart-wrap--tall"><canvas id="envMonthChart"></canvas></div></div>
-        <div class="panel-card" style="padding:0;overflow:hidden">
-          <div class="section-title" style="padding:16px 20px 0">Environment Ownership &amp; Cost</div>
-          <div class="data-table-wrap" style="border:none;margin:0"><table class="data-table">
-            <thead><tr><th>Environment</th><th>Cost</th><th>% of Total</th><th>Owner Team</th><th>Owner Email</th></tr></thead>
-            <tbody>${rows}</tbody></table></div>
+        <div class="kpi-grid">${kpiCards}</div>
+        <div style="font-size:.78rem;color:var(--text-muted);margin-bottom:16px;padding:0 4px;">
+          Tagged spend: ${fmtUSD(he.filter(e=>e.environment!=='Untagged').reduce((s,e)=>s+e.cost,0))} of ${fmtUSD(total)} total (${fmtPct(he.filter(e=>e.environment!=='Untagged').reduce((s,e)=>s+e.cost,0)/(total||1)*100)} tagged)
         </div>
-        <div class="section-title">Environment × Service Category</div>
-        ${matrixHtml}`;
 
-      // stacked bar: env per month
-      const emRows = _filteredRows.length ? null : (DASH.env_month_breakdown || []);
-      const em = _filteredRows.length ? envByMonth() : (() => {
-        if (!emRows || !emRows.length) return null;
-        const months = [...new Set(emRows.map(r => r.month))].sort();
-        const envs = [...new Set(emRows.map(r => r.environment).filter(Boolean))];
-        const matrix = {};
-        emRows.forEach(r => {
-          matrix[r.environment] = matrix[r.environment] || {};
-          matrix[r.environment][r.month] = (matrix[r.environment][r.month] || 0) + r.cost;
+        <div class="chart-grid chart-grid--2" style="margin-bottom:16px">
+          <div class="chart-card">
+            <div class="chart-card__title">Cost by Hosting Environment</div>
+            <div class="chart-wrap"><canvas id="heDonut"></canvas></div>
+          </div>
+          <div class="panel-card" style="padding:0;overflow:hidden">
+            <div class="section-title" style="padding:16px 20px 8px">
+              Hosting Environment Breakdown
+              <span style="font-size:.75rem;font-weight:400;color:var(--text-muted);margin-left:8px;">
+                (tagged resources only — ${fmtPct(he.filter(e=>e.environment!=='Untagged').reduce((s,e)=>s+e.cost,0) / (total||1) * 100)} of total spend)
+              </span>
+            </div>
+            <div class="data-table-wrap" style="border:none;margin:0">
+              <table class="data-table">
+                <thead><tr><th>Environment</th><th>Cost</th><th>% of Total</th></tr></thead>
+                <tbody>${he.map(e=>
+                  `<tr>
+                    <td><span class="env-badge" style="background:${envColor2(e.environment)}22;color:${e.environment==='Untagged'?'var(--danger)':envColor2(e.environment)};text-transform:none;font-size:.78rem">${escapeHtml(e.environment)}</span></td>
+                    <td style="color:var(--accent);font-weight:600">${fmtUSD(e.cost)}</td>
+                    <td>${fmtPct(e.pct_of_total)}</td>
+                  </tr>`
+                ).join('')}
+                <tr style="border-top:2px solid var(--border);font-weight:700;background:var(--navy-2)">
+                  <td>Total</td>
+                  <td style="color:var(--accent)">${fmtUSD(he.reduce((s,e)=>s+e.cost,0))}</td>
+                  <td>100%</td>
+                </tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="chart-grid chart-grid--2" style="margin-bottom:16px">
+          <div class="chart-card">
+            <div class="chart-card__title">Cost by Lifecycle</div>
+            <div class="chart-wrap"><canvas id="lcDonut"></canvas></div>
+          </div>
+          <div class="panel-card" style="padding:0;overflow:hidden">
+            <div class="section-title" style="padding:16px 20px 8px">Lifecycle Breakdown</div>
+            <div class="data-table-wrap" style="border:none;margin:0">
+              <table class="data-table">
+                <thead><tr><th>Lifecycle</th><th>Cost</th><th>% of Total</th><th>Raw Tag Values</th></tr></thead>
+                <tbody>${lcRows}</tbody>
+              </table>
+            </div>
+          </div>
+        </div>`;
+
+      // Lifecycle donut
+      destroyChart('lcDonut');
+      const lcCtx = document.getElementById('lcDonut')?.getContext('2d');
+      if (lcCtx && lc.length) {
+        charts['lcDonut'] = new Chart(lcCtx, {
+          type: 'doughnut',
+          data: {
+            labels: lc.map(e => e.lifecycle),
+            datasets: [{
+              data: lc.map(e => e.cost),
+              backgroundColor: lc.map(e => lcColor(e.lifecycle)),
+              borderWidth: 0,
+            }]
+          },
+          options: {
+            responsive: true, cutout: '60%',
+            plugins: {
+              legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+              datalabels: { display: false },
+            }
+          }
         });
-        return { months, envs, matrix };
-      })();
-      destroyChart('envMonth');
-      const ctx = document.getElementById('envMonthChart');
-      if (em && em.months && em.months.length && ctx) {
-        charts['envMonth'] = new Chart(ctx.getContext('2d'), {
-          type: 'bar',
-          data: { labels: em.months, datasets: em.envs.map(en => ({
-            label: en, backgroundColor: envColor(en.toLowerCase()),
-            data: em.months.map(mo => Math.round((em.matrix[en] && em.matrix[en][mo]) || 0)) })) },
-          options: { responsive: true, maintainAspectRatio: false,
-            plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
-                       tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmtUSD(c.parsed.y)}` } } },
-            scales: { x: { stacked: true }, y: { stacked: true, ticks: { callback: v => '$' + Number(v).toLocaleString() } } } },
+      }
+
+      // Hosting environment donut
+      destroyChart('heDonut');
+      const heCtx = document.getElementById('heDonut')?.getContext('2d');
+      if (heCtx && he.length) {
+        const heFiltered = he.filter(e => e.environment !== 'Untagged');
+        charts['heDonut'] = new Chart(heCtx, {
+          type: 'doughnut',
+          data: {
+            labels: heFiltered.map(e => e.environment),
+            datasets: [{
+              data: heFiltered.map(e => e.cost),
+              backgroundColor: ['#6366f1','#f59e0b','#10b981','#0ea5e9','#dc2626','#94a3b8','#f97316','#8b5cf6','#ec4899','#14b8a6'],
+              borderWidth: 0,
+            }]
+          },
+          options: {
+            responsive: true, cutout: '60%',
+            plugins: {
+              legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+              datalabels: { display: false },
+            }
+          }
         });
-      } else if (ctx) {
-        ctx.parentElement.innerHTML = '<div class="data-table__empty">No monthly environment data available.</div>';
       }
     }
 

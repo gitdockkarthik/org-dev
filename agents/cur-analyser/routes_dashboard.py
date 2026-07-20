@@ -377,21 +377,19 @@ async def get_tab_environments(report_id: int = Query(default=None)) -> dict:
     file_path, csv_text, enricher = await _resolve_report(report_id)
     if file_path is None and csv_text is None:
         return {"empty": True}
-    from tools.duckdb_engine import get_cost_by_environment, get_cost_by_env_month, get_cost_by_env_category
+    from tools.duckdb_engine import get_cost_by_lifecycle, get_cost_by_hosting_environment
     from tools.dashboard_builder import _executor
     import asyncio
     loop = asyncio.get_running_loop()
     def run(fn, *args, **kwargs):
         return loop.run_in_executor(_executor, lambda: fn(*args, **kwargs))
-    environment_breakdown, env_month_breakdown, env_category_breakdown = await asyncio.gather(
-        run(get_cost_by_environment, csv_text, file_path=file_path, enricher=enricher),
-        run(get_cost_by_env_month, csv_text, file_path=file_path, enricher=enricher),
-        run(get_cost_by_env_category, csv_text, file_path=file_path, enricher=enricher),
+    lifecycle_breakdown, hosting_env_breakdown = await asyncio.gather(
+        run(get_cost_by_lifecycle, csv_text, file_path=file_path),
+        run(get_cost_by_hosting_environment, csv_text, file_path=file_path),
     )
     result = {
-        "environment_breakdown": environment_breakdown,
-        "env_month_breakdown": env_month_breakdown,
-        "env_category_breakdown": env_category_breakdown,
+        "lifecycle_breakdown": lifecycle_breakdown,
+        "hosting_env_breakdown": hosting_env_breakdown,
     }
     _set_cached_tab(report_id, "environments", result)
     await _set_db_cached_tab(report_id, "environments", result)
