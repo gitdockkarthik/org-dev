@@ -152,6 +152,36 @@
     #filterProgress { font-size:.75rem; }
     @media (max-width: 900px) { .chart-grid--2 { grid-template-columns: 1fr; } }
     @media (max-width: 768px) { .subnav { padding: 0 20px; } .content { padding: 20px; } .chart-grid { grid-template-columns: 1fr; } .cov-row { grid-template-columns:110px 1fr 70px; } .cov-row__cost { display:none; } }
+    /* Tab Chat Panel */
+    #tabChatToggle {
+      position: fixed; bottom: 80px; right: 24px; z-index: 999;
+      background: var(--accent); color: #fff; border: none; border-radius: 50px;
+      padding: 10px 20px; font-size: .88rem; font-weight: 600; cursor: pointer;
+      box-shadow: 0 4px 12px rgba(99,102,241,.4); display: none;
+    }
+    #tabChatPanel {
+      position: fixed; bottom: 0; right: 0; width: 360px; height: 100vh;
+      background: var(--navy-1); border-left: 1px solid var(--border);
+      display: flex; flex-direction: column; z-index: 998;
+      transform: translateX(100%); transition: transform .25s ease;
+      box-shadow: -4px 0 24px rgba(0,0,0,.12);
+    }
+    #tabChatPanel.open { transform: translateX(0); }
+    #tabChatHeader {
+      padding: 14px 16px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+      font-weight: 600; font-size: .9rem;
+    }
+    #tabChatMessages {
+      flex: 1; overflow-y: auto; padding: 12px 16px; display: flex;
+      flex-direction: column; gap: 10px;
+    }
+    .tab-chat-msg { max-width: 90%; padding: 8px 12px; border-radius: 10px; font-size: .83rem; line-height: 1.45; }
+    .tab-chat-msg--user { align-self: flex-end; background: var(--accent); color: #fff; }
+    .tab-chat-msg--assistant { align-self: flex-start; background: var(--navy-2); color: var(--text); border: 1px solid var(--border); }
+    #tabChatInput { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); }
+    #tabChatInput textarea { flex: 1; resize: none; height: 60px; border-radius: 8px; border: 1px solid var(--border); background: var(--navy-2); color: var(--text); padding: 8px 10px; font-size: .83rem; }
+    #tabChatInput button { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 0 14px; cursor: pointer; font-weight: 600; }
   </style>
 </head>
 <body style="visibility:hidden">
@@ -302,7 +332,6 @@
         <button class="tab-btn"                 data-tab="services"    onclick="switchTab('services',this)">By Service</button>
         <button class="tab-btn"                 data-tab="tags"        onclick="switchTab('tags',this)">Cost Centres &amp; Tags</button>
         <button class="tab-btn"                 data-tab="trends"      onclick="switchTab('trends',this)">Trends</button>
-        <button class="tab-btn"                 data-tab="insights"    onclick="switchTab('insights',this)">AI Insights</button>
       </div>
 
       <div id="filterBar" style="background:var(--navy-1,#f8fafc);
@@ -399,7 +428,6 @@
       <div id="tab-services"     class="tab-panel"></div>
       <div id="tab-tags"         class="tab-panel"></div>
       <div id="tab-trends"       class="tab-panel"></div>
-      <div id="tab-insights"     class="tab-panel"></div>
     </div>
 
     <!-- Comparison mode view (2+ reports selected) -->
@@ -1502,6 +1530,15 @@
             setTabLoading(btn, false);
           }));
         }
+      }
+      // Reset tab chat context on tab switch
+      if (typeof _tabChatOpen !== 'undefined' && _tabChatOpen) {
+        _tabChatHistory = [];
+        document.getElementById('tabChatMessages').innerHTML = '';
+        const _tcLabels = { overview:'Overview', accounts:'By Account', environments:'By Environment', services:'By Service', tags:'Cost Centres & Tags', trends:'Trends' };
+        document.getElementById('tabChatTitle').textContent = `Ask about ${_tcLabels[name] || name}`;
+        appendTabChatMsg('assistant', `Switched to ${_tcLabels[name] || name} tab. Select a suggestion or ask your own question:`);
+        showTabSuggestions(name);
       }
     }
     function renderTab(name) {
@@ -3321,6 +3358,7 @@ ${JSON.stringify(payload, null, 2)}
         _currentFilename = filename;
         buildInfoBar(filename);
         document.getElementById('dashboard').style.display = 'block';
+        showTabChatButton();
         _loaded.add('overview');
         renderOverview();
 
@@ -3403,6 +3441,212 @@ ${JSON.stringify(payload, null, 2)}
         document.body.style.visibility = 'visible';
       });
     })();
+
+    // ── Tab Chat ──────────────────────────────────────────────────────────────
+    let _tabChatOpen = false;
+    let _tabChatHistory = [];
+    let _tabChatStreaming = false;
+    let _tabChatSessionId = null;
+    function _getTabSessionId(tab) {
+      if (!_tabChatSessionId) {
+        _tabChatSessionId = (typeof crypto.randomUUID === 'function' ? crypto.randomUUID() :
+          'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+            const r = Math.random()*16|0; return (c=='x'?r:(r&0x3|0x8)).toString(16);
+          }));
+      }
+      return _tabChatSessionId + '-' + tab;
+    }
+
+    function toggleTabChat() {
+      _tabChatOpen = !_tabChatOpen;
+      document.getElementById('tabChatPanel').classList.toggle('open', _tabChatOpen);
+      if (_tabChatOpen && _tabChatHistory.length === 0) {
+        const tab = document.querySelector('.tab-btn--active')?.dataset.tab || 'overview';
+        appendTabChatMsg('assistant', `Hi! I can answer questions about this tab's data. Select a suggestion or type your own question:`);
+        showTabSuggestions(tab);
+      }
+    }
+
+    const TAB_SUGGESTIONS = {
+      overview: [
+        'What is my total AWS spend this month?',
+        'What are my top 5 services by cost?',
+        'How much did I save from discounts and credits?',
+        'What is my marketplace spend?',
+      ],
+      services: [
+        'What are my top AWS services by cost?',
+        'How much am I spending on Reserved Instances?',
+        'What are my Marketplace charges?',
+        'What is my Savings Plan coverage cost?',
+      ],
+      accounts: [
+        'Which account is spending the most?',
+        'What is the cost breakdown across all accounts?',
+        'How many AWS accounts are in this report?',
+      ],
+      environments: [
+        'What is my Production environment spend?',
+        'How much spend is untagged?',
+        'Compare Pre-GoLive vs Post-GoLive costs',
+        'What is my Non-Production spend?',
+      ],
+      tags: [
+        'What is the most expensive application?',
+        'Show me cost breakdown by layer',
+        'What is the untagged spend by application?',
+        'Which budget code has the highest spend?',
+      ],
+      trends: [
+        'What is my daily average spend?',
+        'Which region is most expensive?',
+        'Why is day 1 spend so high?',
+        'What is my total spend by billing type?',
+      ],
+    };
+
+    function showTabSuggestions(tab) {
+      const msgs = document.getElementById('tabChatMessages');
+      const suggestions = TAB_SUGGESTIONS[tab] || [];
+      if (!suggestions.length) return;
+      const div = document.createElement('div');
+      div.id = 'tabChatSuggestions';
+      div.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;padding:4px 0;';
+      suggestions.forEach(s => {
+        const btn = document.createElement('button');
+        btn.textContent = s;
+        btn.style.cssText = 'padding:5px 10px;border-radius:14px;border:1px solid var(--accent);background:transparent;color:var(--accent);font-size:.75rem;cursor:pointer;text-align:left;';
+        btn.onclick = () => {
+          document.getElementById('tabChatText').value = s;
+          div.remove();
+          sendTabChat();
+        };
+        div.appendChild(btn);
+      });
+      msgs.appendChild(div);
+      msgs.scrollTop = msgs.scrollHeight;
+    }
+
+    function getTabContext() {
+      const tab = document.querySelector('.tab-btn--active')?.dataset.tab || 'overview';
+      const tabLabels = {
+        overview: 'Overview', accounts: 'By Account', environments: 'By Environment',
+        services: 'By Service', tags: 'Cost Centres & Tags', trends: 'Trends'
+      };
+      document.getElementById('tabChatTitle').textContent = `Ask about ${tabLabels[tab] || tab}`;
+
+      const ctx = { active_tab: tab, billing_period: '2026-07' };
+      if (tab === 'overview') {
+        ctx.total_cost = DASH.total_cost;
+        ctx.total_gross = DASH.total_gross;
+        ctx.total_net = DASH.total_net;
+        ctx.credits_discounts = DASH.credits_discounts;
+        ctx.taxes = DASH.taxes;
+        ctx.marketplace_total = DASH.marketplace_total;
+        ctx.top_service = DASH.top_service;
+        ctx.service_breakdown = (DASH.service_breakdown || []).slice(0, 10);
+      } else if (tab === 'services') {
+        ctx.line_item_breakdown = DASH.line_item_breakdown;
+      } else if (tab === 'accounts') {
+        ctx.account_breakdown = DASH.account_breakdown;
+      } else if (tab === 'environments') {
+        ctx.lifecycle_breakdown = DASH.lifecycle_breakdown;
+        ctx.hosting_env_breakdown = DASH.hosting_env_breakdown;
+      } else if (tab === 'tags') {
+        ctx.tag_application = (DASH.tag_application || []).slice(0, 15);
+        ctx.tag_layer = (DASH.tag_layer || []).slice(0, 15);
+        ctx.tag_function = (DASH.tag_function || []).slice(0, 15);
+        ctx.tag_budget_code = (DASH.tag_budget_code || []).slice(0, 15);
+      } else if (tab === 'trends') {
+        ctx.daily_trend = DASH.daily_trend;
+        ctx.region_breakdown = DASH.region_breakdown;
+        ctx.line_item_breakdown = DASH.line_item_breakdown;
+      }
+      return ctx;
+    }
+
+    function appendTabChatMsg(role, text) {
+      const msgs = document.getElementById('tabChatMessages');
+      const div = document.createElement('div');
+      div.className = `tab-chat-msg tab-chat-msg--${role}`;
+      div.textContent = text;
+      msgs.appendChild(div);
+      msgs.scrollTop = msgs.scrollHeight;
+      return div;
+    }
+
+    async function sendTabChat() {
+      if (_tabChatStreaming) return;
+      const input = document.getElementById('tabChatText');
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = '';
+      appendTabChatMsg('user', text);
+
+      const ctx = getTabContext();
+      const systemPrompt = `You are a CUR cost analysis assistant. Answer questions about the ${ctx.active_tab} tab data provided in the context. Be concise and cite exact figures. Format currency as $X,XXX.XX. Only answer based on the provided data — do not guess or infer.`;
+
+      const tabMessage = `IMPORTANT: Answer ONLY from the data provided below. Do NOT use any other data sources, tools, or cached data. Do NOT make recommendations. Just state the facts from the data.\n\nTab: ${ctx.active_tab}\nData:\n${JSON.stringify(ctx, null, 2)}\n\nQuestion: ${text}\n\nAnswer factually and concisely using ONLY the data above.`;
+      _tabChatHistory.push({ role: 'user', content: tabMessage });
+
+      const assistantDiv = appendTabChatMsg('assistant', '...');
+      _tabChatStreaming = true;
+
+      try {
+        const res = await fetch(`${PROXY}/invoke/stream`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+          body: JSON.stringify({
+            session_id: _getTabSessionId(ctx.active_tab),
+            user_message: tabMessage,
+            context: { report_id: currentReportId || REPORT_ID, tab_chat: true },
+          })
+        });
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let fullText = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value);
+          for (const line of chunk.split('\n')) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6);
+              if (data === '[DONE]') break;
+              if (!data.startsWith('[')) { fullText += data; assistantDiv.textContent = fullText; }
+            }
+          }
+          document.getElementById('tabChatMessages').scrollTop = document.getElementById('tabChatMessages').scrollHeight;
+        }
+        _tabChatHistory.push({ role: 'assistant', content: fullText });
+      } catch (e) {
+        assistantDiv.textContent = 'Error getting response. Please try again.';
+      }
+      _tabChatStreaming = false;
+    }
+
+    // Show/hide tab chat button when dashboard is visible
+    function showTabChatButton() {
+      document.getElementById('tabChatToggle').style.display = 'block';
+    }
+
+    // Clear chat history when tab switches
   </script>
+
+  <!-- Tab Chat Toggle Button -->
+  <button id="tabChatToggle" onclick="toggleTabChat()">💬 Ask about this tab</button>
+
+  <!-- Tab Chat Panel -->
+  <div id="tabChatPanel">
+    <div id="tabChatHeader">
+      <span id="tabChatTitle">Ask about this tab</span>
+      <button onclick="toggleTabChat()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:1.1rem">✕</button>
+    </div>
+    <div id="tabChatMessages"></div>
+    <div id="tabChatInput">
+      <textarea id="tabChatText" placeholder="Ask a question about this tab's data..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendTabChat();}"></textarea>
+      <button onclick="sendTabChat()">Send</button>
+    </div>
+  </div>
 </body>
 </html>

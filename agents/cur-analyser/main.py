@@ -1377,8 +1377,12 @@ async def invoke_stream(
             csv_text = get_report_csv(_rid)
             if csv_text:
                 _cur_cache[body.session_id] = csv_text
+    is_tab_chat = bool(ctx.get("tab_chat"))
     has_data = bool(_cur_cache.get(body.session_id)) or body.session_id in _session_report_map
-    system = _runner._build_system({"session_id": body.session_id, "has_data": has_data})
+    if is_tab_chat:
+        system = "You are a CUR cost analysis assistant. Answer ONLY from the data provided in the user message. Do NOT call any tools. Do NOT make recommendations. State facts concisely with exact figures. Format currency as $X,XXX.XX."
+    else:
+        system = _runner._build_system({"session_id": body.session_id, "has_data": has_data})
     messages = _runner._build_messages(body.history, body.user_message)
 
     async def _execute_tool(name: str, tool_input: dict) -> str:
@@ -1399,8 +1403,8 @@ async def invoke_stream(
                 max_tokens=8192,
                 system=system,
                 messages=messages,
-                tools=_runner._anthropic_tools if _runner._tool_map else None,
-                tool_executor=_execute_tool,
+                tools=None if is_tab_chat else (_runner._anthropic_tools if _runner._tool_map else None),
+                tool_executor=None if is_tab_chat else _execute_tool,
                 api_key=x_anthropic_key or settings.anthropic_api_key,
             ):
                 if chunk.startswith("[STOP_REASON]"):
