@@ -1379,8 +1379,39 @@ async def invoke_stream(
                 _cur_cache[body.session_id] = csv_text
     is_tab_chat = bool(ctx.get("tab_chat"))
     has_data = bool(_cur_cache.get(body.session_id)) or body.session_id in _session_report_map
+    pre_aggregated = ctx.get("pre_aggregated")
+    logger.info("invoke_stream: is_tab_chat=%s pre_aggregated=%s session=%s", is_tab_chat, bool(pre_aggregated), body.session_id)
     if is_tab_chat:
-        system = "You are a CUR cost analysis assistant. Answer ONLY from the data provided in the user message. Do NOT call any tools. Do NOT make recommendations. State facts concisely with exact figures. Format currency as $X,XXX.XX."
+        system = """You are a CUR cost analysis assistant. Answer ONLY from the data provided in the user message. Do NOT call any tools. Do NOT make recommendations. State facts concisely with exact figures. Format currency as $X,XXX.XX.
+
+If the question cannot be answered from the provided tab data, guide the user to the correct tab:
+- Total cost, top services, gross/net cost, discounts → Overview tab
+- Service breakdown, marketplace, reserved instances, savings plans → By Service tab
+- Account-level costs → By Account tab
+- Production/staging/lifecycle costs → By Environment tab
+- Application, layer, function, budget code costs → Cost Centres & Tags tab
+- Daily trends, regional costs → Trends tab
+- Cross-dimensional questions (e.g. untagged EC2) → use the main Chat tab for deeper analysis
+
+Example response when data not available: "This data is not available in the [current] tab. Switch to the [correct] tab to see [specific data].\""""
+    elif pre_aggregated:
+        import json as _json
+        pre_agg_summary = f"""
+Pre-aggregated CUR data available — use this to answer questions WITHOUT calling build_dashboard:
+
+OVERVIEW: total_cost={pre_aggregated.get('overview', {}).get('total_cost')}, total_gross={pre_aggregated.get('overview', {}).get('total_gross')}, total_net={pre_aggregated.get('overview', {}).get('total_net')}, credits={pre_aggregated.get('overview', {}).get('credits_discounts')}, marketplace={pre_aggregated.get('overview', {}).get('marketplace_total')}, taxes={pre_aggregated.get('overview', {}).get('taxes')}
+TOP SERVICES: {_json.dumps(pre_aggregated.get('overview', {}).get('service_breakdown', [])[:5])}
+ACCOUNTS: {_json.dumps(pre_aggregated.get('accounts', {}).get('account_breakdown', [])[:5])}
+LIFECYCLE: {_json.dumps(pre_aggregated.get('environments', {}).get('lifecycle_breakdown', []))}
+HOSTING ENV: {_json.dumps(pre_aggregated.get('environments', {}).get('hosting_env_breakdown', [])[:5])}
+LINE ITEM BREAKDOWN: {_json.dumps(pre_aggregated.get('services', {}).get('line_item_breakdown', {}))}
+TAGS - APPLICATION: {_json.dumps(pre_aggregated.get('tags', {}).get('tag_application', [])[:10])}
+TAGS - LAYER: {_json.dumps(pre_aggregated.get('tags', {}).get('tag_layer', [])[:10])}
+TAGS - BUDGET CODE: {_json.dumps(pre_aggregated.get('tags', {}).get('tag_budget_code', [])[:10])}
+
+Only call build_dashboard if the user asks for data NOT listed above.
+"""
+        system = _runner._build_system({"session_id": body.session_id, "has_data": has_data}) + "\n\n" + pre_agg_summary
     else:
         system = _runner._build_system({"session_id": body.session_id, "has_data": has_data})
     messages = _runner._build_messages(body.history, body.user_message)

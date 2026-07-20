@@ -113,6 +113,12 @@
         document.getElementById('agent-fallback-link').href = url;
         const frame = document.getElementById('agent-frame');
         frame.src = url;
+        // Listen for navigation requests from the iframe
+        window.addEventListener('message', function(e) {
+          if (e.data && e.data.type === 'navigate') {
+            window.location.href = e.data.url;
+          }
+        });
         frame.onerror = () => {
           frame.style.display = 'none';
           document.getElementById('agent-error').style.display = 'flex';
