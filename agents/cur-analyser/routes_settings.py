@@ -128,6 +128,7 @@ class SettingsPayload(BaseModel):
     top_drivers_count: int = 5
     min_cost_threshold: float = 1.00
     api_key: str = ""
+    inventory_enrichment_enabled: bool = False
 
 
 @router.get("")
@@ -139,6 +140,7 @@ async def get_settings() -> dict:
     cfg["api_key_last4"] = (api_key[-4:] if api_key else "")
     if "api_key" in cfg:
         del cfg["api_key"]
+    cfg["inventory_enrichment_enabled"] = _config.get("inventory_enrichment_enabled", False)
     return cfg
 
 

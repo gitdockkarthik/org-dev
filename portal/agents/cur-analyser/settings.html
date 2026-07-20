@@ -325,6 +325,22 @@
         <div id="api-key-msg" class="action-msg hidden"></div>
       </div>
 
+      <!-- Inventory Enrichment Toggle -->
+      <div class="card" style="margin-bottom:1rem;">
+        <div class="card-title">Inventory Enrichment</div>
+        <div class="card-subtitle">When enabled, CUR cost rows are enriched with inventory attributes (Customer, Application, Environment, Service). Disable to show raw AWS tag data only.</div>
+        <div class="toggle-wrap" style="margin-top:12px;">
+          <input type="checkbox" id="inv-enrichment-toggle" class="toggle-input" />
+          <label for="inv-enrichment-toggle" class="toggle-track"></label>
+          <span class="toggle-label">Enable Inventory Enrichment</span>
+        </div>
+        <div style="font-size:.82rem;color:#64748b;margin-top:4px;" id="inv-enrichment-hint">
+          OFF — Dashboard shows raw AWS tag data without inventory mapping.
+        </div>
+        <button onclick="saveEnrichmentToggle()" class="btn btn-primary" style="margin-top:12px;">Save</button>
+        <span id="inv-enrichment-status" style="font-size:.82rem;margin-left:10px;"></span>
+      </div>
+
       <!-- Inventory File -->
       <div class="card">
         <div class="card-title">Inventory File</div>
@@ -823,12 +839,56 @@
         if (cfg.top_drivers_count      != null)  $('top-drivers-count').value   = cfg.top_drivers_count;
         if (cfg.min_cost_threshold     != null)  $('min-cost-threshold').value  = cfg.min_cost_threshold;
 
+        // Load enrichment toggle state
+        await loadEnrichmentToggle();
+
       } catch (err) {
         console.error('loadSettings failed:', err);
       }
     }
 
+    async function apiFetch(path, options = {}) {
+      const url = PROXY ? PROXY + path : path;
+      const res = await fetch(url, {
+        credentials: 'include',
+        headers: { ...authHeaders(), ...((options.headers) || {}) },
+        ...options,
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    }
+
+    async function loadEnrichmentToggle() {
+      try {
+        const s = await apiFetch('/settings');
+        const enabled = !!s.inventory_enrichment_enabled;
+        document.getElementById('inv-enrichment-toggle').checked = enabled;
+        document.getElementById('inv-enrichment-hint').textContent = enabled
+          ? 'ON — Dashboard enriches cost rows with inventory attributes.'
+          : 'OFF — Dashboard shows raw AWS tag data without inventory mapping.';
+      } catch(e) {}
+    }
+
     loadSettings();
+
+    async function saveEnrichmentToggle() {
+      const enabled = document.getElementById('inv-enrichment-toggle').checked;
+      const statusEl = document.getElementById('inv-enrichment-status');
+      statusEl.textContent = 'Saving…';
+      try {
+        await postSettings({ inventory_enrichment_enabled: enabled });
+        document.getElementById('inv-enrichment-hint').textContent = enabled
+          ? 'ON — Dashboard enriches cost rows with inventory attributes.'
+          : 'OFF — Dashboard shows raw AWS tag data without inventory mapping.';
+        statusEl.textContent = '✓ Saved — reload dashboard to apply';
+        statusEl.style.color = '#16a34a';
+        // Invalidate DB tab cache so next load recomputes without enrichment
+        await apiFetch('/dashboard/precompute?report_id=' + (window._activeReportId || 3), { method: 'POST' });
+      } catch(e) {
+        statusEl.textContent = 'Failed to save';
+        statusEl.style.color = '#dc2626';
+      }
+    }
   </script>
   <script>
     // ── Data Sources section (pluggable data-source abstraction layer) ─────

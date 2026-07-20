@@ -175,7 +175,14 @@ async def _resolve_report(report_id: int | None):
             if csv_text is None:
                 return None, None, None
     reg = get_registry()
-    enricher = await build_enricher(reg)
+    # Respect inventory enrichment toggle from settings
+    from routes_settings import _config as _settings_config
+    enrichment_enabled = _settings_config.get("inventory_enrichment_enabled", False)
+    if enrichment_enabled:
+        enricher = await build_enricher(reg)
+    else:
+        from tools.inventory_enricher import CurEnricher
+        enricher = CurEnricher(None)  # inactive enricher — pass-through
     return file_path, csv_text, enricher
 
 
