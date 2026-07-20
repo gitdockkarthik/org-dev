@@ -441,27 +441,23 @@ async def get_tab_tags(report_id: int = Query(default=None)) -> dict:
     file_path, csv_text, enricher = await _resolve_report(report_id)
     if file_path is None and csv_text is None:
         return {"empty": True}
-    from tools.duckdb_engine import get_cost_by_tag, get_untagged_resources
+    from tools.duckdb_engine import get_cost_by_raw_tag
     from tools.dashboard_builder import _executor
     import asyncio
     loop = asyncio.get_running_loop()
     def run(fn, *args, **kwargs):
         return loop.run_in_executor(_executor, lambda: fn(*args, **kwargs))
-    tag_product, tag_team, tag_customer, tag_costcentre, tag_team_native, untagged_resources = await asyncio.gather(
-        run(get_cost_by_tag, csv_text, "tag_Product", file_path=file_path, enricher=enricher),
-        run(get_cost_by_tag, csv_text, "tag_Team", file_path=file_path, enricher=enricher),
-        run(get_cost_by_tag, csv_text, "tag_Customer", file_path=file_path, enricher=enricher),
-        run(get_cost_by_tag, csv_text, "tag_CostCentre", file_path=file_path, enricher=enricher),
-        run(get_cost_by_tag, csv_text, "tag_Team", file_path=file_path, enricher=enricher, native_only=True),
-        run(get_untagged_resources, csv_text, file_path=file_path, enricher=enricher),
+    tag_application, tag_layer, tag_function, tag_budget_code = await asyncio.gather(
+        run(get_cost_by_raw_tag, "user_application", csv_text, file_path=file_path),
+        run(get_cost_by_raw_tag, "user_layer", csv_text, file_path=file_path),
+        run(get_cost_by_raw_tag, "user_function", csv_text, file_path=file_path),
+        run(get_cost_by_raw_tag, "user_budget_code", csv_text, file_path=file_path),
     )
     result = {
-        "tag_product_breakdown": tag_product,
-        "tag_team_breakdown": tag_team,
-        "tag_team_native_breakdown": tag_team_native,
-        "tag_customer_breakdown": tag_customer,
-        "tag_costcentre_breakdown": tag_costcentre,
-        "untagged_resources": untagged_resources,
+        "tag_application": tag_application,
+        "tag_layer": tag_layer,
+        "tag_function": tag_function,
+        "tag_budget_code": tag_budget_code,
     }
     _set_cached_tab(report_id, "tags", result)
     await _set_db_cached_tab(report_id, "tags", result)

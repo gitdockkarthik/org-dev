@@ -2092,119 +2092,84 @@
 
     // ── TAB 5: Cost Centres & Tags ─────────────────────────────────────────────────
     function renderTags() {
-      const ut = DASH.untagged_resources || { tag_coverage: [], overall_coverage_pct: 0 };
-      const cov = ut.tag_coverage || [];
+      const app = DASH.tag_application || [];
+      const layer = DASH.tag_layer || [];
+      const func = DASH.tag_function || [];
+      const budget = DASH.tag_budget_code || [];
+      const total = DASH.total_cost || 0;
 
-      const awsPct   = ut.aws_tag_pct   ?? null;
-      const invPct   = ut.inventory_pct ?? null;
-      const covRows = (awsPct !== null && invPct !== null)
-        ? (() => {
-            const awsCost  = ut.tag_coverage?.[0]?.untagged_cost ?? 0;   // cost of untagged-in-AWS rows
-            const invCost  = awsCost;                                      // inventory covers exactly those rows
-            const taggedCost = (DASH.total_cost || 0) - awsCost;
-            return `<div style="margin-bottom:18px">
-              <div style="display:flex;border-radius:8px;overflow:hidden;height:36px">
-                <div style="flex:${awsPct};background:#22c55e;display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700;color:#fff;min-width:60px">
-                  ${fmtPct(awsPct)}
-                </div>
-                <div style="flex:${invPct};background:#f59e0b;display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700;color:#fff;min-width:60px">
-                  ${fmtPct(invPct)}
-                </div>
-              </div>
-              <div style="font-size:.75rem;color:var(--text-muted);margin-top:6px">
-                Row coverage: % of billing line items with at least one AWS resource tag vs covered by inventory enrichment.
-              </div>
-              <div style="display:flex;margin-top:10px;gap:24px;flex-wrap:wrap">
-                <div style="display:flex;align-items:center;gap:8px">
-                  <div style="width:12px;height:12px;border-radius:2px;background:#22c55e;flex-shrink:0"></div>
-                  <div>
-                    <div style="font-weight:600;font-size:.85rem">AWS Resource Tags</div>
-                    <div style="color:var(--text-muted);font-size:.78rem">${fmtPct(awsPct)} of rows tagged in AWS (${fmtNum(ut.total_rows - (ut.tag_coverage?.[0]?.untagged_count ?? 0))} rows) · ${fmtUSD0(taggedCost)} attributed</div>
-                  </div>
-                </div>
-                <div style="display:flex;align-items:center;gap:8px">
-                  <div style="width:12px;height:12px;border-radius:2px;background:#f59e0b;flex-shrink:0"></div>
-                  <div>
-                    <div style="font-weight:600;font-size:.85rem">Inventory Enrichment</div>
-                    <div style="color:var(--text-muted);font-size:.78rem">${fmtPct(invPct)} of untagged rows enriched via account mapping (${fmtNum(ut.tag_coverage?.[0]?.untagged_count ?? 0)} rows) · ${fmtUSD0(invCost)} attributed — every AWS account mapped to environment, customer &amp; cost centre</div>
-                  </div>
-                </div>
-              </div>
-              <div style="margin-top:10px;font-size:.78rem;color:var(--text-muted)">
-                💡 Improve AWS tagging to reduce inventory dependency. Target: move spend from amber to green.
-              </div>
-            </div>`;
-          })()
-        : cov.map(c => {
-            const col = covColor(c.coverage_pct);
-            const label = c.tag.replace(/^tag_/, '');
-            return `<div class="cov-row">
-              <div class="cov-row__name">${escapeHtml(label)}</div>
-              <div class="progress-bar"><div class="progress-bar__fill" style="width:${c.coverage_pct}%;background:${col}"></div></div>
-              <div style="color:${col};font-weight:700">${fmtPct(c.coverage_pct)}</div>
-              <div class="cov-row__cost" style="color:var(--text-muted);font-size:.8rem">${fmtUSD0(c.untagged_cost)} untagged</div>
-            </div>`;
-          }).join('') || `<div class="data-table__empty">${ut.has_tag_columns === false ? 'Tag columns not available in this CUR format. Cost attribution is provided via inventory enrichment.' : 'No tag columns found.'}</div>`;
+      const TAG_COLORS = ['#6366f1','#f59e0b','#10b981','#0ea5e9','#dc2626',
+                          '#f97316','#8b5cf6','#ec4899','#14b8a6','#64748b'];
 
-      const overall = ut.overall_coverage_pct || 0;
-      const ocol = covColor(overall);
+      function tagTable(data, label) {
+        const rows = data.map((t, i) =>
+          `<tr>
+            <td><span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:.75rem;font-weight:600;
+                background:${t.tag_value==='Untagged'?'rgba(220,38,38,.1)':TAG_COLORS[i%TAG_COLORS.length]+'22'};
+                color:${t.tag_value==='Untagged'?'#dc2626':TAG_COLORS[i%TAG_COLORS.length]}">${escapeHtml(t.tag_value)}</span></td>
+            <td style="color:var(--accent);font-weight:600">${fmtUSD(t.cost)}</td>
+            <td>${fmtPct(t.pct_of_total)}</td>
+          </tr>`
+        ).join('');
+        const tagged = data.filter(t=>t.tag_value!=='Untagged').reduce((s,t)=>s+t.cost,0);
+        const taggedPct = total ? (tagged/total*100) : 0;
+        return `
+          <div class="panel-card" style="padding:0;overflow:hidden">
+            <div class="section-title" style="padding:16px 20px 8px">
+              ${label}
+              <span style="font-size:.75rem;font-weight:400;color:var(--text-muted);margin-left:8px;">
+                ${fmtPct(taggedPct)} tagged
+              </span>
+            </div>
+            <div class="data-table-wrap" style="border:none;margin:0;max-height:320px;overflow-y:auto">
+              <table class="data-table">
+                <thead><tr><th>Value</th><th>Cost</th><th>% of Total</th></tr></thead>
+                <tbody>${rows}
+                <tr style="border-top:2px solid var(--border);font-weight:700;background:var(--navy-2)">
+                  <td>Total</td>
+                  <td style="color:var(--accent)">${fmtUSD(data.reduce((s,t)=>s+t.cost,0))}</td>
+                  <td>100%</td>
+                </tr></tbody>
+              </table>
+            </div>
+          </div>`;
+      }
 
-      // recommendations from coverage gaps
-      const gaps = cov.filter(c => c.coverage_pct < 80).sort((a, b) => b.untagged_cost - a.untagged_cost);
-      const recs = ut.has_tag_columns === false
-        ? '<li><span style="color:var(--text-muted)">Tag columns not available in this CUR format. Cost attribution is via inventory enrichment.</span></li>'
-        : gaps.length
-          ? gaps.map(c => `<li><span class="signal-icon">→</span><span>Improve <strong>${escapeHtml(c.tag.replace(/^tag_/, ''))}</strong> coverage (currently ${fmtPct(c.coverage_pct)}) — ${fmtUSD0(c.untagged_cost)} of spend is untagged.</span></li>`).join('')
-          : '<li><span style="color:var(--success)">✅</span><span>All tags above 80% coverage — tagging hygiene is healthy.</span></li>';
-
-      const tagSection = (title, breakdown, chartId) => {
-        const rows = (breakdown || []).map(t => `<tr><td style="font-weight:600">${escapeHtml(t.tag_value)}</td>
-          <td style="color:var(--accent);font-weight:600">${fmtUSD(t.cost)}</td><td>${fmtPct(t.pct_of_total)}</td></tr>`).join('')
-          || emptyTable(3, 'No data');
-        return `<div class="panel-card">
-          <div class="chart-card__title">${title}</div>
-          <div class="chart-wrap" style="height:220px"><canvas id="${chartId}"></canvas></div>
-          <div class="data-table-wrap" style="margin-top:12px"><table class="data-table">
-            <thead><tr><th>Value</th><th>Cost</th><th>% of Total</th></tr></thead><tbody>${rows}</tbody></table></div>
-        </div>`;
-      };
+      // KPI cards — top item from each tag (excluding Untagged)
+      const topApp = app.find(t=>t.tag_value!=='Untagged');
+      const topLayer = layer.find(t=>t.tag_value!=='Untagged');
+      const topFunc = func.find(t=>t.tag_value!=='Untagged');
 
       document.getElementById('tab-tags').innerHTML = `
-        <div class="panel-card">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
-            <div class="section-title" style="margin:0">Tag Coverage</div>
-            <div class="stat-badge" style="background:${ocol}18;border-color:${ocol}44">
-              <span class="stat-badge__v" style="color:${ocol}">${fmtPct(overall)}</span>
-              <span class="stat-badge__l">Overall coverage</span>
-            </div>
+        <div class="kpi-grid">
+          <div class="kpi kpi--accent">
+            <div class="kpi__label">Top Application</div>
+            <div class="kpi__value" style="font-size:1.15rem">${topApp ? escapeHtml(topApp.tag_value) : '—'}</div>
+            <div class="kpi__sub">${topApp ? fmtUSD(topApp.cost) : 'No tag data'}</div>
           </div>
-          ${covRows}
+          <div class="kpi kpi--orange">
+            <div class="kpi__label">Top Layer</div>
+            <div class="kpi__value" style="font-size:1.15rem">${topLayer ? escapeHtml(topLayer.tag_value) : '—'}</div>
+            <div class="kpi__sub">${topLayer ? fmtUSD(topLayer.cost) : 'No tag data'}</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi__label">Top Function</div>
+            <div class="kpi__value" style="font-size:1.15rem">${topFunc ? escapeHtml(topFunc.tag_value) : '—'}</div>
+            <div class="kpi__sub">${topFunc ? fmtUSD(topFunc.cost) : 'No tag data'}</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi__label">Top Budget Code</div>
+            <div class="kpi__value" style="font-size:1.15rem">${budget.find(t=>t.tag_value!=='Untagged')?.tag_value || '—'}</div>
+            <div class="kpi__sub">${budget.find(t=>t.tag_value!=='Untagged') ? fmtUSD(budget.find(t=>t.tag_value!=='Untagged').cost) : 'No tag data'}</div>
+          </div>
         </div>
-        <div class="chart-grid chart-grid--2">
-          ${tagSection('By Product', DASH.tag_product_breakdown, 'tagProdChart')}
-          ${tagSection('By Managed By', DASH.tag_team_breakdown, 'tagTeamChart')}
-          ${tagSection('By Customer', DASH.tag_customer_breakdown, 'tagCustChart')}
-          ${DASH.tag_team_native_breakdown && DASH.tag_team_native_breakdown.length > 0
-            ? tagSection('By Team (AWS Tag)', DASH.tag_team_native_breakdown, 'tagTeamNativeChart')
-            : ''}
-          ${tagSection('By Cost Centre', DASH.tag_costcentre_breakdown, 'tagCCChart')}
-        </div>
-        <div class="panel-card" style="border-color:var(--accent)">
-          <div class="section-title" style="color:var(--accent)">🤖 AI Tagging Recommendations</div>
-          <div style="font-size:.86rem;color:var(--text-muted);margin-bottom:8px">Based on tag coverage analysis, the following improvements are recommended:</div>
-          <ul class="signal-list">${recs}</ul>
-        </div>
-        <div id="invEnrichPanel"></div>`;
 
-      const bar = (id, data) => hbar(id, id, (data || []).map(t => t.tag_value), (data || []).map(t => t.cost),
-        (data || []).map((_, i) => PALETTE[i % PALETTE.length]));
-      bar('tagProdChart', DASH.tag_product_breakdown);
-      bar('tagTeamChart', DASH.tag_team_breakdown);
-      bar('tagCustChart', DASH.tag_customer_breakdown);
-      bar('tagCCChart', DASH.tag_costcentre_breakdown);
-      if (DASH.tag_team_native_breakdown && DASH.tag_team_native_breakdown.length > 0)
-        bar('tagTeamNativeChart', DASH.tag_team_native_breakdown);
-      renderInvEnrichment();
+        <div class="chart-grid" style="grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px;margin-bottom:16px">
+          ${tagTable(app, '📦 By Application (user_application)')}
+          ${tagTable(layer, '🏗️ By Layer (user_layer)')}
+          ${tagTable(func, '⚙️ By Function (user_function)')}
+          ${tagTable(budget, '💰 By Budget Code (user_budget_code)')}
+        </div>`;
     }
 
     // ── Inventory Enrichment (renders only when inventory is loaded) ──────────

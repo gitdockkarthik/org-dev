@@ -1285,6 +1285,49 @@ def get_cost_by_hosting_environment(
         con.close()
 
 
+def get_cost_by_raw_tag(
+    tag_key: str,
+    csv_text: str | None = None,
+    file_path: str | None = None,
+    filters: dict | None = None,
+) -> list[dict]:
+    """Cost breakdown by a specific key in the resource_tags JSON column.
+    Returns list of {tag_value, cost, pct_of_total} sorted by cost desc.
+    Includes Untagged to reconcile with total spend."""
+    df, con = _load_df(csv_text, file_path=file_path, filters=filters)
+    try:
+        cols = list(df.columns)
+        cost_col = _detect_cost_col(cols)
+        if not cost_col:
+            return []
+        tags_col = next((c for c in cols if c.lower() in ('resource_tags', 'resourcetags')), None)
+        if not tags_col:
+            return []
+        rows = con.execute(f"""
+            SELECT
+                COALESCE(
+                    NULLIF(TRIM(json_extract_string("{tags_col}", '$.{tag_key}')), ''),
+                    'Untagged'
+                ) as tag_val,
+                SUM("{cost_col}") as cost
+            FROM cur_data
+            GROUP BY tag_val
+            ORDER BY cost DESC
+        """).fetchall()
+        total = sum(float(r[1] or 0) for r in rows)
+        return [
+            {
+                "tag_value": r[0],
+                "cost": round(float(r[1] or 0), 4),
+                "pct_of_total": round(float(r[1] or 0) / total * 100, 2) if total else 0,
+            }
+            for r in rows
+            if float(r[1] or 0) >= 0.1
+        ]
+    finally:
+        con.close()
+
+
 def get_daily_trend(csv_text: str | None = None, file_path: str | None = None, filters: dict | None = None) -> list[dict]:
     df, con = _load_df(csv_text, file_path=file_path, filters=filters)
     try:
