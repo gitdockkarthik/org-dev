@@ -1638,65 +1638,68 @@
     // ── TAB 2: By Account ──────────────────────────────────────────────────────────
     function renderAccounts() {
       const acc = DASH.account_breakdown || [];
-      const ou = DASH.org_unit_breakdown || [];
       const total = DASH.total_cost || 0;
+      const top = acc[0] || null;
 
-      const accRows = acc.map(a => {
+      const accRows = acc.map((a, i) => {
         const pct = total ? (a.cost / total) * 100 : 0;
         return `<tr>
-          <td><code style="font-size:.8rem">${escapeHtml(a.account_id)}</code></td>
+          <td><code style="font-size:.78rem">${escapeHtml(a.account_id)}</code></td>
           <td style="font-weight:600">${escapeHtml(a.account_name || '—')}</td>
-          <td>${escapeHtml((ouFor(a.account_name) || '—'))}</td>
-          <td style="font-weight:600;color:var(--accent)">${fmtUSD(a.cost)}</td>
+          <td style="color:var(--accent);font-weight:600">${fmtUSD(a.cost)}</td>
           <td>${fmtPct(pct)}</td>
-          <td style="text-align:right">${fmtNum(a.row_count)}</td>
+          <td style="text-align:right;color:var(--text-muted)">${fmtNum(a.row_count)}</td>
         </tr>`;
-      }).join('') || emptyTable(6, 'No account data');
-
-      const ouRows = ou.map(o => `<tr>
-        <td style="font-weight:600">${escapeHtml(o.org_unit)}</td>
-        <td style="color:var(--accent);font-weight:600">${fmtUSD(o.cost)}</td>
-        <td>${fmtPct(o.pct_of_total)}</td></tr>`).join('') || emptyTable(3, 'No org-unit data');
+      }).join('') || emptyTable(5, 'No account data');
 
       document.getElementById('tab-accounts').innerHTML = `
         <div class="kpi-grid">
-          <div class="kpi kpi--accent"><div class="kpi__label">Accounts</div><div class="kpi__value">${acc.length}</div><div class="kpi__sub">linked accounts</div></div>
-          <div class="kpi"><div class="kpi__label">Total Cost</div><div class="kpi__value" style="font-size:1.3rem">${fmtUSD(total)}</div><div class="kpi__sub">across all accounts</div></div>
-          <div class="kpi"><div class="kpi__label">Org Units</div><div class="kpi__value">${ou.length}</div><div class="kpi__sub">organizational units</div></div>
+          <div class="kpi kpi--accent">
+            <div class="kpi__label">Total Accounts</div>
+            <div class="kpi__value">${acc.length}</div>
+            <div class="kpi__sub">linked AWS accounts</div>
+          </div>
+          <div class="kpi kpi--orange">
+            <div class="kpi__label">Top Account</div>
+            <div class="kpi__value" style="font-size:1.1rem">${top ? escapeHtml(top.account_name || top.account_id) : '—'}</div>
+            <div class="kpi__sub">${top ? fmtUSD(top.cost) : ''}</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi__label">Payer Account</div>
+            <div class="kpi__value" style="font-size:1rem">${escapeHtml(acc[0]?.account_name || '—')}</div>
+            <div class="kpi__sub">billing consolidated</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi__label">Total Cost</div>
+            <div class="kpi__value" style="font-size:1.3rem">${fmtUSD(total)}</div>
+            <div class="kpi__sub">across all accounts</div>
+          </div>
         </div>
-        <div class="chart-card"><div class="chart-card__title">Cost per Account</div>
-          <div class="chart-wrap"><canvas id="accChart"></canvas></div></div>
-        <div class="panel-card" style="padding:0;overflow:hidden">
-          <div class="section-title" style="padding:16px 20px 0">Account Breakdown</div>
-          <div class="data-table-wrap" style="border:none;margin:0"><table class="data-table">
-            <thead><tr><th>Account ID</th><th>Name</th><th>Org Unit</th><th>Cost</th><th>% of Total</th><th style="text-align:right">Rows</th></tr></thead>
-            <tbody>${accRows}</tbody></table></div>
-        </div>
-        <div class="section-title">Org Unit Breakdown</div>
-        <div class="chart-grid chart-grid--2">
-          <div class="chart-card"><div class="chart-card__title">Cost by Org Unit</div>
-            <div class="chart-wrap"><canvas id="ouChart"></canvas></div></div>
+
+        <div class="chart-grid chart-grid--2" style="margin-bottom:16px">
+          <div class="chart-card chart-wrap--tall">
+            <div class="chart-card__title">Cost per Account</div>
+            <div class="chart-wrap chart-wrap--tall"><canvas id="accChart"></canvas></div>
+          </div>
           <div class="panel-card" style="padding:0;overflow:hidden">
-            <div class="data-table-wrap" style="border:none;margin:0"><table class="data-table">
-              <thead><tr><th>Org Unit</th><th>Cost</th><th>% of Total</th></tr></thead>
-              <tbody>${ouRows}</tbody></table></div>
+            <div class="section-title" style="padding:16px 20px 8px">Account Breakdown</div>
+            <div class="data-table-wrap" style="border:none;margin:0">
+              <table class="data-table">
+                <thead><tr><th>Account ID</th><th>Name</th><th>Cost</th><th>% of Total</th><th style="text-align:right">Rows</th></tr></thead>
+                <tbody>${accRows}
+                <tr style="border-top:2px solid var(--border);font-weight:700;background:var(--navy-2)">
+                  <td colspan="2">Total</td>
+                  <td style="color:var(--accent)">${fmtUSD(acc.reduce((s,a)=>s+a.cost,0))}</td>
+                  <td>100%</td>
+                  <td style="text-align:right">${fmtNum(acc.reduce((s,a)=>s+a.row_count,0))}</td>
+                </tr></tbody>
+              </table>
+            </div>
           </div>
         </div>`;
 
       hbar('acc', 'accChart', acc.map(a => a.account_name || a.account_id), acc.map(a => a.cost),
            acc.map((_, i) => PALETTE[i % PALETTE.length]));
-      donut('ou', 'ouChart', ou.map(o => o.org_unit), ou.map(o => o.cost));
-    }
-    let _acctOuMap = null;
-    function ouFor(name) {
-      if (_acctOuMap === null) {
-        _acctOuMap = {};
-        ROWS.forEach(r => {
-          const an = r.line_item_usage_account_name;
-          if (an && r.org_unit_name && !_acctOuMap[an]) _acctOuMap[an] = r.org_unit_name;
-        });
-      }
-      return _acctOuMap[name] || null;
     }
 
     // ── TAB 3: By Environment ───────────────────────────────────────────────────────
@@ -2267,113 +2270,147 @@
 
     // ── TAB 6: Trends ─────────────────────────────────────────────────────────────
     function renderTrends() {
-      const mt = DASH.monthly_trend || [];
-      const mom = DASH.mom_comparison || [];
-      const pricing = DASH.pricing_term_breakdown || [];
-      const region = DASH.region_breakdown || [];
+      const dt = DASH.daily_trend || DASH.trends_daily_trend || [];
+      const region = DASH.region_breakdown || DASH.trends_region_breakdown || [];
+      const lb = DASH.line_item_breakdown || DASH.trends_line_item_breakdown || {};
       const total = DASH.total_cost || 0;
 
-      // top service per month from mom_comparison (already ordered month, cost desc)
-      const topByMonth = {};
-      mom.forEach(r => { if (!topByMonth[r.month]) topByMonth[r.month] = r; });
-
-      const momRows = mt.map((m, i) => {
-        const prev = i > 0 ? mt[i - 1].cost : null;
-        const chg = prev ? ((m.cost - prev) / prev) * 100 : null;
-        const top = topByMonth[m.month];
-        const chgHtml = chg === null ? '<span style="color:var(--text-muted)">—</span>'
-          : chg > 0 ? `<span style="color:var(--danger);font-weight:600">▲ ${chg.toFixed(1)}%</span>`
-          : `<span style="color:var(--success);font-weight:600">▼ ${Math.abs(chg).toFixed(1)}%</span>`;
-        return `<tr><td style="font-weight:600">${escapeHtml(m.month)}</td>
-          <td style="color:var(--accent);font-weight:600">${fmtUSD(m.cost)}</td>
-          <td>${top ? escapeHtml(shortSvc(top.service)) : '—'}</td>
-          <td>${chgHtml}</td></tr>`;
-      }).join('') || emptyTable(4, 'No monthly data');
-
-      const priceRows = pricing.map(p => `<tr><td style="font-weight:600">${escapeHtml(p.pricing_term)}</td>
-        <td style="color:var(--accent);font-weight:600">${fmtUSD(p.cost)}</td>
-        <td>${fmtPct(p.pct_of_total)}</td><td style="text-align:right">${fmtNum(p.row_count)}</td></tr>`).join('')
-        || emptyTable(4, 'No pricing data');
-
-      // Legacy CUR has no pricing/term column — show a clear note instead of an
-      // empty chart.
-      const pricingPanel = pricing.length
-        ? `<div class="chart-wrap" style="height:240px"><canvas id="priceChart"></canvas></div>
-            <div class="data-table-wrap" style="margin-top:12px"><table class="data-table">
-              <thead><tr><th>Term</th><th>Cost</th><th>% of Total</th><th style="text-align:right">Rows</th></tr></thead>
-              <tbody>${priceRows}</tbody></table></div>`
-        : `<div class="data-table__empty" style="padding:24px">Pricing term data not available in this CUR export format.</div>`;
+      // Daily trend — detect July 1 RI/SP spike
+      const dailyRows = dt.map(d =>
+        `<tr><td style="font-weight:600">${escapeHtml(d.date)}</td>
+             <td style="color:var(--accent);font-weight:600">${fmtUSD(d.cost)}</td></tr>`
+      ).join('') || emptyTable(2, 'No daily data');
 
       const regionRows = region.map(r => {
         const pct = total ? (r.cost / total) * 100 : 0;
         return `<tr><td style="font-weight:600">${escapeHtml(r.region)}</td>
-          <td style="color:var(--accent);font-weight:600">${fmtUSD(r.cost)}</td><td>${fmtPct(pct)}</td></tr>`;
+          <td style="color:var(--accent);font-weight:600">${fmtUSD(r.cost)}</td>
+          <td>${fmtPct(pct)}</td></tr>`;
       }).join('') || emptyTable(3, 'No region data');
 
-      // heatmap
-      const hm = dayWeekHeatmap();
-      const dows = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-      let heatHtml;
-      if (hm) {
-        const cols = hm.weeks;
-        const cells = [];
-        // header row
-        cells.push('<div class="heatmap__rowlabel"></div>');
-        for (let w = 0; w < cols; w++) cells.push(`<div class="heatmap__collabel">W${w + 1}</div>`);
-        for (let d = 0; d < 7; d++) {
-          cells.push(`<div class="heatmap__rowlabel" style="justify-content:flex-end;padding-right:4px">${dows[d]}</div>`);
-          for (let w = 0; w < cols; w++) {
-            const v = hm.cells[`${d}:${w}`] || 0;
-            const intensity = hm.maxCost ? v / hm.maxCost : 0;
-            const bg = v ? `rgba(99,102,241,${(0.15 + intensity * 0.85).toFixed(2)})` : 'var(--navy-2)';
-            cells.push(`<div class="heatmap__cell" style="background:${bg}" title="${dows[d]} W${w + 1}: ${fmtUSD(v)}"></div>`);
-          }
-        }
-        heatHtml = `<div class="heatmap" style="grid-template-columns:50px repeat(${cols}, minmax(18px,1fr))">${cells.join('')}</div>`;
-      } else {
-        heatHtml = '<div class="data-table__empty">No daily data for heatmap.</div>';
-      }
+      // Cost composition from line_item_breakdown
+      const awsTotal = (lb.aws_services||[]).reduce((s,r)=>s+r.cost,0);
+      const mpTotal = (lb.marketplace||[]).reduce((s,r)=>s+r.cost,0);
+      const riTotal = (lb.reserved_instances||[]).reduce((s,r)=>s+r.cost,0);
+      const spTotal = (lb.savings_plans||[]).reduce((s,r)=>s+r.cost,0);
+      const taxes = lb.taxes || 0;
+      const credits = lb.credits_discounts || 0;
 
       document.getElementById('tab-trends').innerHTML = `
-        <div class="chart-card"><div class="chart-card__title">Monthly Cost Trend</div>
-          <div class="chart-wrap"><canvas id="trMonthChart"></canvas></div></div>
-        <div class="panel-card" style="padding:0;overflow:hidden">
-          <div class="section-title" style="padding:16px 20px 0">Month-over-Month Comparison</div>
-          <div class="data-table-wrap" style="border:none;margin:0"><table class="data-table">
-            <thead><tr><th>Month</th><th>Total Cost</th><th>Top Service</th><th>MoM Change</th></tr></thead>
-            <tbody>${momRows}</tbody></table></div>
-        </div>
-        <div class="panel-card">
-          <div class="section-title">Daily Spend Heatmap <span style="font-weight:400;color:var(--text-muted);font-size:.8rem">(day of week × week, most recent 13 weeks)</span></div>
-          <div style="max-height:300px;overflow:hidden">${heatHtml}</div>
-        </div>
-        <div class="chart-grid chart-grid--2">
-          <div class="panel-card">
-            <div class="chart-card__title">Pricing Term Breakdown</div>
-            ${pricingPanel}
+        <div class="kpi-grid">
+          <div class="kpi kpi--accent">
+            <div class="kpi__label">Billing Period</div>
+            <div class="kpi__value" style="font-size:1.1rem">${dt.length ? dt[0].date.slice(0,7) : '—'}</div>
+            <div class="kpi__sub">${dt.length} days of data</div>
           </div>
-          <div class="panel-card">
-            <div class="chart-card__title">Region Breakdown</div>
-            <div class="chart-wrap" style="height:240px"><canvas id="regionChart"></canvas></div>
-            <div class="data-table-wrap" style="margin-top:12px"><table class="data-table">
-              <thead><tr><th>Region</th><th>Cost</th><th>% of Total</th></tr></thead>
-              <tbody>${regionRows}</tbody></table></div>
+          <div class="kpi">
+            <div class="kpi__label">On-Demand (AWS Services)</div>
+            <div class="kpi__value" style="font-size:1.1rem">${fmtUSD(awsTotal)}</div>
+            <div class="kpi__sub">${fmtPct(awsTotal/total*100)} of gross</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi__label">Reserved Instances</div>
+            <div class="kpi__value" style="font-size:1.1rem">${fmtUSD(riTotal)}</div>
+            <div class="kpi__sub">${fmtPct(riTotal/total*100)} of gross</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi__label">Savings Plans</div>
+            <div class="kpi__value" style="font-size:1.1rem">${fmtUSD(spTotal)}</div>
+            <div class="kpi__sub">${fmtPct(spTotal/total*100)} of gross</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi__label">Credits &amp; Discounts</div>
+            <div class="kpi__value" style="color:var(--success);font-size:1.1rem">${fmtUSD(Math.abs(credits))}</div>
+            <div class="kpi__sub">net savings</div>
+          </div>
+        </div>
+
+        <div class="chart-grid chart-grid--2" style="margin-bottom:16px">
+          <div class="chart-card">
+            <div class="chart-card__title">Daily Cost Trend</div>
+            <div class="chart-wrap"><canvas id="dailyTrendChart"></canvas></div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-card__title">Cost by Region</div>
+            <div class="chart-wrap"><canvas id="regionChart"></canvas></div>
+          </div>
+        </div>
+
+        <div class="chart-grid chart-grid--2" style="margin-bottom:16px">
+          <div class="panel-card" style="padding:0;overflow:hidden">
+            <div class="section-title" style="padding:16px 20px 8px">
+              Daily Cost Breakdown
+              <span style="font-size:.72rem;font-weight:400;color:var(--text-muted);margin-left:8px;">
+                Day 1 spike = RI/SP recurring fees billed monthly
+              </span>
+            </div>
+            <div class="data-table-wrap" style="border:none;margin:0">
+              <table class="data-table">
+                <thead><tr><th>Date</th><th>Cost</th></tr></thead>
+                <tbody>${dailyRows}
+                <tr style="border-top:2px solid var(--border);font-weight:700;background:var(--navy-2)">
+                  <td>Total</td>
+                  <td style="color:var(--accent)">${fmtUSD(dt.reduce((s,d)=>s+d.cost,0))}</td>
+                </tr></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="panel-card" style="padding:0;overflow:hidden">
+            <div class="section-title" style="padding:16px 20px 8px">Cost by Region</div>
+            <div class="data-table-wrap" style="border:none;margin:0">
+              <table class="data-table">
+                <thead><tr><th>Region</th><th>Cost</th><th>% of Total</th></tr></thead>
+                <tbody>${regionRows}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>`;
 
-      destroyChart('trMonth');
-      const mctx = document.getElementById('trMonthChart');
-      if (mctx) charts['trMonth'] = new Chart(mctx.getContext('2d'), {
-        type: 'line',
-        data: { labels: mt.map(m => m.month), datasets: [{ label: 'Monthly Cost', data: mt.map(m => m.cost),
-          borderColor: '#6366f1', backgroundColor: 'rgba(99,102,241,.12)', fill: true, tension: .35, pointRadius: 3 }] },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
-          scales: { y: { ticks: { callback: v => '$' + Number(v).toLocaleString() } } } },
-      });
+      // Daily trend line chart
+      destroyChart('dailyTrendChart');
+      const dtCtx = document.getElementById('dailyTrendChart')?.getContext('2d');
+      if (dtCtx && dt.length) {
+        charts['dailyTrendChart'] = new Chart(dtCtx, {
+          type: 'line',
+          data: {
+            labels: dt.map(d => d.date),
+            datasets: [{
+              label: 'Daily Cost',
+              data: dt.map(d => d.cost),
+              borderColor: '#6366f1',
+              backgroundColor: 'rgba(99,102,241,0.1)',
+              fill: true,
+              tension: 0.3,
+              pointRadius: 2,
+            }]
+          },
+          options: {
+            responsive: true,
+            plugins: { legend: { display: false }, datalabels: { display: false } },
+            scales: { x: { ticks: { maxTicksLimit: 10 } }, y: { beginAtZero: false } }
+          }
+        });
+      }
 
-      if (pricing.length) donut('price', 'priceChart', pricing.map(p => p.pricing_term), pricing.map(p => p.cost));
-      hbar('region', 'regionChart', region.map(r => r.region), region.map(r => r.cost),
-           region.map((_, i) => PALETTE[i % PALETTE.length]));
+      // Region bar chart
+      destroyChart('regionChart');
+      const rCtx = document.getElementById('regionChart')?.getContext('2d');
+      if (rCtx && region.length) {
+        const top10r = region.slice(0, 10);
+        charts['regionChart'] = new Chart(rCtx, {
+          type: 'bar',
+          data: {
+            labels: top10r.map(r => r.region),
+            datasets: [{ label: 'Cost', data: top10r.map(r => r.cost), backgroundColor: '#0ea5e9', borderWidth: 0 }]
+          },
+          options: {
+            indexAxis: 'y', responsive: true,
+            plugins: { legend: { display: false }, datalabels: { display: false } },
+            scales: { x: { beginAtZero: true } }
+          }
+        });
+      }
     }
 
     // ── TAB 7: AI Insights ──────────────────────────────────────────────────────────

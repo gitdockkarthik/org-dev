@@ -476,21 +476,21 @@ async def get_tab_trends(report_id: int = Query(default=None)) -> dict:
     file_path, csv_text, enricher = await _resolve_report(report_id)
     if file_path is None and csv_text is None:
         return {"empty": True}
-    from tools.duckdb_engine import get_cost_by_pricing_term, get_mom_comparison, get_cost_by_region
+    from tools.duckdb_engine import get_daily_trend, get_cost_by_region, get_cost_by_line_item_category
     from tools.dashboard_builder import _executor
     import asyncio
     loop = asyncio.get_running_loop()
     def run(fn, *args, **kwargs):
         return loop.run_in_executor(_executor, lambda: fn(*args, **kwargs))
-    pricing_term_breakdown, mom_comparison, region_breakdown = await asyncio.gather(
-        run(get_cost_by_pricing_term, csv_text, file_path=file_path),
-        run(get_mom_comparison, csv_text, file_path=file_path),
+    daily_trend, region_breakdown, line_item_breakdown = await asyncio.gather(
+        run(get_daily_trend, csv_text, file_path=file_path),
         run(get_cost_by_region, csv_text, file_path=file_path),
+        run(get_cost_by_line_item_category, csv_text, file_path=file_path),
     )
     result = {
-        "pricing_term_breakdown": pricing_term_breakdown,
-        "mom_comparison": mom_comparison,
+        "daily_trend": daily_trend,
         "region_breakdown": region_breakdown,
+        "line_item_breakdown": line_item_breakdown,
     }
     _set_cached_tab(report_id, "trends", result)
     await _set_db_cached_tab(report_id, "trends", result)
