@@ -1846,6 +1846,15 @@
       const awsTotal = awsSvcs.reduce((s, r) => s + r.cost, 0);
 
       document.getElementById('tab-services').innerHTML = `
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center;">
+          <span style="font-size:.82rem;font-weight:600;color:var(--text-muted);margin-right:4px;">Show:</span>
+          <button class="svc-filter-btn active" data-section="all" onclick="filterServicesTab('all')" style="padding:5px 14px;border-radius:20px;border:1.5px solid var(--accent);background:var(--accent);color:#fff;font-size:.82rem;cursor:pointer;">All</button>
+          <button class="svc-filter-btn" data-section="aws" onclick="filterServicesTab('aws')" style="padding:5px 14px;border-radius:20px;border:1.5px solid var(--border-hi);background:transparent;color:var(--text-muted);font-size:.82rem;cursor:pointer;">AWS Services</button>
+          <button class="svc-filter-btn" data-section="marketplace" onclick="filterServicesTab('marketplace')" style="padding:5px 14px;border-radius:20px;border:1.5px solid var(--border-hi);background:transparent;color:var(--text-muted);font-size:.82rem;cursor:pointer;">Marketplace</button>
+          <button class="svc-filter-btn" data-section="ri" onclick="filterServicesTab('ri')" style="padding:5px 14px;border-radius:20px;border:1.5px solid var(--border-hi);background:transparent;color:var(--text-muted);font-size:.82rem;cursor:pointer;">Reserved Instances</button>
+          <button class="svc-filter-btn" data-section="sp" onclick="filterServicesTab('sp')" style="padding:5px 14px;border-radius:20px;border:1.5px solid var(--border-hi);background:transparent;color:var(--text-muted);font-size:.82rem;cursor:pointer;">Savings Plans</button>
+          <input id="svc-search" type="text" placeholder="Search service..." oninput="filterServicesTab(null)" style="margin-left:auto;padding:5px 12px;border-radius:20px;border:1.5px solid var(--border-hi);background:var(--navy-2);color:var(--text);font-size:.82rem;outline:none;min-width:180px;">
+        </div>
         <div class="kpi-grid">
           <div class="kpi kpi--accent">
             <div class="kpi__label">AWS Services</div>
@@ -1889,9 +1898,8 @@
             <div class="chart-wrap"><canvas id="awsSvcChart"></canvas></div>
           </div>
         </div>
-
         <div class="chart-grid chart-grid--2" style="margin-bottom:16px">
-          <div class="panel-card" style="padding:0;overflow:hidden">
+          <div id="svc-section-marketplace" class="panel-card" style="padding:0;overflow:hidden">
             <div class="section-title" style="padding:16px 20px 8px">🛒 AWS Marketplace Charges</div>
             <div class="data-table-wrap" style="border:none;margin:0">
               <table class="data-table">
@@ -1900,7 +1908,7 @@
               </table>
             </div>
           </div>
-          <div class="panel-card" style="padding:0;overflow:hidden">
+          <div id="svc-section-ri" class="panel-card" style="padding:0;overflow:hidden">
             <div class="section-title" style="padding:16px 20px 8px">🏷️ Reserved Instances</div>
             <div class="data-table-wrap" style="border:none;margin:0">
               <table class="data-table">
@@ -1910,9 +1918,8 @@
             </div>
           </div>
         </div>
-
         <div class="chart-grid chart-grid--2" style="margin-bottom:16px">
-          <div class="panel-card" style="padding:0;overflow:hidden">
+          <div id="svc-section-sp" class="panel-card" style="padding:0;overflow:hidden">
             <div class="section-title" style="padding:16px 20px 8px">💰 Savings Plans</div>
             <div class="data-table-wrap" style="border:none;margin:0">
               <table class="data-table">
@@ -1921,7 +1928,7 @@
               </table>
             </div>
           </div>
-          <div class="panel-card" style="padding:0;overflow:hidden">
+          <div id="svc-section-aws-table" class="panel-card" style="padding:0;overflow:hidden">
             <div class="section-title" style="padding:16px 20px 8px">☁️ AWS Services Breakdown</div>
             <div class="data-table-wrap" style="border:none;margin:0">
               <table class="data-table">
@@ -1932,8 +1939,8 @@
           </div>
         </div>`;
 
-      // Cost Composition donut
-      destroyChart('compositionDonut');
+      // Cost Composition donut — only rebuild if not already rendered
+      if (!charts['compositionDonut']) {
       const dCtx = document.getElementById('compositionDonut')?.getContext('2d');
       if (dCtx) {
         charts['compositionDonut'] = new Chart(dCtx, {
@@ -1955,8 +1962,10 @@
           }
         });
       }
+      } // end compositionDonut lazy init
 
-      // Top AWS Services bar chart
+      // Top AWS Services bar chart — only rebuild if not already rendered
+      if (!charts['awsSvcChart']) {
       destroyChart('awsSvcChart');
       const sCtx = document.getElementById('awsSvcChart')?.getContext('2d');
       if (sCtx) {
@@ -1977,6 +1986,46 @@
           }
         });
       }
+      } // end awsSvcChart lazy init
+    }
+    let _svcActiveSection = 'all';
+
+    function filterServicesTab(section) {
+      if (section !== null) _svcActiveSection = section;
+      const search = document.getElementById('svc-search')?.value?.toLowerCase() || '';
+
+      // Update button styles
+      document.querySelectorAll('.svc-filter-btn').forEach(btn => {
+        const isActive = btn.dataset.section === _svcActiveSection;
+        btn.style.background = isActive ? 'var(--accent)' : 'transparent';
+        btn.style.color = isActive ? '#fff' : 'var(--text-muted)';
+        btn.style.borderColor = isActive ? 'var(--accent)' : 'var(--border-hi)';
+      });
+
+      const sMp  = document.getElementById('svc-section-marketplace');
+      const sRi  = document.getElementById('svc-section-ri');
+      const sSp  = document.getElementById('svc-section-sp');
+      const sAws = document.getElementById('svc-section-aws-table');
+
+      const show = (el) => { if (el) el.style.display = ''; };
+      const hide = (el) => { if (el) el.style.display = 'none'; };
+
+      if (_svcActiveSection === 'all') {
+        show(sMp); show(sRi); show(sSp); show(sAws);
+      } else if (_svcActiveSection === 'aws') {
+        hide(sMp); hide(sRi); hide(sSp); show(sAws);
+      } else if (_svcActiveSection === 'marketplace') {
+        show(sMp); hide(sRi); hide(sSp); hide(sAws);
+      } else if (_svcActiveSection === 'ri') {
+        hide(sMp); show(sRi); hide(sSp); hide(sAws);
+      } else if (_svcActiveSection === 'sp') {
+        hide(sMp); hide(sRi); show(sSp); hide(sAws);
+      }
+
+      // Search filter on AWS services table rows
+      document.querySelectorAll('#svc-section-aws-table .data-table tbody tr').forEach(row => {
+        row.style.display = (!search || row.textContent.toLowerCase().includes(search)) ? '' : 'none';
+      });
     }
     function sortSvc(col) {
       if (_svcSort.col === col) _svcSort.dir = _svcSort.dir === 'asc' ? 'desc' : 'asc';
@@ -3254,55 +3303,8 @@ ${JSON.stringify(payload, null, 2)}
             renderEnvironments();
           }
         } else {
-          if (progEl) {
-            progEl.style.display = 'inline';
-            progEl.textContent = 'Loading data...';
-          }
-          streamReportRows(
-            currentReportId,
-            (loaded, total) => {
-              if (progEl)
-                progEl.textContent = `Loading ${loaded}/${total} rows...`;
-            },
-            (rows) => {
-              _rawRows = rows;
-              ROWS = rows;
-              _filteredRows = rows;
-              if (progEl) progEl.style.display = 'none';
-              // Re-render active row-dependent tab if ROWS arrived after tab was clicked
-              const _streamActiveTab = document.querySelector('.tab-btn--active')?.dataset.tab;
-              const _rowTabs = ['environments','accounts','services','tags','trends'];
-              if (_streamActiveTab && _rowTabs.includes(_streamActiveTab)) {
-                _loaded.delete(_streamActiveTab);
-                renderTab(_streamActiveTab);
-              }
-              if (_streamActiveTab !== 'environments' && _loaded.has('environments')) {
-                renderEnvironments();
-              }
-              // Populate filter dropdowns from actual data
-              buildMultiSelect('fAccountWrap', 'Account',
-                getDistinctValues(rows, fAccount),
-                'accounts', true);
-              buildMultiSelect('fEnvWrap', 'Environment',
-                getDistinctValues(rows, fEnv),
-                'environments', true);
-              buildMultiSelect('fServiceWrap', 'Service',
-                getDistinctValues(rows, fService),
-                'services', true);
-              buildMultiSelect('fRegionWrap', 'Region',
-                getDistinctValues(rows, fRegion),
-                'regions', true);
-              buildMultiSelect('fPricingWrap', 'Pricing Term',
-                getDistinctValues(rows, r => r.pricing_term),
-                'pricingTerms', true);
-              buildMultiSelect('fProductWrap', 'Product Tag',
-                getDistinctValues(rows, fProduct),
-                'tagProducts', true);
-              buildMultiSelect('fTeamWrap', 'Managed By',
-                getDistinctValues(rows, fTeam),
-                'tagTeams', true);
-            }
-          ).catch(() => { if (progEl) progEl.style.display = 'none'; });
+          // Tabs are pre-aggregated server-side — no row streaming needed
+          if (progEl) progEl.style.display = 'none';
         }
       } catch (e) {
         document.getElementById('loadingState').innerHTML = `

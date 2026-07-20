@@ -192,11 +192,13 @@ async def _init_config() -> None:
                 needs_compute = True
                 if SessionLocal is not None:
                     async with SessionLocal() as _sess:
+                        from routes_dashboard import CACHE_VERSION
                         _r = await _sess.execute(
                             _sel(CurTabCache).where(
                                 CurTabCache.report_id == active_id,
                                 CurTabCache.tab_name == "overview",
                                 CurTabCache.enrichment_enabled == enrichment_enabled,
+                                CurTabCache.cache_version == CACHE_VERSION,
                             )
                         )
                         needs_compute = _r.scalar_one_or_none() is None
@@ -854,7 +856,8 @@ async def ds_status() -> dict:
     """Registry status — sources, active selection, staleness, archives."""
     reg = _require_registry()
     status = reg.status()
-    status["enabled"] = settings.enable_inventory_enrichment
+    from routes_settings import _config as _sc
+    status["enabled"] = bool(_sc.get("inventory_enrichment_enabled", False))
     return status
 
 

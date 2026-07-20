@@ -16,6 +16,8 @@ import json as _json
 from models import CurTabCache
 from sqlalchemy import select, delete
 
+CACHE_VERSION = "v2"  # bump this when tab data structure changes
+
 router = APIRouter(tags=["dashboard"])
 
 _dashboard_cache: dict = {}
@@ -84,6 +86,7 @@ async def _get_db_cached_tab(report_id: int, tab: str) -> dict | None:
                     CurTabCache.report_id == report_id,
                     CurTabCache.tab_name == tab,
                     CurTabCache.enrichment_enabled == enrichment_enabled,
+                    CurTabCache.cache_version == CACHE_VERSION,
                 )
             )
             row = result.scalar_one_or_none()
@@ -109,6 +112,7 @@ async def _set_db_cached_tab(report_id: int, tab: str, data: dict) -> None:
                     CurTabCache.report_id == report_id,
                     CurTabCache.tab_name == tab,
                     CurTabCache.enrichment_enabled == enrichment_enabled,
+                    CurTabCache.cache_version == CACHE_VERSION,
                 )
             )
             row = existing.scalar_one_or_none()
@@ -116,12 +120,14 @@ async def _set_db_cached_tab(report_id: int, tab: str, data: dict) -> None:
                 row.data_json = _json.dumps(data)
                 row.computed_at = datetime.now(timezone.utc)
                 row.enrichment_enabled = enrichment_enabled
+                row.cache_version = CACHE_VERSION
             else:
                 session.add(CurTabCache(
                     report_id=report_id,
                     tab_name=tab,
                     data_json=_json.dumps(data),
                     enrichment_enabled=enrichment_enabled,
+                    cache_version=CACHE_VERSION,
                 ))
             await session.commit()
     except Exception as e:
@@ -137,7 +143,10 @@ async def invalidate_db_tab_cache(report_id: int, enrichment_enabled: bool | Non
         return
     try:
         async with SessionLocal() as session:
-            q = delete(CurTabCache).where(CurTabCache.report_id == report_id)
+            q = delete(CurTabCache).where(
+                CurTabCache.report_id == report_id,
+                CurTabCache.cache_version == CACHE_VERSION,
+            )
             if enrichment_enabled is not None:
                 q = q.where(CurTabCache.enrichment_enabled == enrichment_enabled)
             await session.execute(q)

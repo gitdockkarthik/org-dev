@@ -39,7 +39,7 @@ class CurReport(Base):
 
 class CurTabCache(Base):
     __tablename__ = "cur_tab_cache"
-    __table_args__ = (UniqueConstraint("report_id", "tab_name", "enrichment_enabled", name="uq_cur_tab_cache"),)
+    __table_args__ = (UniqueConstraint("report_id", "tab_name", "enrichment_enabled", "cache_version", name="uq_cur_tab_cache"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     report_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
@@ -50,3 +50,4 @@ class CurTabCache(Base):
         default=lambda: datetime.now(timezone.utc),
     )
     enrichment_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    cache_version: Mapped[str] = mapped_column(String(16), nullable=False, default="v1")
