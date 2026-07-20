@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     # Anthropic — injected via X-Anthropic-Key header by the backend orchestrator.
     # Set directly only when invoking the agent outside the orchestrated stack.
     anthropic_api_key: str = ""
-    model: str = os.environ.get("LLM_MODEL", DEFAULT_MODEL)
+    model: str = Field(default_factory=lambda: os.environ.get("LLM_MODEL", DEFAULT_MODEL), alias="LLM_MODEL")
 
     # Agent identity
     agent_id: str = ""

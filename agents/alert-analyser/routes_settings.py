@@ -424,6 +424,8 @@ async def get_settings() -> dict:
     )
     result["api_token_configured"] = bool(_config.get("api_token", ""))
     result["genie_key_configured"] = bool(_config.get("api_token", "")) and _config.get("source_type") == "standalone" and _config.get("opsgenie_type") == "standalone"
+    from config import settings as _settings
+    result["model"] = _settings.model
     return result
 
 
