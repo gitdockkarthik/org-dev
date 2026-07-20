@@ -62,6 +62,7 @@ async function initPortal() {
 // Auto-bootstrap: fetch API key from backend on script load.
 // Expose as a Promise so pages can await portalReady before making authenticated calls.
 const portalReady = initPortal();
+window.portalReady = portalReady;
 
 // ── Current user cache ──────────────────────────────────────────────────────
 let _currentUser = null;

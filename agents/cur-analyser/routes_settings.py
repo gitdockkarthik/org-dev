@@ -141,6 +141,8 @@ async def get_settings() -> dict:
     if "api_key" in cfg:
         del cfg["api_key"]
     cfg["inventory_enrichment_enabled"] = _config.get("inventory_enrichment_enabled", False)
+    from config import settings as _settings
+    cfg["model"] = _settings.model
     return cfg
 
 
