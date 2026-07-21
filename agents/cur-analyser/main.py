@@ -480,6 +480,16 @@ async def _process_upload_job(job: dict, tmp_path: str, filename: str, file_size
             finally:
                 con.close()
             perm_path = parquet_dir
+            # Update file_size to reflect actual Parquet size
+            actual_parquet_size = sum(
+                os.path.getsize(os.path.join(parquet_dir, f))
+                for f in os.listdir(parquet_dir)
+                if f.endswith(".parquet")
+            )
+            from report_store import _get_internal as _gri
+            _r = _gri(report["id"])
+            if _r:
+                _r["file_size"] = actual_parquet_size
         except Exception as exc:
             logger.warning("Parquet conversion failed, storing gz instead: %s", exc)
             import shutil as _shutil
@@ -646,6 +656,16 @@ async def _process_folder_upload_job(job: dict, tmp_paths: list[str], filenames:
             _job_update(job, UploadStatus.FAILED, error=f"Failed to convert parts to Parquet: {exc}")
             return
         perm_path = parquet_dir
+        # Update file_size to reflect actual Parquet size (not original upload size)
+        actual_parquet_size = sum(
+            os.path.getsize(os.path.join(parquet_dir, f))
+            for f in os.listdir(parquet_dir)
+            if f.endswith(".parquet")
+        )
+        from report_store import _get_internal as _gri
+        _r = _gri(report["id"])
+        if _r:
+            _r["file_size"] = actual_parquet_size
 
         set_report_path(report["id"], perm_path)
         await persist_report(report["id"])
