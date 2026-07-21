@@ -1360,36 +1360,54 @@ async def _run_s3_sync(job_id: str, bucket: str, prefix: str, region: str) -> No
                 file_size=total_size,
                 file_path=None,
             )
-            # Ingest all parts to single DuckDB file
-            duckdb_path = report_file_path(report["id"], ".duckdb")
-            def _ingest_all_sync():
+            # Convert each CSV.gz to Parquet sequentially (memory bounded ~1.2GB peak)
+            import os as _os
+            parquet_dir = report_file_path(report["id"], ".parquet_dir")
+            _os.makedirs(parquet_dir, exist_ok=True)
+            parquet_paths = []
+            for i, tmp_path in enumerate(tmp_paths):
+                parquet_path = _os.path.join(parquet_dir, f"part-{i+1:05d}.parquet")
+                update("running", f"Converting to Parquet ({i+1}/{len(tmp_paths)})...")
+                def _convert(src=tmp_path, dst=parquet_path):
+                    import duckdb as _ddb
+                    con = _ddb.connect(":memory:")
+                    try:
+                        con.execute("SET threads=2")
+                        con.execute("SET memory_limit='1.2GB'")
+                        src_safe = src.replace("'", "''")
+                        dst_safe = dst.replace("'", "''")
+                        con.execute(f"""
+                            COPY (SELECT * FROM read_csv_auto('{src_safe}', ignore_errors=true))
+                            TO '{dst_safe}' (FORMAT PARQUET, COMPRESSION ZSTD)
+                        """)
+                    finally:
+                        con.close()
+                await loop.run_in_executor(None, _convert)
+                parquet_paths.append(parquet_path)
+            # Compute totals from all Parquet files (instant)
+            update("running", "Computing report totals...")
+            def _compute_totals():
                 import duckdb as _ddb
-                con = _ddb.connect(duckdb_path)
+                paths_sql = "', '".join(p.replace("'", "''") for p in parquet_paths)
+                con = _ddb.connect(":memory:")
                 try:
-                    con.execute("PRAGMA threads=4")
-                    con.execute("DROP TABLE IF EXISTS cur_data")
-                    # Ingest first file to create table schema
-                    first = tmp_paths[0].replace("'", "''")
-                    con.execute(f"CREATE TABLE cur_data AS SELECT * FROM read_csv_auto('{first}', ignore_errors=true)")
-                    # Append remaining files one by one
-                    for p in tmp_paths[1:]:
-                        safe = p.replace("'", "''")
-                        con.execute(f"INSERT INTO cur_data SELECT * FROM read_csv_auto('{safe}', ignore_errors=true)")
+                    result = con.execute(f"""
+                        SELECT COUNT(*), SUM(line_item_unblended_cost)
+                        FROM read_parquet(['{paths_sql}'])
+                    """).fetchone()
+                    return {"row_count": result[0] or 0, "total_cost": float(result[1] or 0)}
                 finally:
                     con.close()
-            update("running", f"Building query index (0/{len(tmp_paths)} parts)...")
-            await loop.run_in_executor(None, _ingest_all_sync)
-            # Compute totals from the ingested DuckDB file (single pass, memory efficient)
-            update("running", "Computing report totals...")
-            summary = await loop.run_in_executor(None, lambda: get_total_cost(file_path=duckdb_path))
+            summary = await loop.run_in_executor(None, _compute_totals)
             # Update report with actual totals
             from report_store import _get_internal
             rep = _get_internal(report["id"])
             if rep:
                 rep["row_count"] = summary.get("row_count", 0)
                 rep["total_cost"] = round(summary.get("total_cost", 0.0), 4)
-            perm_path = duckdb_path
-            set_report_path(report["id"], perm_path)
+                rep["file_size"] = sum(_os.path.getsize(p) for p in parquet_paths)
+            # Store parquet directory as the report path
+            set_report_path(report["id"], parquet_dir)
             await persist_report(report["id"])
             # Update last synced info
             from datetime import datetime, timezone

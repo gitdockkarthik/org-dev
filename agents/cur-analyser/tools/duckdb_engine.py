@@ -29,6 +29,38 @@ logger = logging.getLogger(__name__)
 # "Credits / Refunds" category regardless of the service name.
 _CREDIT_LINE_ITEM_TYPES = {'EdpDiscount', 'SavingsPlanNegation', 'BundledDiscount', 'Refund', 'Credit'}
 
+def _open_con(file_path: str) -> tuple:
+    """Open a DuckDB connection with a cur_data view for the given file.
+    Supports: .duckdb (ATTACH), .parquet / directory of .parquet (read_parquet),
+    .csv.gz / .csv (read_csv_auto).
+    Returns (con, needs_close=True).
+    """
+    import os
+    con = duckdb.connect(":memory:")
+    con.execute("PRAGMA threads=4")
+    safe = str(file_path).replace("'", "''")
+
+    if str(file_path).lower().endswith(".duckdb"):
+        con.execute(f"ATTACH '{safe}' AS src (READ_ONLY)")
+        con.execute("CREATE VIEW cur_data AS SELECT * FROM src.cur_data")
+    elif str(file_path).lower().endswith(".parquet"):
+        con.execute(f"CREATE VIEW cur_data AS SELECT * FROM read_parquet('{safe}')")
+    elif os.path.isdir(file_path):
+        # Directory of parquet files
+        parts = sorted([
+            os.path.join(file_path, f)
+            for f in os.listdir(file_path)
+            if f.endswith(".parquet")
+        ])
+        if not parts:
+            raise ValueError(f"No parquet files found in {file_path}")
+        paths_sql = "', '".join(p.replace("'", "''") for p in parts)
+        con.execute(f"CREATE VIEW cur_data AS SELECT * FROM read_parquet(['{paths_sql}'])")
+    else:
+        con.execute(f"CREATE VIEW cur_data AS SELECT * FROM read_csv_auto('{safe}', ignore_errors=true)")
+
+    return con
+
 def ingest_to_duckdb(src_path: str, duckdb_path: str) -> None:
     """Ingest a CSV or gz file into a persistent DuckDB database file.
     Uses ZSTD compression for optimal storage and query performance.
@@ -52,13 +84,7 @@ def get_per_service_match_rate(file_path: str, enricher) -> tuple[list[dict], li
     if not file_path or enricher is None or not getattr(enricher, "active", False):
         return [], []
     try:
-        con = duckdb.connect(":memory:")
-        safe = str(file_path).replace("'", "''")
-        if str(file_path).lower().endswith(".duckdb"):
-            con.execute(f"ATTACH '{safe}' AS src (READ_ONLY)")
-            con.execute("CREATE VIEW cur_data AS SELECT * FROM src.cur_data")
-        else:
-            con.execute(f"CREATE VIEW cur_data AS SELECT * FROM read_csv_auto('{safe}', ignore_errors=true)")
+        con = _open_con(file_path)
         _register_resource_lookup(con, enricher)
         _register_account_lookup(con, enricher)
         cols = [r[0] for r in con.execute("DESCRIBE cur_data").fetchall()]
@@ -121,13 +147,7 @@ def get_before_after_coverage(file_path: str, enricher) -> dict:
     if not file_path or enricher is None or not getattr(enricher, "active", False):
         return {}
     try:
-        con = duckdb.connect(":memory:")
-        safe = str(file_path).replace("'", "''")
-        if str(file_path).lower().endswith(".duckdb"):
-            con.execute(f"ATTACH '{safe}' AS src (READ_ONLY)")
-            con.execute("CREATE VIEW cur_data AS SELECT * FROM src.cur_data")
-        else:
-            con.execute(f"CREATE VIEW cur_data AS SELECT * FROM read_csv_auto('{safe}', ignore_errors=true)")
+        con = _open_con(file_path)
         _register_account_lookup(con, enricher)
         cols = [r[0] for r in con.execute("DESCRIBE cur_data").fetchall()]
         cost_col = _detect_cost_col(cols)
@@ -879,27 +899,15 @@ def _load_df(
         _duckdb_path = str(file_path).replace(".csv.gz", ".duckdb").replace(".csv", ".duckdb")
         if not str(file_path).endswith(".duckdb") and os.path.exists(_duckdb_path):
             file_path = _duckdb_path
-    con = duckdb.connect(database=":memory:")
-    con.execute("PRAGMA memory_limit='500MB'")
     if file_path is not None:
-        # ── File-path pipeline: DuckDB native view straight off disk ──
-        path_sql = str(file_path).replace("'", "''")
-        if str(file_path).lower().endswith(".duckdb"):
-            # Persistent DuckDB file — attach and use cur_data table directly.
-            con.execute(f"ATTACH '{path_sql}' AS src (READ_ONLY)")
-            con.execute("CREATE VIEW cur_data AS SELECT * FROM src.cur_data")
-        elif str(file_path).lower().endswith(".parquet"):
-            reader = f"read_parquet('{path_sql}')"
-            con.execute(f"CREATE VIEW cur_data AS SELECT * FROM {reader}")
-        else:
-            reader = f"read_csv_auto('{path_sql}', ignore_errors=true)"
-            con.execute(f"CREATE VIEW cur_data AS SELECT * FROM {reader}")
+        con = _open_con(file_path)
+        con.execute("SET memory_limit='1GB'")
         if filters:
             filter_sql = _build_filter_sql(filters, con)
             if filter_sql:
                 con.execute(
                     f"CREATE OR REPLACE VIEW cur_data AS "
-                    f"SELECT * FROM {reader} WHERE {filter_sql}"
+                    f"SELECT * FROM cur_data WHERE {filter_sql}"
                 )
         # Register the inventory account lookup as a tiny in-memory table so
         # query functions can LEFT JOIN inv_account_lookup without materialising
@@ -918,6 +926,8 @@ def _load_df(
         ).fetchall()] if getattr(enricher, "active", False) else []
         df_meta = SimpleNamespace(columns=cols + inv_cols)
         return df_meta, con
+    con = duckdb.connect(database=":memory:")
+    con.execute("SET memory_limit='1GB'")
     df = pd.read_csv(io.StringIO(csv_text))
     if enricher is not None:
         df = enricher.enrich_dataframe(df)
