@@ -1288,18 +1288,87 @@ async def ds_s3_status() -> dict:
 
 _s3_sync_jobs: dict = {}
 
-@app.post("/data-sources/s3/sync")
-async def ds_s3_sync() -> dict:
-    """Trigger a background S3 sync job."""
-    import uuid
+@app.get("/data-sources/s3/browse")
+async def ds_s3_browse() -> dict:
+    """Browse S3 bucket — list billing periods and their folders."""
+    import boto3
     from routes_settings import _config as _sc
     bucket = _sc.get("s3_bucket", "")
     prefix = _sc.get("s3_prefix", "")
+    region = _sc.get("s3_region", "us-east-1")
+    if not bucket or not prefix:
+        return {"s3_configured": False}
+    try:
+        s3 = boto3.client("s3", region_name=region)
+        # Strip billing period from prefix to get parent path
+        # e.g. AIAnalysis/FoAIAnalysis/data/BILLING_PERIOD=2026-07/ -> AIAnalysis/FoAIAnalysis/data/
+        base_prefix = prefix.rstrip("/")
+        if "BILLING_PERIOD=" in base_prefix:
+            base_prefix = base_prefix.rsplit("BILLING_PERIOD=", 1)[0]
+        else:
+            base_prefix = base_prefix + "/"
+        # List billing period prefixes
+        resp = s3.list_objects_v2(
+            Bucket=bucket,
+            Prefix=base_prefix,
+            Delimiter="/"
+        )
+        billing_periods = sorted([
+            p["Prefix"].rstrip("/").split("/")[-1]
+            for p in resp.get("CommonPrefixes", [])
+            if "BILLING_PERIOD=" in p["Prefix"]
+        ], reverse=True)
+        periods = []
+        for bp in billing_periods:
+            bp_prefix = base_prefix + bp + "/"
+            bp_resp = s3.list_objects_v2(Bucket=bucket, Prefix=bp_prefix, Delimiter="/")
+            folders = []
+            for fp in sorted([p["Prefix"] for p in bp_resp.get("CommonPrefixes", [])], reverse=True):
+                folder_name = fp.rstrip("/").split("/")[-1]
+                # Get file count and size
+                files_resp = s3.list_objects_v2(Bucket=bucket, Prefix=fp)
+                contents = [f for f in files_resp.get("Contents", []) if f["Key"].endswith(".csv.gz") or f["Key"].endswith(".csv")]
+                total_mb = sum(f["Size"] for f in contents) // 1024 // 1024
+                latest_modified = max((f["LastModified"] for f in contents), default=None)
+                folders.append({
+                    "folder": folder_name,
+                    "prefix": fp,
+                    "file_count": len(contents),
+                    "size_mb": total_mb,
+                    "latest_modified": latest_modified.isoformat() if latest_modified else None,
+                })
+            periods.append({
+                "billing_period": bp,
+                "folder_count": len(folders),
+                "folders": folders[:5],  # latest 5 folders per period
+            })
+        return {
+            "s3_configured": True,
+            "bucket": bucket,
+            "base_prefix": base_prefix,
+            "billing_periods": periods,
+        }
+    except Exception as e:
+        logger.warning("ds_s3_browse failed: %s", e)
+        return {"s3_configured": True, "error": str(e)}
+
+@app.post("/data-sources/s3/sync")
+async def ds_s3_sync(body: dict = None) -> dict:
+    """Trigger a background S3 sync job.
+    Optional body: {"folder_prefix": "full/s3/prefix/to/specific/folder/"}
+    If not provided, uses latest folder automatically.
+    """
+    import uuid, asyncio
+    from routes_settings import _config as _sc
+    bucket = _sc.get("s3_bucket", "")
+    prefix = _sc.get("s3_prefix", "")
+    region = _sc.get("s3_region", "us-east-1")
     if not bucket or not prefix:
         raise HTTPException(status_code=400, detail="S3 not configured — set bucket and prefix in Settings")
+    folder_prefix = (body or {}).get("folder_prefix")
     job_id = str(uuid.uuid4())
     _s3_sync_jobs[job_id] = {"status": "started", "progress": "Initialising..."}
-    asyncio.create_task(_run_s3_sync(job_id, bucket, prefix, _sc.get("s3_region", "us-east-1")))
+    asyncio.create_task(_run_s3_sync(job_id, bucket, prefix, region, folder_prefix=folder_prefix))
     return {"job_id": job_id, "status": "started"}
 
 
@@ -1312,8 +1381,8 @@ async def ds_s3_sync_status(job_id: str) -> dict:
     return job
 
 
-async def _run_s3_sync(job_id: str, bucket: str, prefix: str, region: str) -> None:
-    """Background S3 sync: find latest folder, ingest to DuckDB, pre-aggregate."""
+async def _run_s3_sync(job_id: str, bucket: str, prefix: str, region: str, folder_prefix: str | None = None) -> None:
+    """Background S3 sync: find latest folder (or use specified folder), convert to Parquet, pre-aggregate."""
     import boto3, tempfile, os, shutil
     from routes_settings import _config as _sc, _upsert
     from routes_dashboard import invalidate_tab_cache, invalidate_db_tab_cache
@@ -1324,13 +1393,19 @@ async def _run_s3_sync(job_id: str, bucket: str, prefix: str, region: str) -> No
     try:
         update("running", "Checking S3 for latest data...")
         s3 = boto3.client("s3", region_name=region)
-        resp = s3.list_objects_v2(Bucket=bucket, Prefix=prefix.rstrip("/") + "/", Delimiter="/")
-        prefixes = sorted([p["Prefix"] for p in resp.get("CommonPrefixes", [])])
-        if not prefixes:
-            update("failed", "No folders found in S3")
-            return
-        latest = prefixes[-1]
-        folder_name = latest.rstrip("/").split("/")[-1]
+        if folder_prefix:
+            # Use specified folder directly
+            latest = folder_prefix if folder_prefix.endswith("/") else folder_prefix + "/"
+            folder_name = latest.rstrip("/").split("/")[-1]
+        else:
+            # Find latest folder automatically
+            resp = s3.list_objects_v2(Bucket=bucket, Prefix=prefix.rstrip("/") + "/", Delimiter="/")
+            prefixes = sorted([p["Prefix"] for p in resp.get("CommonPrefixes", [])])
+            if not prefixes:
+                update("failed", "No folders found in S3")
+                return
+            latest = prefixes[-1]
+            folder_name = latest.rstrip("/").split("/")[-1]
         # Check if latest S3 files are newer than last sync
         files_obj = s3.list_objects_v2(Bucket=bucket, Prefix=latest)
         contents_check = files_obj.get("Contents", [])
@@ -1375,7 +1450,15 @@ async def _run_s3_sync(job_id: str, bucket: str, prefix: str, region: str) -> No
             import os as _os
             total_size = sum(_os.path.getsize(p) for p in tmp_paths)
             loop = asyncio.get_event_loop()
-            # Create placeholder report entry first
+            # Find existing auto-sync report to replace (avoid accumulating reports)
+            from report_store import list_reports, delete_report
+            existing_auto = next((r for r in list_reports() if r.get("sync_type") == "auto"), None)
+            if existing_auto:
+                logger.info("S3 sync: replacing existing auto-sync report %d", existing_auto["id"])
+                try:
+                    await delete_report(existing_auto["id"])
+                except Exception as e:
+                    logger.warning("Failed to delete existing auto report: %s", e)
             report = add_report(
                 filename=folder_label,
                 csv_text="",
@@ -1383,6 +1466,7 @@ async def _run_s3_sync(job_id: str, bucket: str, prefix: str, region: str) -> No
                 total_cost=0.0,
                 file_size=total_size,
                 file_path=None,
+                sync_type="auto",
             )
             # Convert each CSV.gz to Parquet sequentially (memory bounded ~1.2GB peak)
             import os as _os

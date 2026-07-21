@@ -161,6 +161,7 @@ def add_report(
     total_cost: float,
     file_size: int,
     file_path: str | None = None,
+    sync_type: str = "manual",
 ) -> dict[str, Any]:
     """Register a report.
 
@@ -183,6 +184,7 @@ def add_report(
             "total_cost": round(total_cost, 4),
             "file_size": file_size,
             "status": "ready",
+            "sync_type": sync_type,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         _reports.insert(0, report)
@@ -338,6 +340,7 @@ async def persist_report(report_id: int) -> None:
                     total_cost=report["total_cost"],
                     file_size=report["file_size"],
                     status=report["status"],
+                    sync_type=report["sync_type"],
                     created_at=created_at,
                 )
                 .on_conflict_do_update(
@@ -350,6 +353,7 @@ async def persist_report(report_id: int) -> None:
                         "total_cost": report["total_cost"],
                         "file_size": report["file_size"],
                         "status": report["status"],
+                        "sync_type": report["sync_type"],
                     },
                 )
             )
@@ -449,6 +453,7 @@ async def load_from_db() -> int:
                 "total_cost": r.total_cost,
                 "file_size": r.file_size,
                 "status": r.status,
+                "sync_type": getattr(r, "sync_type", "manual"),
                 "created_at": r.created_at.isoformat(),
             })
 

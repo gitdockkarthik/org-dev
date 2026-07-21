@@ -34,6 +34,7 @@ class CurReport(Base):
     total_cost: Mapped[float] = mapped_column(Float, nullable=False)
     file_size: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="ready")
+    sync_type: Mapped[str] = mapped_column(String(16), nullable=False, default="manual")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
