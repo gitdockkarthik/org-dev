@@ -1195,6 +1195,235 @@ async def ds_set_active_cur(source_id: str) -> dict:
     return {"ok": True, "active": source_id}
 
 
+@app.get("/data-sources/s3/status")
+async def ds_s3_status() -> dict:
+    """Return S3 sync status — latest available folder vs last synced."""
+    import boto3
+    from routes_settings import _config as _sc
+    bucket = _sc.get("s3_bucket", "")
+    prefix = _sc.get("s3_prefix", "")
+    region = _sc.get("s3_region", "us-east-1")
+    if not bucket or not prefix:
+        return {"s3_configured": False}
+    try:
+        s3 = boto3.client("s3", region_name=region)
+        billing_period = prefix.rstrip("/")
+        resp = s3.list_objects_v2(
+            Bucket=bucket,
+            Prefix=billing_period + "/",
+            Delimiter="/"
+        )
+        prefixes = sorted([p["Prefix"] for p in resp.get("CommonPrefixes", [])])
+        if not prefixes:
+            return {"s3_configured": True, "latest_s3_folder": None}
+        latest = prefixes[-1]
+        files = s3.list_objects_v2(Bucket=bucket, Prefix=latest)
+        contents = files.get("Contents", [])
+        total_mb = sum(f["Size"] for f in contents) // 1024 // 1024
+        # Extract timestamp from folder name
+        folder_name = latest.rstrip("/").split("/")[-1]
+        latest_ts = folder_name.split("T")[0] + "T" + folder_name.split("T")[1][:8] + "Z" if "T" in folder_name else folder_name
+        # Estimate sync time:
+        # - S3 download: ~22 MB/s compressed = total_mb / 22 seconds
+        # - DuckDB ingest: ~5s per file
+        # - Pre-aggregation: ~30s fixed
+        download_secs = total_mb / 22
+        ingest_secs = len(contents) * 5
+        preaggregate_secs = 30
+        est_secs = int(download_secs + ingest_secs + preaggregate_secs)
+        est_mins = round(est_secs / 60, 1)
+        last_synced_at = _sc.get("s3_last_synced_at", "")
+        # Check if latest S3 files are newer than last sync
+        latest_file_modified = max((f["LastModified"] for f in contents), default=None)
+        latest_file_ts = latest_file_modified.isoformat() if latest_file_modified else None
+        is_latest = False
+        if last_synced_at and latest_file_modified:
+            from datetime import datetime, timezone
+            try:
+                last_dt = datetime.fromisoformat(last_synced_at.replace("Z", "+00:00"))
+                is_latest = latest_file_modified <= last_dt
+            except Exception:
+                is_latest = False
+        return {
+            "s3_configured": True,
+            "bucket": bucket,
+            "prefix": prefix,
+            "latest_s3_folder": folder_name,
+            "latest_s3_timestamp": latest_ts,
+            "latest_s3_file_modified": latest_file_ts,
+            "latest_s3_file_count": len(contents),
+            "latest_s3_size_mb": total_mb,
+            "last_synced_at": last_synced_at,
+            "is_latest": is_latest,
+            "estimated_sync_minutes": est_mins,
+        }
+    except Exception as e:
+        logger.warning("ds_s3_status failed: %s", e)
+        return {"s3_configured": True, "error": str(e)}
+
+
+_s3_sync_jobs: dict = {}
+
+@app.post("/data-sources/s3/sync")
+async def ds_s3_sync() -> dict:
+    """Trigger a background S3 sync job."""
+    import uuid
+    from routes_settings import _config as _sc
+    bucket = _sc.get("s3_bucket", "")
+    prefix = _sc.get("s3_prefix", "")
+    if not bucket or not prefix:
+        raise HTTPException(status_code=400, detail="S3 not configured — set bucket and prefix in Settings")
+    job_id = str(uuid.uuid4())
+    _s3_sync_jobs[job_id] = {"status": "started", "progress": "Initialising..."}
+    asyncio.create_task(_run_s3_sync(job_id, bucket, prefix, _sc.get("s3_region", "us-east-1")))
+    return {"job_id": job_id, "status": "started"}
+
+
+@app.get("/data-sources/s3/sync-status/{job_id}")
+async def ds_s3_sync_status(job_id: str) -> dict:
+    """Poll S3 sync job status."""
+    job = _s3_sync_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+async def _run_s3_sync(job_id: str, bucket: str, prefix: str, region: str) -> None:
+    """Background S3 sync: find latest folder, ingest to DuckDB, pre-aggregate."""
+    import boto3, tempfile, os, shutil
+    from routes_settings import _config as _sc, _upsert
+    from routes_dashboard import invalidate_tab_cache, invalidate_db_tab_cache
+
+    def update(status: str, progress: str):
+        _s3_sync_jobs[job_id] = {"status": status, "progress": progress}
+
+    try:
+        update("running", "Checking S3 for latest data...")
+        s3 = boto3.client("s3", region_name=region)
+        resp = s3.list_objects_v2(Bucket=bucket, Prefix=prefix.rstrip("/") + "/", Delimiter="/")
+        prefixes = sorted([p["Prefix"] for p in resp.get("CommonPrefixes", [])])
+        if not prefixes:
+            update("failed", "No folders found in S3")
+            return
+        latest = prefixes[-1]
+        folder_name = latest.rstrip("/").split("/")[-1]
+        # Check if latest S3 files are newer than last sync
+        files_obj = s3.list_objects_v2(Bucket=bucket, Prefix=latest)
+        contents_check = files_obj.get("Contents", [])
+        last_synced_at = _sc.get("s3_last_synced_at", "")
+        if last_synced_at and contents_check:
+            from datetime import datetime, timezone
+            try:
+                last_dt = datetime.fromisoformat(last_synced_at.replace("Z", "+00:00"))
+                latest_mod = max(f["LastModified"] for f in contents_check)
+                last_file_count = int(_sc.get("s3_last_synced_file_count", 0))
+                current_file_count = len([f for f in contents_check if f["Key"].endswith(".csv.gz") or f["Key"].endswith(".csv")])
+                files_unchanged = latest_mod <= last_dt
+                count_unchanged = current_file_count == last_file_count
+                if files_unchanged and count_unchanged:
+                    update("complete", f"Already up to date — files unchanged since last sync")
+                    return
+            except Exception:
+                pass
+        files = files_obj
+        contents = [f for f in files.get("Contents", []) if f["Key"].endswith(".csv.gz") or f["Key"].endswith(".csv")]
+        if not contents:
+            update("failed", "No CSV files found in latest folder")
+            return
+        update("running", f"Downloading {len(contents)} files from S3...")
+        # Download to temp directory
+        tmp_dir = tempfile.mkdtemp(prefix="s3_sync_")
+        try:
+            tmp_paths = []
+            for i, obj in enumerate(contents):
+                filename = obj["Key"].split("/")[-1]
+                tmp_path = os.path.join(tmp_dir, filename)
+                update("running", f"Downloading {i+1}/{len(contents)}: {filename}")
+                await asyncio.get_event_loop().run_in_executor(
+                    None, lambda k=obj["Key"], p=tmp_path: s3.download_file(bucket, k, p)
+                )
+                tmp_paths.append(tmp_path)
+            update("running", "Ingesting to local database...")
+            # Use existing folder upload pipeline
+            from report_store import add_report, persist_report, report_file_path, set_report_path
+            from tools.duckdb_engine import get_total_cost
+            folder_label = folder_name.split("T")[0] + f" ({len(tmp_paths)} parts)"
+            import os as _os
+            total_size = sum(_os.path.getsize(p) for p in tmp_paths)
+            loop = asyncio.get_event_loop()
+            # Create placeholder report entry first
+            report = add_report(
+                filename=folder_label,
+                csv_text="",
+                row_count=0,
+                total_cost=0.0,
+                file_size=total_size,
+                file_path=None,
+            )
+            # Ingest all parts to single DuckDB file
+            duckdb_path = report_file_path(report["id"], ".duckdb")
+            def _ingest_all_sync():
+                import duckdb as _ddb
+                con = _ddb.connect(duckdb_path)
+                try:
+                    con.execute("PRAGMA threads=4")
+                    con.execute("DROP TABLE IF EXISTS cur_data")
+                    # Ingest first file to create table schema
+                    first = tmp_paths[0].replace("'", "''")
+                    con.execute(f"CREATE TABLE cur_data AS SELECT * FROM read_csv_auto('{first}', ignore_errors=true)")
+                    # Append remaining files one by one
+                    for p in tmp_paths[1:]:
+                        safe = p.replace("'", "''")
+                        con.execute(f"INSERT INTO cur_data SELECT * FROM read_csv_auto('{safe}', ignore_errors=true)")
+                finally:
+                    con.close()
+            update("running", f"Building query index (0/{len(tmp_paths)} parts)...")
+            await loop.run_in_executor(None, _ingest_all_sync)
+            # Compute totals from the ingested DuckDB file (single pass, memory efficient)
+            update("running", "Computing report totals...")
+            summary = await loop.run_in_executor(None, lambda: get_total_cost(file_path=duckdb_path))
+            # Update report with actual totals
+            from report_store import _get_internal
+            rep = _get_internal(report["id"])
+            if rep:
+                rep["row_count"] = summary.get("row_count", 0)
+                rep["total_cost"] = round(summary.get("total_cost", 0.0), 4)
+            perm_path = duckdb_path
+            set_report_path(report["id"], perm_path)
+            await persist_report(report["id"])
+            # Update last synced info
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc).isoformat()
+            await _upsert("s3_last_synced_folder", folder_name)
+            await _upsert("s3_last_synced_at", now)
+            await _upsert("s3_last_synced_file_count", str(len(contents)))
+            _sc["s3_last_synced_folder"] = folder_name
+            _sc["s3_last_synced_at"] = now
+            _sc["s3_last_synced_file_count"] = str(len(contents))
+            # Invalidate cache and pre-aggregate
+            update("running", "Pre-aggregating dashboard data...")
+            invalidate_tab_cache(report["id"])
+            await invalidate_db_tab_cache(report["id"])
+            await _precompute_all_tabs(report["id"])
+            update("complete", f"Sync complete — {folder_label} loaded and ready")
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+    except Exception as e:
+        logger.exception("S3 sync failed")
+        update("failed", f"Sync failed: {str(e)}")
+
+
+def _ingest_s3_parts(file_paths: list[str], duckdb_path: str) -> None:
+    """Ingest multiple S3 CUR part files into one DuckDB file."""
+    import duckdb
+    safe_paths = [p.replace("'", "''") for p in file_paths]
+    paths_sql = "['" + "', '".join(safe_paths) + "']"
+    con = duckdb.connect(database=duckdb_path)
+    con.execute("PRAGMA threads=4")
+    con.execute(f"CREATE TABLE cur_data AS SELECT * FROM read_csv_auto({paths_sql}, ignore_errors=true)")
+    con.close()
+
+
 @app.delete("/data-sources/cur/{source_id}")
 async def ds_delete_cur(source_id: str) -> dict:
     from report_store import delete_report

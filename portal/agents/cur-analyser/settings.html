@@ -625,6 +625,23 @@
         if (cfg.top_drivers_count      != null)  $('top-drivers-count').value   = cfg.top_drivers_count;
         if (cfg.min_cost_threshold     != null)  $('min-cost-threshold').value  = cfg.min_cost_threshold;
 
+        // Set data source radio
+        if (cfg.source_type) {
+          const radio = document.querySelector(`input[name="data-source-type"][value="${cfg.source_type}"]`);
+          if (radio) {
+            radio.checked = true;
+            document.getElementById('s3-config').style.display = cfg.source_type === 's3' ? 'block' : 'none';
+          }
+        }
+        // Load S3 config fields
+        if (cfg.s3_bucket) document.getElementById('s3-bucket').value = cfg.s3_bucket;
+        if (cfg.s3_prefix) document.getElementById('s3-prefix').value = cfg.s3_prefix;
+        if (cfg.s3_region) document.getElementById('s3-region').value = cfg.s3_region;
+        if (cfg.s3_auto_sync !== undefined) {
+          document.getElementById('s3-auto-sync').checked = cfg.s3_auto_sync;
+          document.getElementById('s3-schedule-times').style.display = cfg.s3_auto_sync ? 'block' : 'none';
+        }
+
         // Load enrichment toggle state
         await loadEnrichmentToggle();
 
@@ -1270,8 +1287,11 @@
     // Data source type toggle
     document.addEventListener('DOMContentLoaded', function() {
       document.querySelectorAll('input[name="data-source-type"]').forEach(r => {
-        r.addEventListener('change', function() {
+        r.addEventListener('change', async function() {
           document.getElementById('s3-config').style.display = this.value === 's3' ? 'block' : 'none';
+          if (this.value === 'file') {
+            await postSettings({ source_type: 'file' });
+          }
         });
       });
 
@@ -1301,7 +1321,7 @@
       const msg = document.getElementById('s3-config-msg');
       if (!bucket || !prefix) { msg.textContent = 'Bucket and prefix are required'; msg.style.color = '#dc2626'; return; }
       try {
-        await postSettings({ s3_bucket: bucket, s3_prefix: prefix, s3_region: region, s3_auto_sync: autoSync });
+        await postSettings({ source_type: 's3', s3_bucket: bucket, s3_prefix: prefix, s3_region: region, s3_auto_sync: autoSync });
         msg.textContent = '✓ Saved'; msg.style.color = '#16a34a';
       } catch(e) { msg.textContent = 'Failed to save'; msg.style.color = '#dc2626'; }
     }

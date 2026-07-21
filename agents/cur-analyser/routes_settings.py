@@ -129,6 +129,10 @@ class SettingsPayload(BaseModel):
     min_cost_threshold: float = 1.00
     api_key: str = ""
     inventory_enrichment_enabled: bool = False
+    s3_bucket: str = ""
+    s3_prefix: str = ""
+    s3_region: str = "us-east-1"
+    s3_auto_sync: bool = False
 
 
 @router.get("")

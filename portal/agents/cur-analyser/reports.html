@@ -67,10 +67,43 @@
       <div class="page-heading__sub">Saved CUR reports loaded for analysis</div>
     </div>
 
-    <!-- Note -->
-    <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:16px">
-      CUR files are managed in <strong>Settings → Data Source</strong>. Use Dashboard or Chat to analyse each report.
-    </p>
+    <!-- File Upload Section -->
+    <div class="section-card" style="margin-bottom:16px">
+      <div class="section-card__header">
+        📁 Upload CUR File
+        <span style="font-size:.75rem;font-weight:400;color:var(--text-muted)">CSV, CSV.gz, or select a folder of part files</span>
+      </div>
+      <div style="padding:16px 20px">
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+          <label class="btn btn--primary" style="cursor:pointer">
+            📄 Upload single file
+            <input type="file" id="rpt-file-input" accept=".csv,.gz" style="display:none">
+          </label>
+          <label class="btn btn--secondary" style="cursor:pointer">
+            📂 Upload folder (multi-part)
+            <input type="file" id="rpt-folder-input" accept=".csv,.gz" multiple webkitdirectory style="display:none">
+          </label>
+        </div>
+        <div id="rpt-upload-msg" style="margin-top:10px;font-size:.83rem"></div>
+        <div id="rpt-upload-progress" style="display:none;margin-top:10px">
+          <div style="font-size:.83rem;color:var(--text-muted)" id="rpt-progress-text">Uploading...</div>
+          <div style="margin-top:6px;background:var(--navy-2);border-radius:4px;height:6px">
+            <div id="rpt-progress-bar" style="background:var(--accent);height:6px;border-radius:4px;width:0%;transition:width .3s"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- S3 Sync Section -->
+    <div class="section-card" style="margin-bottom:16px" id="s3-sync-card">
+      <div class="section-card__header">
+        ☁️ S3 Sync
+        <button class="btn btn--ghost btn--sm" onclick="loadS3Status()">↻ Refresh</button>
+      </div>
+      <div id="s3-sync-body" style="padding:16px 20px">
+        <div style="color:var(--text-muted);font-size:.85rem">Loading S3 status...</div>
+      </div>
+    </div>
 
     <!-- Reports table -->
     <div class="section-card">
@@ -167,7 +200,196 @@
       }
     }
 
-    loadReports();
+    (async () => {
+      await portalReady;
+      await loadReports();
+      await loadS3Status();
+    })();
+
+    async function loadS3Status() {
+      const body = document.getElementById('s3-sync-body');
+      try {
+        const st = await api('/data-sources/s3/status');
+        if (!st.s3_configured) {
+          body.innerHTML = '<div style="color:var(--text-muted);font-size:.85rem">S3 not configured. Set bucket and prefix in <a href="/agents/cur-analyser/settings">Settings → Data Source</a>.</div>';
+          return;
+        }
+        const isLatest = st.is_latest;
+        const gap = st.last_synced_at ? '' : 'Never synced';
+        body.innerHTML = `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+            <div>
+              <div style="font-size:.72rem;text-transform:uppercase;color:var(--text-muted);font-weight:600;margin-bottom:4px">Latest in S3</div>
+              <div style="font-weight:600">${st.latest_s3_timestamp || '—'}</div>
+              <div style="font-size:.78rem;color:var(--text-muted)">${st.latest_s3_file_count} files · ${st.latest_s3_size_mb} MB</div>
+            </div>
+            <div>
+              <div style="font-size:.72rem;text-transform:uppercase;color:var(--text-muted);font-weight:600;margin-bottom:4px">Last Synced</div>
+              <div style="font-weight:600">${st.last_synced_at ? new Date(st.last_synced_at).toLocaleString() : 'Never'}</div>
+              <div style="font-size:.78rem;color:var(--text-muted)">${st.last_synced_folder || '—'}</div>
+            </div>
+          </div>
+          ${isLatest
+            ? '<div style="color:var(--success);font-size:.85rem;margin-bottom:12px">✓ Agent data is up to date with S3</div>'
+            : '<div style="color:#f59e0b;font-size:.85rem;margin-bottom:12px">⚠ Newer data available in S3</div>'
+          }
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <button class="btn btn--primary" onclick="startS3Sync()" id="s3-sync-btn">
+              ${isLatest ? '↻ Re-sync' : '⬇ Sync Now'}
+            </button>
+            <span style="font-size:.78rem;color:var(--text-muted)">Estimated time: ~${st.estimated_sync_minutes} min</span>
+            <span id="s3-sync-status" style="font-size:.82rem"></span>
+          </div>`;
+      } catch(e) {
+        body.innerHTML = '<div style="color:var(--danger);font-size:.85rem">Failed to load S3 status: ' + e.message + '</div>';
+      }
+    }
+
+    let _s3SyncJobId = null;
+    let _s3SyncPoller = null;
+
+    async function startS3Sync() {
+      const btn = document.getElementById('s3-sync-btn');
+      const statusEl = document.getElementById('s3-sync-status');
+      if (btn) btn.disabled = true;
+      if (statusEl) statusEl.textContent = 'Starting sync...';
+      try {
+        const job = await api('/data-sources/s3/sync', { method: 'POST' });
+        _s3SyncJobId = job.job_id;
+        pollS3Sync();
+      } catch(e) {
+        if (statusEl) statusEl.textContent = 'Failed: ' + e.message;
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    function pollS3Sync() {
+      if (_s3SyncPoller) clearInterval(_s3SyncPoller);
+      _s3SyncPoller = setInterval(async () => {
+        try {
+          const st = await api('/data-sources/s3/sync-status/' + _s3SyncJobId);
+          const statusEl = document.getElementById('s3-sync-status');
+          if (statusEl) statusEl.textContent = st.progress || st.status;
+          if (st.status === 'complete' || st.status === 'failed') {
+            clearInterval(_s3SyncPoller);
+            const btn = document.getElementById('s3-sync-btn');
+            if (btn) btn.disabled = false;
+            await loadS3Status();
+            await loadReports();
+          }
+        } catch(e) { clearInterval(_s3SyncPoller); }
+      }, 3000);
+    }
+
+    // File upload handlers
+    document.addEventListener('DOMContentLoaded', function() {
+      const fileInput = document.getElementById('rpt-file-input');
+      if (fileInput) fileInput.addEventListener('change', async (ev) => {
+        const file = ev.target.files[0];
+        if (!file) return;
+        ev.target.value = '';
+        await uploadFile(file);
+      });
+      const folderInput = document.getElementById('rpt-folder-input');
+      if (folderInput) folderInput.addEventListener('change', async (ev) => {
+        const files = [...ev.target.files].filter(f => f.name.endsWith('.gz') || f.name.endsWith('.csv'));
+        if (!files.length) { document.getElementById('rpt-upload-msg').textContent = 'No CSV/gz files found'; return; }
+        ev.target.value = '';
+        await uploadFolder(files);
+      });
+    });
+
+    async function uploadFile(file) {
+      const msg = document.getElementById('rpt-upload-msg');
+      const prog = document.getElementById('rpt-upload-progress');
+      const bar = document.getElementById('rpt-progress-bar');
+      const text = document.getElementById('rpt-progress-text');
+      msg.textContent = '';
+      prog.style.display = 'block';
+      text.textContent = 'Uploading ' + file.name + '...';
+      bar.style.width = '0%';
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const job = await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', `${PROXY}/data-sources/cur/upload`);
+          const hdrs = _authHeaders();
+          Object.keys(hdrs).forEach(k => xhr.setRequestHeader(k, hdrs[k]));
+          xhr.upload.addEventListener('progress', ev => {
+            if (ev.lengthComputable) bar.style.width = Math.round(ev.loaded/ev.total*100) + '%';
+          });
+          xhr.addEventListener('load', () => {
+            if (xhr.status === 202) { try { resolve(JSON.parse(xhr.responseText)); } catch(e) { reject(new Error('Invalid response')); } }
+            else { let d='HTTP '+xhr.status; try{const j=JSON.parse(xhr.responseText);if(j.detail)d=j.detail;}catch(_){} reject(new Error(d)); }
+          });
+          xhr.addEventListener('error', () => reject(new Error('Network error')));
+          xhr.send(fd);
+        });
+        pollUploadJob(job.job_id, file.name, msg, prog, bar, text);
+      } catch(e) {
+        prog.style.display = 'none';
+        msg.textContent = 'Upload failed: ' + e.message;
+        msg.style.color = 'var(--danger)';
+      }
+    }
+
+    async function uploadFolder(files) {
+      const msg = document.getElementById('rpt-upload-msg');
+      const prog = document.getElementById('rpt-upload-progress');
+      const bar = document.getElementById('rpt-progress-bar');
+      const text = document.getElementById('rpt-progress-text');
+      msg.textContent = '';
+      prog.style.display = 'block';
+      text.textContent = 'Uploading ' + files.length + ' files...';
+      bar.style.width = '0%';
+      try {
+        const fd = new FormData();
+        files.forEach(f => fd.append('files', f));
+        const job = await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', `${PROXY}/data-sources/cur/upload-folder`);
+          const hdrs = _authHeaders();
+          Object.keys(hdrs).forEach(k => xhr.setRequestHeader(k, hdrs[k]));
+          xhr.upload.addEventListener('progress', ev => {
+            if (ev.lengthComputable) bar.style.width = Math.round(ev.loaded/ev.total*100) + '%';
+          });
+          xhr.addEventListener('load', () => {
+            if (xhr.status === 202) { try { resolve(JSON.parse(xhr.responseText)); } catch(e) { reject(new Error('Invalid response')); } }
+            else { let d='HTTP '+xhr.status; try{const j=JSON.parse(xhr.responseText);if(j.detail)d=j.detail;}catch(_){} reject(new Error(d)); }
+          });
+          xhr.addEventListener('error', () => reject(new Error('Network error')));
+          xhr.send(fd);
+        });
+        pollUploadJob(job.job_id, files[0].name, msg, prog, bar, text);
+      } catch(e) {
+        prog.style.display = 'none';
+        msg.textContent = 'Upload failed: ' + e.message;
+        msg.style.color = 'var(--danger)';
+      }
+    }
+
+    async function pollUploadJob(jobId, filename, msg, prog, bar, text) {
+      const poll = setInterval(async () => {
+        try {
+          const st = await api('/data-sources/cur/upload-status/' + jobId);
+          text.textContent = st.status === 'processing' ? 'Processing ' + filename + '...' : st.status;
+          bar.style.width = '100%';
+          if (st.status === 'ready') {
+            clearInterval(poll);
+            prog.style.display = 'none';
+            msg.textContent = '✓ Report loaded successfully';
+            msg.style.color = 'var(--success)';
+            await loadReports();
+          } else if (st.status === 'failed') {
+            clearInterval(poll);
+            prog.style.display = 'none';
+            msg.textContent = 'Failed: ' + (st.error || 'Unknown error');
+            msg.style.color = 'var(--danger)';
+          }
+        } catch(e) { clearInterval(poll); }
+      }, 3000);
+    }
   </script>
   <script>
     // ── Fix nav links in standalone mode ──────────────────────────────────
