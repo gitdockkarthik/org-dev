@@ -295,15 +295,6 @@
     <nav class="tab-nav" role="tablist">
       <button class="tab-btn active" data-tab="data-source" role="tab">Data Source</button>
       <button class="tab-btn" data-tab="cost-tuning" role="tab">Cost Tuning</button>
-      <button class="tab-btn" data-tab="aws-live" role="tab">
-        AWS Live <span class="phase-badge">Phase 2</span>
-      </button>
-      <button class="tab-btn" data-tab="finops" role="tab">
-        FinOps Intelligence <span class="phase-badge">Phase 3</span>
-      </button>
-      <button class="tab-btn" data-tab="autonomous" role="tab">
-        Autonomous FinOps <span class="phase-badge red">Phase 4</span>
-      </button>
     </nav>
 
     <!-- ══════════════════════════════════════════════════════════ -->
@@ -339,93 +330,83 @@
         </div>
         <button onclick="saveEnrichmentToggle()" class="btn btn-primary" style="margin-top:12px;">Save</button>
         <span id="inv-enrichment-status" style="font-size:.82rem;margin-left:10px;"></span>
-      </div>
-
-      <!-- Inventory File -->
-      <div class="card">
-        <div class="card-title">Inventory File</div>
-        <div class="card-subtitle">
-          Optional resource inventory (.xlsx) that enriches CUR rows with Customer, Application,
-          Budget&nbsp;Code, Environment and ownership via <code>inv_*</code> attributes.
-        </div>
-        <div id="ds-inv-staleness" class="banner-amber hidden" style="margin-bottom:0.75rem"></div>
-        <div id="ds-inv-info" style="font-size:0.875rem;color:#475569">Loading…</div>
-        <div class="actions" style="margin-top:0.875rem">
-          <label class="btn btn-primary" style="cursor:pointer">
-            <span id="ds-inv-btn-label">Upload inventory (.xlsx)</span>
-            <input type="file" id="ds-inv-file" accept=".xlsx" style="display:none" />
-          </label>
-          <button class="btn btn-secondary hidden" id="ds-inv-remove">Remove inventory</button>
-        </div>
-        <div id="ds-inv-msg" class="action-msg hidden"></div>
-      </div>
-
-      <!-- CUR Files -->
-      <div class="card">
-        <div class="card-title">CUR Files</div>
-        <div class="card-subtitle">AWS Cost &amp; Usage Report files loaded for analysis.
-          Match rate is measured against the currently loaded inventory.</div>
-        <div id="ds-storage-bar" style="margin-bottom:12px;display:none">
-          <div style="display:flex;justify-content:space-between;font-size:.78rem;color:var(--text-muted);margin-bottom:4px">
-            <span>Storage used</span>
-            <span id="ds-storage-label">—</span>
+        <div id="inv-file-section" style="display:none;margin-top:16px;border-top:1px solid var(--border);padding-top:16px">
+          <div style="font-size:.88rem;font-weight:600;margin-bottom:8px">Inventory File</div>
+          <div id="ds-inv-staleness" class="banner-amber hidden" style="margin-bottom:0.75rem"></div>
+          <div id="ds-inv-info" style="font-size:0.875rem;color:#475569">Loading…</div>
+          <div class="actions" style="margin-top:0.875rem">
+            <label class="btn btn-primary" style="cursor:pointer">
+              <span id="ds-inv-btn-label">Upload inventory (.xlsx)</span>
+              <input type="file" id="ds-inv-file" accept=".xlsx" style="display:none" />
+            </label>
+            <button class="btn btn-secondary hidden" id="ds-inv-remove">Remove inventory</button>
           </div>
-          <div style="background:var(--navy-2);border-radius:4px;height:8px;overflow:hidden">
-            <div id="ds-storage-fill" style="height:100%;border-radius:4px;background:#22c55e;transition:width .3s"></div>
-          </div>
+          <div id="ds-inv-msg" class="action-msg hidden"></div>
         </div>
-        <div id="ds-cur-grid" style="font-size:0.875rem;color:#475569">Loading…</div>
-        <div class="actions" style="margin-top:1rem;display:flex;gap:8px;flex-wrap:wrap">
-          <label class="btn btn-primary" id="ds-cur-upload-btn" style="cursor:pointer">
-            + Upload CUR file
-            <input type="file" id="ds-cur-file" accept=".csv,.zip,.parquet,.gz" style="display:none" />
-          </label>
-          <label class="btn btn-secondary" id="ds-cur-folder-btn" style="cursor:pointer">
-            📁 Upload CUR folder
-            <input type="file" id="ds-cur-folder" accept=".gz,.csv" multiple webkitdirectory style="display:none" />
-          </label>
-        </div>
-        <p class="hint" style="margin-top:0.5rem">Large files (>50 MB) may take several minutes to upload over VPN. Use "Upload CUR folder" to upload all parts from an S3 export folder at once.</p>
-        <div id="ds-cur-msg" class="action-msg hidden"></div>
       </div>
 
-      <!-- Coming soon -->
+      <!-- Data Source Selector -->
       <div class="card">
-        <div class="card-title">Coming soon</div>
-        <div class="card-subtitle">Additional data-source connectors planned for future phases.</div>
-        <div class="radio-cards">
-          <label class="radio-card coming">
-            <input type="radio" disabled />
+        <div class="card-title">Data Source</div>
+        <div class="card-subtitle">Select how CUR data is loaded into the agent.</div>
+        <div class="radio-cards" style="margin-top:12px">
+          <label class="radio-card">
+            <input type="radio" name="data-source-type" value="file" id="ds-type-file" checked />
             <div class="radio-card-body">
-              <div class="radio-card-label">AWS Cost Explorer API
-                <span class="phase-badge">Coming soon</span></div>
-              <div class="radio-card-desc">Fetch cost data directly from the Cost Explorer API on a schedule</div>
+              <div class="radio-card-label">File Upload</div>
+              <div class="radio-card-desc">Manually upload CUR CSV or gz files. Manage uploads in the Reports page.</div>
+            </div>
+          </label>
+          <label class="radio-card">
+            <input type="radio" name="data-source-type" value="s3" id="ds-type-s3" />
+            <div class="radio-card-body">
+              <div class="radio-card-label">S3 Sync</div>
+              <div class="radio-card-desc">Auto-sync CUR exports directly from an S3 bucket on a schedule.</div>
             </div>
           </label>
           <label class="radio-card coming">
-            <input type="radio" disabled />
+            <input type="radio" name="data-source-type" value="ce" disabled />
             <div class="radio-card-body">
-              <div class="radio-card-label">S3 Sync
-                <span class="phase-badge">Coming soon</span></div>
-              <div class="radio-card-desc">Auto-sync CUR exports directly from an S3 bucket / prefix</div>
+              <div class="radio-card-label">AWS Cost Explorer <span class="phase-badge">Coming soon</span></div>
+              <div class="radio-card-desc">Fetch cost data directly from the Cost Explorer API.</div>
             </div>
           </label>
           <label class="radio-card coming">
-            <input type="radio" disabled />
+            <input type="radio" name="data-source-type" value="api" disabled />
             <div class="radio-card-body">
-              <div class="radio-card-label">S3 Watch
-                <span class="phase-badge">Coming soon</span></div>
-              <div class="radio-card-desc">Watch an S3 location for updated inventory exports</div>
+              <div class="radio-card-label">Custom API <span class="phase-badge">Coming soon</span></div>
+              <div class="radio-card-desc">Pull cost data from a custom HTTP endpoint on a schedule.</div>
             </div>
           </label>
-          <label class="radio-card coming">
-            <input type="radio" disabled />
-            <div class="radio-card-body">
-              <div class="radio-card-label">Script Endpoint
-                <span class="phase-badge">Coming soon</span></div>
-              <div class="radio-card-desc">Pull inventory from a custom script / HTTP endpoint on a schedule</div>
+        </div>
+
+        <!-- S3 configuration — shown only when S3 selected -->
+        <div id="s3-config" style="display:none;margin-top:16px;border-top:1px solid var(--border);padding-top:16px">
+          <div class="field">
+            <label for="s3-bucket">S3 Bucket</label>
+            <input type="text" id="s3-bucket" placeholder="my-cur-bucket" />
+          </div>
+          <div class="field">
+            <label for="s3-prefix">Prefix</label>
+            <input type="text" id="s3-prefix" placeholder="AIAnalysis/FoAIAnalysis/data/" />
+          </div>
+          <div class="field">
+            <label for="s3-region">Region</label>
+            <input type="text" id="s3-region" placeholder="us-east-1" value="us-east-1" />
+          </div>
+          <div class="field">
+            <label>Auto-sync Schedule</label>
+            <div class="toggle-wrap">
+              <input type="checkbox" id="s3-auto-sync" class="toggle-input" />
+              <label for="s3-auto-sync" class="toggle-track"></label>
+              <span class="toggle-label">Enable auto-sync</span>
             </div>
-          </label>
+            <div id="s3-schedule-times" style="display:none;margin-top:8px;font-size:.82rem;color:var(--text-muted)">
+              Syncs at 06:00, 13:00, 22:00 UTC daily (matching AWS CUR update schedule)
+            </div>
+          </div>
+          <button class="btn btn-primary" onclick="saveS3Config()" style="margin-top:8px">Save S3 Configuration</button>
+          <span id="s3-config-msg" style="font-size:.82rem;margin-left:10px"></span>
         </div>
       </div>
 
@@ -490,201 +471,6 @@
 
     </div><!-- /#panel-cost-tuning -->
 
-    <!-- ══════════════════════════════════════════════════════════ -->
-    <!-- TAB 3: AWS Live (Phase 2, locked)                         -->
-    <!-- ══════════════════════════════════════════════════════════ -->
-    <div class="tab-panel" id="panel-aws-live">
-      <div class="locked-info">
-        <strong>Phase 2</strong> — Direct AWS Cost Explorer and S3 CUR connectivity. Configure
-        once and costs sync automatically on your schedule. Available in Phase 2.
-      </div>
-      <div class="locked-content">
-        <div class="card">
-          <div class="field">
-            <label>IAM method</label>
-            <div class="iam-radios">
-              <label class="iam-radio-label">
-                <input type="radio" name="iam-method" value="keys" disabled /> Access Keys
-              </label>
-              <label class="iam-radio-label">
-                <input type="radio" name="iam-method" value="role" disabled /> IAM Role ARN
-              </label>
-            </div>
-            <div class="hint">IAM Role recommended for production deployments</div>
-          </div>
-          <div class="field">
-            <label for="aws-access-key">AWS Access Key ID</label>
-            <input type="text" id="aws-access-key" disabled placeholder="AKIAIOSFODNN7EXAMPLE" />
-          </div>
-          <div class="field">
-            <label for="aws-secret-key">AWS Secret Access Key</label>
-            <input type="password" id="aws-secret-key" disabled />
-          </div>
-          <div class="field">
-            <label for="aws-region">AWS Region</label>
-            <input type="text" id="aws-region" disabled value="us-east-1" style="max-width:180px" />
-          </div>
-          <div class="field">
-            <label for="iam-role-arn">IAM Role ARN</label>
-            <input type="text" id="iam-role-arn" disabled placeholder="arn:aws:iam::123456789012:role/CURRole" />
-            <div class="hint">Used instead of access keys when running on EC2/EKS</div>
-          </div>
-          <div class="field">
-            <label for="ce-granularity">Cost Explorer granularity</label>
-            <select id="ce-granularity" disabled style="max-width:180px">
-              <option value="DAILY">DAILY</option>
-              <option value="MONTHLY">MONTHLY</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="s3-bucket">S3 CUR Bucket</label>
-            <input type="text" id="s3-bucket" disabled placeholder="my-cur-bucket" />
-          </div>
-          <div class="field">
-            <label for="s3-prefix">S3 CUR Prefix</label>
-            <input type="text" id="s3-prefix" disabled placeholder="cur/reports/" />
-            <div class="hint">Path prefix where CUR files are stored in S3</div>
-          </div>
-        </div>
-      </div>
-    </div><!-- /#panel-aws-live -->
-
-    <!-- ══════════════════════════════════════════════════════════ -->
-    <!-- TAB 4: FinOps Intelligence (Phase 3, locked)              -->
-    <!-- ══════════════════════════════════════════════════════════ -->
-    <div class="tab-panel" id="panel-finops">
-      <div class="locked-info">
-        <strong>Phase 3</strong> — RAG-powered cost optimisation using AWS pricing documentation,
-        Reserved Instance guides, Savings Plans data and your historical cost patterns. The agent
-        will provide grounded RI and Savings Plans recommendations. Available in Phase 3.
-      </div>
-      <div class="locked-content">
-        <div class="card">
-          <div class="toggle-wrap">
-            <input type="checkbox" id="rag-enable" class="toggle-input" disabled />
-            <label for="rag-enable" class="toggle-track"></label>
-            <span class="toggle-label">Enable FinOps RAG</span>
-          </div>
-
-          <div class="field">
-            <label for="rag-qdrant-host">Qdrant Host</label>
-            <input type="text" id="rag-qdrant-host" disabled value="localhost" />
-          </div>
-          <div class="field">
-            <label for="rag-qdrant-port">Qdrant Port</label>
-            <input type="number" id="rag-qdrant-port" disabled value="6333" style="max-width:120px" />
-          </div>
-          <div class="field">
-            <label for="rag-qdrant-collection">Qdrant Collection</label>
-            <input type="text" id="rag-qdrant-collection" disabled placeholder="aws-pricing" />
-          </div>
-          <div class="field">
-            <label for="rag-chunks">RAG Context Chunks</label>
-            <input type="number" id="rag-chunks" disabled value="5" style="max-width:120px" />
-          </div>
-
-          <div class="card-section">
-            <div class="card-section-title">Recommendations</div>
-            <div class="field">
-              <label for="ri-threshold">Suggest RI purchase if break-even is within X months</label>
-              <input type="number" id="ri-threshold" disabled value="12" style="max-width:120px" />
-              <div class="hint">12 months = recommend RI only if it pays for itself within a year</div>
-            </div>
-            <div class="field">
-              <label for="savings-plans-pref">Savings Plans preference</label>
-              <select id="savings-plans-pref" disabled style="max-width:220px">
-                <option value="Compute">Compute</option>
-                <option value="EC2">EC2</option>
-                <option value="SageMaker">SageMaker</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="card-section">
-            <div class="field">
-              <label for="rag-model">Reasoning Model</label>
-              <select id="rag-model" disabled>
-                <option value="claude-sonnet-4-6" selected>claude-sonnet-4-6 (recommended)</option>
-                <option value="claude-opus-4-6">claude-opus-4-6 (higher quality, slower)</option>
-              </select>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div><!-- /#panel-finops -->
-
-    <!-- ══════════════════════════════════════════════════════════ -->
-    <!-- TAB 5: Autonomous FinOps (Phase 4, locked)                -->
-    <!-- ══════════════════════════════════════════════════════════ -->
-    <div class="tab-panel" id="panel-autonomous">
-      <div class="banner-amber">
-        ⚠️ Autonomous FinOps executes cost optimisation actions without human approval, including
-        purchasing Reserved Instances and modifying infrastructure. Enable only after Phase 3
-        recommendations have been validated over at least 90 days with a HITL success rate
-        meeting the configured threshold. Financial commitments made autonomously cannot be reversed.
-      </div>
-      <div class="locked-content">
-        <div class="card">
-          <div class="toggle-wrap">
-            <input type="checkbox" id="auto-enable" class="toggle-input" disabled />
-            <label for="auto-enable" class="toggle-track"></label>
-            <span class="toggle-label">Enable Autonomous FinOps</span>
-          </div>
-
-          <div class="field">
-            <label for="auto-hitl-threshold">
-              Minimum HITL success rate to activate autonomous mode (%)
-            </label>
-            <input type="number" id="auto-hitl-threshold" disabled value="90" style="max-width:120px" />
-            <div class="hint">Higher than alert agent (90% vs 85%) because financial actions carry real monetary risk</div>
-          </div>
-
-          <div class="field">
-            <label for="auto-max-spend">Maximum $ value of autonomous actions per month</label>
-            <input type="number" id="auto-max-spend" disabled value="1000" style="max-width:120px" />
-            <div class="hint">Safety cap — autonomous actions exceeding this require human approval</div>
-          </div>
-
-          <div class="field">
-            <label>Permitted autonomous actions</label>
-            <div class="checkbox-group">
-              <div class="checkbox-row">
-                <input type="checkbox" id="act-ri" disabled />
-                <label for="act-ri">Purchase Reserved Instances</label>
-              </div>
-              <div class="checkbox-row">
-                <input type="checkbox" id="act-sp" disabled />
-                <label for="act-sp">Purchase Savings Plans</label>
-              </div>
-              <div class="checkbox-row">
-                <input type="checkbox" id="act-rightsize" disabled />
-                <label for="act-rightsize">Rightsize EC2 instances</label>
-              </div>
-              <div class="checkbox-row">
-                <input type="checkbox" id="act-delete" disabled />
-                <label for="act-delete">Delete unused resources</label>
-              </div>
-              <div class="checkbox-row">
-                <input type="checkbox" id="act-rds" disabled />
-                <label for="act-rds">Modify RDS instance types</label>
-              </div>
-            </div>
-          </div>
-
-          <div class="field">
-            <label for="auto-terraform-url">Terraform Workspace URL</label>
-            <input type="text" id="auto-terraform-url" disabled placeholder="https://app.terraform.io/…" />
-            <div class="hint">For infrastructure changes via IaC</div>
-          </div>
-
-          <div class="field">
-            <label for="auto-blast-radius">Maximum AWS accounts affected per autonomous action</label>
-            <input type="number" id="auto-blast-radius" disabled value="1" style="max-width:120px" />
-            <div class="hint">Default 1 means changes limited to one account at a time.</div>
-          </div>
-        </div>
-      </div>
-    </div><!-- /#panel-autonomous -->
 
   </div><!-- /.container -->
   </div><!-- /.content -->
@@ -866,6 +652,8 @@
         document.getElementById('inv-enrichment-hint').textContent = enabled
           ? 'ON — Dashboard enriches cost rows with inventory attributes.'
           : 'OFF — Dashboard shows raw AWS tag data without inventory mapping.';
+        const invSection = document.getElementById('inv-file-section');
+        if (invSection) invSection.style.display = enabled ? 'block' : 'none';
       } catch(e) {}
     }
 
@@ -903,7 +691,7 @@
         return (n / 1048576).toFixed(1) + ' MB';
       }
 
-      async function loadDataSources() {
+      window.loadDataSources = async function loadDataSources() {
         await portalReady;
         try {
           const res = await fetch(`${PROXY}/data-sources/status`, { headers: authHeaders() });
@@ -1061,7 +849,7 @@
         document.body.removeChild(ta);
       }
 
-      function renderInv(st) {
+      window.renderInv = function renderInv(st) {
         const el = $('ds-inv-info');
         const stale = $('ds-inv-staleness');
         const btn = $('ds-inv-btn-label');
@@ -1266,7 +1054,8 @@
         });
       }
 
-      $('ds-cur-file').addEventListener('change', async (ev) => {
+      const dsCurFile = $('ds-cur-file');
+      if (dsCurFile) dsCurFile.addEventListener('change', async (ev) => {
         const files = [...ev.target.files];
         ev.target.value = '';
         if (!files.length) return;
@@ -1303,7 +1092,8 @@
         }
       });
 
-      $('ds-cur-folder').addEventListener('change', async (ev) => {
+      const dsCurFolder = $('ds-cur-folder');
+      if (dsCurFolder) dsCurFolder.addEventListener('change', async (ev) => {
         const allFiles = [...ev.target.files];
         ev.target.value = '';
         if (!allFiles.length) return;
@@ -1371,7 +1161,8 @@
 
       // Set Active / Remove buttons inside the CUR grid (event delegation —
       // the grid's innerHTML is rebuilt on every refresh).
-      $('ds-cur-grid').addEventListener('click', async (ev) => {
+      const dsCurGrid = $('ds-cur-grid');
+      if (dsCurGrid) dsCurGrid.addEventListener('click', async (ev) => {
         const copyBtn = ev.target.closest('.cur-copy');
         const setBtn = ev.target.closest('.cur-set-active');
         const rmBtn = ev.target.closest('.cur-remove');
@@ -1475,6 +1266,45 @@
         } catch (_) { localStorage.removeItem('cur_upload_job'); }
       })();
     })();
+
+    // Data source type toggle
+    document.addEventListener('DOMContentLoaded', function() {
+      document.querySelectorAll('input[name="data-source-type"]').forEach(r => {
+        r.addEventListener('change', function() {
+          document.getElementById('s3-config').style.display = this.value === 's3' ? 'block' : 'none';
+        });
+      });
+
+      // S3 auto-sync schedule toggle
+      const s3AutoSync = document.getElementById('s3-auto-sync');
+      if (s3AutoSync) {
+        s3AutoSync.addEventListener('change', function() {
+          document.getElementById('s3-schedule-times').style.display = this.checked ? 'block' : 'none';
+        });
+      }
+
+      // Show/hide inventory file section based on enrichment toggle
+      const tog = document.getElementById('inv-enrichment-toggle');
+      if (tog) {
+        tog.addEventListener('change', function() {
+          document.getElementById('inv-file-section').style.display = this.checked ? 'block' : 'none';
+          if (this.checked) loadDataSources();
+        });
+      }
+    });
+
+    async function saveS3Config() {
+      const bucket = document.getElementById('s3-bucket').value.trim();
+      const prefix = document.getElementById('s3-prefix').value.trim();
+      const region = document.getElementById('s3-region').value.trim();
+      const autoSync = document.getElementById('s3-auto-sync').checked;
+      const msg = document.getElementById('s3-config-msg');
+      if (!bucket || !prefix) { msg.textContent = 'Bucket and prefix are required'; msg.style.color = '#dc2626'; return; }
+      try {
+        await postSettings({ s3_bucket: bucket, s3_prefix: prefix, s3_region: region, s3_auto_sync: autoSync });
+        msg.textContent = '✓ Saved'; msg.style.color = '#16a34a';
+      } catch(e) { msg.textContent = 'Failed to save'; msg.style.color = '#dc2626'; }
+    }
   </script>
   <script>
     // ── Fix nav links and UI in standalone mode ───────────────────────────
