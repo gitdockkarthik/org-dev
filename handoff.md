@@ -35,10 +35,10 @@ Complete Job Server standalone UI, register alert and kafka jobs, clean up redun
   - CUR S3 sync job registered (30 6,13,22 * * *)
   - cur-analyser /internal/sync endpoint working
   - End-to-end validated
-* Commits: 7ba27b3, 0236ff2, 9ed4f43
+* Job Server standalone UI — three tabs: Job Definitions, Schedules, Monitor
+* Commits: 7ba27b3, 0236ff2, 9ed4f43, 9ef4ce5, 58d60ab
 
 ### Pending
-* Job Server standalone UI (Job Definitions, Schedules, Monitor tabs)
 * Register alert-analyser and kafka-analyser jobs in Job Server
 * Clean up CUR Reports page — remove S3 sync section (Job Server owns it)
 * Clean up CUR Settings page — remove auto-sync config (Job Server owns it)
@@ -68,10 +68,9 @@ Complete Job Server standalone UI, register alert and kafka jobs, clean up redun
 * EKS: Job Server runs as dedicated pod with higher memory limits
 
 ## Next Checkpoint
-1. Build Job Server standalone UI (HTML/CSS/JS — no portal dependencies)
-2. Register alert-analyser and kafka-analyser sync jobs
-3. Clean up agent settings/reports pages
-4. Tab-level chat for alert and kafka
+1. Register alert-analyser and kafka-analyser sync jobs in Job Server
+2. Clean up agent settings/reports pages (remove sync UI now owned by Job Server)
+3. Tab-level chat for alert and kafka
 
 ## Blocked
 None — all work unblocked.
