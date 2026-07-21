@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Operative Job Server</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <style>
+    body { background: var(--bg); }
+    .topbar { background: var(--navy-1); border-bottom: 1px solid var(--border); padding: 0 40px; height: 56px; display: flex; align-items: center; justify-content: space-between; }
+    .topbar__brand { font-size: 1rem; font-weight: 700; color: #fff; letter-spacing: 1px; text-decoration: none; }
+    .topbar__sub { font-size: .8rem; color: var(--text-muted); margin-left: 12px; }
+    .tab-bar { display: flex; background: var(--navy-1); border-bottom: 1px solid var(--border); padding: 0 40px; }
+    .tab-btn { padding: 14px 20px; font-size: .88rem; font-weight: 500; color: var(--text-muted); border: none; border-bottom: 2px solid transparent; background: none; cursor: pointer; margin-bottom: -1px; }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+    .content { padding: 28px 40px; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    .section-card { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; margin-bottom: 16px; }
+    .section-card__header { padding: 14px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; font-weight: 600; font-size: .9rem; }
+    .data-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+    .data-table th { padding: 10px 14px; text-align: left; font-size: .72rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-dim); background: var(--navy-2); border-bottom: 1px solid var(--border); }
+    .data-table td { padding: 11px 14px; border-bottom: 1px solid var(--border); color: var(--text); vertical-align: middle; }
+    .data-table tr:last-child td { border-bottom: none; }
+    .data-table tr:hover td { background: var(--navy-3); }
+    .badge { padding: 2px 8px; border-radius: 10px; font-size: .72rem; font-weight: 600; }
+    .badge--success { background: #dcfce7; color: #15803d; }
+    .badge--failed { background: #fee2e2; color: #b91c1c; }
+    .badge--running { background: #dbeafe; color: #1d4ed8; }
+    .badge--skipped { background: #f1f5f9; color: #64748b; }
+    .badge--pending { background: #fef9c3; color: #854d0e; }
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 1000; align-items: center; justify-content: center; }
+    .modal-overlay.open { display: flex; }
+    .modal { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); padding: 24px; width: 480px; max-width: 95vw; }
+    .modal__title { font-size: 1rem; font-weight: 700; margin-bottom: 16px; }
+    .field { margin-bottom: 14px; }
+    .field label { display: block; font-size: .8rem; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; }
+    .field input, .field select, .field textarea { width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--navy-2); color: var(--text); font-size: .85rem; }
+    .field textarea { height: 80px; resize: vertical; }
+    .actions { display: flex; gap: 8px; margin-top: 16px; }
+    .log-box { background: var(--navy-2); border: 1px solid var(--border); border-radius: 6px; padding: 12px; font-family: monospace; font-size: .78rem; white-space: pre-wrap; max-height: 300px; overflow-y: auto; color: var(--text); }
+    .empty-state { padding: 40px; text-align: center; color: var(--text-muted); font-size: .88rem; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+    .status-dot--success { background: #22c55e; }
+    .status-dot--failed { background: #ef4444; }
+    .status-dot--running { background: #3b82f6; animation: pulse 1s infinite; }
+    .status-dot--skipped { background: #94a3b8; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div style="display:flex;align-items:center"><span class="topbar__brand">OPERATIVE</span><span class="topbar__sub">Job Server</span></div>
+    <span style="font-size:.8rem;color:var(--text-muted)" id="server-status">Loading...</span>
+  </header>
+  <div class="tab-bar">
+    <button class="tab-btn active" onclick="switchTab('jobs', this)">📋 Jobs</button>
+    <button class="tab-btn" onclick="switchTab('schedules', this)">🕐 Schedules</button>
+    <button class="tab-btn" onclick="switchTab('monitor', this)">📊 Monitor</button>
+  </div>
+  <div class="content">
+    <div id="tab-jobs" class="tab-panel active">
+      <div class="section-card">
+        <div class="section-card__header">Job Definitions<button class="btn btn--primary btn--sm" onclick="openJobModal()">+ Register</button></div>
+        <div id="jobs-body"><div class="empty-state">Loading...</div></div>
+      </div>
+    </div>
+    <div id="tab-schedules" class="tab-panel">
+      <div class="section-card">
+        <div class="section-card__header">Schedules<button class="btn btn--primary btn--sm" onclick="openScheduleModal()">+ Add</button></div>
+        <div id="schedules-body"><div class="empty-state">Loading...</div></div>
+      </div>
+    </div>
+    <div id="tab-monitor" class="tab-panel">
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <select id="filter-job" onchange="loadRuns()" style="padding:6px 10px"><option value="">All Jobs</option></select>
+        <select id="filter-status" onchange="loadRuns()" style="padding:6px 10px"><option value="">All Status</option><option>success</option><option>failed</option><option>running</option></select>
+        <button onclick="loadRuns()">Refresh</button>
+        <label><input type="checkbox" id="auto-refresh" onchange="toggleAutoRefresh()"> Auto (5s)</label>
+      </div>
+      <div class="section-card">
+        <div class="section-card__header">Run History</div>
+        <div id="monitor-body"><div class="empty-state">Loading...</div></div>
+      </div>
+    </div>
+  </div>
+  <div class="modal-overlay" id="job-modal">
+    <div class="modal">
+      <div class="modal__title">Register Job</div>
+      <div class="field"><label>Job ID</label><input id="job-id" /></div>
+      <div class="field"><label>Name</label><input id="job-name" /></div>
+      <div class="field"><label>Agent</label><input id="job-agent" /></div>
+      <div class="field"><label>Endpoint</label><input id="job-endpoint" /></div>
+      <div class="field"><label>Timeout (s)</label><input id="job-timeout" type="number" value="300" /></div>
+      <div class="field"><label>Max Retries</label><input id="job-retries" type="number" value="2" /></div>
+      <div class="actions"><button class="btn btn--primary" onclick="saveJob()">Save</button><button class="btn btn--ghost" onclick="closeModal('job-modal')">Cancel</button></div>
+    </div>
+  </div>
+  <div class="modal-overlay" id="schedule-modal">
+    <div class="modal">
+      <div class="modal__title">Add Schedule</div>
+      <div class="field"><label>Job</label><select id="sched-job-id"></select></div>
+      <div class="field"><label>Cron</label><input id="sched-cron" placeholder="30 6 * * *" /></div>
+      <div class="field"><label>Timezone</label><input id="sched-tz" value="UTC" /></div>
+      <div class="actions"><button class="btn btn--primary" onclick="saveSchedule()">Save</button><button class="btn btn--ghost" onclick="closeModal('schedule-modal')">Cancel</button></div>
+    </div>
+  </div>
+  <div class="modal-overlay" id="logs-modal">
+    <div class="modal" style="width:640px">
+      <div class="modal__title">Logs — <span id="logs-run-id"></span></div>
+      <div class="log-box" id="logs-content"></div>
+      <div class="actions"><button class="btn btn--ghost" onclick="closeModal('logs-modal')">Close</button></div>
+    </div>
+  </div>
+  <script>
+    const API = '';
+    async function api(path, opts={}) {
+      const res = await fetch(API + path, {headers:{'Content-Type':'application/json',...opts.headers},...opts});
+      if (!res.ok) {
+        const e = await res.json().catch(()=>({detail:res.statusText}));
+        throw new Error(e.detail||`HTTP ${res.status}`);
+      }
+      return res.json();
+    }
+    function fmtDuration(s) { if (!s) return '—'; return s<60 ? `${s.toFixed(1)}s` : `${(s/60).toFixed(1)}m`; }
+    function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : '—'; }
+    function badge(st) { return `<span class="badge badge--${st}"><span class="status-dot status-dot--${st}"></span>${st}</span>`; }
+    function switchTab(n, b) {
+      document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
+      document.querySelectorAll('.tab-btn').forEach(x=>x.classList.remove('active'));
+      document.getElementById('tab-'+n).classList.add('active');
+      b.classList.add('active');
+      if (n==='jobs') loadJobs(); if (n==='schedules') loadSchedules(); if (n==='monitor') loadRuns();
+    }
+    let _jobs=[];
+    async function loadJobs() {
+      const el=document.getElementById('jobs-body');
+      try {
+        _jobs=await api('/jobs');
+        if (!_jobs.length) { el.innerHTML='<div class="empty-state">No jobs.</div>'; return; }
+        const rows=_jobs.map(j=>`<tr><td><strong>${j.id}</strong></td><td>${j.name}</td><td>${j.owner_agent}</td><td>${j.timeout_seconds}s</td><td><button class="btn btn--ghost btn--sm" onclick="triggerJob('${j.id}')">Run</button><button class="btn btn--ghost btn--sm" onclick="deleteJob('${j.id}')">Del</button></td></tr>`).join('');
+        el.innerHTML=`<table class="data-table"><thead><tr><th>ID</th><th>Name</th><th>Agent</th><th>Timeout</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table>`;
+        const sel=document.getElementById('sched-job-id');
+        sel.innerHTML=_jobs.map(j=>`<option value="${j.id}">${j.name}</option>`).join('');
+        const fsel=document.getElementById('filter-job');
+        fsel.innerHTML='<option value="">All Jobs</option>'+_jobs.map(j=>`<option value="${j.id}">${j.name}</option>`).join('');
+      } catch(e) { el.innerHTML=`<div class="empty-state">Failed: ${e.message}</div>`; }
+    }
+    function openJobModal() {
+      ['job-id','job-name','job-agent','job-endpoint'].forEach(id=>document.getElementById(id).value='');
+      document.getElementById('job-modal').classList.add('open');
+    }
+    function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+    async function saveJob() {
+      const body={id:document.getElementById('job-id').value.trim(),name:document.getElementById('job-name').value.trim(),owner_agent:document.getElementById('job-agent').value.trim(),endpoint:document.getElementById('job-endpoint').value.trim(),timeout_seconds:parseInt(document.getElementById('job-timeout').value)||300,max_retries:parseInt(document.getElementById('job-retries').value)||2,description:''};
+      if (!body.id||!body.name||!body.endpoint) { alert('ID, Name, Endpoint required'); return; }
+      try { await api('/jobs',{method:'POST',body:JSON.stringify(body)}); closeModal('job-modal'); loadJobs(); } catch(e) { alert('Failed: '+e.message); }
+    }
+    async function deleteJob(id) { if (!confirm(`Delete "${id }"?`)) return; try { await api('/jobs/'+id,{method:'DELETE'}); loadJobs(); } catch(e) { alert('Failed: '+e.message); } }
+    async function triggerJob(id) { try { const r=await api('/jobs/'+id+'/run',{method:'POST'}); alert(`Run ID: ${r.run_id}`); loadRuns(); } catch(e) { alert('Failed: '+e.message); } }
+    async function loadSchedules() {
+      const el=document.getElementById('schedules-body');
+      try {
+        if (!_jobs.length) _jobs=await api('/jobs');
+        const all=[];
+        for (const j of _jobs) { const scheds=await api(`/jobs/${j.id}/schedules`); scheds.forEach(s=>all.push({...s,job_name:j.name,job_id:j.id})); }
+        if (!all.length) { el.innerHTML='<div class="empty-state">No schedules.</div>'; return; }
+        const rows=all.map(s=>`<tr><td><strong>${s.job_name}</strong></td><td><code>${s.cron}</code></td><td>${s.enabled?'on':'off'}</td><td><button class="btn btn--ghost btn--sm" onclick="deleteSchedule('${s.job_id}',${s.id})">Del</button></td></tr>`).join('');
+        el.innerHTML=`<table class="data-table"><thead><tr><th>Job</th><th>Cron</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table>`;
+      } catch(e) { el.innerHTML=`<div class="empty-state">Failed: ${e.message}</div>`; }
+    }
+    function openScheduleModal() { document.getElementById('sched-cron').value=''; document.getElementById('sched-tz').value='UTC'; document.getElementById('schedule-modal').classList.add('open'); }
+    async function saveSchedule() {
+      const body={cron_expression:document.getElementById('sched-cron').value.trim(),timezone:document.getElementById('sched-tz').value.trim()||'UTC',enabled:true,parameters:{}};
+      const jobId=document.getElementById('sched-job-id').value;
+      if (!body.cron_expression) { alert('Cron required'); return; }
+      try { await api(`/jobs/${jobId}/schedules`,{method:'POST',body:JSON.stringify(body)}); closeModal('schedule-modal'); loadSchedules(); } catch(e) { alert('Failed: '+e.message); }
+    }
+    async function deleteSchedule(jobId,schedId) { if (!confirm('Delete?')) return; try { await api(`/jobs/${jobId}/schedules/${schedId}`,{method:'DELETE'}); loadSchedules(); } catch(e) { alert('Failed: '+e.message); } }
+    let _autoRefreshTimer=null;
+    async function loadRuns() {
+      const el=document.getElementById('monitor-body');
+      const jobId=document.getElementById('filter-job').value;
+      const status=document.getElementById('filter-status').value;
+      let url='/runs?limit=50';
+      if (jobId) url+='&job_id='+encodeURIComponent(jobId);
+      if (status) url+='&status='+encodeURIComponent(status);
+      try {
+        const runs=await api(url);
+        if (!runs.length) { el.innerHTML='<div class="empty-state">No runs.</div>'; return; }
+        const rows=runs.map(r=>`<tr><td>${r.id}</td><td><strong>${r.job_id}</strong></td><td>${badge(r.status)}</td><td>${fmtDate(r.started_at)}</td><td>${fmtDuration(r.duration_seconds)}</td><td><button class="btn btn--ghost btn--sm" onclick="viewLogs(${r.id})">Logs</button></td></tr>`).join('');
+        el.innerHTML=`<table class="data-table"><thead><tr><th>ID</th><th>Job</th><th>Status</th><th>Started</th><th>Duration</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+      } catch(e) { el.innerHTML=`<div class="empty-state">Failed: ${e.message}</div>`; }
+    }
+    async function viewLogs(runId) { try { const run=await api('/runs/'+runId); document.getElementById('logs-run-id').textContent=`#${runId} — ${run.job_id}`; document.getElementById('logs-content').textContent=run.logs||'No logs.'; document.getElementById('logs-modal').classList.add('open'); } catch(e) { alert('Failed: '+e.message); } }
+    function toggleAutoRefresh() { if (_autoRefreshTimer) { clearInterval(_autoRefreshTimer); _autoRefreshTimer=null; } if (document.getElementById('auto-refresh').checked) { _autoRefreshTimer=setInterval(loadRuns,5000); } }
+    async function checkHealth() { try { const h=await api('/health'); document.getElementById('server-status').textContent='● ok'; document.getElementById('server-status').style.color='#22c55e'; } catch(e) { document.getElementById('server-status').textContent='● offline'; document.getElementById('server-status').style.color='#ef4444'; } }
+    checkHealth(); loadJobs();
+  </script>
+</body>
+</html>

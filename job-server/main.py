@@ -5,7 +5,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Header
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import select, desc
 
@@ -33,6 +34,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Operative Job Server", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+@app.get("/", response_class=HTMLResponse)
+async def index():
+    from pathlib import Path
+    html = Path("static/index.html").read_text()
+    return HTMLResponse(content=html)
 
 
 def _check_api_key(x_api_key: str | None = Header(default=None)) -> None:
