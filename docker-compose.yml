@@ -124,6 +124,22 @@ services:
     depends_on:
       - backend
 
+  # ── Job Server ────────────────────────────────────────────────────────────────
+  # Background job orchestrator for async task execution.
+  job-server:
+    build: ./job-server
+    container_name: org-dev-job-server
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://operative:${POSTGRES_PASSWORD}@postgres:5432/operative_db
+      API_KEY: ${BACKEND_API_KEY}
+      PORT: 8020
+    ports:
+      - "${JOB_SERVER_PORT:-8020}:8020"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   # ── MCP Server ────────────────────────────────────────────────────────────────
   # Model Context Protocol gateway — exposes all agents as MCP tools.
   mcp-server:

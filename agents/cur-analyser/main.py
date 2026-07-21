@@ -1424,6 +1424,32 @@ def _ingest_s3_parts(file_paths: list[str], duckdb_path: str) -> None:
     con.close()
 
 
+@app.post("/internal/sync")
+async def internal_sync(body: dict = None) -> dict:
+    """Called by Job Server to trigger S3 sync. Runs in background."""
+    import asyncio
+    from routes_settings import _config as _sc
+    bucket = _sc.get("s3_bucket", "")
+    prefix = _sc.get("s3_prefix", "")
+    region = _sc.get("s3_region", "us-east-1")
+    if not bucket or not prefix:
+        raise HTTPException(status_code=400, detail="S3 not configured")
+    import uuid
+    job_id = str(uuid.uuid4())
+    _s3_sync_jobs[job_id] = {"status": "started", "progress": "Initialising..."}
+    asyncio.create_task(_run_s3_sync(job_id, bucket, prefix, region))
+    # Wait for completion (job server expects synchronous response)
+    import asyncio as _asyncio
+    for _ in range(120):  # wait up to 10 minutes
+        await _asyncio.sleep(5)
+        job = _s3_sync_jobs.get(job_id, {})
+        if job.get("status") in ("complete", "failed"):
+            if job["status"] == "failed":
+                raise HTTPException(status_code=500, detail=job.get("progress", "Sync failed"))
+            return {"ok": True, "message": job.get("progress", "Sync complete")}
+    raise HTTPException(status_code=504, detail="Sync timeout")
+
+
 @app.delete("/data-sources/cur/{source_id}")
 async def ds_delete_cur(source_id: str) -> dict:
     from report_store import delete_report
