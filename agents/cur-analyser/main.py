@@ -462,21 +462,29 @@ async def _process_upload_job(job: dict, tmp_path: str, filename: str, file_size
             _job_update(job, UploadStatus.FAILED, error=f"Storage cap of 10 GB reached ({_storage['cur_used_gb']:.1f} GB used). Remove older reports to free space.")
             return
         _job_update(job, UploadStatus.INGESTING)
-        duckdb_path = report_file_path(report["id"], ".duckdb")
+        parquet_dir = report_file_path(report["id"], ".parquet_dir")
+        os.makedirs(parquet_dir, exist_ok=True)
         try:
-            from tools.duckdb_engine import ingest_to_duckdb
-            ingest_to_duckdb(mat_path, duckdb_path)
+            import duckdb as _ddb
+            con = _ddb.connect(":memory:")
+            try:
+                con.execute("SET threads=2")
+                con.execute("SET memory_limit='1.2GB'")
+                src_safe = mat_path.replace("'", "''")
+                dst = os.path.join(parquet_dir, "part-00001.parquet")
+                dst_safe = dst.replace("'", "''")
+                con.execute(f"""
+                    COPY (SELECT * FROM read_csv_auto('{src_safe}', ignore_errors=true))
+                    TO '{dst_safe}' (FORMAT PARQUET, COMPRESSION ZSTD)
+                """)
+            finally:
+                con.close()
+            perm_path = parquet_dir
         except Exception as exc:
-            # Ingestion failed — fall back to storing gz directly.
-            logger.warning("ingest_to_duckdb failed, storing gz instead: %s", exc)
-            duckdb_path = None
-        if duckdb_path and os.path.exists(duckdb_path):
-            # Ingestion succeeded — use .duckdb, discard gz temp file.
-            perm_path = duckdb_path
-        else:
-            # Fallback — store gz as before.
+            logger.warning("Parquet conversion failed, storing gz instead: %s", exc)
+            import shutil as _shutil
             perm_path = report_file_path(report["id"], ext)
-            shutil.move(mat_path, perm_path)
+            _shutil.move(mat_path, perm_path)
             mat_path = None
         set_report_path(report["id"], perm_path)
 
@@ -613,35 +621,31 @@ async def _process_folder_upload_job(job: dict, tmp_paths: list[str], filenames:
             _job_update(job, UploadStatus.FAILED, error=f"Storage cap of 10 GB reached ({_storage['cur_used_gb']:.1f} GB used). Remove older reports to free space.")
             return
         _job_update(job, UploadStatus.INGESTING)
-        duckdb_path = report_file_path(report["id"], ".duckdb")
+        parquet_dir = report_file_path(report["id"], ".parquet_dir")
+        os.makedirs(parquet_dir, exist_ok=True)
+        parquet_paths = []
         try:
-            # Ingest all parts into one DuckDB file
-            safe_paths = [p.replace("'", "''") for p in mat_paths]
-            paths_sql = "['" + "', '".join(safe_paths) + "']"
-            con = duckdb.connect(database=duckdb_path)
-            con.execute("PRAGMA threads=4")
-            con.execute(f"CREATE TABLE cur_data AS SELECT * FROM read_csv_auto({paths_sql}, ignore_errors=true)")
-            # Validate no duplicate line item IDs across parts
-            try:
-                total_rows_check = con.execute("SELECT COUNT(*) FROM cur_data").fetchone()[0]
-                distinct_rows = con.execute("SELECT COUNT(DISTINCT identity_line_item_id) FROM cur_data").fetchone()[0]
-                if distinct_rows < total_rows_check:
+            for i, mat_path in enumerate(mat_paths):
+                _job_update(job, UploadStatus.INGESTING)
+                dst = os.path.join(parquet_dir, f"part-{i+1:05d}.parquet")
+                con = duckdb.connect(":memory:")
+                try:
+                    con.execute("SET threads=2")
+                    con.execute("SET memory_limit='1.2GB'")
+                    src_safe = mat_path.replace("'", "''")
+                    dst_safe = dst.replace("'", "''")
+                    con.execute(f"""
+                        COPY (SELECT * FROM read_csv_auto('{src_safe}', ignore_errors=true))
+                        TO '{dst_safe}' (FORMAT PARQUET, COMPRESSION ZSTD)
+                    """)
+                finally:
                     con.close()
-                    if os.path.exists(duckdb_path):
-                        os.unlink(duckdb_path)
-                    _job_update(job, UploadStatus.FAILED, error=f"Duplicate rows detected across parts ({total_rows_check - distinct_rows:,} duplicates). Ensure all parts are from the same S3 export folder.")
-                    return
-            except Exception:
-                pass  # Column may not exist in all CUR formats — skip check
-            con.close()
+                parquet_paths.append(dst)
         except Exception as exc:
-            logger.warning("folder ingest failed: %s", exc)
-            duckdb_path = None
-
-        perm_path = duckdb_path if duckdb_path and os.path.exists(duckdb_path) else None
-        if not perm_path:
-            _job_update(job, UploadStatus.FAILED, error="Failed to ingest folder parts into database.")
+            logger.warning("folder Parquet conversion failed: %s", exc)
+            _job_update(job, UploadStatus.FAILED, error=f"Failed to convert parts to Parquet: {exc}")
             return
+        perm_path = parquet_dir
 
         set_report_path(report["id"], perm_path)
         await persist_report(report["id"])
