@@ -182,15 +182,20 @@
     async function loadDataSource() {
       const el = document.getElementById('data-source-body');
       try {
-        const status = await api('/data-source/status').catch(() => ({}));
+        const status = await api('/settings').catch(() => ({}));
         const report = await api('/reports').then(r => r[0]).catch(() => ({}));
 
         let html = '';
-        html += `<div class="info-card__row"><div class="info-card__label">Source Type</div><div class="info-card__value">${status.source_type || 'Not configured'}</div></div>`;
-        html += `<div class="info-card__row"><div class="info-card__label">Last Sync</div><div class="info-card__value">${status.last_synced_at ? new Date(status.last_synced_at).toLocaleString('en-GB', {timeZone:'UTC'}) + ' UTC' : 'Never'}</div></div>`;
-        html += `<div class="info-card__row"><div class="info-card__label">Total Alerts</div><div class="info-card__value">${report.total_alerts || 0}</div></div>`;
-        html += `<div class="info-card__row"><div class="info-card__label">Genuine</div><div class="info-card__value" style="color:var(--success)">${report.genuine_count || 0}</div></div>`;
-        html += `<div class="info-card__row"><div class="info-card__label">Noise</div><div class="info-card__value" style="color:var(--danger)">${report.noise_count || 0}</div></div>`;
+        const sourceLabel = status.source_type === 'standalone'
+          ? `OpsGenie (${status.opsgenie_type === 'jsm' ? 'JSM' : 'Standalone'})`
+          : status.source_type || 'Not configured';
+        const lastSync = status.last_synced || status.last_synced_at;
+        html += `<div class="info-card__row"><div class="info-card__label">Source Type</div><div class="info-card__value">${sourceLabel}</div></div>`;
+        html += `<div class="info-card__row"><div class="info-card__label">Last Sync</div><div class="info-card__value">${lastSync ? new Date(lastSync).toLocaleString('en-GB', {timeZone:'UTC'}) + ' UTC' : 'Never'}</div></div>`;
+        html += `<div class="info-card__row"><div class="info-card__label">Total Alerts</div><div class="info-card__value">${(report.total_alerts || 0).toLocaleString()}</div></div>`;
+        html += `<div class="info-card__row"><div class="info-card__label">Genuine</div><div class="info-card__value" style="color:var(--success)">${(report.genuine_count || 0).toLocaleString()}</div></div>`;
+        html += `<div class="info-card__row"><div class="info-card__label">Noise</div><div class="info-card__value" style="color:var(--danger)">${(report.noise_count || 0).toLocaleString()}</div></div>`;
+        html += `<div class="info-card__row"><div class="info-card__label">Suspect</div><div class="info-card__value" style="color:#f59e0b">${(report.suspect_count || 0).toLocaleString()}</div></div>`;
         el.innerHTML = html;
       } catch(e) {
         el.innerHTML = `<div style="color:var(--danger);font-size:.85rem">Failed: ${e.message}</div>`;
