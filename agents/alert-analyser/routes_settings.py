@@ -352,29 +352,66 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
             except Exception as exc:
                 logger.warning("Incident ticket creation failed: %s", exc)
 
-            if escalation_anomalies:
-                cooldown_key = "alert_analyser_summary"
-                cooldown_mins = teams_cfg.get("teams_cooldown_mins", 10)
-                now = time.time()
-                if not hasattr(_run_opsgenie_sync, '_summary_cooldown'):
-                    _run_opsgenie_sync._summary_cooldown = {}
-                last = _run_opsgenie_sync._summary_cooldown.get(cooldown_key, 0)
-                if now - last >= cooldown_mins * 60:
-                    sent = await send_anomaly_summary(
-                        agent_name="Alert Analyser",
-                        cluster_name="OpsGenie",
-                        anomalies=escalation_anomalies,
-                        config=teams_cfg,
+            # ── Escalation: new incidents (Teams concise) + open summary (Email detailed) ──
+            cooldown_key = "alert_analyser_summary"
+            cooldown_mins = int(teams_cfg.get("teams_cooldown_mins", 15))
+            now_ts = time.time()
+            if not hasattr(_run_opsgenie_sync, '_summary_cooldown'):
+                _run_opsgenie_sync._summary_cooldown = {}
+            last_ts = _run_opsgenie_sync._summary_cooldown.get(cooldown_key, 0)
+            if now_ts - last_ts >= cooldown_mins * 60:
+                from tools.escalation_notifier import send_incident_escalation, send_incident_email_report
+                from database import SessionLocal as _SL
+                from sqlalchemy import text as _text
+                from datetime import datetime as _dt, timezone as _tz
+                # Get new incidents since last escalation
+                last_esc_time = _dt.fromtimestamp(last_ts, tz=_tz.utc) if last_ts else _dt.now(_tz.utc).replace(hour=0, minute=0, second=0)
+                new_incidents = []
+                open_incidents = []
+                try:
+                    async with _SL() as _sess:
+                        # New incidents since last escalation
+                        new_res = await _sess.execute(_text("""
+                            SELECT id, priority, title, status,
+                                   (alert_payload->>'createdAt')::timestamptz as created_at,
+                                   recurrence_count
+                            FROM incident_management.incidents
+                            WHERE status = 'ESCALATED'
+                            AND (alert_payload->>'createdAt')::timestamptz > :since
+                            ORDER BY priority ASC, (alert_payload->>'createdAt')::timestamptz DESC
+                            LIMIT 10
+                        """), {"since": last_esc_time})
+                        new_incidents = [dict(r._mapping) for r in new_res.fetchall()]
+                        # All open incidents summary
+                        open_res = await _sess.execute(_text("""
+                            SELECT id, priority, title, status,
+                                   (alert_payload->>'createdAt')::timestamptz as created_at,
+                                   recurrence_count
+                            FROM incident_management.incidents
+                            WHERE status = 'ESCALATED'
+                            ORDER BY priority ASC, (alert_payload->>'createdAt')::timestamptz DESC
+                            LIMIT 100
+                        """))
+                        open_incidents = [dict(r._mapping) for r in open_res.fetchall()]
+                except Exception as _ie:
+                    logger.error("Incident query for escalation failed: %s", _ie)
+                # Send Teams: top 3 new incidents + summary
+                if new_incidents or escalation_anomalies:
+                    sent = await send_incident_escalation(
+                        new_incidents=new_incidents[:3],
+                        open_count=len(open_incidents),
+                        new_alert_count=len(escalation_anomalies),
+                        config=_config,
                         dashboard_url="http://kpi-internal.cloud.operative.com:3000/agents/alert-analyser/dashboard",
                     )
-                    # Also send email escalation if configured
-                    from tools.escalation_notifier import send_email_escalation
-                    await send_email_escalation(
-                        anomalies=escalation_anomalies,
+                    # Send Email: full open incident report
+                    await send_incident_email_report(
+                        open_incidents=open_incidents,
+                        new_incidents=new_incidents,
                         config=_config,
                     )
                     if sent:
-                        _run_opsgenie_sync._summary_cooldown[cooldown_key] = now
+                        _run_opsgenie_sync._summary_cooldown[cooldown_key] = now_ts
         except Exception as _esc_exc:
             import traceback
             logger.error("Alert escalation failed: %s\n%s", _esc_exc, traceback.format_exc())

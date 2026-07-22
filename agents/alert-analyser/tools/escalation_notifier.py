@@ -424,3 +424,193 @@ async def send_email_escalation(
         except Exception:
             pass
         return False
+
+
+async def send_incident_escalation(
+    new_incidents: list[dict],
+    open_count: int,
+    new_alert_count: int,
+    config: dict,
+    dashboard_url: str = "",
+) -> bool:
+    """Send Teams card: top 3 new incidents + open summary."""
+    if not config.get("teams_enabled", False):
+        return False
+    webhook_url = config.get("teams_webhook_url", "")
+    if not webhook_url:
+        return False
+    if not new_incidents and new_alert_count == 0:
+        return False
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    # Build incident rows
+    incident_rows = []
+    for inc in new_incidents[:3]:
+        priority = inc.get("priority", "—")
+        title = (inc.get("title") or "")[:80]
+        recurrence = inc.get("recurrence_count", 1)
+        emoji = "🔴" if priority in ("P1",) else "🟡" if priority == "P2" else "🟢"
+        incident_rows.append({
+            "type": "TextBlock",
+            "text": f"{emoji} **{priority}** — {title}{'...' if len(inc.get('title','')) > 80 else ''}{' *(recurring x'+str(recurrence)+')* ' if recurrence > 1 else ''}",
+            "wrap": True,
+            "spacing": "Small",
+        })
+    if not incident_rows:
+        incident_rows = [{"type": "TextBlock", "text": "No new incidents this cycle", "color": "good"}]
+    body = [
+        {"type": "TextBlock", "text": f"🚨 Operative Intelligence — Incident Update", "weight": "Bolder", "size": "Medium", "color": "attention"},
+        {"type": "TextBlock", "text": f"**{now_str}**", "isSubtle": True, "spacing": "None"},
+        {"type": "TextBlock", "text": f"📋 NEW INCIDENTS ({len(new_incidents)})", "weight": "Bolder", "spacing": "Medium"},
+        *incident_rows,
+        {"type": "FactSet", "spacing": "Medium", "facts": [
+            {"title": "Total Open", "value": str(open_count)},
+            {"title": "New This Cycle", "value": str(len(new_incidents))},
+            {"title": "New Alerts", "value": str(new_alert_count)},
+        ]},
+        {"type": "TextBlock", "text": "📧 Check email for full open incident report", "isSubtle": True, "wrap": True, "spacing": "Small"},
+    ]
+    actions = []
+    if dashboard_url:
+        actions.append({"type": "Action.OpenUrl", "title": "View Dashboard", "url": dashboard_url})
+        actions.append({"type": "Action.OpenUrl", "title": "View Incidents", "url": dashboard_url.replace("/dashboard", "/dashboard#incidents")})
+    card = {
+        "type": "message",
+        "attachments": [{"contentType": "application/vnd.microsoft.card.adaptive", "content": {
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "type": "AdaptiveCard", "version": "1.4",
+            "body": body, "actions": actions,
+        }}]
+    }
+    try:
+        result = await send_to_teams(webhook_url, card)
+        if result:
+            try:
+                from database import SessionLocal
+                from sqlalchemy import text
+                if SessionLocal is not None:
+                    async with SessionLocal() as sess:
+                        await sess.execute(text("""
+                            INSERT INTO alert_escalation_log
+                            (agent_slug, channel, severity, alert_count, message_summary, recipients, status, sent_at)
+                            VALUES (:slug, 'teams', 'critical', :count, :summary, :recipients, 'sent', now())
+                        """), {
+                            "slug": "alert-analyser",
+                            "count": len(new_incidents),
+                            "summary": f"{len(new_incidents)} new incidents, {open_count} total open",
+                            "recipients": webhook_url[:100],
+                        })
+                        await sess.commit()
+            except Exception as log_exc:
+                logger.warning("Failed to log incident escalation: %s", log_exc)
+        return result
+    except Exception as exc:
+        logger.error("Incident Teams escalation failed: %s", exc)
+        return False
+
+
+async def send_incident_email_report(
+    open_incidents: list[dict],
+    new_incidents: list[dict],
+    config: dict,
+) -> bool:
+    """Send HTML email: full open incident report."""
+    if not config.get("email_enabled", False):
+        return False
+    from_addr = config.get("email_from", "").strip()
+    password = config.get("email_password", "").strip()
+    to_str = config.get("email_to", "").strip()
+    smtp_server = config.get("email_smtp_server", "smtp.office365.com")
+    smtp_port = int(config.get("email_smtp_port", 587))
+    subject_prefix = config.get("email_subject_prefix", "[Operative Alert]")
+    if not from_addr or not password or not to_str:
+        return False
+    to_addrs = [e.strip() for e in to_str.split(",") if e.strip()]
+    if not to_addrs:
+        return False
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    subject = f"{subject_prefix} Open Incident Report — {now_str}"
+    # Build HTML table rows
+    def priority_color(p):
+        return {"P1": "#dc2626", "P2": "#f59e0b", "P3": "#3b82f6"}.get(p, "#64748b")
+    rows = ""
+    for inc in open_incidents[:50]:
+        p = inc.get("priority", "—")
+        title = (inc.get("title") or "")[:100]
+        created = inc.get("created_at")
+        elapsed = ""
+        if created:
+            try:
+                from datetime import datetime as _dt, timezone as _tz
+                delta = _dt.now(_tz.utc) - created
+                h, m = divmod(int(delta.total_seconds()), 3600)
+                elapsed = f"{h}h {m//60}m" if h else f"{m//60}m"
+            except Exception:
+                pass
+        is_new = any(str(inc.get("id")) == str(n.get("id")) for n in new_incidents)
+        new_badge = '<span style="background:#dcfce7;color:#15803d;padding:1px 6px;border-radius:8px;font-size:11px;margin-left:6px">NEW</span>' if is_new else ""
+        rows += f"""<tr>
+            <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0">
+                <span style="color:{priority_color(p)};font-weight:700">{p}</span>
+            </td>
+            <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0">{title}{new_badge}</td>
+            <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:12px">{elapsed or '—'}</td>
+            <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:12px">{inc.get('recurrence_count',1)}x</td>
+        </tr>"""
+    more_note = f"<p style='color:#64748b;font-size:12px'>Showing top 50 of {len(open_incidents)} open incidents.</p>" if len(open_incidents) > 50 else ""
+    html_body = f"""<html><body style='font-family:sans-serif;color:#1e293b;max-width:800px;margin:0 auto'>
+    <h2 style='color:#dc2626'>🚨 Operative Intelligence — Open Incident Report</h2>
+    <p><strong>{len(open_incidents)} open incidents</strong> · {len(new_incidents)} new this cycle · Generated {now_str}</p>
+    <table style='width:100%;border-collapse:collapse;margin-top:16px'>
+      <thead><tr style='background:#f1f5f9'>
+        <th style='padding:8px 12px;text-align:left;font-size:12px'>Priority</th>
+        <th style='padding:8px 12px;text-align:left;font-size:12px'>Title</th>
+        <th style='padding:8px 12px;text-align:left;font-size:12px'>Open For</th>
+        <th style='padding:8px 12px;text-align:left;font-size:12px'>Recurrence</th>
+      </tr></thead>
+      <tbody>{rows}</tbody>
+    </table>
+    {more_note}
+    <p style='margin-top:24px;color:#64748b;font-size:12px;border-top:1px solid #e2e8f0;padding-top:12px'>
+      Sent by Operative Intelligence Alert Analyser · {now_str}<br>
+      This is an automated report — do not reply to this email.
+    </p>
+    </body></html>"""
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        import asyncio
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = from_addr
+        msg["To"] = ", ".join(to_addrs)
+        msg.attach(MIMEText(html_body, "html"))
+        def _send():
+            with smtplib.SMTP(smtp_server, smtp_port) as server:
+                server.ehlo(); server.starttls()
+                server.login(from_addr, password)
+                server.sendmail(from_addr, to_addrs, msg.as_string())
+        await asyncio.get_event_loop().run_in_executor(None, _send)
+        try:
+            from database import SessionLocal
+            from sqlalchemy import text
+            if SessionLocal is not None:
+                async with SessionLocal() as sess:
+                    await sess.execute(text("""
+                        INSERT INTO alert_escalation_log
+                        (agent_slug, channel, severity, alert_count, message_summary, recipients, status, sent_at)
+                        VALUES (:slug, 'email', 'info', :count, :summary, :recipients, 'sent', now())
+                    """), {
+                        "slug": "alert-analyser",
+                        "count": len(open_incidents),
+                        "summary": f"Open incident report: {len(open_incidents)} open, {len(new_incidents)} new",
+                        "recipients": to_str[:100],
+                    })
+                    await sess.commit()
+        except Exception as log_exc:
+            logger.warning("Failed to log email report: %s", log_exc)
+        logger.info("Incident email report sent to %s (%d incidents)", to_addrs, len(open_incidents))
+        return True
+    except Exception as exc:
+        logger.error("Incident email report failed: %s", exc)
+        return False
