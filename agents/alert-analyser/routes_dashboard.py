@@ -950,3 +950,42 @@ async def get_incident_detail(ticket_id: str) -> dict:
     except Exception as e:
         _log.error(f"incident detail error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/dashboard/escalations")
+async def get_escalation_log(limit: int = 50) -> dict:
+    """Return recent escalation log entries."""
+    from database import SessionLocal
+    from sqlalchemy import text
+    import logging
+    logger = logging.getLogger(__name__)
+    if SessionLocal is None:
+        return {"escalations": []}
+    try:
+        async with SessionLocal() as session:
+            result = await session.execute(text("""
+                SELECT id, channel, severity, alert_count, message_summary,
+                       recipients, status, error_message, sent_at
+                FROM alert_escalation_log
+                WHERE agent_slug = 'alert-analyser'
+                ORDER BY sent_at DESC
+                LIMIT :limit
+            """), {"limit": limit})
+            rows = result.fetchall()
+        return {"escalations": [
+            {
+                "id": r.id,
+                "channel": r.channel,
+                "severity": r.severity,
+                "alert_count": r.alert_count,
+                "message_summary": r.message_summary,
+                "recipients": r.recipients,
+                "status": r.status,
+                "error_message": r.error_message,
+                "sent_at": r.sent_at.isoformat() if r.sent_at else None,
+            }
+            for r in rows
+        ]}
+    except Exception as e:
+        logger.warning("get_escalation_log failed: %s", e)
+        return {"escalations": []}

@@ -264,4 +264,55 @@ async def send_anomaly_summary(
             }
         ],
     }
-    return await send_to_teams(webhook_url, card)
+    try:
+        result = await send_to_teams(webhook_url, card)
+        if result:
+            # Log successful escalation
+            try:
+                from database import SessionLocal
+                from datetime import datetime as dt, timezone as tz
+                from sqlalchemy import text
+                if SessionLocal is not None:
+                    async with SessionLocal() as sess:
+                        await sess.execute(text("""
+                            INSERT INTO alert_escalation_log
+                            (agent_slug, channel, severity, alert_count, message_summary, recipients, status, sent_at)
+                            VALUES (:slug, 'teams', :severity, :count, :summary, :recipients, 'sent', :sent_at)
+                        """), {
+                            "slug": "alert-analyser",
+                            "severity": overall_severity,
+                            "count": len(filtered),
+                            "summary": f"{len(filtered)} alert(s) escalated — {critical_count} critical, {warning_count} warning",
+                            "recipients": webhook_url[:100],
+                            "sent_at": dt.now(tz.utc),
+                        })
+                        await sess.commit()
+            except Exception as log_exc:
+                logger.warning("Failed to log escalation: %s", log_exc)
+            return True
+        else:
+            return False
+    except Exception as exc:
+        logger.error("Teams summary send failed: %s", exc)
+        # Log failed escalation
+        try:
+            from database import SessionLocal
+            from datetime import datetime as dt, timezone as tz
+            from sqlalchemy import text
+            if SessionLocal is not None:
+                async with SessionLocal() as sess:
+                    await sess.execute(text("""
+                        INSERT INTO alert_escalation_log
+                        (agent_slug, channel, severity, alert_count, status, error_message, sent_at)
+                        VALUES (:slug, 'teams', :severity, :count, 'failed', :error, :sent_at)
+                    """), {
+                        "slug": "alert-analyser",
+                        "severity": overall_severity,
+                        "count": len(filtered),
+                        "error": str(exc)[:500],
+                        "sent_at": dt.now(tz.utc),
+                    })
+                    await sess.commit()
+        except Exception:
+            pass
+        return False

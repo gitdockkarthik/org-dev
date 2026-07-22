@@ -75,6 +75,9 @@
       <button id="subtab-jobs" class="btn btn--ghost"
         style="border-radius:0;border-bottom:2px solid transparent;margin-bottom:-2px;color:var(--text-muted)"
         onclick="switchSubTab('jobs')">⚙️ Job Management</button>
+      <button id="subtab-escalations" class="btn btn--ghost"
+        style="border-radius:0;border-bottom:2px solid transparent;margin-bottom:-2px;color:var(--text-muted)"
+        onclick="switchSubTab('escalations')">📣 Escalations</button>
     </div>
 
     <div id="subtab-reports-content">
@@ -124,6 +127,18 @@
         </div>
       </div>
     </div><!-- end subtab-jobs-content -->
+
+    <div id="subtab-escalations-content" style="display:none">
+      <div class="section-card">
+        <div class="section-card__header">
+          📣 Escalation History
+          <button class="btn btn--ghost btn--sm" onclick="loadEscalations()">↻ Refresh</button>
+        </div>
+        <div id="escalations-body" style="padding:16px 20px">
+          <div style="color:var(--text-muted);font-size:.85rem">Loading...</div>
+        </div>
+      </div>
+    </div>
 
     <!-- Add Schedule Modal -->
     <div id="add-schedule-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center">
@@ -222,14 +237,20 @@
     function switchSubTab(name) {
       document.getElementById('subtab-reports-content').style.display = name === 'reports' ? 'block' : 'none';
       document.getElementById('subtab-jobs-content').style.display = name === 'jobs' ? 'block' : 'none';
+      document.getElementById('subtab-escalations-content').style.display = name === 'escalations' ? 'block' : 'none';
       const rBtn = document.getElementById('subtab-reports');
       const jBtn = document.getElementById('subtab-jobs');
+      const eBtn = document.getElementById('subtab-escalations');
       rBtn.style.borderBottomColor = name === 'reports' ? 'var(--accent)' : 'transparent';
       rBtn.style.color = name === 'reports' ? 'var(--accent)' : 'var(--text-muted)';
       rBtn.style.fontWeight = name === 'reports' ? '600' : '400';
       jBtn.style.borderBottomColor = name === 'jobs' ? 'var(--accent)' : 'transparent';
       jBtn.style.color = name === 'jobs' ? 'var(--accent)' : 'var(--text-muted)';
       jBtn.style.fontWeight = name === 'jobs' ? '600' : '400';
+      eBtn.style.borderBottomColor = name === 'escalations' ? 'var(--accent)' : 'transparent';
+      eBtn.style.color = name === 'escalations' ? 'var(--accent)' : 'var(--text-muted)';
+      eBtn.style.fontWeight = name === 'escalations' ? '600' : '400';
+      if (name === 'escalations') loadEscalations();
     }
 
     async function loadJobs() { await loadSchedules(); await loadRuns(); }
@@ -318,6 +339,35 @@
       if (!confirm('Delete this schedule?')) return;
       try { await api('/jobs/' + JOB_ID + '/schedules/' + id, { method: 'DELETE' }); loadSchedules(); }
       catch(e) { alert('Failed: ' + e.message); }
+    }
+
+    async function loadEscalations() {
+      const el = document.getElementById('escalations-body');
+      try {
+        const data = await api('/dashboard/escalations?limit=20');
+        const escs = data.escalations || [];
+        if (!escs.length) {
+          el.innerHTML = '<div style="color:var(--text-muted);font-size:.85rem">No escalations logged yet. Configure Teams webhook in Settings → Escalation.</div>';
+          return;
+        }
+        const rows = escs.map(e => `<tr>
+          <td style="font-size:.78rem;color:var(--text-muted)">${e.sent_at ? new Date(e.sent_at).toLocaleString('en-GB',{timeZone:'UTC'}) + ' UTC' : '—'}</td>
+          <td><span style="font-size:.75rem;padding:2px 8px;border-radius:10px;font-weight:600;background:${e.channel==='teams'?'rgba(99,102,241,.15)':'rgba(16,185,129,.15)'};color:${e.channel==='teams'?'var(--accent)':'var(--success)'}">${e.channel}</span></td>
+          <td><span style="color:${e.severity==='critical'?'var(--danger)':e.severity==='warning'?'#f59e0b':'var(--success)'};font-weight:600">● ${e.severity||'—'}</span></td>
+          <td style="font-weight:600">${(e.alert_count||0).toLocaleString()}</td>
+          <td style="font-size:.78rem;color:var(--text-muted);max-width:300px">${e.message_summary||'—'}</td>
+          <td><span style="color:${e.status==='sent'?'var(--success)':'var(--danger)'};font-weight:600">● ${e.status}</span></td>
+        </tr>`).join('');
+        el.innerHTML = `<table class="data-table">
+          <thead><tr>
+            <th>Sent (UTC)</th><th>Channel</th><th>Severity</th>
+            <th>Alerts</th><th>Summary</th><th>Status</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+      } catch(e) {
+        el.innerHTML = `<div style="color:var(--danger);font-size:.85rem">Failed: ${e.message}</div>`;
+      }
     }
 
     document.addEventListener('DOMContentLoaded', () => {
