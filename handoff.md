@@ -27,47 +27,49 @@ Apply job management pattern to alert and kafka agents, then address remaining i
 * Current month expanded by default
 * Session timeout → force re-login (401 redirect)
 * User badge shows correct name initial
-* Commits: 442ab1a, 353be6b, fff0abc
+* Alert self-contained job management (jobs.py)
+* Alert reports page completely redesigned — sub-tabs (Reports & Data / Job Management / Escalations)
+* Active Data Source card: OpsGenie type + last sync + alert counts
+* Escalation logging to alert_escalation_log (migration 0011)
+* Teams: incident-based concise card (top 3 new incidents + open summary)
+* Email: HTML incident report with priority table, elapsed time, NEW badges
+* Email validated via Gmail SMTP ✅
+* Commits: 442ab1a, 353be6b, fff0abc, e150591, b982c39, 78259dc, 5546240, 8acfb94, e349a47, 504caa0
 
 ### Pending
-* Apply jobs.py pattern to alert-analyser (OpsGenie polling job)
-* Apply jobs.py pattern to kafka-analyser (metrics collection job)
-* Audit what schedules alert and kafka currently have
+* Alert settings page cleanup:
+  - Remove Sync Schedule card (Job Management owns it)
+  - Remove Sync Status card (Reports → Job Management owns it)
+  - Remove Phase lock labels from Escalation/Incident Mgmt/RAG/Autonomous tabs
+* Kafka-analyser jobs.py + reports page redesign (same pattern as alert)
 * Tab-level chat for alert and kafka
 * must_change_password not enforced at login
 * Kafka Phase 2 Prometheus — JMX exporter restart needed by CloudOps
-* Job Server UI fixes (lower priority — per-agent jobs.py is the approach)
-* Email/Teams notification for failed jobs (future)
+* Email SMTP: office365 needs IT to enable SMTP AUTH or service account
 
 ## Known Constraints
 * S3 bucket: attribute-cur-us-east-1-741119431024
 * Report 6: FoAIAnalysis (6 parts), 2.8M rows, $295,754 (Parquet, manual)
-* Report 7: 2026-07-21 (8 parts), 4M rows (Parquet, auto-sync)
+* Report 7: auto-sync, 4M rows (Parquet, latest July)
 * CACHE_VERSION = "v2" in routes_dashboard.py
 * LLM_PROVIDER=bedrock, LLM_MODEL=us.anthropic.claude-sonnet-5 in .env
-* CUR job schedule: hourly (0 * * * *) in cur_job_schedules table
+* CUR job schedule: hourly (0 * * * *)
+* Alert job schedule: every 15 min (*/15 * * * *)
 * Kafka Phase 2 fail_count reset SQL: UPDATE agent_config SET value = '{"phase2_fail_count": 0, "throughput_available": true}' WHERE key LIKE 'phase2_%';
 
 ## Architecture Decisions
 * Job management: self-contained per agent (jobs.py per agent)
-* No shared job service dependency
-* Job tables in agent's own DB
 * Job Server (port 8020): platform-level view only, not shipped with agents
 * Parquet as storage: 81-83% smaller, 266x faster
-* Auto-sync: hourly check, replace existing auto report
-* S3 browser: Year → Month → Day cascading tree
+* Escalation: Teams (incident-based Adaptive Cards) + Email (HTML report)
+* Escalation triggers: new ESCALATED incidents since last cycle
+* Open incidents: all ESCALATED status shown in email report
+* alert_escalation_log: tracks all sends, visible in Reports → Escalations tab
 
 ## Next Checkpoint
-1. Audit alert-analyser current sync/schedule mechanism
-2. Create alert-analyser/jobs.py with OpsGenie polling job
-3. Add Job Management sub-tab to alert-analyser reports page
-4. Same for kafka-analyser
-5. Tab-level chat for alert and kafka
+1. Alert settings page cleanup
+2. Kafka jobs.py + reports page redesign
+3. Tab-level chat for alert and kafka
 
 ## Blocked
 None — all work unblocked.
-
-## Additional Next Session Items (prepend to Next Checkpoint)
-* Human-friendly schedule UI for CUR jobs (frequency picker, no cron syntax exposed)
-* Hide global filter bar in CUR dashboard (causing data inconsistencies with pre-aggregated tabs)
-* Then: alert-analyser and kafka-analyser jobs.py
