@@ -16,6 +16,7 @@ from config import settings
 from routes_dashboard import router as dashboard_router
 from routes_reports import router as reports_router
 from routes_settings import _config, _run_opsgenie_sync, _sync_changed, load_config_from_db, router as settings_router
+import jobs as _jobs_module
 from tools.dashboard_builder import DashboardBuilderTool
 from tools.noise_detector import NoiseDetectorTool, classify_alerts
 from tools.source import FileSource
@@ -309,15 +310,43 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Startup: loading last report from DB failed (agent will still start)")
 
-    sync_task = asyncio.create_task(_sync_loop())
+    # Register and start self-contained job scheduler
+    from database import engine as _db_engine, SessionLocal
+    from models import Base, AlertJobSchedule, AlertJobRun
+    if _db_engine is not None:
+        async with _db_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+    # Register OpsGenie sync job
+    async def _opsgenie_sync_job():
+        from routes_settings import _config as _ac
+        source_type = _ac.get("source_type", "")
+        api_token = _ac.get("api_token", "")
+        if source_type not in ("standalone", "opsgenie") or not api_token:
+            _opsgenie_sync_job._last_result = "OpsGenie not configured — skipped"
+            return
+        result = await _run_opsgenie_sync()
+        alert_count = result.get('alert_count', result.get('total', 0))
+        _opsgenie_sync_job._last_result = f"Synced {alert_count:,} alerts"
+    _jobs_module.register_job(
+        "alert-opsgenie-sync",
+        "OpsGenie Alert Sync",
+        "Poll OpsGenie for new alerts and update local store",
+        _opsgenie_sync_job,
+    )
+    # Register default schedule if none exists
+    from sqlalchemy import select as _sel
+    async with SessionLocal() as _sess:
+        existing = await _sess.execute(_sel(AlertJobSchedule).where(AlertJobSchedule.job_id == "alert-opsgenie-sync"))
+        if not existing.scalar_one_or_none():
+            await _jobs_module.create_schedule("alert-opsgenie-sync", "*/15 * * * *", enabled=True)
+            logger.info("Created default 15-min schedule for alert-opsgenie-sync")
+    count = await _jobs_module.load_schedules()
+    logger.info("Job scheduler: loaded %d schedule(s)", count)
+    _jobs_module.start_scheduler()
 
     yield
 
-    sync_task.cancel()
-    try:
-        await sync_task
-    except asyncio.CancelledError:
-        pass
+    _jobs_module.stop_scheduler()
 
 
 app = FastAPI(title=settings.agent_name, version="0.1.0", lifespan=lifespan)
@@ -331,6 +360,47 @@ async def root():
 app.include_router(dashboard_router)
 app.include_router(reports_router)
 app.include_router(settings_router)
+
+
+# ── Job Management Endpoints ──────────────────────────────────────────────────
+@app.get("/jobs")
+async def list_jobs() -> list:
+    if not hasattr(_jobs_module, '_jobs'):
+        return []
+    return [{"id": j["id"], "name": j["name"], "description": j["description"]}
+            for j in _jobs_module._jobs.values()]
+
+@app.get("/jobs/{job_id}/runs")
+async def get_job_runs(job_id: str, limit: int = 50) -> list:
+    return await _jobs_module.get_runs(job_id=job_id, limit=limit)
+
+@app.get("/jobs/{job_id}/schedules")
+async def get_job_schedules(job_id: str) -> list:
+    return await _jobs_module.get_schedules(job_id=job_id)
+
+@app.post("/jobs/{job_id}/trigger")
+async def trigger_job(job_id: str) -> dict:
+    return await _jobs_module.trigger_job(job_id, triggered_by="manual")
+
+@app.post("/jobs/{job_id}/schedules")
+async def create_job_schedule(job_id: str, body: dict) -> dict:
+    cron = body.get("cron_expression", "*/15 * * * *")
+    enabled = body.get("enabled", True)
+    return await _jobs_module.create_schedule(job_id, cron, enabled)
+
+@app.put("/jobs/{job_id}/schedules/{schedule_id}")
+async def update_job_schedule(job_id: str, schedule_id: int, body: dict) -> dict:
+    cron = body.get("cron_expression", "*/15 * * * *")
+    enabled = body.get("enabled", True)
+    return await _jobs_module.update_schedule(schedule_id, cron, enabled)
+
+@app.delete("/jobs/{job_id}/schedules/{schedule_id}")
+async def delete_job_schedule(job_id: str, schedule_id: int) -> dict:
+    return await _jobs_module.delete_schedule(schedule_id)
+
+@app.get("/runs")
+async def get_all_runs(limit: int = 50) -> list:
+    return await _jobs_module.get_runs(limit=limit)
 
 
 @app.get("/health")
