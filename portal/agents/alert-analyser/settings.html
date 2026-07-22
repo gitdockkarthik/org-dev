@@ -594,6 +594,45 @@
         </div>
       </div>
 
+      <!-- Email Escalation -->
+      <div class="card-section">
+        <div class="card-section-title">📧 Email Escalation (Office 365)</div>
+        <div class="field">
+          <label>
+            <input type="checkbox" id="email-enabled" />
+            Enable email escalation notifications
+          </label>
+        </div>
+        <div id="email-config" style="display:none">
+          <div class="field">
+            <label for="email-smtp-server">SMTP Server</label>
+            <input type="text" id="email-smtp-server" placeholder="smtp.office365.com" value="smtp.office365.com" />
+          </div>
+          <div class="field">
+            <label for="email-smtp-port">SMTP Port</label>
+            <input type="number" id="email-smtp-port" placeholder="587" value="587" />
+          </div>
+          <div class="field">
+            <label for="email-from">From Address</label>
+            <input type="email" id="email-from" placeholder="alerts@operative.com" />
+          </div>
+          <div class="field">
+            <label for="email-password">App Password</label>
+            <input type="password" id="email-password" placeholder="Office 365 app password" />
+          </div>
+          <div class="field">
+            <label for="email-to">Recipients (comma separated)</label>
+            <input type="text" id="email-to" placeholder="cloudops@operative.com, oncall@operative.com" />
+          </div>
+          <div class="field">
+            <label for="email-subject-prefix">Subject Prefix</label>
+            <input type="text" id="email-subject-prefix" placeholder="[Operative Alert]" value="[Operative Alert]" />
+          </div>
+          <button class="btn btn-secondary" id="btn-test-email" type="button">Send Test Email</button>
+          <span id="email-test-msg" class="action-msg hidden"></span>
+        </div>
+      </div>
+
       <div class="card">
         <div class="actions">
           <button class="btn btn-primary" id="btn-save-escalation">Save</button>
@@ -1030,6 +1069,13 @@
           ...($('esc-p2').checked ? ['P2'] : []),
           ...($('esc-p3').checked ? ['P3'] : []),
         ],
+        email_enabled: $('email-enabled').checked,
+        email_smtp_server: $('email-smtp-server')?.value.trim() || '',
+        email_smtp_port: parseInt($('email-smtp-port')?.value || '587'),
+        email_from: $('email-from')?.value.trim() || '',
+        email_password: $('email-password')?.value.trim() || '',
+        email_to: $('email-to')?.value.trim() || '',
+        email_subject_prefix: $('email-subject-prefix')?.value.trim() || '[Operative Alert]',
       };
       const res = await postSettings(payload);
       showMsg($('escalation-msg'), res?.ok ? 'Saved' : 'Error', res?.ok ? 'ok' : 'err');
@@ -1046,6 +1092,65 @@
       });
       const data = await res.json().catch(() => ({}));
       showMsg($('teams-test-msg'), data.ok ? '✅ Test message sent' : '❌ Failed — check URL', data.ok ? 'ok' : 'err');
+    });
+
+    const testEmailBtn = document.getElementById('btn-test-email');
+    if (testEmailBtn) {
+      testEmailBtn.addEventListener('click', async () => {
+        const msgEl = document.getElementById('email-test-msg');
+        msgEl.classList.remove('hidden');
+        msgEl.textContent = 'Sending test email...';
+        try {
+          const res = await fetch(`${PROXY}/settings/test-email`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              smtp_server: $('email-smtp-server').value.trim(),
+              smtp_port: parseInt($('email-smtp-port').value || '587'),
+              from_address: $('email-from').value.trim(),
+              password: $('email-password').value.trim(),
+              to: $('email-to').value.trim(),
+              subject_prefix: $('email-subject-prefix').value.trim(),
+            }),
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const data = await res.json();
+          msgEl.textContent = data.message || 'Test email sent!';
+          msgEl.style.color = 'var(--success)';
+        } catch(e) {
+          msgEl.textContent = 'Failed: ' + e.message;
+          msgEl.style.color = 'var(--danger)';
+        }
+      });
+    }
+
+    // ── Email Escalation toggle ──────────────────────────────────────────
+
+    const emailToggle = document.getElementById('email-enabled');
+    if (emailToggle) {
+      emailToggle.addEventListener('change', function() {
+        document.getElementById('email-config').style.display = this.checked ? 'block' : 'none';
+      });
+    }
+
+    document.getElementById('btn-test-email')?.addEventListener('click', async () => {
+      const from = $('email-from').value.trim();
+      if (!from) { showMsg($('email-test-msg'), 'Enter from address first', 'err'); return; }
+      showMsg($('email-test-msg'), 'Sending...', 'info');
+      const res = await fetch(`${PROXY}/settings/test-email`, {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          smtp_server: $('email-smtp-server').value.trim(),
+          smtp_port: parseInt($('email-smtp-port').value || '587'),
+          from_address: from,
+          password: $('email-password').value.trim(),
+          to: $('email-to').value.trim(),
+          subject_prefix: $('email-subject-prefix').value.trim(),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      showMsg($('email-test-msg'), data.ok ? '✅ Test email sent' : '❌ Failed — check settings', data.ok ? 'ok' : 'err');
     });
 
     // ── Render sync status section ───────────────────────────────────────────────
@@ -1158,6 +1263,17 @@
         if ($('esc-p1')) $('esc-p1').checked = escPriorities.includes('P1');
         if ($('esc-p2')) $('esc-p2').checked = escPriorities.includes('P2');
         if ($('esc-p3')) $('esc-p3').checked = escPriorities.includes('P3');
+
+        // Email escalation
+        if ($('email-enabled')) {
+          $('email-enabled').checked = cfg.email_enabled || false;
+          document.getElementById('email-config').style.display = cfg.email_enabled ? 'block' : 'none';
+        }
+        if ($('email-smtp-server')) $('email-smtp-server').value = cfg.email_smtp_server || 'smtp.office365.com';
+        if ($('email-smtp-port')) $('email-smtp-port').value = cfg.email_smtp_port || 587;
+        if ($('email-from')) $('email-from').value = cfg.email_from || '';
+        if ($('email-to')) $('email-to').value = cfg.email_to || '';
+        if ($('email-subject-prefix')) $('email-subject-prefix').value = cfg.email_subject_prefix || '[Operative Alert]';
 
         // Incident purge settings
         if ($('purge-days')) $('purge-days').value = cfg.incident_purge_days || 7;

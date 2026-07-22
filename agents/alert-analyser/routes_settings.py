@@ -367,6 +367,12 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                         config=teams_cfg,
                         dashboard_url="http://kpi-internal.cloud.operative.com:3000/agents/alert-analyser/dashboard",
                     )
+                    # Also send email escalation if configured
+                    from tools.escalation_notifier import send_email_escalation
+                    await send_email_escalation(
+                        anomalies=escalation_anomalies,
+                        config=_config,
+                    )
                     if sent:
                         _run_opsgenie_sync._summary_cooldown[cooldown_key] = now
         except Exception as _esc_exc:
@@ -442,6 +448,45 @@ async def save_settings(request: Request) -> dict:
         await _upsert(k, v)
     _sync_changed.set()  # wake the background loop to re-evaluate interval immediately
     return {"ok": True}
+
+
+@router.post("/test-email")
+async def test_email(request: Request) -> dict:
+    """Send a test email to verify Office 365 SMTP config."""
+    body = await request.json()
+    smtp_server = body.get("smtp_server", "smtp.office365.com").strip()
+    smtp_port = int(body.get("smtp_port", 587))
+    from_addr = body.get("from_address", "").strip()
+    password = body.get("password", "").strip()
+    to_addrs = [e.strip() for e in body.get("to", "").split(",") if e.strip()]
+    subject_prefix = body.get("subject_prefix", "[Operative Alert]").strip()
+    if not from_addr or not to_addrs or not password:
+        raise HTTPException(status_code=400, detail="from_address, password and to are required")
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = f"{subject_prefix} Test Notification"
+        msg["From"] = from_addr
+        msg["To"] = ", ".join(to_addrs)
+        html_body = """<html><body>
+        <h2>✅ Operative Intelligence — Test Email</h2>
+        <p>This is a test notification from the Alert Analyser agent.</p>
+        <p>Email escalation is configured correctly.</p>
+        </body></html>"""
+        msg.attach(MIMEText(html_body, "html"))
+        import asyncio
+        def _send():
+            with smtplib.SMTP(smtp_server, smtp_port) as server:
+                server.ehlo()
+                server.starttls()
+                server.login(from_addr, password)
+                server.sendmail(from_addr, to_addrs, msg.as_string())
+        await asyncio.get_event_loop().run_in_executor(None, _send)
+        return {"ok": True, "message": f"Test email sent to {', '.join(to_addrs)}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Email send failed: {str(e)}")
 
 
 @router.post("/test-teams")

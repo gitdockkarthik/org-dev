@@ -316,3 +316,111 @@ async def send_anomaly_summary(
         except Exception:
             pass
         return False
+
+
+async def send_email_escalation(
+    anomalies: list[dict],
+    config: dict,
+) -> bool:
+    """Send email escalation via Office 365 SMTP."""
+    if not config.get("email_enabled", False):
+        return False
+    from_addr = config.get("email_from", "").strip()
+    password = config.get("email_password", "").strip()
+    to_str = config.get("email_to", "").strip()
+    smtp_server = config.get("email_smtp_server", "smtp.office365.com")
+    smtp_port = int(config.get("email_smtp_port", 587))
+    subject_prefix = config.get("email_subject_prefix", "[Operative Alert]")
+    if not from_addr or not password or not to_str:
+        return False
+    to_addrs = [e.strip() for e in to_str.split(",") if e.strip()]
+    if not to_addrs or not anomalies:
+        return False
+    severity_filter = config.get("teams_severity_filter", ["critical", "warning"])
+    filtered = [a for a in anomalies if a.get("severity") in severity_filter]
+    if not filtered:
+        return False
+    critical = [a for a in filtered if a.get("severity") == "critical"]
+    warning = [a for a in filtered if a.get("severity") == "warning"]
+    overall = "critical" if critical else "warning"
+    emoji = SEVERITY_EMOJI[overall]
+    subject = f"{subject_prefix} {emoji} {len(filtered)} Alert(s) Escalated — {len(critical)} Critical, {len(warning)} Warning"
+    rows = "".join(
+        f"<tr><td style='padding:6px 12px;border-bottom:1px solid #e2e8f0'>{SEVERITY_EMOJI.get(a.get('severity','info'))} {a.get('severity','').upper()}</td>"
+        f"<td style='padding:6px 12px;border-bottom:1px solid #e2e8f0'>{CATEGORY_LABEL.get(a.get('category',''), a.get('category',''))}</td>"
+        f"<td style='padding:6px 12px;border-bottom:1px solid #e2e8f0'>{a.get('description','')}</td></tr>"
+        for a in filtered[:10]
+    )
+    html_body = f"""<html><body style='font-family:sans-serif;color:#1e293b'>
+    <h2 style='color:#dc2626'>{emoji} Operative Intelligence — Alert Escalation</h2>
+    <p><strong>{len(filtered)} alert(s)</strong> require attention — {len(critical)} critical, {len(warning)} warning</p>
+    <table style='width:100%;border-collapse:collapse;margin-top:16px'>
+      <thead><tr style='background:#f1f5f9'>
+        <th style='padding:8px 12px;text-align:left'>Severity</th>
+        <th style='padding:8px 12px;text-align:left'>Category</th>
+        <th style='padding:8px 12px;text-align:left'>Description</th>
+      </tr></thead>
+      <tbody>{rows}</tbody>
+    </table>
+    <p style='margin-top:16px;color:#64748b;font-size:12px'>Sent by Operative Intelligence Alert Analyser · {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}</p>
+    </body></html>"""
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        import asyncio
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = from_addr
+        msg["To"] = ", ".join(to_addrs)
+        msg.attach(MIMEText(html_body, "html"))
+        def _send():
+            with smtplib.SMTP(smtp_server, smtp_port) as server:
+                server.ehlo()
+                server.starttls()
+                server.login(from_addr, password)
+                server.sendmail(from_addr, to_addrs, msg.as_string())
+        await asyncio.get_event_loop().run_in_executor(None, _send)
+        # Log to DB
+        try:
+            from database import SessionLocal
+            from sqlalchemy import text
+            if SessionLocal is not None:
+                async with SessionLocal() as sess:
+                    await sess.execute(text("""
+                        INSERT INTO alert_escalation_log
+                        (agent_slug, channel, severity, alert_count, message_summary, recipients, status, sent_at)
+                        VALUES (:slug, 'email', :severity, :count, :summary, :recipients, 'sent', now())
+                    """), {
+                        "slug": "alert-analyser",
+                        "severity": overall,
+                        "count": len(filtered),
+                        "summary": f"{len(filtered)} alert(s) — {len(critical)} critical, {len(warning)} warning",
+                        "recipients": to_str[:100],
+                    })
+                    await sess.commit()
+        except Exception as log_exc:
+            logger.warning("Failed to log email escalation: %s", log_exc)
+        logger.info("Email escalation sent to %s", to_addrs)
+        return True
+    except Exception as exc:
+        logger.error("Email escalation failed: %s", exc)
+        try:
+            from database import SessionLocal
+            from sqlalchemy import text
+            if SessionLocal is not None:
+                async with SessionLocal() as sess:
+                    await sess.execute(text("""
+                        INSERT INTO alert_escalation_log
+                        (agent_slug, channel, severity, alert_count, status, error_message, sent_at)
+                        VALUES (:slug, 'email', :severity, :count, 'failed', :error, now())
+                    """), {
+                        "slug": "alert-analyser",
+                        "severity": overall,
+                        "count": len(filtered),
+                        "error": str(exc)[:500],
+                    })
+                    await sess.commit()
+        except Exception:
+            pass
+        return False
