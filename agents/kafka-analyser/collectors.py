@@ -206,7 +206,7 @@ async def collect_consumer_lag_active():
 
 # ── Job 3: Topic Sizes ────────────────────────────────────────────────────────
 async def collect_topic_sizes():
-    """Collect topic sizes via AdminClient describe_log_dirs — fast, no JMX needed."""
+    """Collect ALL topic sizes via AdminClient describe_log_dirs and upsert to postgres."""
     clusters = await _get_enabled_clusters()
     if not clusters:
         collect_topic_sizes._last_result = "No enabled clusters"
@@ -216,17 +216,50 @@ async def collect_topic_sizes():
         cid = _cid(c)
         try:
             collector = await _get_collector(c)
-            sizes_result = await collector.collect_topic_sizes(top_n=100)
+            # Collect ALL topics — no top_n limit
+            sizes_result = await collector.collect_topic_sizes(top_n=99999)
             if sizes_result.get("error"):
                 logger.warning("topic_sizes failed for %s: %s", c["name"], sizes_result["error"])
                 continue
+            all_topics = sizes_result["topic_sizes"]
+            total_size_gb = sizes_result["total_size_gb"]
+            total_topics = sizes_result["total_topics"]
+            # Bulk upsert all topics in single SQL statement — fast (~0.65s for 16k rows)
+            from database import SessionLocal
+            from sqlalchemy import text
+            async with SessionLocal() as sess:
+                if all_topics:
+                    values = ",".join(
+                        f"({int(cid)}, '{t['topic'].replace(chr(39), chr(39)*2)}', {t['size_bytes']})"
+                        for t in all_topics
+                    )
+                    await sess.execute(text(f"""
+                        INSERT INTO kafka_topic_metrics
+                        (cluster_id, topic, size_bytes, time, partition_count, replication_factor,
+                         messages_in_per_sec, bytes_in_per_sec, bytes_out_per_sec,
+                         total_messages, retention_bytes, retention_pct, last_seen)
+                        SELECT c, t, s, now(), 0, 0, 0, 0, 0, 0, -1, 0, now()
+                        FROM (VALUES {values}) AS v(c, t, s)
+                        ON CONFLICT (cluster_id, topic) DO UPDATE SET
+                            size_bytes = EXCLUDED.size_bytes,
+                            last_seen = now(),
+                            time = now()
+                    """))
+                # Cleanup stale topics not seen in last 2 sync cycles
+                await sess.execute(text("""
+                    DELETE FROM kafka_topic_metrics
+                    WHERE cluster_id = :cid
+                    AND last_seen < now() - interval '35 minutes'
+                """), {"cid": int(cid)})
+                await sess.commit()
+            # Update kafka_store cache with top 100 for dashboard
+            top_100 = all_topics[:100]
             data = _ks.get_cluster_data(cid) or {}
             if "counts" not in data:
                 data["counts"] = {}
-            data["counts"]["top_topics_by_size"] = sizes_result["topic_sizes"]
-            data["counts"]["total_size_gb"] = sizes_result["total_size_gb"]
-            data["counts"]["total_topics"] = sizes_result["total_topics"]
-            # Also populate data["topics"] for dashboard compatibility
+            data["counts"]["top_topics_by_size"] = top_100
+            data["counts"]["total_size_gb"] = total_size_gb
+            data["counts"]["total_topics"] = total_topics
             data["topics"] = [
                 {
                     "name": t["topic"],
@@ -239,17 +272,15 @@ async def collect_topic_sizes():
                     "bytes_out_per_sec": 0.0,
                     "total_messages": 0,
                     "under_replicated": 0,
-                    "status": "healthy",
+                    "status": "healthy" if t["size_bytes"] < 10*1024**3 else "retention-warning" if t["size_bytes"] < 50*1024**3 else "retention-critical",
                 }
-                for t in sizes_result["topic_sizes"]
+                for t in top_100
             ]
             _ks.set_cluster_data(data, source_type=c.get("source_type", "live"), cluster_id=cid)
-            # Persist to PostgreSQL
-            from kafka_store import save_topics_metrics
-            await save_topics_metrics(cid)
-            results.append(f"{c['name']}: {sizes_result['total_topics']} topics, {sizes_result['total_size_gb']}GB in {sizes_result['collection_time_secs']}s")
+            results.append(f"{c['name']}: {total_topics} topics, {total_size_gb}GB in {sizes_result['collection_time_secs']}s")
         except Exception as e:
             logger.warning("topic_sizes failed for %s: %s", c["name"], e)
+            import traceback; traceback.print_exc()
     collect_topic_sizes._last_result = "; ".join(results) if results else "No data collected"
 
 

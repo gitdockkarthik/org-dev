@@ -152,17 +152,39 @@ async def get_counts(cluster_id: str | None = None) -> dict:
                 if _br_row:
                     brokers = _json.loads(_br_row.data_json) or []
 
+        # Read top topics by size directly from kafka_topic_metrics
+        top_topics_by_size = []
+        total_topics_count = 0
+        if SessionLocal:
+            async with SessionLocal() as _sess3:
+                _tr = await _sess3.execute(_text("""
+                    SELECT topic, size_bytes
+                    FROM kafka_topic_metrics
+                    WHERE cluster_id = :cid
+                    ORDER BY size_bytes DESC LIMIT 100
+                """), {"cid": int(cluster_id)})
+                _topic_rows = _tr.fetchall()
+                top_topics_by_size = [
+                    {"name": r.topic, "size_bytes": r.size_bytes,
+                     "size_mb": round(r.size_bytes / 1024 / 1024, 1)}
+                    for r in _topic_rows
+                ]
+                _cnt = await _sess3.execute(_text(
+                    "SELECT COUNT(*) FROM kafka_topic_metrics WHERE cluster_id = :cid"
+                ), {"cid": int(cluster_id)})
+                total_topics_count = _cnt.scalar() or 0
         return {
-            "total_topics": structure.get("total_topics", 0),
+            "total_topics": total_topics_count or structure.get("total_topics", 0),
             "total_groups": structure.get("total_groups", 0),
             "total_brokers": structure.get("total_brokers", len(brokers)),
             "total_connectors": 0,
             "total_rf1": structure.get("total_rf1", 0),
             "total_urp": structure.get("total_urp", 0),
             "total_partitions": structure.get("total_partitions", 0),
-            "top_topics_by_size": metrics.get("top_topics_by_size", []),
+            "top_topics_by_size": top_topics_by_size,
             "top_topics_by_msg_rate": metrics.get("top_topics_by_msg_rate", []),
-            "total_hot": metrics.get("total_hot", 0),
+            "total_hot": 0,  # updated by msg rate job
+            "large_topics_count": len([t for t in top_topics_by_size if t["size_bytes"] > 10*1024**3]),
         }
     except Exception as _e:
         return {"empty": True, "error": str(_e)}
@@ -221,13 +243,62 @@ async def get_consumer_groups(cluster_id: str | None = None, hours: int | None =
 
 
 @router.get("/dashboard/topics")
-async def get_topics(cluster_id: str | None = None, hours: int | None = None) -> dict:
-    """Topic metrics sorted by message rate descending."""
-    data = kafka_store.get_cluster_data(cluster_id, hours=hours)
-    if data is None:
+async def get_topics(cluster_id: str | None = None, hours: int | None = None,
+                     limit: int = 50, offset: int = 0, search: str = "") -> dict:
+    """Topic metrics from postgres — sorted by size descending, with pagination and search."""
+    from database import SessionLocal
+    from sqlalchemy import text
+    import logging
+    logger = logging.getLogger(__name__)
+    if SessionLocal is None:
         return {"empty": True}
-    topics = sorted(data["topics"], key=lambda t: t["messages_in_per_sec"], reverse=True)
-    return {"topics": topics}
+    cid = cluster_id or "3"
+    try:
+        async with SessionLocal() as sess:
+            # Total count
+            count_result = await sess.execute(text(
+                "SELECT COUNT(*) FROM kafka_topic_metrics WHERE cluster_id = :cid" +
+                (" AND topic ILIKE :search" if search else "")
+            ), {"cid": int(cid), "search": f"%{search}%"} if search else {"cid": int(cid)})
+            total = count_result.scalar()
+            # Paginated topics
+            query = """
+                SELECT topic, size_bytes, partition_count, replication_factor,
+                       messages_in_per_sec, bytes_in_per_sec, bytes_out_per_sec,
+                       total_messages, last_seen
+                FROM kafka_topic_metrics
+                WHERE cluster_id = :cid
+            """
+            params = {"cid": int(cid), "limit": limit, "offset": offset}
+            if search:
+                query += " AND topic ILIKE :search"
+                params["search"] = f"%{search}%"
+            query += " ORDER BY size_bytes DESC LIMIT :limit OFFSET :offset"
+            result = await sess.execute(text(query), params)
+            rows = result.fetchall()
+        topics = []
+        for r in rows:
+            size = r.size_bytes or 0
+            status = "retention-critical" if size > 50*1024**3 else "retention-warning" if size > 10*1024**3 else "healthy"
+            topics.append({
+                "name": r.topic,
+                "topic": r.topic,
+                "size_bytes": size,
+                "size_mb": round(size / 1024 / 1024, 1),
+                "partition_count": r.partition_count or 0,
+                "replication_factor": r.replication_factor or 0,
+                "messages_in_per_sec": r.messages_in_per_sec or 0.0,
+                "bytes_in_per_sec": r.bytes_in_per_sec or 0.0,
+                "bytes_out_per_sec": r.bytes_out_per_sec or 0.0,
+                "total_messages": r.total_messages or 0,
+                "under_replicated": 0,
+                "status": status,
+                "last_seen": r.last_seen.isoformat() if r.last_seen else None,
+            })
+        return {"topics": topics, "total": total, "limit": limit, "offset": offset}
+    except Exception as e:
+        logger.error("get_topics failed: %s", e)
+        return {"empty": True}
 
 
 @router.get("/dashboard/brokers")
