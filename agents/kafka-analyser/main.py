@@ -891,8 +891,8 @@ async def lifespan(app: FastAPI):
     # Register all 8 individual collection jobs
     from collectors import (
         collect_broker_health, collect_consumer_lag_active, collect_topic_sizes,
-        collect_topic_structure, collect_consumer_lag_full, collect_connectors,
-        collect_msg_rate, collect_schema_registry,
+        collect_topic_structure, collect_consumer_lag_full,
+        collect_msg_rate,
     )
     _jobs_module.register_job("kafka-broker-health", "Broker Health",
         "Broker JVM metrics via Prometheus Phase 1", collect_broker_health, default_timeout_secs=30)
@@ -904,12 +904,8 @@ async def lifespan(app: FastAPI):
         "Full topic metadata: partitions, RF, URP", collect_topic_structure, default_timeout_secs=180)
     _jobs_module.register_job("kafka-consumer-lag-full", "Consumer Lag (Full Audit)",
         "All groups including EMPTY/DEAD for governance", collect_consumer_lag_full, default_timeout_secs=180)
-    _jobs_module.register_job("kafka-connectors", "Kafka Connectors",
-        "Connector status from Kafka Connect REST API", collect_connectors, default_timeout_secs=20)
     _jobs_module.register_job("kafka-msg-rate", "Message Rate",
         "Producer msg/sec from offset deltas", collect_msg_rate, default_timeout_secs=30)
-    _jobs_module.register_job("kafka-schema-registry", "Schema Registry",
-        "Schema registry subjects and versions", collect_schema_registry, default_timeout_secs=20)
 
     # Register default schedules if none exist
     default_schedules = [
@@ -918,9 +914,7 @@ async def lifespan(app: FastAPI):
         ("kafka-topic-sizes",          "*/15 * * * *", 30),
         ("kafka-topic-structure",      "2 */30 * * *", 180),
         ("kafka-consumer-lag-full",    "3 */30 * * *", 180),
-        ("kafka-connectors",           "*/5 * * * *",  20),
         ("kafka-msg-rate",             "*/2 * * * *",  30),
-        ("kafka-schema-registry",      "5 */30 * * *", 20),
     ]
     from sqlalchemy import select as _sel
     for job_id, cron, timeout in default_schedules:

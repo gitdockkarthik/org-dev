@@ -390,15 +390,15 @@
 
           <div class="form-row">
             <label for="cf-sr-url">Schema Registry URL <span style="font-size:.75rem;color:var(--text-muted)">(optional)</span></label>
-            <input type="text" id="cf-sr-url" placeholder="http://schema-registry:8081" />
+            <input type="text" id="cf-sr-url" placeholder="http://sr01:8081,http://sr02:8081" />
           </div>
           <div class="form-row">
             <label for="cf-zk-url">ZooKeeper URL <span style="font-size:.75rem;color:var(--text-muted)">(optional)</span></label>
-            <input type="text" id="cf-zk-url" placeholder="zookeeper:2181" />
+            <input type="text" id="cf-zk-url" placeholder="zk01:2181,zk02:2181,zk03:2181" />
           </div>
           <div class="form-row">
-            <label for="cf-connect-url">Kafka Connect URL <span style="font-size:.75rem;color:var(--text-muted)">(optional)</span></label>
-            <input type="text" id="cf-connect-url" placeholder="http://kafka-connect:8083" />
+            <label for="cf-connect-url">Kafka Connect URLs <span style="font-size:.75rem;color:var(--text-muted)">(optional — comma-separated for HA)</span></label>
+            <input type="text" id="cf-connect-url" placeholder="http://worker01:8083,http://worker02:8083" />
           </div><div class="field">
             <label for="cf-jmx-port">JMX Port <span style="font-size:.75rem;color:var(--text-muted)">(optional — enables Tier 2 broker metrics)</span></label>
             <input type="number" id="cf-jmx-port" placeholder="9999" />

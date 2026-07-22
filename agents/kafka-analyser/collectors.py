@@ -370,7 +370,8 @@ _prev_offsets: dict = {}
 _prev_offset_time: float = 0.0
 
 async def collect_msg_rate():
-    """Calculate message in/out rates from offset deltas — no JMX needed."""
+    """Calculate bytes/sec ingestion rate using describe_log_dirs delta between cycles.
+    Upserts bytes_in_per_sec to kafka_topic_metrics in postgres."""
     global _prev_offsets, _prev_offset_time
     clusters = await _get_enabled_clusters()
     if not clusters:
@@ -379,7 +380,7 @@ async def collect_msg_rate():
     for c in clusters:
         cid = _cid(c)
         try:
-            from kafka import KafkaConsumer, TopicPartition
+            from kafka import KafkaAdminClient
             security = {}
             if c.get("auth_type") not in (None, "none"):
                 security = {
@@ -388,68 +389,77 @@ async def collect_msg_rate():
                     "sasl_plain_username": c.get("sasl_username"),
                     "sasl_plain_password": c.get("sasl_password"),
                 }
-            # Get top topics by size for msg rate tracking
-            data = _ks.get_cluster_data(cid) or {}
-            top_topics = [t["topic"] for t in data.get("counts", {}).get("top_topics_by_size", [])[:30]]
-            if not top_topics:
-                collect_msg_rate._last_result = "No topic size data yet — run kafka-topic-sizes first"
-                return
-            # Get partition assignments via AdminClient
-            from kafka import KafkaAdminClient
-            admin = KafkaAdminClient(
-                bootstrap_servers=c["bootstrap_servers"],
-                request_timeout_ms=10000,
-                **security,
-            )
-            meta = admin.describe_topics(top_topics)
-            admin.close()
-            tps = []
-            for topic_meta in meta:
-                topic = topic_meta.get("topic", "")
-                for p in topic_meta.get("partitions", []):
-                    tps.append(TopicPartition(topic, p["partition"]))
-            if not tps:
-                continue
-            # Get latest offsets via KafkaConsumer seek_to_end
             loop = asyncio.get_event_loop()
-            def _get_offsets():
-                consumer = KafkaConsumer(
+            def _get_partition_sizes():
+                admin = KafkaAdminClient(
                     bootstrap_servers=c["bootstrap_servers"],
-                    request_timeout_ms=10000,
+                    request_timeout_ms=15000,
                     **security,
                 )
-                consumer.assign(tps)
-                consumer.seek_to_end(*tps)
-                offsets = {tp: consumer.position(tp) for tp in tps}
-                consumer.close()
-                return offsets
+                try:
+                    result = admin.describe_log_dirs()
+                    sizes = {}
+                    for log_dir in result.log_dirs:
+                        if log_dir[0] != 0: continue
+                        for topic_entry in log_dir[2]:
+                            topic = topic_entry[0]
+                            if topic.startswith('_'): continue
+                            for partition in topic_entry[1]:
+                                key = f"{topic}:{partition[0]}"
+                                sizes[key] = partition[1]
+                    return sizes
+                finally:
+                    admin.close()
             now = time.time()
-            offsets = await loop.run_in_executor(None, _get_offsets)
-            # Calculate rates if we have previous offsets
-            topic_rates = {}
-            if _prev_offsets and _prev_offset_time:
-                elapsed = now - _prev_offset_time
-                if elapsed > 0:
-                    for tp, curr in offsets.items():
-                        key = f"{cid}:{tp.topic}:{tp.partition}"
-                        prev = _prev_offsets.get(key, curr)
-                        delta = max(0, curr - prev)
-                        rate = delta / elapsed
-                        topic_rates[tp.topic] = topic_rates.get(tp.topic, 0) + rate
-            # Store current offsets
-            _prev_offsets = {f"{cid}:{tp.topic}:{tp.partition}": off for tp, off in offsets.items()}
+            current_sizes = await loop.run_in_executor(None, _get_partition_sizes)
+            prev_key = f"{cid}_sizes"
+            prev_sizes = _prev_offsets.get(prev_key, {})
+            prev_time = _prev_offset_time if _prev_offset_time else now
+            elapsed = max(1, now - prev_time)
+            _prev_offsets[prev_key] = current_sizes
             _prev_offset_time = now
-            # Build top by msg rate
-            top_by_rate = sorted(
-                [{"topic": t, "messages_in_per_sec": round(r, 2)} for t, r in topic_rates.items()],
-                key=lambda x: x["messages_in_per_sec"], reverse=True
-            )[:30]
-            if "counts" not in data:
-                data["counts"] = {}
-            data["counts"]["top_topics_by_msg_rate"] = top_by_rate
-            data["counts"]["total_hot"] = sum(1 for t in top_by_rate if t["messages_in_per_sec"] > 100)
-            _ks.set_cluster_data(data, source_type=c.get("source_type", "live"), cluster_id=cid)
-            collect_msg_rate._last_result = f"Msg rates: {len(top_by_rate)} topics, {sum(t['messages_in_per_sec'] for t in top_by_rate):.0f} total msgs/s"
+            if not prev_sizes:
+                collect_msg_rate._last_result = "Baseline stored — rates available next cycle"
+                return
+            # Calculate bytes/sec per topic
+            topic_rates = {}
+            for key, size2 in current_sizes.items():
+                size1 = prev_sizes.get(key, size2)
+                delta = max(0, size2 - size1)
+                topic = key.rsplit(':', 1)[0]
+                topic_rates[topic] = topic_rates.get(topic, 0) + (delta / elapsed)
+            # Upsert bytes_in_per_sec to postgres for active topics
+            active_topics = {t: r for t, r in topic_rates.items() if r > 0}
+            if active_topics:
+                from database import SessionLocal
+                from sqlalchemy import text
+                async with SessionLocal() as sess:
+                    for topic, rate in active_topics.items():
+                        await sess.execute(text("""
+                            UPDATE kafka_topic_metrics
+                            SET bytes_in_per_sec = :rate, time = now()
+                            WHERE cluster_id = :cid AND topic = :topic
+                        """), {"cid": int(cid), "rate": round(rate, 2), "topic": topic})
+                    await sess.commit()
+            # Also write to kafka_topic_metrics_hourly for trend chart
+            if active_topics:
+                from database import SessionLocal as _SL2
+                from sqlalchemy import text as _t2
+                async with _SL2() as sess2:
+                    for topic, rate in list(active_topics.items())[:50]:
+                        await sess2.execute(_t2("""
+                            INSERT INTO kafka_topic_metrics_hourly
+                            (cluster_id, topic, hour_bucket, avg_msgs, max_msgs, sample_count)
+                            VALUES (:cid, :topic, date_trunc('hour', now()), :rate, :rate, 1)
+                            ON CONFLICT (cluster_id, topic, hour_bucket)
+                            DO UPDATE SET
+                                avg_msgs = (kafka_topic_metrics_hourly.avg_msgs * kafka_topic_metrics_hourly.sample_count + EXCLUDED.avg_msgs) / (kafka_topic_metrics_hourly.sample_count + 1),
+                                max_msgs = GREATEST(kafka_topic_metrics_hourly.max_msgs, EXCLUDED.max_msgs),
+                                sample_count = kafka_topic_metrics_hourly.sample_count + 1
+                        """), {"cid": int(cid), "topic": topic, "rate": round(rate/1024, 2)})
+                    await sess2.commit()
+            hot_count = sum(1 for r in active_topics.values() if r > 100*1024)
+            collect_msg_rate._last_result = f"Rates updated: {len(active_topics)} active topics, {hot_count} hot (>100KB/s)"
         except Exception as e:
             logger.warning("msg_rate failed for %s: %s", c["name"], e)
             collect_msg_rate._last_result = f"Failed: {e}"

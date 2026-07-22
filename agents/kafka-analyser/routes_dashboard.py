@@ -417,16 +417,99 @@ async def get_kafka_connect(cluster_id: str | None = None) -> dict:
             pass
 
     if not connect_url:
-        return {
-            "status": "not_configured",
-            "message": "No Kafka Connect URL configured for this cluster. Edit the cluster in Settings to add one.",
-            "connector_count": 0,
-            "connectors": [],
-        }
+        # Use first enabled cluster if no cluster_id provided or connect_url not found
+        try:
+            all_clusters = await get_backend().get_clusters("kafka-analyser")
+            enabled = [c for c in all_clusters if c.get("enabled") and c.get("kafka_connect_url")]
+            if enabled:
+                connect_url = enabled[0].get("kafka_connect_url", "")
+            else:
+                return {"status": "not_configured", "message": "No Kafka Connect URL configured. Edit the cluster in Settings.", "connector_count": 0, "connectors": []}
+        except Exception:
+            return {"status": "not_configured", "connector_count": 0, "connectors": []}
 
     from tools.kafka_connect import KafkaConnectCollector
-    collector = KafkaConnectCollector(connect_url)
-    return await collector.collect()
+    import asyncio as _asyncio, socket as _socket
+    urls = [u.strip() for u in connect_url.split(",") if u.strip()]
+
+    async def _try_worker(url):
+        hostname = url.split("//")[-1].split(":")[0]
+        try:
+            result = await KafkaConnectCollector(url).collect()
+            for c in result.get("connectors", []):
+                c["cluster"] = hostname
+            result["cluster"] = hostname
+            result["url"] = url
+            if result.get("connector_count", 0) == 0:
+                result["status"] = "empty"
+            return result
+        except Exception as e:
+            return {"status": "unreachable", "url": url, "cluster": hostname,
+                    "connector_count": 0, "connectors": [], "error": str(e)}
+
+    worker_results = await _asyncio.gather(*[_try_worker(u) for u in urls])
+
+    # Build IP→hostname map for worker_id resolution
+    ip_to_host = {}
+    for wr in worker_results:
+        try:
+            ip = _socket.gethostbyname(wr.get("cluster", ""))
+            port = wr["url"].split(":")[-1].rstrip("/")
+            ip_to_host[f"{ip}:{port}"] = wr["cluster"]
+        except Exception:
+            pass
+
+    reachable = [r for r in worker_results if r.get("status") not in ("unreachable", "empty", "error") and r.get("connector_count", 0) > 0]
+    unreachable = [r for r in worker_results if r.get("status") == "unreachable"]
+
+    # Deduplicate workers by connector fingerprint
+    seen_fps = set()
+    unique_clusters = []
+    for wr in reachable:
+        fp = hash(frozenset(c.get("name","") for c in wr.get("connectors", [])))
+        if fp not in seen_fps:
+            seen_fps.add(fp)
+            unique_clusters.append(wr)
+
+    # Deduplicate connectors by name
+    seen_names = {}
+    all_connectors = []
+    for wr in unique_clusters:
+        for c in wr.get("connectors", []):
+            if c.get("name","") not in seen_names:
+                seen_names[c["name"]] = True
+                wid = c.get("worker_id", "")
+                if wid in ip_to_host:
+                    c["worker_id"] = ip_to_host[wid]
+                all_connectors.append(c)
+
+    running = sum(1 for c in all_connectors if c.get("state") == "RUNNING")
+    failed  = sum(1 for c in all_connectors if c.get("state") == "FAILED")
+    paused  = sum(1 for c in all_connectors if c.get("state") == "PAUSED")
+
+    worker_nodes = [{
+        "hostname": wr["cluster"],
+        "url": wr["url"],
+        "status": "up" if wr.get("status") not in ("unreachable","error","empty") else "down",
+        "connector_count": wr.get("connector_count", 0),
+        "error": wr.get("error","") if wr.get("status") == "unreachable" else "",
+    } for wr in worker_results]
+
+    return {
+        "status": "healthy" if reachable else "error",
+        "connector_count": len(all_connectors),
+        "connectors": all_connectors,
+        "clusters": [{"cluster": r["cluster"], "url": r["url"],
+                      "connector_count": r.get("connector_count",0),
+                      "running": r.get("summary",{}).get("running",0),
+                      "failed": r.get("summary",{}).get("failed",0),
+                      "paused": r.get("summary",{}).get("paused",0)}
+                     for r in unique_clusters],
+        "worker_nodes": worker_nodes,
+        "unreachable": [{"cluster": r["cluster"], "url": r["url"], "error": r.get("error","")} for r in unreachable],
+        "summary": {"running": running, "failed": failed, "paused": paused,
+                    "unassigned": len(all_connectors) - running - failed - paused},
+    }
 
 
 @router.get("/dashboard/mirrormaker")

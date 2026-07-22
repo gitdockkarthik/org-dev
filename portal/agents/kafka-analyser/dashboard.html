@@ -1136,8 +1136,8 @@
           </div>
           <div class="kpi kpi--warn">
             <div class="kpi__label">Hot Topics</div>
-            <div class="kpi__value">${highTraffic}</div>
-            <div class="kpi__sub">&gt; 1k msgs/sec</div>
+            <div class="kpi__value">${(window._clusterCounts && window._clusterCounts.total_hot != null) ? window._clusterCounts.total_hot : highTraffic}</div>
+            <div class="kpi__sub">&gt; 100 KB/s ingestion</div>
           </div>
           <div class="kpi kpi--orange">
             <div class="kpi__label">Large Topics</div>
@@ -1843,6 +1843,7 @@
       const failedCount    = s.failed ?? connectors.filter(c => c.state === 'FAILED').length;
       const totalTasks     = s.total_tasks ?? connectors.reduce((n, c) => n + (c.total_tasks || 0), 0);
       const failedTasks    = s.failed_tasks ?? connectors.reduce((n, c) => n + (c.failed_tasks || 0), 0);
+      const pausedCount    = s.paused ?? connectors.filter(c => c.state === 'PAUSED').length;
 
       const connectKpis = `
         <div class="kpi-grid">
@@ -1861,6 +1862,11 @@
             <div class="kpi__value">${failedCount}</div>
             <div class="kpi__sub">connectors</div>
           </div>
+          <div class="kpi kpi--warn">
+            <div class="kpi__label">Paused</div>
+            <div class="kpi__value">${pausedCount}</div>
+            <div class="kpi__sub">connectors</div>
+          </div>
           <div class="kpi kpi--orange">
             <div class="kpi__label">Total Tasks</div>
             <div class="kpi__value">${totalTasks}</div>
@@ -1870,6 +1876,21 @@
             <div class="kpi__label">Failed Tasks</div>
             <div class="kpi__value">${failedTasks}</div>
             <div class="kpi__sub">tasks</div>
+          </div>
+        </div>`;
+
+      // ── Worker nodes ──────────────────────────────────────────────────────────
+      const workerNodes = data.worker_nodes || [];
+      const connectWorkers = `
+        <div class="chart-card" style="margin-bottom:18px">
+          <div class="chart-card__title">Worker Nodes (${workerNodes.length})</div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;padding:8px 0">
+            ${workerNodes.map(w => `
+              <div style="display:flex;align-items:center;gap:6px;padding:6px 12px;background:var(--navy-1);border-radius:6px;border:1px solid ${w.status==='up'?'var(--success)':'var(--danger)'}">
+                <span style="width:8px;height:8px;border-radius:50%;background:${w.status==='up'?'var(--success)':'var(--danger)'}"></span>
+                <span style="font-size:.82rem;font-weight:600">${w.hostname.split('.')[0].replace('awaos-qa-','')}</span>
+                <span style="font-size:.75rem;color:var(--text-muted)">${w.connector_count > 0 ? w.connector_count+' connectors' : w.status==='down'?'down':''}</span>
+              </div>`).join('')}
           </div>
         </div>`;
 
@@ -1920,17 +1941,18 @@
             <div>${c.running_tasks ?? 0}/${c.total_tasks ?? 0}</div>
             ${taskPills(c)}
           </td>
-          <td style="font-size:.8rem;color:var(--text-muted)">${c.worker_id || c.worker || '-'}</td>
+          <td style="font-size:.8rem;color:var(--text-muted)" title="${c.worker_id || ''}">${(c.worker_id || c.worker || '-').split('.')[0].replace('awaos-qa-','')}</td>
           <td>${statusBadge(c.state)}</td>
         </tr>`;
 
-      el.innerHTML = connectKpis + connectCharts + `
+      el.innerHTML = connectKpis + connectWorkers + connectCharts + `
         <div class="filter-bar">
           <span class="dash-label">Status:</span>
           <span class="filter-chip active" onclick="window._connectSetStatus('all',this)">All</span>
           <span class="filter-chip" onclick="window._connectSetStatus('RUNNING',this)">Running</span>
           <span class="filter-chip" onclick="window._connectSetStatus('FAILED',this)">Failed</span>
           <span class="filter-chip" onclick="window._connectSetStatus('PAUSED',this)">Paused</span>
+          <span class="filter-chip" onclick="window._connectSetStatus('FAILED_TASKS',this)">Failed Tasks</span>
           <input class="filter-input" id="connector-search" placeholder="Search connector…" oninput="window._connectSearch(this.value)" />
         </div>
         <div class="filter-bar">
@@ -1965,7 +1987,9 @@
       window._connectView = { status: 'all', type: 'all', search: '', visible: CONNECT_PAGE };
 
       const connectMatches = (c, st) => {
-        if (st.status !== 'all' && c.state !== st.status) return false;
+        if (st.status === 'FAILED_TASKS') {
+          if ((c.failed_tasks || 0) === 0) return false;
+        } else if (st.status !== 'all' && c.state !== st.status) return false;
         if (st.type !== 'all' && (c.type || '').toLowerCase() !== st.type) return false;
         if (st.search && !(c.name || '').toLowerCase().includes(st.search.toLowerCase())) return false;
         return true;
@@ -2529,6 +2553,10 @@
         ).join('');
         _currentClusterId = clusters[0].id;
         document.getElementById('dash-controls').style.display = 'flex';
+        // Reload active tab now that cluster_id is known
+        const activeBtn = document.querySelector('.tab-btn--active');
+        const activeTab = activeBtn ? activeBtn.dataset.tab : null;
+        if (activeTab) loadTab(activeTab);
       } catch(e) {
         console.error('Failed to load clusters', e);
       }
