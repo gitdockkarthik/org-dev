@@ -276,10 +276,10 @@
       <button class="tab-btn" data-tab="escalation" role="tab">Escalation</button>
       <button class="tab-btn" data-tab="incident-mgmt" role="tab">Incident Mgmt</button>
       <button class="tab-btn" data-tab="rag" role="tab">
-        RAG &amp; Reasoning <span class="phase-badge">Phase 3</span>
+        RAG &amp; Reasoning
       </button>
       <button class="tab-btn" data-tab="autonomous" role="tab">
-        Autonomous <span class="phase-badge red">Phase 4</span>
+        Autonomous
       </button>
     </nav>
 
@@ -395,23 +395,7 @@
         </div>
       </div>
 
-      <!-- C: Sync Schedule -->
-      <div class="card">
-        <div class="card-title">Sync Schedule</div>
-        <div class="sync-row" style="margin-top:0.75rem">
-          <div class="field">
-            <select id="sync-interval">
-              <option value="0">Disabled</option>
-              <option value="15">Every 15 minutes</option>
-              <option value="30">Every 30 minutes</option>
-              <option value="60">Every 60 minutes</option>
-            </select>
-          </div>
-          <span class="last-synced" id="last-synced-label">Loading…</span>
-        </div>
-      </div>
-
-      <!-- D: Sync Window -->
+      <!-- C: Sync Window -->
       <div class="card">
         <div class="card-title">Sync Window</div>
         <div class="field" style="margin-top:0.75rem">
@@ -436,18 +420,6 @@
           <button class="btn btn-secondary" id="btn-save-only">Save Only</button>
         </div>
         <div id="action-msg" class="action-msg hidden"></div>
-      </div>
-
-      <!-- F: Sync Status -->
-      <div class="card">
-        <div class="card-title">Sync Status</div>
-        <div id="sync-status" class="status-rows" style="margin-top:0.75rem">
-          <span style="color:#94a3b8;font-style:italic;font-size:.875rem">Loading…</span>
-        </div>
-        <div id="large-dataset-banner" class="banner-blue hidden">
-          Large dataset detected. Analysis may take longer than usual. Consider using a shorter
-          sync window for faster responses during development.
-        </div>
       </div>
 
     </div><!-- /#panel-data-source -->
@@ -540,7 +512,7 @@
     </div><!-- /#panel-noise-tuning -->
 
     <!-- ══════════════════════════════════════════════════════════ -->
-    <!-- TAB 3: Escalation (Phase 2, locked)                       -->
+    <!-- TAB 3: Escalation                                         -->
     <!-- ══════════════════════════════════════════════════════════ -->
     <div class="tab-panel" id="panel-escalation">
       <div class="card">
@@ -642,15 +614,10 @@
     </div><!-- /#panel-escalation -->
 
     <!-- ══════════════════════════════════════════════════════════ -->
-    <!-- TAB 4: RAG & Reasoning (Phase 3, locked)                  -->
+    <!-- TAB 4: RAG & Reasoning                                    -->
     <!-- ══════════════════════════════════════════════════════════ -->
     <div class="tab-panel" id="panel-rag">
-      <div class="locked-info">
-        <strong>Phase 3</strong> — Runbook-grounded AI reasoning using Confluence, Jira and
-        Qdrant vector store. The agent will retrieve relevant runbooks and past incidents to
-        ground its analysis and mitigation suggestions. Available in Phase 3.
-      </div>
-      <div class="locked-content">
+      <div>
         <div class="card">
           <div class="toggle-wrap">
             <input type="checkbox" id="rag-enable" class="toggle-input" disabled />
@@ -713,7 +680,7 @@
     </div><!-- /#panel-rag -->
 
     <!-- ══════════════════════════════════════════════════════════ -->
-    <!-- TAB 5: Autonomous (Phase 4, locked)                       -->
+    <!-- TAB 5: Autonomous                                         -->
     <!-- ══════════════════════════════════════════════════════════ -->
     <div class="tab-panel" id="panel-autonomous">
       <div class="banner-amber">
@@ -721,7 +688,7 @@
         Phase 3 HITL workflows are validated and the scorecard consistently meets the configured
         threshold. Irreversible actions may occur.
       </div>
-      <div class="locked-content">
+      <div>
         <div class="card">
           <div class="toggle-wrap">
             <input type="checkbox" id="auto-enable" class="toggle-input" disabled />
