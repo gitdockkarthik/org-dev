@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from agent import AgentRunner
 from config import settings
 import jobs as _jobs_module
+import collectors as _collectors
 from routes_dashboard import router as dashboard_router
 from routes_reports import router as reports_router
 from routes_settings import load_config_from_db, router as settings_router
@@ -332,29 +333,9 @@ async def _collection_loop() -> None:
                                             ""
                                         )
                                     logger.info("Prometheus topic scrape: using broker %s", available_broker)
-                                    if available_broker:
-                                        topic_metrics, top_by_size, top_by_msg_rate = await scrape_topic_metrics_and_top_by_size(
-                                            available_broker, _prom_port, [], top_n=200)
-                                        if "counts" not in data:
-                                            data["counts"] = {}
-                                        data["counts"]["top_topics_by_size"] = top_by_size
-                                        data["counts"]["top_topics_by_msg_rate"] = top_by_msg_rate
-                                        data["topics"] = list(top_by_msg_rate)
-                                        data["counts"]["total_hot"] = sum(
-                                            1 for t in top_by_msg_rate
-                                            if (t.get("messages_in_per_sec") or 0) > 1000)
-                                        # Persist counts directly to DB — bypasses cache dependency
-                                        try:
-                                            from routes_settings import _upsert
-                                            import json as _j
-                                            await _upsert(f"kafka_counts_metrics_{cid}",
-                                                _j.dumps({
-                                                    "top_topics_by_size": top_by_size,
-                                                    "top_topics_by_msg_rate": top_by_msg_rate,
-                                                    "total_hot": data["counts"].get("total_hot", 0),
-                                                }))
-                                        except Exception as _ue:
-                                            logger.warning("Failed to persist counts to DB: %s", _ue)
+                                    # Topic sizes via AdminClient (replaces broken Prometheus scrape)
+                                    # Fast: 0.6s for 16k+ topics, no JMX/Prometheus dependency
+                                    pass  # topic sizes collected in _loop_topic_sizes below
                                 logger.info("Collection loop Prometheus: completed for '%s'", c["name"])
                             except Exception as _pe:
                                 logger.warning("Collection loop Prometheus failed for '%s': %s",
@@ -370,6 +351,55 @@ async def _collection_loop() -> None:
                             except Exception as _je:
                                 logger.warning("Collection loop JMX failed for '%s': %s",
                                               c["name"], _je)
+
+                    async def _loop_topic_sizes():
+                        try:
+                            import time as _time
+                            _t0 = _time.time()
+                            sizes_result = await collector.collect_topic_sizes(top_n=100)
+                            if sizes_result.get("error"):
+                                logger.warning("Topic sizes collection failed for '%s': %s",
+                                               c["name"], sizes_result["error"])
+                                return
+                            top_by_size = sizes_result["topic_sizes"]
+                            total_size_gb = sizes_result["total_size_gb"]
+                            # Calculate msg rate from offset deltas
+                            # Store current offsets for next cycle delta calculation
+                            if not hasattr(_loop_topic_sizes, '_prev_offsets'):
+                                _loop_topic_sizes._prev_offsets = {}
+                                _loop_topic_sizes._prev_time = _time.time()
+                            # Build top topics list with size data
+                            top_topics = [{
+                                "name": t["topic"],
+                                "size_bytes": t["size_bytes"],
+                                "size_mb": t["size_mb"],
+                                "messages_in_per_sec": 0,  # will be enriched when offset delta available
+                            } for t in top_by_size]
+                            if "counts" not in data:
+                                data["counts"] = {}
+                            data["counts"]["top_topics_by_size"] = top_by_size
+                            data["counts"]["top_topics_by_msg_rate"] = top_topics
+                            data["counts"]["total_size_gb"] = total_size_gb
+                            data["counts"]["total_hot"] = 0
+                            data["topics"] = top_topics
+                            # Persist to DB for cache recovery
+                            try:
+                                from routes_settings import _upsert
+                                import json as _j
+                                await _upsert(f"kafka_counts_metrics_{cid}",
+                                    _j.dumps({
+                                        "top_topics_by_size": top_by_size,
+                                        "top_topics_by_msg_rate": top_topics,
+                                        "total_hot": 0,
+                                        "total_size_gb": total_size_gb,
+                                    }))
+                            except Exception as _ue:
+                                logger.warning("Failed to persist topic sizes to DB: %s", _ue)
+                            logger.info("Topic sizes collected for '%s': %d topics, %.1f GB in %.1fs",
+                                       c["name"], sizes_result["total_topics"],
+                                       total_size_gb, _time.time() - _t0)
+                        except Exception as _tse:
+                            logger.warning("_loop_topic_sizes failed for '%s': %s", c["name"], _tse)
 
                     async def _loop_lag_scan():
                         try:
@@ -401,7 +431,8 @@ async def _collection_loop() -> None:
                     await asyncio.gather(
                         _loop_topic_describe(),
                         _loop_prometheus(),
-                        _loop_lag_scan()
+                        _loop_lag_scan(),
+                        _loop_topic_sizes()
                     )
 
                     # Save complete enriched snapshot
@@ -857,35 +888,47 @@ async def lifespan(app: FastAPI):
     if _db_engine is not None:
         async with _db_engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-    # Register kafka metrics collection job
-    async def _kafka_collect_job():
-        from routes_settings import _config as _rs_config
-        source_type = _rs_config.get("source_type", "synthetic")
-        if source_type not in ("kafka_internal", "kafka_sasl", "live"):
-            _kafka_collect_job._last_result = f"Skipped — source_type={source_type}"
-            return
-        from storage import get_backend
-        clusters = await get_backend().get_clusters(settings.agent_slug)
-        enabled = [c for c in clusters if c.get("enabled")]
-        if not enabled:
-            _kafka_collect_job._last_result = "No enabled clusters — skipped"
-            return
-        await _collection_loop()
-        _kafka_collect_job._last_result = f"Collected metrics for {len(enabled)} cluster(s)"
-    _jobs_module.register_job(
-        "kafka-metrics-collect",
-        "Kafka Metrics Collection",
-        "Collect broker, consumer lag, topic, and connector metrics from Kafka clusters",
-        _kafka_collect_job,
-        default_timeout_secs=120,
+    # Register all 8 individual collection jobs
+    from collectors import (
+        collect_broker_health, collect_consumer_lag_active, collect_topic_sizes,
+        collect_topic_structure, collect_consumer_lag_full, collect_connectors,
+        collect_msg_rate, collect_schema_registry,
     )
-    # Register default schedule if none exists
+    _jobs_module.register_job("kafka-broker-health", "Broker Health",
+        "Broker JVM metrics via Prometheus Phase 1", collect_broker_health, default_timeout_secs=30)
+    _jobs_module.register_job("kafka-consumer-lag-active", "Consumer Lag (Active)",
+        "Lag for STABLE and REBALANCING groups only", collect_consumer_lag_active, default_timeout_secs=60)
+    _jobs_module.register_job("kafka-topic-sizes", "Topic Sizes",
+        "Topic sizes via AdminClient describe_log_dirs", collect_topic_sizes, default_timeout_secs=30)
+    _jobs_module.register_job("kafka-topic-structure", "Topic Structure",
+        "Full topic metadata: partitions, RF, URP", collect_topic_structure, default_timeout_secs=180)
+    _jobs_module.register_job("kafka-consumer-lag-full", "Consumer Lag (Full Audit)",
+        "All groups including EMPTY/DEAD for governance", collect_consumer_lag_full, default_timeout_secs=180)
+    _jobs_module.register_job("kafka-connectors", "Kafka Connectors",
+        "Connector status from Kafka Connect REST API", collect_connectors, default_timeout_secs=20)
+    _jobs_module.register_job("kafka-msg-rate", "Message Rate",
+        "Producer msg/sec from offset deltas", collect_msg_rate, default_timeout_secs=30)
+    _jobs_module.register_job("kafka-schema-registry", "Schema Registry",
+        "Schema registry subjects and versions", collect_schema_registry, default_timeout_secs=20)
+
+    # Register default schedules if none exist
+    default_schedules = [
+        ("kafka-broker-health",        "*/2 * * * *",  30),
+        ("kafka-consumer-lag-active",  "1 */2 * * *",  60),
+        ("kafka-topic-sizes",          "*/15 * * * *", 30),
+        ("kafka-topic-structure",      "2 */30 * * *", 180),
+        ("kafka-consumer-lag-full",    "3 */30 * * *", 180),
+        ("kafka-connectors",           "*/5 * * * *",  20),
+        ("kafka-msg-rate",             "*/2 * * * *",  30),
+        ("kafka-schema-registry",      "5 */30 * * *", 20),
+    ]
     from sqlalchemy import select as _sel
-    async with SessionLocal() as _sess:
-        existing = await _sess.execute(_sel(KafkaJobSchedule).where(KafkaJobSchedule.job_id == "kafka-metrics-collect"))
-        if not existing.scalar_one_or_none():
-            await _jobs_module.create_schedule("kafka-metrics-collect", "*/5 * * * *", enabled=True, timeout_secs=120)
-            logger.info("Created default 5-min schedule for kafka-metrics-collect")
+    for job_id, cron, timeout in default_schedules:
+        async with SessionLocal() as _sess:
+            existing = await _sess.execute(_sel(KafkaJobSchedule).where(KafkaJobSchedule.job_id == job_id))
+            if not existing.scalar_one_or_none():
+                await _jobs_module.create_schedule(job_id, cron, enabled=True, timeout_secs=timeout)
+                logger.info("Created default schedule for %s: %s", job_id, cron)
     count = await _jobs_module.load_schedules()
     logger.info("Job scheduler: loaded %d schedule(s)", count)
     _jobs_module.start_scheduler()

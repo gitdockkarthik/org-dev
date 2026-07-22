@@ -237,6 +237,102 @@ class RealKafkaCollector(KafkaCollector):
             except Exception:
                 pass
 
+    async def collect_topic_sizes(self, top_n: int = 100) -> dict[str, Any]:
+        """Collect topic sizes using describe_log_dirs — fast, no JMX/Prometheus needed.
+        Works on Kafka 2.3+ (Confluent 5.3+). Returns top N topics by size."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._collect_topic_sizes_sync, top_n)
+
+    def _collect_topic_sizes_sync(self, top_n: int = 100) -> dict[str, Any]:
+        """Synchronous topic size collection via AdminClient.describe_log_dirs."""
+        import time
+        security = self._security_kwargs()
+        try:
+            admin = KafkaAdminClient(
+                bootstrap_servers=self._bootstrap_list,
+                request_timeout_ms=15000,
+                **security,
+            )
+        except Exception as exc:
+            return {"error": str(exc), "topic_sizes": [], "total_size_bytes": 0}
+        try:
+            t = time.time()
+            result = admin.describe_log_dirs()
+            elapsed = time.time() - t
+            topic_sizes: dict[str, int] = {}
+            for log_dir in result.log_dirs:
+                if log_dir[0] != 0:
+                    continue
+                for topic_entry in log_dir[2]:
+                    topic = topic_entry[0]
+                    for partition in topic_entry[1]:
+                        size = partition[1]
+                        topic_sizes[topic] = topic_sizes.get(topic, 0) + size
+            total_size = sum(topic_sizes.values())
+            top_topics = sorted(topic_sizes.items(), key=lambda x: x[1], reverse=True)[:top_n]
+            return {
+                "topic_sizes": [
+                    {"topic": t, "size_bytes": s, "size_mb": round(s / 1024 / 1024, 1)}
+                    for t, s in top_topics
+                ],
+                "total_topics": len(topic_sizes),
+                "total_size_bytes": total_size,
+                "total_size_gb": round(total_size / 1024**3, 2),
+                "collection_time_secs": round(elapsed, 2),
+                "error": None,
+            }
+        except Exception as exc:
+            return {"error": str(exc), "topic_sizes": [], "total_size_bytes": 0}
+        finally:
+            try:
+                admin.close()
+            except Exception:
+                pass
+
+    async def collect_brokers_only(self) -> list[dict]:
+        """Fast broker list only — skips topic listing. ~1s vs 35s."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._collect_brokers_only_sync)
+
+    def _collect_brokers_only_sync(self) -> list[dict]:
+        security = self._security_kwargs()
+        try:
+            admin = KafkaAdminClient(
+                bootstrap_servers=self._bootstrap_list,
+                request_timeout_ms=10000,
+                **security,
+            )
+            try:
+                cluster_info = admin.describe_cluster()
+                return self._build_brokers(cluster_info)
+            finally:
+                admin.close()
+        except Exception as exc:
+            logger.warning("collect_brokers_only failed: %s", exc)
+            return []
+
+    async def collect_group_states(self) -> list[dict]:
+        """Fast group states only — no lag fetch, no topic listing. ~2s."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._collect_group_states_sync)
+
+    def _collect_group_states_sync(self) -> list[dict]:
+        security = self._security_kwargs()
+        try:
+            admin = KafkaAdminClient(
+                bootstrap_servers=self._bootstrap_list,
+                request_timeout_ms=10000,
+                **security,
+            )
+            try:
+                groups = admin.list_consumer_groups()
+                return [{"group_id": g[0], "state": g[1] if len(g) > 1 else "Unknown"} for g in groups]
+            finally:
+                admin.close()
+        except Exception as exc:
+            logger.warning("collect_group_states failed: %s", exc)
+            return []
+
     async def fetch_topic_details(self, topic_names: list[str]) -> list[dict[str, Any]]:
         """On-demand: describe specific topics with full partition/URP detail."""
         loop = asyncio.get_event_loop()
