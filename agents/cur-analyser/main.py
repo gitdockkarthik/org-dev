@@ -1289,8 +1289,10 @@ async def ds_s3_status() -> dict:
 _s3_sync_jobs: dict = {}
 
 @app.get("/data-sources/s3/browse")
-async def ds_s3_browse() -> dict:
-    """Browse S3 bucket — list billing periods and their folders."""
+async def ds_s3_browse(year: str | None = None, month: str | None = None) -> dict:
+    """Browse S3 bucket — cascading Year → Month → Day structure.
+    Optional filters: year (e.g. '2026'), month (e.g. '07')
+    Returns latest export per day only."""
     import boto3
     from routes_settings import _config as _sc
     bucket = _sc.get("s3_bucket", "")
@@ -1300,53 +1302,79 @@ async def ds_s3_browse() -> dict:
         return {"s3_configured": False}
     try:
         s3 = boto3.client("s3", region_name=region)
-        # Strip billing period from prefix to get parent path
-        # e.g. AIAnalysis/FoAIAnalysis/data/BILLING_PERIOD=2026-07/ -> AIAnalysis/FoAIAnalysis/data/
         base_prefix = prefix.rstrip("/")
         if "BILLING_PERIOD=" in base_prefix:
             base_prefix = base_prefix.rsplit("BILLING_PERIOD=", 1)[0]
         else:
             base_prefix = base_prefix + "/"
-        # List billing period prefixes
-        resp = s3.list_objects_v2(
-            Bucket=bucket,
-            Prefix=base_prefix,
-            Delimiter="/"
-        )
-        billing_periods = sorted([
+        # List all billing periods
+        resp = s3.list_objects_v2(Bucket=bucket, Prefix=base_prefix, Delimiter="/")
+        all_periods = sorted([
             p["Prefix"].rstrip("/").split("/")[-1]
             for p in resp.get("CommonPrefixes", [])
             if "BILLING_PERIOD=" in p["Prefix"]
         ], reverse=True)
-        periods = []
-        for bp in billing_periods:
+        # Filter by year/month if provided
+        filtered_periods = []
+        for bp in all_periods:
+            period_val = bp.replace("BILLING_PERIOD=", "")  # e.g. 2026-07
+            p_year, p_month = period_val.split("-") if "-" in period_val else (period_val, "")
+            if year and p_year != year:
+                continue
+            if month and p_month != month:
+                continue
+            filtered_periods.append((bp, period_val, p_year, p_month))
+        # Build year → month → day structure
+        tree = {}
+        for bp, period_val, p_year, p_month in filtered_periods:
             bp_prefix = base_prefix + bp + "/"
             bp_resp = s3.list_objects_v2(Bucket=bucket, Prefix=bp_prefix, Delimiter="/")
-            folders = []
-            for fp in sorted([p["Prefix"] for p in bp_resp.get("CommonPrefixes", [])], reverse=True):
+            all_folders = sorted([p["Prefix"] for p in bp_resp.get("CommonPrefixes", [])], reverse=True)
+            # Group by date — keep only latest folder per date
+            by_date = {}
+            for fp in all_folders:
                 folder_name = fp.rstrip("/").split("/")[-1]
-                # Get file count and size
+                date = folder_name.split("T")[0] if "T" in folder_name else folder_name
+                if date not in by_date:
+                    by_date[date] = fp  # first = latest (sorted reverse)
+            # For each unique date get metadata
+            days = []
+            for date in sorted(by_date.keys(), reverse=True):
+                fp = by_date[date]
                 files_resp = s3.list_objects_v2(Bucket=bucket, Prefix=fp)
                 contents = [f for f in files_resp.get("Contents", []) if f["Key"].endswith(".csv.gz") or f["Key"].endswith(".csv")]
                 total_mb = sum(f["Size"] for f in contents) // 1024 // 1024
                 latest_modified = max((f["LastModified"] for f in contents), default=None)
-                folders.append({
-                    "folder": folder_name,
+                est_mins = round((total_mb / 22 + len(contents) * 24 + 30) / 60, 1)
+                days.append({
+                    "date": date,
                     "prefix": fp,
                     "file_count": len(contents),
                     "size_mb": total_mb,
                     "latest_modified": latest_modified.isoformat() if latest_modified else None,
+                    "est_sync_mins": est_mins,
                 })
-            periods.append({
+            if p_year not in tree:
+                tree[p_year] = {}
+            tree[p_year][p_month] = {
                 "billing_period": bp,
-                "folder_count": len(folders),
-                "folders": folders[:5],  # latest 5 folders per period
-            })
+                "period_val": period_val,
+                "total_days": len(all_folders),
+                "unique_days": len(days),
+                "days": days,
+            }
+        # Get available years for filter dropdown
+        all_years = sorted(set(
+            bp.replace("BILLING_PERIOD=", "").split("-")[0]
+            for bp in all_periods
+            if "BILLING_PERIOD=" in bp
+        ), reverse=True)
         return {
             "s3_configured": True,
             "bucket": bucket,
             "base_prefix": base_prefix,
-            "billing_periods": periods,
+            "available_years": all_years,
+            "tree": tree,
         }
     except Exception as e:
         logger.warning("ds_s3_browse failed: %s", e)

@@ -171,11 +171,11 @@
 
     let _s3Selected = {};  // { "prefix": { billing_period, folder, file_count, size_mb } }
 
-    async function loadS3Browser() {
+    async function loadS3Browser(preloadedBrowseData) {
       const body = document.getElementById('s3-browser-body');
       try {
         const [browseData, statusData, settingsData] = await Promise.all([
-          api('/data-sources/s3/browse'),
+          preloadedBrowseData ? Promise.resolve(preloadedBrowseData) : api('/data-sources/s3/browse'),
           api('/data-sources/s3/status').catch(() => ({})),
           api('/settings').catch(() => ({})),
         ]);
@@ -217,7 +217,7 @@
           </div>
           <div id="sync-latest-status" style="font-size:.82rem;color:var(--text-muted);margin-bottom:12px"></div>`;
 
-        if (!browseData.billing_periods || !browseData.billing_periods.length) {
+        if (!browseData.tree || !Object.keys(browseData.tree).length) {
           body.innerHTML = syncBar + '<div style="color:var(--text-muted);font-size:.85rem">No billing periods found in S3.</div>';
           return;
         }
@@ -249,69 +249,87 @@
         }
         autoHtml += `</div>`;
 
-        // Historical browser section
-        let browseHtml = `
-          <div style="margin-bottom:10px">
-            <div style="font-size:.88rem;font-weight:600;margin-bottom:4px">📂 Historical Data — Browse & Select</div>
-            <div style="font-size:.78rem;color:var(--text-muted)">
-              ℹ️ Only the latest export per day is shown (AWS updates CUR ~3x daily — older exports for the same day are superseded).
-              Syncs run sequentially to prevent memory issues.
+        // Get current and previous month for default expansion
+        const now = new Date();
+        const currentYear = now.getUTCFullYear().toString();
+        const currentMonth = String(now.getUTCMonth() + 1).padStart(2, '0');
+        const prevMonth = String(now.getUTCMonth() === 0 ? 12 : now.getUTCMonth()).padStart(2, '0');
+        const prevYear = now.getUTCMonth() === 0 ? String(now.getUTCFullYear() - 1) : currentYear;
+
+        // Build year/month filter dropdowns
+        const availableYears = browseData.available_years || [];
+        let filterHtml = `
+          <div style="margin-bottom:16px">
+            <div style="font-size:.88rem;font-weight:600;margin-bottom:8px">📂 Historical Data — Browse & Select</div>
+            <div style="font-size:.78rem;color:var(--text-muted);margin-bottom:12px">
+              ℹ️ Current and previous month shown by default. Use filters for older data.
+              Only latest export per day shown — syncs run sequentially.
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+              <select id="s3-filter-year" class="btn btn--ghost btn--sm" style="padding:6px 10px" onchange="applyS3Filter()">
+                <option value="">All Years</option>
+                ${availableYears.map(y => `<option value="${y}" ${y === currentYear ? 'selected' : ''}>${y}</option>`).join('')}
+              </select>
+              <select id="s3-filter-month" class="btn btn--ghost btn--sm" style="padding:6px 10px" onchange="applyS3Filter()">
+                <option value="">All Months</option>
+                ${['01','02','03','04','05','06','07','08','09','10','11','12'].map(m => {
+                  const name = new Date(2026, parseInt(m)-1, 1).toLocaleString('en', {month:'long'});
+                  return `<option value="${m}">${name}</option>`;
+                }).join('')}
+              </select>
+              <button class="btn btn--ghost btn--sm" onclick="applyS3Filter()">🔍 Search</button>
+              <button class="btn btn--ghost btn--sm" onclick="clearS3Filter()">✕ Clear</button>
             </div>
           </div>`;
 
-        for (const bp of browseData.billing_periods) {
-          const period = bp.billing_period.replace('BILLING_PERIOD=', '');
-          // Group by date — keep only latest folder per date
-          const byDate = {};
-          for (const f of bp.folders) {
-            const date = f.folder.split('T')[0];
-            if (!byDate[date] || f.folder > byDate[date].folder) {
-              byDate[date] = f;
-            }
-          }
-          const latestPerDay = Object.values(byDate).sort((a,b) => b.folder.localeCompare(a.folder));
-
-          browseHtml += `<div style="margin-bottom:16px">
-            <div style="font-weight:600;font-size:.9rem;margin-bottom:8px;color:var(--accent)">
-              📅 ${period}
-              <span style="font-size:.75rem;font-weight:400;color:var(--text-muted)">
-                ${bp.folder_count} total exports · showing ${latestPerDay.length} (latest per day)
-              </span>
-            </div>
-            <div style="overflow-x:auto">
-              <table class="data-table">
-                <thead><tr>
-                  <th>Date</th>
-                  <th>Files</th>
-                  <th>Size</th>
-                  <th>Last Modified in S3</th>
-                  <th>Est. Sync Time</th>
-                  <th>Action</th>
-                </tr></thead>
-                <tbody>`;
-
-          for (let i = 0; i < latestPerDay.length; i++) {
-            const f = latestPerDay[i];
-            const date = f.folder.split('T')[0];
-            const isSelected = _s3Selected[f.prefix];
-            const estMins = Math.round((f.size_mb / 22 + f.file_count * 24 + 30) / 60 * 10) / 10;
-            const isLatestFolder = i === 0;
-            browseHtml += `<tr>
-              <td style="font-weight:600">${date}${isLatestFolder ? ' <span style="font-size:.7rem;background:#dcfce7;color:#15803d;padding:1px 6px;border-radius:8px">latest</span>' : ''}</td>
-              <td>${f.file_count} files</td>
-              <td>${f.size_mb} MB</td>
-              <td style="font-size:.78rem;color:var(--text-muted)">${f.latest_modified ? new Date(f.latest_modified).toLocaleString('en-GB', {timeZone:'UTC'}) + ' UTC' : '—'}</td>
-              <td style="font-size:.78rem;color:var(--text-muted)">~${estMins} min</td>
-              <td>
-                <button class="btn btn--${isSelected ? 'primary' : 'ghost'} btn--sm"
-                  onclick="toggleS3Select('${f.prefix}', '${period}', '${f.folder}', ${f.file_count}, ${f.size_mb}, ${estMins}, this)">
+        // Build collapsible year → month → day tree
+        const tree = browseData.tree || {};
+        let treeHtml = '';
+        for (const [year, months] of Object.entries(tree).sort((a,b) => b[0].localeCompare(a[0]))) {
+          treeHtml += `<div style="margin-bottom:8px">`;
+          for (const [month, data] of Object.entries(months).sort((a,b) => b[0].localeCompare(a[0]))) {
+            const monthName = new Date(parseInt(year), parseInt(month)-1, 1).toLocaleString('en', {month:'long'});
+            const isCurrentMonth = year === currentYear && month === currentMonth;
+            const isPrevMonth = year === prevYear && month === prevMonth;
+            const isExpanded = isCurrentMonth;
+            const monthId = `s3-month-${year}-${month}`;
+            treeHtml += `
+              <div style="margin-bottom:6px;border:1px solid var(--border);border-radius:6px;overflow:hidden">
+                <div style="padding:10px 14px;background:var(--navy-2);cursor:pointer;display:flex;align-items:center;justify-content:space-between"
+                     onclick="toggleMonth('${monthId}')">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <span id="${monthId}-arrow" style="font-size:.8rem">${isExpanded ? '▼' : '►'}</span>
+                    <span style="font-weight:600">📅 ${monthName} ${year}</span>
+                    <span style="font-size:.75rem;color:var(--text-muted)">${data.unique_days} days</span>
+                    ${isCurrentMonth ? '<span style="font-size:.7rem;background:#dcfce7;color:#15803d;padding:1px 8px;border-radius:8px">current</span>' : ''}
+                  </div>
+                </div>
+                <div id="${monthId}" style="display:${isExpanded ? 'block' : 'none'}">
+                  <div style="max-height:320px;overflow-y:auto">
+                    <table class="data-table">
+                      <thead><tr><th>Date</th><th>Files</th><th>Size</th><th>Last Modified (UTC)</th><th>Est. Sync</th><th>Action</th></tr></thead>
+                      <tbody>`;
+            for (let i = 0; i < data.days.length; i++) {
+              const d = data.days[i];
+              const isSelected = _s3Selected[d.prefix];
+              const isLatest = i === 0;
+              treeHtml += `<tr>
+                <td style="font-weight:600">${d.date}${isLatest ? ' <span style="font-size:.7rem;background:#dcfce7;color:#15803d;padding:1px 6px;border-radius:8px">latest</span>' : ''}</td>
+                <td>${d.file_count} files</td>
+                <td>${d.size_mb} MB</td>
+                <td style="font-size:.78rem;color:var(--text-muted)">${d.latest_modified ? new Date(d.latest_modified).toLocaleString('en-GB',{timeZone:'UTC'}) + ' UTC' : '—'}</td>
+                <td style="font-size:.78rem;color:var(--text-muted)">~${d.est_sync_mins} min</td>
+                <td><button class="btn btn--${isSelected ? 'primary' : 'ghost'} btn--sm"
+                  onclick="toggleS3Select('${d.prefix}','${year}-${month}','${d.date}',${d.file_count},${d.size_mb},${d.est_sync_mins},this)">
                   ${isSelected ? '✓ Selected' : 'Select'}
-                </button>
-              </td>
-            </tr>`;
+                </button></td>
+              </tr>`;
+            }
+            treeHtml += `</tbody></table></div></div></div>`;
           }
-          browseHtml += `</tbody></table></div></div>`;
+          treeHtml += `</div>`;
         }
+        let browseHtml = filterHtml + treeHtml;
 
         // Manual reports table
         const manualReports = await api('/reports').then(r => r.filter(x => x.sync_type !== 'auto')).catch(() => []);
@@ -484,6 +502,42 @@
           updateSelectionBar();
         }
       }, 3000);
+    }
+
+    function toggleMonth(id) {
+      const el = document.getElementById(id);
+      const arrow = document.getElementById(id + '-arrow');
+      if (!el) return;
+      const isOpen = el.style.display !== 'none';
+      el.style.display = isOpen ? 'none' : 'block';
+      if (arrow) arrow.textContent = isOpen ? '►' : '▼';
+    }
+
+    async function applyS3Filter() {
+      const year = document.getElementById('s3-filter-year')?.value || '';
+      const month = document.getElementById('s3-filter-month')?.value || '';
+      const body = document.getElementById('s3-browser-body');
+      if (body) body.innerHTML = '<div style="color:var(--text-muted);font-size:.85rem;padding:20px">Loading...</div>';
+      try {
+        let url = '/data-sources/s3/browse';
+        const params = [];
+        if (year) params.push('year=' + year);
+        if (month) params.push('month=' + month);
+        if (params.length) url += '?' + params.join('&');
+        const data = await api(url);
+        // Re-render just the tree portion
+        await loadS3Browser(data);
+      } catch(e) {
+        if (body) body.innerHTML = `<div style="color:var(--danger);font-size:.85rem">Failed: ${e.message}</div>`;
+      }
+    }
+
+    function clearS3Filter() {
+      const yearSel = document.getElementById('s3-filter-year');
+      const monthSel = document.getElementById('s3-filter-month');
+      if (yearSel) yearSel.value = '';
+      if (monthSel) monthSel.value = '';
+      loadS3Browser();
     }
 
     // File upload handlers
