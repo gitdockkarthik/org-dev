@@ -59,6 +59,15 @@
   </nav>
 
   <div class="content">
+    <div style="display:flex;gap:0;margin-bottom:20px;border-bottom:2px solid var(--border)">
+      <button id="subtab-reports" class="btn btn--ghost"
+        style="border-radius:0;border-bottom:2px solid var(--accent);margin-bottom:-2px;font-weight:600;color:var(--accent)"
+        onclick="switchSubTab('reports')">📁 Reports & Data</button>
+      <button id="subtab-jobs" class="btn btn--ghost"
+        style="border-radius:0;border-bottom:2px solid transparent;margin-bottom:-2px;color:var(--text-muted)"
+        onclick="switchSubTab('jobs')">⚙️ Job Management</button>
+    </div>
+    <div id="subtab-reports-content">
     <div class="page-heading">
       <div class="page-heading__title">Reports</div>
       <div class="page-heading__sub">Saved CUR reports loaded for analysis</div>
@@ -79,6 +88,62 @@
         <div class="empty-state"><div class="empty-state__icon">📁</div><div class="empty-state__title">Loading…</div></div>
       </div>
     </div>
+
+    </div><!-- end subtab-reports-content -->
+    <div id="subtab-jobs-content" style="display:none">
+    <div class="section-card">
+      <div class="section-card__header">
+        ⚙️ Job Management
+        <button class="btn btn--ghost btn--sm" onclick="loadJobs()">↻ Refresh</button>
+      </div>
+      <div style="padding:16px 20px">
+        <!-- Schedules -->
+        <div style="margin-bottom:20px">
+          <div style="font-size:.88rem;font-weight:600;margin-bottom:8px">🕐 Schedules
+            <button class="btn btn--ghost btn--sm" style="margin-left:8px" onclick="openAddScheduleModal()">+ Add</button>
+          </div>
+          <div id="jobs-schedules-body">Loading...</div>
+        </div>
+        <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
+        <!-- Run History -->
+        <div>
+          <div style="font-size:.88rem;font-weight:600;margin-bottom:8px">📋 Run History
+            <button class="btn btn--primary btn--sm" style="margin-left:8px" onclick="triggerJob()">▶ Trigger Now</button>
+          </div>
+          <div id="jobs-runs-body">Loading...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Schedule Modal -->
+    <div id="add-schedule-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center">
+      <div style="background:var(--navy-1);border:1px solid var(--border);border-radius:var(--r);padding:24px;width:420px;max-width:95vw">
+        <div style="font-size:1rem;font-weight:700;margin-bottom:16px">Add Sync Schedule</div>
+        <div style="margin-bottom:12px">
+          <label style="display:block;font-size:.8rem;font-weight:600;color:var(--text-muted);margin-bottom:4px">Run Every</label>
+          <select id="sched-frequency" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-2);color:var(--text)" onchange="updateCronPreview()">
+            <option value="hourly">Every hour</option>
+            <option value="every2h">Every 2 hours</option>
+            <option value="every6h">Every 6 hours</option>
+            <option value="daily">Once a day</option>
+          </select>
+        </div>
+        <div id="sched-time-row" style="display:none;margin-bottom:12px">
+          <label style="display:block;font-size:.8rem;font-weight:600;color:var(--text-muted);margin-bottom:4px">At (UTC)</label>
+          <select id="sched-hour" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-2);color:var(--text)" onchange="updateCronPreview()"></select>
+        </div>
+        <div style="margin-bottom:16px;padding:8px 12px;background:var(--navy-2);border-radius:6px;font-size:.78rem;color:var(--text-muted)">
+          Cron: <code id="cron-preview">0 * * * *</code>
+          <span style="margin-left:8px;color:var(--text-muted)">· All times in UTC</span>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn--primary" onclick="saveSchedule()">Save</button>
+          <button class="btn btn--ghost" onclick="closeScheduleModal()">Cancel</button>
+        </div>
+      </div>
+    </div>
+    </div><!-- end subtab-jobs-content -->
+
   </div>
 
   <script>
@@ -166,6 +231,169 @@
     }
 
     loadReports();
+    loadJobs();
+
+    // ── Job Management ────────────────────────────────────────────────────────
+    async function loadJobs() {
+      await loadSchedules();
+      await loadRuns();
+    }
+
+    async function loadSchedules() {
+      const el = document.getElementById('jobs-schedules-body');
+      try {
+        const scheds = await api('/jobs/cur-s3-sync/schedules');
+        if (!scheds.length) {
+          el.innerHTML = '<div style="color:var(--text-muted);font-size:.85rem">No schedules configured.</div>';
+          return;
+        }
+        const rows = scheds.map(s => {
+          const friendly = cronToFriendly(s.cron_expression);
+          return `<tr>
+            <td><strong>CUR S3 Sync</strong></td>
+            <td>${friendly}</td>
+            <td><code style="font-size:.75rem">${s.cron_expression}</code></td>
+            <td style="font-size:.75rem;color:var(--text-muted)">UTC</td>
+            <td>${s.enabled
+              ? '<span style="color:var(--success);font-weight:600">● Enabled</span>'
+              : '<span style="color:var(--danger);font-weight:600">● Disabled</span>'}</td>
+            <td style="display:flex;gap:4px">
+              <button class="btn btn--ghost btn--sm" onclick="toggleSchedule(${s.id}, ${s.enabled}, '${s.cron_expression}')">${s.enabled ? 'Disable' : 'Enable'}</button>
+              <button class="btn btn--ghost btn--sm" onclick="deleteSchedule(${s.id})">🗑</button>
+            </td>
+          </tr>`;
+        }).join('');
+        el.innerHTML = `<table class="data-table" style="width:100%">
+          <thead><tr><th>Job</th><th>Frequency</th><th>Cron</th><th>Timezone</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+      } catch(e) {
+        el.innerHTML = `<div style="color:var(--danger);font-size:.85rem">Failed: ${e.message}</div>`;
+      }
+    }
+
+    async function loadRuns() {
+      const el = document.getElementById('jobs-runs-body');
+      try {
+        const runs = await api('/jobs/cur-s3-sync/runs?limit=10');
+        if (!runs.length) { el.innerHTML = '<div style="color:var(--text-muted);font-size:.85rem">No runs yet.</div>'; return; }
+        const rows = runs.map(r => `<tr>
+          <td>${r.id}</td>
+          <td><span class="badge badge--${r.status === 'success' ? 'published' : r.status === 'running' ? 'draft' : 'deprecated'}">${r.status}</span></td>
+          <td><span style="font-size:.78rem">${r.triggered_by}</span></td>
+          <td style="font-size:.78rem;color:var(--text-muted)">${r.started_at ? new Date(r.started_at).toLocaleString('en-GB',{timeZone:'UTC'}) + ' UTC' : '—'}</td>
+          <td style="font-size:.78rem;color:var(--text-muted)">${r.ended_at ? new Date(r.ended_at).toLocaleString('en-GB',{timeZone:'UTC'}) + ' UTC' : '—'}</td>
+          <td>${r.duration_seconds ? r.duration_seconds.toFixed(1) + 's' : '—'}</td>
+          <td style="font-size:.78rem;color:var(--danger)">${r.error_message || ''}</td>
+          <td style="font-size:.78rem;color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.logs || ''}">${r.logs || '—'}</td>
+        </tr>`).join('');
+        el.innerHTML = `<table class="data-table" style="width:100%">
+          <thead><tr><th>#</th><th>Status</th><th>Trigger</th><th>Started (UTC)</th><th>Ended (UTC)</th><th>Duration</th><th>Error</th><th>Notes</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+      } catch(e) {
+        el.innerHTML = `<div style="color:var(--danger);font-size:.85rem">Failed: ${e.message}</div>`;
+      }
+    }
+
+    async function triggerJob() {
+      if (!confirm('Trigger CUR S3 Sync now?')) return;
+      try {
+        const r = await api('/jobs/cur-s3-sync/trigger', { method: 'POST' });
+        alert('Job triggered — Run #' + r.run_id);
+        setTimeout(loadRuns, 2000);
+      } catch(e) { alert('Failed: ' + e.message); }
+    }
+
+    function cronToFriendly(cron) {
+      if (cron === '0 * * * *') return 'Every hour';
+      if (cron === '0 */2 * * *') return 'Every 2 hours';
+      if (cron === '0 */6 * * *') return 'Every 6 hours';
+      const m = cron.match(/^0 (\d+) \* \* \*$/);
+      if (m) return `Daily at ${String(m[1]).padStart(2,'0')}:00 UTC`;
+      return cron;
+    }
+
+    function updateCronPreview() {
+      const freq = document.getElementById('sched-frequency').value;
+      const timeRow = document.getElementById('sched-time-row');
+      let cron = '0 * * * *';
+      if (freq === 'hourly') { cron = '0 * * * *'; timeRow.style.display = 'none'; }
+      else if (freq === 'every2h') { cron = '0 */2 * * *'; timeRow.style.display = 'none'; }
+      else if (freq === 'every6h') { cron = '0 */6 * * *'; timeRow.style.display = 'none'; }
+      else if (freq === 'daily') {
+        const h = document.getElementById('sched-hour')?.value || '6';
+        cron = `0 ${h} * * *`;
+        timeRow.style.display = 'block';
+      }
+      document.getElementById('cron-preview').textContent = cron;
+    }
+
+    function openAddScheduleModal() {
+      const modal = document.getElementById('add-schedule-modal');
+      const hourSel = document.getElementById('sched-hour');
+      if (hourSel && !hourSel.options.length) {
+        for (let i = 0; i < 24; i++) {
+          const opt = document.createElement('option');
+          opt.value = i; opt.textContent = String(i).padStart(2,'0') + ':00 UTC';
+          hourSel.appendChild(opt);
+        }
+      }
+      updateCronPreview();
+      modal.style.display = 'flex';
+    }
+
+    function closeScheduleModal() {
+      document.getElementById('add-schedule-modal').style.display = 'none';
+    }
+
+    async function saveSchedule() {
+      const freq = document.getElementById('sched-frequency').value;
+      const cron = document.getElementById('cron-preview').textContent;
+      try {
+        await api('/jobs/cur-s3-sync/schedules', {
+          method: 'POST',
+          body: JSON.stringify({ cron_expression: cron, enabled: true }),
+          headers: { 'Content-Type': 'application/json' }
+        });
+        closeScheduleModal();
+        loadSchedules();
+      } catch(e) { alert('Failed: ' + e.message); }
+    }
+
+    async function toggleSchedule(id, currentEnabled, cron) {
+      const action = currentEnabled ? 'disable' : 'enable';
+      if (!confirm(`${action.charAt(0).toUpperCase()+action.slice(1)} this schedule?`)) return;
+      try {
+        await api(`/jobs/cur-s3-sync/schedules/${id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ cron_expression: cron, enabled: !currentEnabled }),
+          headers: { 'Content-Type': 'application/json' }
+        });
+        loadSchedules();
+      } catch(e) { alert('Failed: ' + e.message); }
+    }
+
+    async function deleteSchedule(id) {
+      if (!confirm('Delete this schedule?')) return;
+      try {
+        await api(`/jobs/cur-s3-sync/schedules/${id}`, { method: 'DELETE' });
+        loadSchedules();
+      } catch(e) { alert('Failed: ' + e.message); }
+    }
+
+    function switchSubTab(name) {
+      document.getElementById('subtab-reports-content').style.display = name === 'reports' ? 'block' : 'none';
+      document.getElementById('subtab-jobs-content').style.display = name === 'jobs' ? 'block' : 'none';
+      const rBtn = document.getElementById('subtab-reports');
+      const jBtn = document.getElementById('subtab-jobs');
+      rBtn.style.borderBottomColor = name === 'reports' ? 'var(--accent)' : 'transparent';
+      rBtn.style.color = name === 'reports' ? 'var(--accent)' : 'var(--text-muted)';
+      rBtn.style.fontWeight = name === 'reports' ? '600' : '400';
+      jBtn.style.borderBottomColor = name === 'jobs' ? 'var(--accent)' : 'transparent';
+      jBtn.style.color = name === 'jobs' ? 'var(--accent)' : 'var(--text-muted)';
+      jBtn.style.fontWeight = name === 'jobs' ? '600' : '400';
+    }
   </script>
   <script>
     // ── Fix nav links in standalone mode ──────────────────────────────────

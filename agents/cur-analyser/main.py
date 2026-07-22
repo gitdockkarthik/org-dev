@@ -330,8 +330,11 @@ async def lifespan(app: FastAPI):
         _s3_sync_jobs[job_id] = {"status": "started", "progress": "Initialising..."}
         await _run_s3_sync(job_id, bucket, prefix, region)
         result = _s3_sync_jobs.get(job_id, {})
+        progress = result.get("progress", "Sync complete")
         if result.get("status") == "failed":
-            raise Exception(result.get("progress", "Sync failed"))
+            raise Exception(progress)
+        # Store result message so job runner can log it
+        _s3_sync_job._last_result = progress
     _jobs_module.register_job(
         "cur-s3-sync",
         "CUR S3 Sync",

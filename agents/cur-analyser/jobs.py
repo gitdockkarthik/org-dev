@@ -91,12 +91,14 @@ async def _execute_job(job: dict, run: CurJobRun) -> None:
         await job["handler"]()
         ended = datetime.now(timezone.utc)
         duration = (ended - started).total_seconds()
+        result_note = getattr(job["handler"], '_last_result', None)
+        log_msg = f"{result_note} (completed in {duration:.1f}s)" if result_note else f"Completed in {duration:.1f}s"
         await _update_run(
             run.id,
             status="success",
             ended_at=ended,
             duration_seconds=duration,
-            logs=f"Completed in {duration:.1f}s",
+            logs=log_msg,
         )
         logger.info("Job %s completed in %.1fs", job["id"], duration)
     except Exception as e:
