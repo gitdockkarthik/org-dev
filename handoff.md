@@ -90,3 +90,6 @@ Complete remaining Kafka dashboard tabs and job management UI.
 
 ## Blocked
 None — overnight jobs running.
+
+## Additional Fix This Session
+* Kafka Connect search: now searches both connector name AND connector_class (e.g. "elasticsearch", "debezium")
