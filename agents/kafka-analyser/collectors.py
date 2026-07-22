@@ -71,6 +71,8 @@ async def collect_broker_health():
                     broker.update(broker_metrics[bid])
             # Update only brokers in cache
             _ks.update_brokers(cid, brokers)
+            from kafka_store import save_brokers
+            await save_brokers(cid, brokers=brokers)
             results.append(f"{c['name']}: {len(brokers)} brokers")
         except Exception as e:
             logger.warning("broker_health failed for %s: %s", c["name"], e)
@@ -159,6 +161,8 @@ async def collect_consumer_lag_active():
             data["counts"]["active_groups"] = result["group_states"]["consumer"]
             data["counts"]["total_lag"] = result["total_lag"]
             _ks.set_cluster_data(data, source_type=c.get("source_type", "live"), cluster_id=cid)
+            from kafka_store import save_groups
+            await save_groups(cid)
             total_groups += result["group_states"]["consumer"]
         except Exception as e:
             logger.warning("consumer_lag_active failed for %s: %s", c["name"], e)
@@ -205,6 +209,9 @@ async def collect_topic_sizes():
                 for t in sizes_result["topic_sizes"]
             ]
             _ks.set_cluster_data(data, source_type=c.get("source_type", "live"), cluster_id=cid)
+            # Persist to PostgreSQL
+            from kafka_store import save_topics_metrics
+            await save_topics_metrics(cid)
             results.append(f"{c['name']}: {sizes_result['total_topics']} topics, {sizes_result['total_size_gb']}GB in {sizes_result['collection_time_secs']}s")
         except Exception as e:
             logger.warning("topic_sizes failed for %s: %s", c["name"], e)
