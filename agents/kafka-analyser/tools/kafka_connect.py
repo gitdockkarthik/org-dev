@@ -22,15 +22,55 @@ class KafkaConnectCollector:
     async def collect(self) -> dict[str, Any]:
         """Fetch all connector data and return structured dict."""
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=8.0) as client:
                 # Check Connect cluster info
                 info = await self._get_cluster_info(client)
-
-                # Get all connector names
-                connector_names = await self._get_connectors(client)
-
-                # Fetch status in batches for efficiency
-                connectors = await self._get_connector_statuses(client, connector_names)
+                # Single call with expand=status&expand=info — gets all connectors at once
+                resp = await client.get(f"{self._url}/connectors?expand=status&expand=info")
+                resp.raise_for_status()
+                expanded = resp.json()
+                # Parse expanded response directly — no per-connector calls needed
+                if isinstance(expanded, dict):
+                    connectors = []
+                    for name, data in expanded.items():
+                        status = data.get("status", {})
+                        info_data = data.get("info", {})
+                        config = info_data.get("config", {})
+                        connector_status = status.get("connector", {})
+                        tasks = status.get("tasks", [])
+                        state = connector_status.get("state", "UNKNOWN")
+                        connector_type = status.get("type", info_data.get("type", "unknown"))
+                        connector_class = config.get("connector.class", "").split(".")[-1]
+                        total_tasks = len(tasks)
+                        failed_tasks = sum(1 for t in tasks if t.get("state") == "FAILED")
+                        running_tasks = sum(1 for t in tasks if t.get("state") == "RUNNING")
+                        paused_tasks = sum(1 for t in tasks if t.get("state") == "PAUSED")
+                        task_details = [
+                            {
+                                "task_id": t.get("id", {}).get("task", i) if isinstance(t.get("id"), dict) else i,
+                                "state": t.get("state", "UNKNOWN"),
+                                "worker_id": t.get("worker_id", ""),
+                                "trace": t.get("trace", "")[:200] if t.get("trace") else "",
+                            }
+                            for i, t in enumerate(tasks)
+                        ]
+                        connectors.append({
+                            "name": name,
+                            "state": state,
+                            "type": connector_type,
+                            "connector_class": connector_class,
+                            "total_tasks": total_tasks,
+                            "failed_tasks": failed_tasks,
+                            "running_tasks": running_tasks,
+                            "paused_tasks": paused_tasks,
+                            "tasks": task_details,
+                            "worker_id": connector_status.get("worker_id", ""),
+                            "trace": connector_status.get("trace", "")[:200] if connector_status.get("trace") else "",
+                        })
+                else:
+                    # Fallback: list response without expand
+                    connector_names = expanded if isinstance(expanded, list) else []
+                    connectors = await self._get_connector_statuses(client, connector_names)
 
                 # Compute summary stats
                 running = sum(1 for c in connectors if c["state"] == "RUNNING")
