@@ -66,3 +66,8 @@ Apply job management pattern to alert and kafka agents, then address remaining i
 
 ## Blocked
 None — all work unblocked.
+
+## Additional Next Session Items (prepend to Next Checkpoint)
+* Human-friendly schedule UI for CUR jobs (frequency picker, no cron syntax exposed)
+* Hide global filter bar in CUR dashboard (causing data inconsistencies with pre-aggregated tabs)
+* Then: alert-analyser and kafka-analyser jobs.py
