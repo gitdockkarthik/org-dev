@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from agent import AgentRunner
 from config import settings
+import jobs as _jobs_module
 from routes_dashboard import router as dashboard_router
 from routes_reports import router as reports_router
 from routes_settings import load_config_from_db, router as settings_router
@@ -850,20 +851,46 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("Startup: could not restore from DB: %s", exc)
 
-    async def _delayed_collection_loop():
-        """Wait for startup scans to complete before starting collection loop."""
-        await asyncio.sleep(300)  # 5 mins — enough for topic describe + prometheus + lag
+    # Register and start self-contained job scheduler
+    from database import engine as _db_engine, SessionLocal
+    from models import Base, KafkaJobSchedule, KafkaJobRun
+    if _db_engine is not None:
+        async with _db_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+    # Register kafka metrics collection job
+    async def _kafka_collect_job():
+        from routes_settings import _config as _rs_config
+        source_type = _rs_config.get("source_type", "synthetic")
+        if source_type not in ("kafka_internal", "kafka_sasl", "live"):
+            _kafka_collect_job._last_result = f"Skipped — source_type={source_type}"
+            return
+        from storage import get_backend
+        clusters = await get_backend().get_clusters(settings.agent_slug)
+        enabled = [c for c in clusters if c.get("enabled")]
+        if not enabled:
+            _kafka_collect_job._last_result = "No enabled clusters — skipped"
+            return
         await _collection_loop()
-
-    collection_task = asyncio.create_task(_delayed_collection_loop())
-
+        _kafka_collect_job._last_result = f"Collected metrics for {len(enabled)} cluster(s)"
+    _jobs_module.register_job(
+        "kafka-metrics-collect",
+        "Kafka Metrics Collection",
+        "Collect broker, consumer lag, topic, and connector metrics from Kafka clusters",
+        _kafka_collect_job,
+        default_timeout_secs=120,
+    )
+    # Register default schedule if none exists
+    from sqlalchemy import select as _sel
+    async with SessionLocal() as _sess:
+        existing = await _sess.execute(_sel(KafkaJobSchedule).where(KafkaJobSchedule.job_id == "kafka-metrics-collect"))
+        if not existing.scalar_one_or_none():
+            await _jobs_module.create_schedule("kafka-metrics-collect", "*/5 * * * *", enabled=True, timeout_secs=120)
+            logger.info("Created default 5-min schedule for kafka-metrics-collect")
+    count = await _jobs_module.load_schedules()
+    logger.info("Job scheduler: loaded %d schedule(s)", count)
+    _jobs_module.start_scheduler()
     yield
-
-    collection_task.cancel()
-    try:
-        await collection_task
-    except asyncio.CancelledError:
-        pass
+    _jobs_module.stop_scheduler()
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
@@ -880,6 +907,48 @@ app.include_router(dashboard_router)
 app.include_router(reports_router)
 app.include_router(settings_router)
 
+
+# ── Job Management Endpoints ──────────────────────────────────────────────────
+@app.get("/jobs")
+async def list_jobs() -> list:
+    if not hasattr(_jobs_module, '_jobs'):
+        return []
+    return [{"id": j["id"], "name": j["name"], "description": j["description"], "default_timeout_secs": j["default_timeout_secs"]}
+            for j in _jobs_module._jobs.values()]
+
+@app.get("/jobs/{job_id}/runs")
+async def get_job_runs(job_id: str, limit: int = 50) -> list:
+    return await _jobs_module.get_runs(job_id=job_id, limit=limit)
+
+@app.get("/jobs/{job_id}/schedules")
+async def get_job_schedules(job_id: str) -> list:
+    return await _jobs_module.get_schedules(job_id=job_id)
+
+@app.post("/jobs/{job_id}/trigger")
+async def trigger_job(job_id: str) -> dict:
+    return await _jobs_module.trigger_job(job_id, triggered_by="manual")
+
+@app.post("/jobs/{job_id}/schedules")
+async def create_job_schedule(job_id: str, body: dict) -> dict:
+    cron = body.get("cron_expression", "*/5 * * * *")
+    enabled = body.get("enabled", True)
+    timeout_secs = body.get("timeout_secs", 120)
+    return await _jobs_module.create_schedule(job_id, cron, enabled, timeout_secs)
+
+@app.put("/jobs/{job_id}/schedules/{schedule_id}")
+async def update_job_schedule(job_id: str, schedule_id: int, body: dict) -> dict:
+    cron = body.get("cron_expression", "*/5 * * * *")
+    enabled = body.get("enabled", True)
+    timeout_secs = body.get("timeout_secs", 120)
+    return await _jobs_module.update_schedule(schedule_id, cron, enabled, timeout_secs)
+
+@app.delete("/jobs/{job_id}/schedules/{schedule_id}")
+async def delete_job_schedule(job_id: str, schedule_id: int) -> dict:
+    return await _jobs_module.delete_schedule(schedule_id)
+
+@app.get("/runs")
+async def get_all_runs(limit: int = 50) -> list:
+    return await _jobs_module.get_runs(limit=limit)
 
 @app.get("/health")
 async def health():

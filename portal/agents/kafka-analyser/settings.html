@@ -258,10 +258,10 @@
         Enterprise Kafka <span class="phase-badge">Phase 3</span>
       </button>
       <button class="tab-btn" data-tab="rag" role="tab">
-        RAG &amp; Intelligence <span class="phase-badge">Phase 2</span>
+        RAG &amp; Intelligence
       </button>
       <button class="tab-btn" data-tab="autonomous" role="tab">
-        Autonomous <span class="phase-badge">Phase 3</span>
+        Autonomous
       </button>
     </nav>
 
@@ -470,13 +470,6 @@
         <div id="action-msg" class="action-msg hidden"></div>
       </div>
 
-      <div class="card">
-        <div class="card-title">Sync Status</div>
-        <div id="sync-status" class="status-rows" style="margin-top:0.75rem">
-          <span style="color:#94a3b8;font-style:italic;font-size:.875rem">Loading…</span>
-        </div>
-      </div>
-
     </div><!-- /#panel-data-source -->
 
     <!-- TAB 2: Alert Thresholds -->
@@ -611,12 +604,9 @@
 
     </div><!-- /#panel-thresholds -->
 
-    <!-- TAB 3: Enterprise Kafka (Phase 3, locked) -->
+    <!-- TAB 3: Enterprise Kafka -->
     <div class="tab-panel" id="panel-enterprise">
-      <div class="locked-info">
-        <strong>Phase 3</strong> — Self-hosted Apache Kafka via JMX Exporter and AWS MSK connectivity. Configure once and metrics collect automatically on your schedule. Available in Phase 3.
-      </div>
-      <div class="locked-content">
+      <div>
         <div class="card">
           <div class="field"><label for="ent-cluster-name">Cluster Name</label><input type="text" id="ent-cluster-name" disabled placeholder="prod-kafka" /></div>
           <div class="field"><label for="ent-bootstrap">Bootstrap Servers</label><input type="text" id="ent-bootstrap" disabled placeholder="broker1:9092,broker2:9092" /></div>
@@ -636,7 +626,7 @@
       </div>
     </div>
 
-    <!-- TAB 4: RAG & Intelligence (Phase 4, locked) -->
+    <!-- TAB 4: RAG & Intelligence -->
     <div class="tab-panel" id="panel-rag">
       <div class="locked-info">
         <strong>Phase 4</strong> — Incident history embeddings and runbook-grounded AI analysis using pgvector and Qdrant. Available in Phase 4.
