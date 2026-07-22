@@ -836,6 +836,7 @@ class RealKafkaCollector(KafkaCollector):
                 "produce_latency_ms": 0.0, "fetch_latency_ms": 0.0}
             brokers.append({
                 "id": str(node.get("node_id")),
+                "broker_id": str(node.get("node_id")),
                 "host": host,
                 "port": int(node.get("port", 0)),
                 **metrics,

@@ -69,10 +69,45 @@ async def collect_broker_health():
                 bid = str(broker.get("broker_id", broker.get("host", "")))
                 if bid in broker_metrics and broker_metrics[bid]:
                     broker.update(broker_metrics[bid])
-            # Update only brokers in cache
+            # Update cache
             _ks.update_brokers(cid, brokers)
-            from kafka_store import save_brokers
-            await save_brokers(cid, brokers=brokers)
+            # Upsert to postgres — one row per broker per cluster (latest only)
+            try:
+                from database import SessionLocal
+                from sqlalchemy import text
+                async with SessionLocal() as sess:
+                    for broker in brokers:
+                        bid = broker.get("broker_id") or broker.get("id", "")
+                        await sess.execute(text("""
+                            INSERT INTO kafka_broker_metrics
+                            (time, cluster_id, broker_id, heap_pct, gc_pause_ms,
+                             request_handler_idle_pct, urp_count, messages_in_per_sec,
+                             cpu_pct, disk_pct)
+                            VALUES (now(), :cid, :bid, :heap, :gc, :idle, :urp, :msgs, :cpu, :disk)
+                            ON CONFLICT (cluster_id, broker_id)
+                            DO UPDATE SET
+                                time = now(),
+                                heap_pct = EXCLUDED.heap_pct,
+                                gc_pause_ms = EXCLUDED.gc_pause_ms,
+                                request_handler_idle_pct = EXCLUDED.request_handler_idle_pct,
+                                urp_count = EXCLUDED.urp_count,
+                                messages_in_per_sec = EXCLUDED.messages_in_per_sec,
+                                cpu_pct = EXCLUDED.cpu_pct,
+                                disk_pct = EXCLUDED.disk_pct
+                        """), {
+                            "cid": int(cid),
+                            "bid": bid,
+                            "heap": broker.get("heap_pct", 0.0),
+                            "gc": int(broker.get("gc_pause_ms", 0)),
+                            "idle": broker.get("request_handler_idle_pct", 100.0),
+                            "urp": int(broker.get("urp_count", 0)),
+                            "msgs": broker.get("messages_in_per_sec", 0.0),
+                            "cpu": broker.get("cpu_pct", 0.0),
+                            "disk": broker.get("disk_pct", 0.0),
+                        })
+                    await sess.commit()
+            except Exception as db_exc:
+                logger.warning("broker upsert failed: %s", db_exc)
             results.append(f"{c['name']}: {len(brokers)} brokers")
         except Exception as e:
             logger.warning("broker_health failed for %s: %s", c["name"], e)
