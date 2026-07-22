@@ -252,8 +252,7 @@
           return `<tr>
             <td><strong>CUR S3 Sync</strong></td>
             <td>${friendly}</td>
-            <td><code style="font-size:.75rem">${s.cron_expression}</code></td>
-            <td style="font-size:.75rem;color:var(--text-muted)">UTC</td>
+            <td style="font-size:.78rem;color:var(--text-muted)">UTC</td>
             <td>${s.enabled
               ? '<span style="color:var(--success);font-weight:600">● Enabled</span>'
               : '<span style="color:var(--danger);font-weight:600">● Disabled</span>'}</td>
@@ -264,7 +263,7 @@
           </tr>`;
         }).join('');
         el.innerHTML = `<table class="data-table" style="width:100%">
-          <thead><tr><th>Job</th><th>Frequency</th><th>Cron</th><th>Timezone</th><th>Status</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Job</th><th>Schedule</th><th>Timezone</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>`;
       } catch(e) {
