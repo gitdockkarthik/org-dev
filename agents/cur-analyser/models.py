@@ -52,3 +52,34 @@ class CurTabCache(Base):
     )
     enrichment_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     cache_version: Mapped[str] = mapped_column(String(16), nullable=False, default="v1")
+
+
+class CurJobSchedule(Base):
+    __tablename__ = "cur_job_schedules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    cron_expression: Mapped[str] = mapped_column(String(64), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+
+class CurJobRun(Base):
+    __tablename__ = "cur_job_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    triggered_by: Mapped[str] = mapped_column(String(16), nullable=False, default="schedule")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    logs: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )

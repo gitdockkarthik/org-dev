@@ -39,6 +39,13 @@ function resetSession(agentSlug) {
 
 // ── HTTP helpers ────────────────────────────────────────────────────────────────
 async function _json(res) {
+  if (res.status === 401) {
+    const mode = window.__CONFIG__?.AUTH_MODE || 'none';
+    if (mode === 'local' && !window.location.pathname.includes('/login')) {
+      window.location.href = '/login?expired=1';
+    }
+    throw new Error('Session expired');
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(body.detail || `HTTP ${res.status}`);
@@ -71,6 +78,13 @@ async function fetchCurrentUser() {
   if (_currentUser) return _currentUser;
   try {
     const res = await fetch('/api/auth/me', { credentials: 'include' });
+    if (res.status === 401) {
+      const mode = window.__CONFIG__?.AUTH_MODE || 'none';
+      if (mode === 'local' && !window.location.pathname.includes('/login')) {
+        window.location.href = '/login?expired=1';
+      }
+      return null;
+    }
     if (!res.ok) return null;
     _currentUser = await res.json();
     return _currentUser;
