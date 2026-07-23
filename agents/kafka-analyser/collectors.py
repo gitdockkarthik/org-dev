@@ -386,6 +386,28 @@ async def collect_topic_structure(cluster_id: str = ""):
             data["counts"]["topics_rf1"] = total_rf1
             data["counts"]["total_urp"] = total_urp
             _ks.set_cluster_data(data, source_type=c.get("source_type", "live"), cluster_id=cid)
+            # Bulk update partition_count and replication_factor in kafka_topic_metrics
+            try:
+                from database import SessionLocal
+                from sqlalchemy import text as _pct
+                async with SessionLocal() as sess:
+                    values = ",".join(
+                        f"('{t['name'].replace(chr(39), chr(39)*2)}', {t.get('partition_count',0)}, {t.get('replication_factor',0)})"
+                        for t in described_topics
+                    )
+                    if values:
+                        await sess.execute(_pct(f"""
+                            UPDATE kafka_topic_metrics SET
+                                partition_count = v.pc,
+                                replication_factor = v.rf
+                            FROM (VALUES {values}) AS v(topic, pc, rf)
+                            WHERE kafka_topic_metrics.cluster_id = {int(cid)}
+                            AND kafka_topic_metrics.topic = v.topic
+                        """))
+                        await sess.commit()
+                logger.info("Updated partition counts for %d topics in %s", len(described_topics), c["name"])
+            except Exception as _pe:
+                logger.warning("partition count update failed: %s", _pe)
             results.append(f"{c['name']}: {len(described_topics)} topics, {total_rf1} RF=1, {total_urp} URP")
             # Collect broker leader distribution
             try:

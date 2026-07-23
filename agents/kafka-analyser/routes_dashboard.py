@@ -1547,9 +1547,22 @@ Unknown tab "{tab}" — no specific data available.
 async def stream_topic_details(cluster_id: str, limit: int = 500):
     """Stream topic details on-demand — top N topics, rest available via search."""
     collector = await _collector_for_cluster(cluster_id)
-    data = kafka_store.get_cluster_data(cluster_id)
-    all_names = [t["name"] for t in (data or {}).get("topics", [])]
-    total_count = (data or {}).get("counts", {}).get("total_topics", len(all_names))
+    # Read topic names from postgres
+    all_names = []
+    total_count = 0
+    try:
+        from database import SessionLocal
+        from sqlalchemy import text as _tst
+        if SessionLocal:
+            async with SessionLocal() as _tss:
+                _tsr = await _tss.execute(_tst(
+                    "SELECT topic FROM kafka_topic_metrics WHERE cluster_id=:cid ORDER BY size_bytes DESC LIMIT :lim"
+                ), {"cid": int(cluster_id), "lim": limit})
+                all_names = [r.topic for r in _tsr.fetchall()]
+                _tc = await _tss.execute(_tst("SELECT COUNT(*) FROM kafka_topic_metrics WHERE cluster_id=:cid"), {"cid": int(cluster_id)})
+                total_count = _tc.scalar() or 0
+    except Exception:
+        pass
     if not all_names:
         return {"topics": [], "total": 0, "total_topics": total_count}
     names_to_describe = all_names[:limit]
@@ -1578,14 +1591,21 @@ async def stream_topic_details(cluster_id: str, limit: int = 500):
 async def stream_group_lags(cluster_id: str):
     """Stream consumer group lag on-demand — fetches lag in batches."""
     collector = await _collector_for_cluster(cluster_id)
-    data = kafka_store.get_cluster_data(cluster_id)
-    all_groups = [g for g in (data or {}).get("consumer_groups", [])
-                  if g.get("state", "Unknown") not in ("Empty", "Dead")]
-    if not all_groups:
+    # Read groups from postgres sorted by lag
+    group_ids = []
+    try:
+        from database import SessionLocal
+        from sqlalchemy import text as _gst
+        if SessionLocal:
+            async with SessionLocal() as _gss:
+                _gsr = await _gss.execute(_gst(
+                    "SELECT group_id FROM kafka_consumer_group_lag WHERE cluster_id=:cid ORDER BY total_lag DESC LIMIT 2000"
+                ), {"cid": int(cluster_id)})
+                group_ids = [r.group_id for r in _gsr.fetchall()]
+    except Exception:
+        pass
+    if not group_ids:
         return {"groups": [], "total": 0}
-
-    # Sort by state — active groups first, limit to 200
-    group_ids = [g["group_id"] for g in all_groups][:2000]
 
     async def generate():
         _BATCH = 20
