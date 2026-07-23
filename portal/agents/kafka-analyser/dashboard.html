@@ -1141,7 +1141,7 @@
           </div>
           <div class="kpi kpi--orange">
             <div class="kpi__label">Large Topics</div>
-            <div class="kpi__value">${((window._clusterCounts && window._clusterCounts.top_topics_by_size) || []).filter(t => (t.size_bytes||0) > 10*1024*1024*1024).length}</div>
+            <div class="kpi__value">${(window._clusterCounts && window._clusterCounts.large_topics_count) || 0}</div>
             <div class="kpi__sub">&gt; 10GB storage</div>
           </div>
         </div>`;
@@ -3093,8 +3093,8 @@
       const realTotal = counts.total_topics || topics.length;
       // Use accurate cluster-wide counts if available, otherwise compute from displayed topics
       const lowRep = counts.total_rf1 != null ? counts.total_rf1 : topics.filter(t => t.replication_factor === 1 && t.partition_count > 0).length;
-      const hotTopics = topics.filter(t => (t.messages_in_per_sec || 0) > 1000).length;
-      const retentionRisk = topics.filter(t => (t.retention_pct || 0) > 70).length;
+      const hotTopics = counts.total_hot != null ? counts.total_hot : 0;
+      const largeTopics = counts.large_topics_count != null ? counts.large_topics_count : 0;
       if (isDone) {
         kpis[0].textContent = realTotal.toLocaleString();
         kpis[0].classList.remove('kpi-loading');
@@ -3103,7 +3103,7 @@
         kpis[1].classList.remove('kpi-loading');
         kpis[2].textContent = hotTopics;
         kpis[2].classList.remove('kpi-loading');
-        kpis[3].textContent = retentionRisk;
+        kpis[3].textContent = largeTopics;
         kpis[3].classList.remove('kpi-loading');
       } else {
         kpis[0].textContent = realTotal.toLocaleString();
@@ -3111,7 +3111,7 @@
         kpis[1].classList.add('kpi-loading');
         kpis[2].textContent = hotTopics;
         kpis[2].classList.add('kpi-loading');
-        kpis[3].textContent = retentionRisk;
+        kpis[3].textContent = largeTopics;
         kpis[3].classList.add('kpi-loading');
       }
     }
