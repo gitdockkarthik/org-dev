@@ -1337,10 +1337,11 @@
                 label: s.name || ('Topic ' + (i + 1)),
                 data: s.values || [],
                 borderColor: colors[i % colors.length],
-                backgroundColor: 'transparent',
+                backgroundColor: `rgba(${['255,107,53','79,195,247','76,175,80','156,39,176','255,152,0'][i % 5]},0.1)`,
                 borderWidth: 2,
                 pointRadius: labels.length <= 24 ? 3 : 0,
                 tension: 0.3,
+                fill: true,
               })),
             },
             options: {
