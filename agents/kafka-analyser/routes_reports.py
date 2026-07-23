@@ -190,6 +190,17 @@ async def list_reports() -> dict:
         # Consumer groups from postgres
         cg = await sess.execute(_t("SELECT COUNT(*) FROM kafka_consumer_group_lag WHERE cluster_id IN (SELECT id FROM kafka_clusters WHERE agent_slug='kafka-analyser' AND enabled=true)"))
         cg_count = cg.scalar() or 0
+        connector_count = 0
+        try:
+            from routes_dashboard import get_kafka_connect
+            from storage import get_backend as _gb3
+            _cls3 = await _gb3().get_clusters("kafka-analyser")
+            _en3 = [c for c in _cls3 if c.get("enabled") and c.get("kafka_connect_url")]
+            if _en3:
+                _cdata = await get_kafka_connect(cluster_id=str(_en3[0].get("id","")))
+                connector_count = _cdata.get("connector_count", 0)
+        except Exception:
+            pass
         return {
             "loaded": broker_count > 0 or topic_count > 0,
             "source_type": "live",
@@ -197,7 +208,7 @@ async def list_reports() -> dict:
             "broker_count": broker_count,
             "consumer_group_count": cg_count,
             "topic_count": topic_count,
-            "connector_count": 0,
+            "connector_count": connector_count,
         }
     except Exception as e:
         return kafka_store.get_sync_meta()
