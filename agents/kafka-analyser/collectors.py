@@ -525,7 +525,150 @@ async def collect_connectors():
     collect_connectors._last_result = "; ".join(results) if results else "No connectors configured"
 
 
-# ── Job 7: Message Rate ───────────────────────────────────────────────────────
+# ── Job 7: Connector Snapshots for SLO Tracking ───────────────────────────────
+async def collect_connector_snapshots(cluster_id: str = ""):
+    """Collect connector states and save snapshots for SLO tracking."""
+    c = await _get_cluster(cluster_id)
+    if not c:
+        collect_connector_snapshots._last_result = f"Cluster {cluster_id} not found"
+        return
+    connect_url = c.get("kafka_connect_url", "")
+    if not connect_url:
+        collect_connector_snapshots._last_result = "No Kafka Connect URL configured"
+        return
+    try:
+        from tools.kafka_connect import KafkaConnectCollector
+        from database import SessionLocal
+        from sqlalchemy import text as _ct
+        import asyncio as _aio
+        # Collect from all workers
+        urls = [u.strip() for u in connect_url.split(",") if u.strip()]
+        all_connectors = {}
+        async def _collect_one(url):
+            try:
+                r = await KafkaConnectCollector(url).collect()
+                for conn in r.get("connectors", []):
+                    name = conn["name"]
+                    if name not in all_connectors:
+                        all_connectors[name] = conn
+            except Exception:
+                pass
+        await _aio.gather(*[_collect_one(u) for u in urls])
+        connectors = list(all_connectors.values())
+        if not connectors:
+            collect_connector_snapshots._last_result = "No connectors found"
+            return
+        # Save snapshots to postgres
+        cid = _cid(c)
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        async with SessionLocal() as sess:
+            values = ",".join(
+                f"({int(cid)}, '{conn['name'].replace(chr(39), chr(39)*2)}', "
+                f"'{conn.get('type','unknown')}', '{conn.get('state','UNKNOWN')}', "
+                f"{conn.get('total_tasks',0)}, {conn.get('running_tasks',0)}, "
+                f"{conn.get('failed_tasks',0)}, '{now.isoformat()}')"
+                for conn in connectors
+            )
+            await sess.execute(_ct(f"""
+                INSERT INTO kafka_connector_snapshots
+                (cluster_id, connector_name, connector_type, state, total_tasks, running_tasks, failed_tasks, collected_at)
+                VALUES {values}
+            """))
+            await sess.commit()
+        collect_connector_snapshots._last_result = f"Saved {len(connectors)} connector snapshots"
+    except Exception as e:
+        logger.error("collect_connector_snapshots failed: %s", e)
+        collect_connector_snapshots._last_result = f"Error: {e}"
+
+
+# ── Job 7b: SLO Compliance Computation ────────────────────────────────────────
+async def compute_slo_compliance(cluster_id: str = ""):
+    """Compute hourly SLO compliance and save to kafka_slo_compliance."""
+    c = await _get_cluster(cluster_id)
+    if not c:
+        compute_slo_compliance._last_result = f"Cluster {cluster_id} not found"
+        return
+    cid = _cid(c)
+    try:
+        from database import SessionLocal
+        from sqlalchemy import text as _slo
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone.utc)
+        hour_bucket = now.replace(minute=0, second=0, microsecond=0)
+        prev_hour = hour_bucket - timedelta(hours=1)
+        async with SessionLocal() as sess:
+            # Get SLO targets
+            tgt = await sess.execute(_slo(
+                "SELECT * FROM kafka_slo_targets WHERE cluster_id=:cid LIMIT 1"
+            ), {"cid": int(cid)})
+            target = tgt.fetchone()
+            lag_target = target.consumer_lag_target if target else 10000
+            conn_target = target.connector_availability_target if target else 99.0
+            urp_target = target.urp_target if target else 0
+            # Connector availability % in last hour
+            # SLI: RUNNING / (RUNNING + FAILED) — excludes PAUSED and UNASSIGNED
+            conn_stats = await sess.execute(_slo("""
+                SELECT SUM(CASE WHEN state='RUNNING' THEN 1 ELSE 0 END) as running,
+                       SUM(CASE WHEN state='FAILED' THEN 1 ELSE 0 END) as failed
+                FROM kafka_connector_snapshots
+                WHERE cluster_id=:cid AND collected_at >= :prev AND collected_at < :now
+                AND state IN ('RUNNING', 'FAILED')
+            """), {"cid": int(cid), "prev": prev_hour, "now": hour_bucket})
+            cs = conn_stats.fetchone()
+            conn_running = cs.running or 0
+            conn_failed = cs.failed or 0
+            conn_total = conn_running + conn_failed
+            conn_avail_pct = (conn_running / conn_total * 100) if conn_total > 0 else None
+            # Consumer lag compliance % in last hour
+            lag_stats = await sess.execute(_slo("""
+                SELECT COUNT(*) as total,
+                       SUM(CASE WHEN total_lag <= :target THEN 1 ELSE 0 END) as compliant
+                FROM kafka_lag_snapshots
+                WHERE cluster_id=:cid AND collected_at >= :prev AND collected_at < :now
+            """), {"cid": str(cid), "target": lag_target, "prev": prev_hour, "now": hour_bucket})
+            ls = lag_stats.fetchone()
+            lag_compliance_pct = (ls.compliant / ls.total * 100) if ls and ls.total > 0 else None
+            # Broker + URP compliance % in last hour
+            broker_stats = await sess.execute(_slo("""
+                SELECT COUNT(*) as total,
+                       SUM(CASE WHEN urp_count <= :urp THEN 1 ELSE 0 END) as urp_ok
+                FROM kafka_broker_metrics
+                WHERE cluster_id=:cid AND time >= :prev AND time < :now
+            """), {"cid": int(cid), "urp": urp_target, "prev": prev_hour, "now": hour_bucket})
+            bs = broker_stats.fetchone()
+            broker_avail_pct = 100.0 if bs and bs.total > 0 else None
+            urp_compliance_pct = (bs.urp_ok / bs.total * 100) if bs and bs.total > 0 else None
+            # Overall compliance
+            metrics = [m for m in [conn_avail_pct, lag_compliance_pct, urp_compliance_pct] if m is not None]
+            overall = sum(metrics) / len(metrics) if metrics else None
+            # Upsert compliance snapshot
+            await sess.execute(_slo("""
+                INSERT INTO kafka_slo_compliance
+                (cluster_id, hour_bucket, connector_availability_pct, consumer_lag_compliance_pct,
+                 broker_availability_pct, urp_compliance_pct, overall_compliance_pct,
+                 connector_total, connector_running, connector_failed)
+                VALUES (:cid, :hb, :ca, :lc, :ba, :uc, :oa, :ct, :cr, :cf)
+                ON CONFLICT (cluster_id, hour_bucket) DO UPDATE SET
+                    connector_availability_pct = EXCLUDED.connector_availability_pct,
+                    consumer_lag_compliance_pct = EXCLUDED.consumer_lag_compliance_pct,
+                    broker_availability_pct = EXCLUDED.broker_availability_pct,
+                    urp_compliance_pct = EXCLUDED.urp_compliance_pct,
+                    overall_compliance_pct = EXCLUDED.overall_compliance_pct,
+                    connector_total = EXCLUDED.connector_total,
+                    connector_running = EXCLUDED.connector_running,
+                    connector_failed = EXCLUDED.connector_failed
+            """), {"cid": int(cid), "hb": hour_bucket, "ca": conn_avail_pct, "lc": lag_compliance_pct,
+                  "ba": broker_avail_pct, "uc": urp_compliance_pct, "oa": overall,
+                  "ct": conn_total, "cr": conn_running, "cf": conn_failed})
+            await sess.commit()
+        compute_slo_compliance._last_result = f"SLO computed: overall={overall:.1f}% conn={conn_avail_pct:.1f}%" if overall else "SLO computed (no data)"
+    except Exception as e:
+        logger.error("compute_slo_compliance failed: %s", e)
+        compute_slo_compliance._last_result = f"Error: {e}"
+
+
+# ── Job 8: Message Rate ───────────────────────────────────────────────────────
 _prev_offsets: dict = {}
 _prev_offset_time: float = 0.0
 
@@ -624,7 +767,7 @@ async def collect_msg_rate(cluster_id: str = ""):
         collect_msg_rate._last_result = f"Failed: {e}"
 
 
-# ── Job 8: Schema Registry ────────────────────────────────────────────────────
+# ── Job 9: Schema Registry ────────────────────────────────────────────────────
 async def collect_schema_registry():
     """Collect schema registry stats."""
     clusters = await _get_enabled_clusters()

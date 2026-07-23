@@ -16,6 +16,7 @@ from config import settings
 import jobs as _jobs_module
 import collectors as _collectors
 from routes_dashboard import router as dashboard_router
+from routes_slo import router as slo_router
 from routes_reports import router as reports_router
 from routes_settings import load_config_from_db, router as settings_router
 from storage import init_storage
@@ -905,7 +906,8 @@ async def lifespan(app: FastAPI):
     # Register per-cluster jobs
     from collectors import (
         collect_broker_health, collect_consumer_lag_active, collect_topic_sizes,
-        collect_topic_structure, collect_msg_rate,
+        collect_topic_structure, collect_msg_rate, collect_connector_snapshots,
+        compute_slo_compliance,
     )
     from storage import get_backend as _gb
     _clusters = await _gb().get_clusters(settings.agent_slug)
@@ -913,11 +915,13 @@ async def lifespan(app: FastAPI):
 
     # Job type definitions: (suffix, name, handler, default_timeout, default_cron, default_enabled)
     _job_types = [
-        ("broker-health",    "Broker Health",    collect_broker_health,    60,  "*/2 * * * *",  True),
-        ("consumer-lag",     "Consumer Lag",     collect_consumer_lag_active, 120, "1 */2 * * *", True),
-        ("topic-sizes",      "Topic Sizes",      collect_topic_sizes,      30,  "*/15 * * * *", True),
-        ("topic-structure",  "Topic Structure",  collect_topic_structure,  90,  "2 */30 * * *", False),
-        ("msg-rate",         "Message Rate",     collect_msg_rate,         60,  "*/2 * * * *",  True),
+        ("broker-health",        "Broker Health",        collect_broker_health,         60,  "*/2 * * * *",  True),
+        ("consumer-lag",         "Consumer Lag",         collect_consumer_lag_active,   120, "1 */2 * * *",  True),
+        ("topic-sizes",          "Topic Sizes",          collect_topic_sizes,           30,  "*/15 * * * *", True),
+        ("topic-structure",      "Topic Structure",      collect_topic_structure,       90,  "2 */30 * * *", False),
+        ("msg-rate",             "Message Rate",         collect_msg_rate,              60,  "*/2 * * * *",  True),
+        ("connector-snapshots",  "Connector Snapshots",  collect_connector_snapshots,   30,  "*/2 * * * *",  True),
+        ("slo-compliance",       "SLO Compliance",       compute_slo_compliance,        60,  "5 * * * *",    True),
     ]
 
     from sqlalchemy import select as _sel
@@ -988,6 +992,7 @@ from fastapi.responses import RedirectResponse
 async def root():
     return RedirectResponse(url="/static/dashboard.html")
 app.include_router(dashboard_router)
+app.include_router(slo_router)
 app.include_router(reports_router)
 app.include_router(settings_router)
 
