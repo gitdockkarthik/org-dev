@@ -79,3 +79,12 @@ Kafka Analyser — postgres migration complete for core data, per-cluster jobs w
 3. Schema Registry performance
 4. SLI/SLO feature
 
+
+## Backlog additions
+* **Schema Registry pagination**: Currently loads 50 subject samples (3.5s). Need server-side 
+  pagination — fetch subjects in pages of 50 on "Show More". Requires new endpoint 
+  `/dashboard/schema-registry/subjects?offset=N`. Label should be honest about loaded vs total.
+* **Message Rate Trends 1h resolution**: Chart shows flat lines for 1h range due to hourly 
+  bucket aggregation. Need finer-grained `kafka_topic_metrics_snapshots` table (per-run, 2min).
+* **Topics tab governance KPIs**: Add Stale Topics filter in table, Dead/Empty consumer groups 
+  count in Consumer Groups tab.
