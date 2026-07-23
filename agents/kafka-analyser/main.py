@@ -1031,8 +1031,8 @@ async def delete_job_schedule(job_id: str, schedule_id: int) -> dict:
     return await _jobs_module.delete_schedule(schedule_id)
 
 @app.get("/runs")
-async def get_all_runs(limit: int = 50) -> list:
-    return await _jobs_module.get_runs(limit=limit)
+async def get_all_runs(limit: int = 50, offset: int = 0, status: str | None = None) -> list:
+    return await _jobs_module.get_runs(limit=limit, offset=offset, status=status)
 
 @app.get("/health")
 async def health():

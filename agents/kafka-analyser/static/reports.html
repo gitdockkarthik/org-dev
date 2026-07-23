@@ -117,9 +117,24 @@
           <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
           <!-- Run Monitor Section -->
           <div>
-            <div style="font-size:.88rem;font-weight:600;margin-bottom:8px">📋 Run Monitor
-              <button class="btn btn--ghost btn--sm" style="margin-left:8px" onclick="loadRunMonitor(true)">↻ Refresh</button>
-              <button class="btn btn--ghost btn--sm" style="margin-left:4px" onclick="loadRunMonitor(false)">+ Load More</button>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+              <span style="font-size:.88rem;font-weight:600">📋 Run Monitor</span>
+              <select id="run-filter-job" style="font-size:.8rem;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text)" onchange="_runsFilter.jobType=this.value;loadRunMonitor(true)">
+                <option value="all">All Jobs</option>
+                <option value="broker-health">Broker Health</option>
+                <option value="consumer-lag">Consumer Lag</option>
+                <option value="topic-sizes">Topic Sizes</option>
+                <option value="topic-structure">Topic Structure</option>
+                <option value="msg-rate">Message Rate</option>
+              </select>
+              <select id="run-filter-status" style="font-size:.8rem;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text)" onchange="_runsFilter.status=this.value;loadRunMonitor(true)">
+                <option value="all">All Status</option>
+                <option value="success">Success</option>
+                <option value="failed">Failed</option>
+                <option value="running">Running</option>
+              </select>
+              <button class="btn btn--ghost btn--sm" onclick="loadRunMonitor(true)">↻ Refresh</button>
+              <button class="btn btn--ghost btn--sm" onclick="loadRunMonitor(false)">+ Load More</button>
             </div>
             <table class="data-table" style="width:100%">
               <thead><tr>
@@ -369,12 +384,13 @@
 
     // ── Run Monitor ───────────────────────────────────────────────────────────
     let _runsOffset = 0;
-    let _runsFilter = { status: 'all', clusterId: 'all' };
+    let _runsFilter = { status: 'all', clusterId: 'all', jobType: 'all' };
 
     async function loadRunMonitor(reset) {
       if (reset) _runsOffset = 0;
       try {
-        const runs = await api('/runs?limit=20&offset=' + _runsOffset);
+        const statusParam = _runsFilter.status !== 'all' ? '&status=' + _runsFilter.status : '';
+        const runs = await api('/runs?limit=20&offset=' + _runsOffset + statusParam);
         const tbody = document.getElementById('runs-body');
         if (!runs.length) {
           tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:16px">No runs yet</td></tr>';
@@ -385,6 +401,10 @@
           const parts = r.job_id.split('-');
           const cid = parts[parts.length - 1];
           if (_runsFilter.clusterId !== 'all' && cid !== _runsFilter.clusterId) return false;
+          if (_runsFilter.jobType !== 'all') {
+            const jt = parts.slice(0, -1).join('-').replace('kafka-', '');
+            if (jt !== _runsFilter.jobType) return false;
+          }
           return true;
         });
         const rows = filtered.map(r => {
