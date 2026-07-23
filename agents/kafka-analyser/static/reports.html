@@ -266,6 +266,18 @@
       }
     }
 
+    function cronToFriendly(cron) {
+      if (!cron || cron === '—') return '—';
+      const p = cron.trim().split(/\s+/);
+      if (p.length < 5) return cron;
+      const [min, hour] = p;
+      if (min.startsWith('*/')) return `Every ${min.slice(2)} min`;
+      if (/^\d+-\d+\/(\d+)$/.test(min)) return `Every ${min.split('/')[1]} min`;
+      if (min === '0' && hour.startsWith('*/')) return `Every ${hour.slice(2)}h`;
+      if (min === '0' && hour === '0') return 'Daily midnight';
+      return cron;
+    }
+
     let _clusterNames = {};  // clusterId -> cluster name
 
     // ── Job Registry ──────────────────────────────────────────────────────────
@@ -304,7 +316,7 @@
           cluster.jobs.forEach(j => {
             const s = j.schedule;
             const enabled = s?.enabled ?? false;
-            const cron = s?.cron_expression || '—';
+            const cron = cronToFriendly(s?.cron_expression) || '—';
             const timeout = s ? s.timeout_secs + 's' : '—';
             const statusBadge = s ? (enabled ? '<span class="sev sev--healthy">ACTIVE</span>' : '<span class="sev sev--warning">DISABLED</span>') : '<span class="sev sev--warning">NO SCHEDULE</span>';
             html += `<tr>
