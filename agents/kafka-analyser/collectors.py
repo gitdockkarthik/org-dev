@@ -157,39 +157,43 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
                     # Fetch offsets for all consumer groups
                     enriched = []
                     total_lag = 0
-                    # Batched lag: 100 groups per batch (optimal from testing — ~31s for 642 groups)
+                    # Collect ALL committed offsets first, then fetch end offsets in one consumer session
                     from kafka import KafkaConsumer
                     BATCH = 100
                     group_committed = {}
                     end_offsets = {}
+                    # Step 1: collect all committed offsets (fast — AdminClient)
                     for batch_start in range(0, len(consumer_gids), BATCH):
                         batch_gids = consumer_gids[batch_start:batch_start + BATCH]
-                        batch_committed = {}
                         for gid in batch_gids:
                             try:
                                 offsets = admin.list_consumer_group_offsets(gid)
-                                batch_committed[gid] = {
+                                group_committed[gid] = {
                                     tp: (meta.offset if hasattr(meta, 'offset') else meta)
                                     for tp, meta in offsets.items()
-                                    if (meta.offset if hasattr(meta, 'offset') else meta) >= 0
+                                    if (meta.offset if hasattr(meta, 'offset') else meta) > 0
                                 }
                             except Exception:
-                                batch_committed[gid] = {}
-                        group_committed.update(batch_committed)
-                        batch_tps = list(set(tp for committed in batch_committed.values() for tp in committed.keys()))
-                        if batch_tps:
-                            try:
-                                _consumer = KafkaConsumer(
-                                    bootstrap_servers=c["bootstrap_servers"],
-                                    request_timeout_ms=10000,
-                                    **security,
-                                )
+                                group_committed[gid] = {}
+                    # Step 2: get ALL end offsets in one consumer session (avoid repeated connections)
+                    all_tps = list(set(tp for committed in group_committed.values() for tp in committed.keys()))
+                    if all_tps:
+                        try:
+                            _consumer = KafkaConsumer(
+                                bootstrap_servers=c["bootstrap_servers"],
+                                request_timeout_ms=10000,
+                                **security,
+                            )
+                            # Process in batches within single connection
+                            SEEK_BATCH = 500
+                            for i in range(0, len(all_tps), SEEK_BATCH):
+                                batch_tps = all_tps[i:i + SEEK_BATCH]
                                 _consumer.assign(batch_tps)
                                 _consumer.seek_to_end(*batch_tps)
                                 end_offsets.update({tp: _consumer.position(tp) for tp in batch_tps})
-                                _consumer.close()
-                            except Exception as e:
-                                logger.warning("seek_to_end batch failed: %s", e)
+                            _consumer.close()
+                        except Exception as e:
+                            logger.warning("seek_to_end failed: %s", e)
                     # Calculate lag per group
                     for gid in consumer_gids:
                         committed = group_committed.get(gid, {})
