@@ -891,6 +891,7 @@ async def get_lag_trend(cluster_id: str | None = None, minutes: float = 1440.0) 
                 FROM kafka_lag_snapshots
                 WHERE cluster_id = :cluster_id
                 AND collected_at >= NOW() - ((:minutes) * INTERVAL '1 minute')
+                AND total_lag >= 0
                 GROUP BY date_bin(
                     '{bucket_interval}'::INTERVAL,
                     collected_at,

@@ -2824,16 +2824,19 @@
       const t = data.targets || {};
       const col = s => s==='green'?'#4CAF50':s==='amber'?'#FF9800':s==='red'?'#F44336':'#666';
       const icon = s => s==='green'?'✅':s==='amber'?'⚠️':s==='red'?'🔴':'—';
-      const badge = (s,l) => `<span style="background:${col(s)}22;color:${col(s)};padding:2px 8px;border-radius:12px;font-size:.75rem;font-weight:700">${icon(s)} ${l}</span>`;
+      const badge = (s,l) => { const _s=s||'unknown'; return `<span style="background:${col(_s)}22;color:${col(_s)};padding:2px 8px;border-radius:12px;font-size:.75rem;font-weight:700">${icon(_s)} ${l}</span>`; };
       const overallPct = data.trend&&data.trend.length>0?(data.trend[data.trend.length-1].overall_pct||0):(c.connector_availability_pct||0);
       const overallStatus = overallPct>=95?'green':overallPct>=80?'amber':'red';
 
       // ── 1. SLO Compliance (top) ──────────────────────────────────────────
       const sloRows = [
         {label:'Connector Availability', target:`>${t.connector_availability||99}%`, current:`${c.connector_availability_pct||0}%`, status:c.connector_status},
+        {label:'Task Health', target:`>${t.min_task_health_pct||95}%`, current:`${c.task_health_pct||0}%`, status:c.task_status||'unknown'},
         {label:'Consumer Lag', target:`<${(t.consumer_lag||10000).toLocaleString()}`, current:`${((c.consumer_lag||0)/1000000).toFixed(1)}M`, status:c.lag_status},
-        {label:'Broker Health', target:'100%', current:`${c.broker_count||0} online`, status:c.broker_status},
+        {label:'Broker Availability', target:`${t.expected_brokers||3}/3`, current:`${c.broker_count||0}/${c.expected_brokers||3} online`, status:c.broker_status},
         {label:'Under-replicated Partitions', target:`=${t.urp||0}`, current:`${c.urp||0}`, status:c.urp_status},
+        {label:'Broker CPU', target:`<${t.max_broker_cpu_pct||85}%`, current:`${c.avg_cpu||0}%`, status:c.cpu_status||'unknown'},
+        {label:'Broker Heap', target:`<${t.max_broker_heap_pct||80}%`, current:`${c.avg_heap||0}%`, status:c.heap_status||'unknown'},
       ];
       const section1 = `
         <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px">
@@ -2958,25 +2961,27 @@
     }
 
     function renderSLOSettingsHTML() {
+      const field = (id, label, hint, min=0, max=100, step=1) => `
+        <div>
+          <label style="display:block;font-size:.8rem;font-weight:600;color:var(--text-muted);margin-bottom:2px">${label}</label>
+          ${hint?`<div style="font-size:.72rem;color:var(--text-muted);margin-bottom:4px">${hint}</div>`:''}
+          <input type="number" id="${id}" min="${min}" max="${max}" step="${step}"
+            style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text)">
+        </div>`;
       return `
-        <div class="chart-card" style="max-width:500px">
-          <div class="chart-card__title">⚙️ SLO Targets</div>
-          <div style="display:flex;flex-direction:column;gap:16px;padding:8px 0">
-            <div>
-              <label style="display:block;font-size:.8rem;color:var(--text-muted);margin-bottom:4px">Connector Availability Target (%)</label>
-              <input type="number" id="slo-conn-target" min="0" max="100" step="0.1"
-                style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text)">
-            </div>
-            <div>
-              <label style="display:block;font-size:.8rem;color:var(--text-muted);margin-bottom:4px">Max Consumer Lag (messages)</label>
-              <input type="number" id="slo-lag-target" min="0"
-                style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text)">
-            </div>
-            <div>
-              <label style="display:block;font-size:.8rem;color:var(--text-muted);margin-bottom:4px">Max Under-replicated Partitions</label>
-              <input type="number" id="slo-urp-target" min="0"
-                style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text)">
-            </div>
+        <div class="chart-card" style="max-width:560px">
+          <div class="chart-card__title">⚙️ SLO Targets — per cluster configuration</div>
+          <div style="display:flex;flex-direction:column;gap:14px;padding:8px 0">
+            <div style="font-size:.78rem;font-weight:700;color:var(--accent);border-bottom:1px solid var(--border);padding-bottom:6px">🔌 Connector SLOs</div>
+            ${field('slo-conn-target','Connector Availability Target (%)','% of non-paused connectors that must be RUNNING',0,100,0.1)}
+            ${field('slo-task-target','Min Task Health (%)','% of active connectors with ALL tasks healthy',0,100,0.1)}
+            ${field('slo-failed-tasks-target','Max Failed Tasks','Maximum number of failed tasks allowed (0 = zero tolerance)',0,9999,1)}
+            <div style="font-size:.78rem;font-weight:700;color:var(--accent);border-bottom:1px solid var(--border);padding-bottom:6px;margin-top:4px">📊 Consumer SLOs</div>
+            ${field('slo-lag-target','Max Consumer Lag (messages)','Total lag across all groups above this = SLO breach',0,999999999,1)}
+            <div style="font-size:.78rem;font-weight:700;color:var(--accent);border-bottom:1px solid var(--border);padding-bottom:6px;margin-top:4px">🖥 Infrastructure SLOs</div>
+            ${field('slo-cpu-target','Max Broker CPU (%)','Average CPU across all brokers',0,100,0.1)}
+            ${field('slo-heap-target','Max Broker Heap (%)','Average heap usage across all brokers',0,100,0.1)}
+            ${field('slo-urp-target','Max Under-replicated Partitions','0 = all partitions must be fully replicated',0,9999,1)}
             <button class="btn btn--primary" onclick="saveSLOSettings()">Save Targets</button>
             <div id="slo-settings-msg" style="font-size:.82rem;color:var(--success)"></div>
           </div>
@@ -3298,7 +3303,11 @@
       try {
         const t = await fetch(`${PROXY}/slo/targets?cluster_id=${cid}`, { headers: _authHeaders() }).then(r => r.json());
         document.getElementById('slo-conn-target').value = t.connector_availability_target || 99;
+        document.getElementById('slo-task-target').value = t.min_task_health_pct || 95;
+        document.getElementById('slo-failed-tasks-target').value = t.max_failed_tasks || 0;
         document.getElementById('slo-lag-target').value = t.consumer_lag_target || 10000;
+        document.getElementById('slo-cpu-target').value = t.max_broker_cpu_pct || 85;
+        document.getElementById('slo-heap-target').value = t.max_broker_heap_pct || 80;
         document.getElementById('slo-urp-target').value = t.urp_target || 0;
       } catch(e) { console.warn('SLO settings load failed', e); }
     }
@@ -3310,7 +3319,11 @@
           method: 'POST', headers: { ..._authHeaders(), 'Content-Type': 'application/json' },
           body: JSON.stringify({
             connector_availability_target: parseFloat(document.getElementById('slo-conn-target').value),
+            min_task_health_pct: parseFloat(document.getElementById('slo-task-target').value),
+            max_failed_tasks: parseInt(document.getElementById('slo-failed-tasks-target').value),
             consumer_lag_target: parseInt(document.getElementById('slo-lag-target').value),
+            max_broker_cpu_pct: parseFloat(document.getElementById('slo-cpu-target').value),
+            max_broker_heap_pct: parseFloat(document.getElementById('slo-heap-target').value),
             urp_target: parseInt(document.getElementById('slo-urp-target').value),
           })
         });

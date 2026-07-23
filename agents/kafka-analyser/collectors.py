@@ -632,23 +632,64 @@ async def compute_slo_compliance(cluster_id: str = ""):
             # Broker + URP compliance % in last hour
             broker_stats = await sess.execute(_slo("""
                 SELECT COUNT(*) as total,
-                       SUM(CASE WHEN urp_count <= :urp THEN 1 ELSE 0 END) as urp_ok
+                       SUM(CASE WHEN urp_count <= :urp THEN 1 ELSE 0 END) as urp_ok,
+                       AVG(CASE WHEN cpu_pct IS NOT NULL THEN 1.0 ELSE 0 END) as broker_online_ratio
                 FROM kafka_broker_metrics
                 WHERE cluster_id=:cid AND time >= :prev AND time < :now
             """), {"cid": int(cid), "urp": urp_target, "prev": prev_hour, "now": hour_bucket})
             bs = broker_stats.fetchone()
-            broker_avail_pct = 100.0 if bs and bs.total > 0 else None
+            # Broker availability: ratio of brokers reporting metrics (proxy for online)
+            # Get expected broker count from max ever seen for this cluster
+            max_brokers = await sess.execute(_slo(
+                "SELECT COUNT(DISTINCT broker_id) FROM kafka_broker_metrics WHERE cluster_id=:cid"
+            ), {"cid": int(cid)})
+            expected_brokers = max_brokers.scalar() or 1
+            actual_brokers = await sess.execute(_slo(
+                "SELECT COUNT(DISTINCT broker_id) FROM kafka_broker_metrics WHERE cluster_id=:cid AND time >= :prev AND time < :now"
+            ), {"cid": int(cid), "prev": prev_hour, "now": hour_bucket})
+            ab = actual_brokers.scalar() or 0
+            broker_avail_pct = round(ab / expected_brokers * 100, 1) if expected_brokers > 0 else None
             urp_compliance_pct = (bs.urp_ok / bs.total * 100) if bs and bs.total > 0 else None
-            # Overall compliance
-            metrics = [m for m in [conn_avail_pct, lag_compliance_pct, urp_compliance_pct] if m is not None]
+            # Broker CPU/Heap compliance in last hour
+            br_stats = await sess.execute(_slo("""
+                SELECT AVG(cpu_pct) as avg_cpu, AVG(heap_pct) as avg_heap
+                FROM kafka_broker_metrics
+                WHERE cluster_id=:cid AND time >= :prev AND time < :now
+            """), {"cid": int(cid), "prev": prev_hour, "now": hour_bucket})
+            br = br_stats.fetchone()
+            # Get targets
+            tgt_row = await sess.execute(_slo(
+                "SELECT max_broker_cpu_pct, max_broker_heap_pct, min_task_health_pct FROM kafka_slo_targets WHERE cluster_id=:cid LIMIT 1"
+            ), {"cid": int(cid)})
+            tgt = tgt_row.fetchone()
+            cpu_target = float(tgt.max_broker_cpu_pct) if tgt and tgt.max_broker_cpu_pct else 85.0
+            heap_target = float(tgt.max_broker_heap_pct) if tgt and tgt.max_broker_heap_pct else 80.0
+            avg_cpu = br.avg_cpu or 0 if br else 0
+            avg_heap = br.avg_heap or 0 if br else 0
+            cpu_compliance_pct = 100.0 if avg_cpu <= cpu_target else max(0, round((1 - (avg_cpu - cpu_target)/cpu_target) * 100, 1))
+            heap_compliance_pct = 100.0 if avg_heap <= heap_target else max(0, round((1 - (avg_heap - heap_target)/heap_target) * 100, 1))
+            # Task health compliance from connector snapshots
+            task_stats = await sess.execute(_slo("""
+                SELECT COUNT(DISTINCT connector_name) as total,
+                       SUM(CASE WHEN failed_tasks = 0 AND state = 'RUNNING' THEN 1 ELSE 0 END) as healthy
+                FROM kafka_connector_snapshots
+                WHERE cluster_id=:cid AND collected_at >= :prev AND collected_at < :now
+                AND state IN ('RUNNING', 'FAILED')
+            """), {"cid": int(cid), "prev": prev_hour, "now": hour_bucket})
+            ts = task_stats.fetchone()
+            task_health_pct = round(ts.healthy / ts.total * 100, 1) if ts and ts.total > 0 else None
+            # Overall compliance — all metrics
+            metrics = [m for m in [conn_avail_pct, lag_compliance_pct, urp_compliance_pct,
+                                   cpu_compliance_pct, heap_compliance_pct, task_health_pct] if m is not None]
             overall = sum(metrics) / len(metrics) if metrics else None
             # Upsert compliance snapshot
             await sess.execute(_slo("""
                 INSERT INTO kafka_slo_compliance
                 (cluster_id, hour_bucket, connector_availability_pct, consumer_lag_compliance_pct,
                  broker_availability_pct, urp_compliance_pct, overall_compliance_pct,
-                 connector_total, connector_running, connector_failed)
-                VALUES (:cid, :hb, :ca, :lc, :ba, :uc, :oa, :ct, :cr, :cf)
+                 connector_total, connector_running, connector_failed,
+                 broker_cpu_compliance_pct, broker_heap_compliance_pct, task_health_compliance_pct)
+                VALUES (:cid, :hb, :ca, :lc, :ba, :uc, :oa, :ct, :cr, :cf, :cc, :hc, :tc)
                 ON CONFLICT (cluster_id, hour_bucket) DO UPDATE SET
                     connector_availability_pct = EXCLUDED.connector_availability_pct,
                     consumer_lag_compliance_pct = EXCLUDED.consumer_lag_compliance_pct,
@@ -657,12 +698,16 @@ async def compute_slo_compliance(cluster_id: str = ""):
                     overall_compliance_pct = EXCLUDED.overall_compliance_pct,
                     connector_total = EXCLUDED.connector_total,
                     connector_running = EXCLUDED.connector_running,
-                    connector_failed = EXCLUDED.connector_failed
+                    connector_failed = EXCLUDED.connector_failed,
+                    broker_cpu_compliance_pct = EXCLUDED.broker_cpu_compliance_pct,
+                    broker_heap_compliance_pct = EXCLUDED.broker_heap_compliance_pct,
+                    task_health_compliance_pct = EXCLUDED.task_health_compliance_pct
             """), {"cid": int(cid), "hb": hour_bucket, "ca": conn_avail_pct, "lc": lag_compliance_pct,
                   "ba": broker_avail_pct, "uc": urp_compliance_pct, "oa": overall,
-                  "ct": conn_total, "cr": conn_running, "cf": conn_failed})
+                  "ct": conn_total, "cr": conn_running, "cf": conn_failed,
+                  "cc": cpu_compliance_pct, "hc": heap_compliance_pct, "tc": task_health_pct})
             await sess.commit()
-        compute_slo_compliance._last_result = f"SLO computed: overall={overall:.1f}% conn={conn_avail_pct:.1f}%" if overall else "SLO computed (no data)"
+        compute_slo_compliance._last_result = f"SLO computed: overall={overall:.1f}% conn={conn_avail_pct:.1f}% cpu={cpu_compliance_pct:.1f}%" if overall else "SLO computed (no data)"
     except Exception as e:
         logger.error("compute_slo_compliance failed: %s", e)
         compute_slo_compliance._last_result = f"Error: {e}"

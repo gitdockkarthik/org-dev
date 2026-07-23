@@ -28,6 +28,10 @@ async def get_slo_targets(cluster_id: str) -> dict:
                 "broker_availability_target": r.broker_availability_target,
                 "urp_target": r.urp_target,
                 "min_throughput_bytes": r.min_throughput_bytes,
+                "max_broker_cpu_pct": r.max_broker_cpu_pct or 85.0,
+                "max_broker_heap_pct": r.max_broker_heap_pct or 80.0,
+                "min_task_health_pct": r.min_task_health_pct or 95.0,
+                "max_failed_tasks": r.max_failed_tasks or 0,
             }
         return {
             "cluster_id": cluster_id,
@@ -36,6 +40,10 @@ async def get_slo_targets(cluster_id: str) -> dict:
             "broker_availability_target": 100.0,
             "urp_target": 0,
             "min_throughput_bytes": 0,
+            "max_broker_cpu_pct": 85.0,
+            "max_broker_heap_pct": 80.0,
+            "min_task_health_pct": 95.0,
+            "max_failed_tasks": 0,
         }
     except Exception as e:
         return {"error": str(e)}
@@ -51,14 +59,19 @@ async def save_slo_targets(cluster_id: str, payload: dict) -> dict:
             await sess.execute(_t("""
                 INSERT INTO kafka_slo_targets
                 (cluster_id, connector_availability_target, consumer_lag_target,
-                 broker_availability_target, urp_target, min_throughput_bytes, updated_at)
-                VALUES (:cid, :ca, :cl, :ba, :urp, :mt, now())
+                 broker_availability_target, urp_target, min_throughput_bytes,
+                 max_broker_cpu_pct, max_broker_heap_pct, min_task_health_pct, max_failed_tasks, updated_at)
+                VALUES (:cid, :ca, :cl, :ba, :urp, :mt, :cpu, :heap, :task, :ft, now())
                 ON CONFLICT (cluster_id) DO UPDATE SET
                     connector_availability_target = EXCLUDED.connector_availability_target,
                     consumer_lag_target = EXCLUDED.consumer_lag_target,
                     broker_availability_target = EXCLUDED.broker_availability_target,
                     urp_target = EXCLUDED.urp_target,
                     min_throughput_bytes = EXCLUDED.min_throughput_bytes,
+                    max_broker_cpu_pct = EXCLUDED.max_broker_cpu_pct,
+                    max_broker_heap_pct = EXCLUDED.max_broker_heap_pct,
+                    min_task_health_pct = EXCLUDED.min_task_health_pct,
+                    max_failed_tasks = EXCLUDED.max_failed_tasks,
                     updated_at = now()
             """), {
                 "cid": int(cluster_id),
@@ -67,6 +80,10 @@ async def save_slo_targets(cluster_id: str, payload: dict) -> dict:
                 "ba": payload.get("broker_availability_target", 100.0),
                 "urp": payload.get("urp_target", 0),
                 "mt": payload.get("min_throughput_bytes", 0),
+                "cpu": payload.get("max_broker_cpu_pct", 85.0),
+                "heap": payload.get("max_broker_heap_pct", 80.0),
+                "task": payload.get("min_task_health_pct", 95.0),
+                "ft": payload.get("max_failed_tasks", 0),
             })
             await sess.commit()
         return {"ok": True}
@@ -94,6 +111,10 @@ async def get_slo_dashboard(cluster_id: str, hours: int = 24) -> dict:
             lag_target = int(target.consumer_lag_target) if target else 10000
             conn_target = float(target.connector_availability_target) if target else 99.0
             urp_target = int(target.urp_target) if target else 0
+            cpu_target = float(target.max_broker_cpu_pct) if target and target.max_broker_cpu_pct else 85.0
+            heap_target = float(target.max_broker_heap_pct) if target and target.max_broker_heap_pct else 80.0
+            task_target = float(target.min_task_health_pct) if target and target.min_task_health_pct else 95.0
+            max_failed_tasks = int(target.max_failed_tasks) if target and target.max_failed_tasks is not None else 0
 
             # Current connector state — SLI excludes PAUSED/UNASSIGNED
             conn_now = await sess.execute(_t("""
@@ -131,6 +152,20 @@ async def get_slo_dashboard(cluster_id: str, hours: int = 24) -> dict:
             bn = broker_now.fetchone()
             broker_count = int(bn.total) if bn else 0
             current_urp = int(bn.total_urp or 0) if bn else 0
+            # Dynamic expected broker count
+            max_br = await sess.execute(_t(
+                "SELECT COUNT(DISTINCT broker_id) FROM kafka_broker_metrics WHERE cluster_id=:cid"
+            ), {"cid": int(cluster_id)})
+            expected_brokers = max_br.scalar() or 1
+            broker_avail_pct = round(broker_count / expected_brokers * 100, 1)
+            # Broker CPU and heap averages
+            broker_metrics = await sess.execute(_t("""
+                SELECT AVG(cpu_pct) as avg_cpu, AVG(heap_pct) as avg_heap
+                FROM kafka_broker_metrics WHERE cluster_id=:cid
+            """), {"cid": int(cluster_id)})
+            bm = broker_metrics.fetchone()
+            avg_cpu = round(bm.avg_cpu or 0, 1) if bm else 0.0
+            avg_heap = round(bm.avg_heap or 0, 1) if bm else 0.0
 
             # Compliance trend (hourly)
             trend = await sess.execute(_t("""
@@ -152,6 +187,10 @@ async def get_slo_dashboard(cluster_id: str, hours: int = 24) -> dict:
                 ORDER BY state, connector_name
             """), {"cid": int(cluster_id)})
             connector_rows = connectors.fetchall()
+            # Task health: connectors with all tasks healthy / total active connectors
+            total_active = conn_running + conn_failed
+            conn_with_failures = sum(1 for r in connector_rows if r.failed_tasks > 0 and r.state == 'RUNNING')
+            task_health_pct = round((total_active - conn_with_failures) / total_active * 100, 1) if total_active > 0 else 100.0
 
         # Compliance status helper
         def status(pct, target):
@@ -168,6 +207,11 @@ async def get_slo_dashboard(cluster_id: str, hours: int = 24) -> dict:
                 "consumer_lag": lag_target,
                 "broker_availability": 100.0,
                 "urp": urp_target,
+                "max_broker_cpu_pct": cpu_target,
+                "max_broker_heap_pct": heap_target,
+                "min_task_health_pct": task_target,
+                "max_failed_tasks": max_failed_tasks,
+                "expected_brokers": expected_brokers,
             },
             "current": {
                 "connector_availability_pct": conn_avail_pct,
@@ -179,10 +223,19 @@ async def get_slo_dashboard(cluster_id: str, hours: int = 24) -> dict:
                 "consumer_lag": current_lag,
                 "broker_count": broker_count,
                 "urp": current_urp,
+                "avg_cpu": avg_cpu,
+                "avg_heap": avg_heap,
+                "task_health_pct": task_health_pct,
                 "connector_status": status(conn_avail_pct, conn_target),
                 "lag_status": "green" if current_lag <= lag_target else ("amber" if current_lag <= lag_target * 2 else "red"),
                 "urp_status": "green" if current_urp <= urp_target else "red",
-                "broker_status": "green" if broker_count > 0 else "red",
+                "broker_count": broker_count,
+                "expected_brokers": expected_brokers,
+                "broker_avail_pct": broker_avail_pct,
+                "broker_status": "green" if broker_avail_pct >= 100 else ("amber" if broker_avail_pct >= 66 else "red"),
+                "cpu_status": "green" if avg_cpu <= cpu_target else ("amber" if avg_cpu <= cpu_target * 1.1 else "red") if avg_cpu > 0 else "unknown",
+                "heap_status": "green" if avg_heap <= heap_target else ("amber" if avg_heap <= heap_target * 1.1 else "red") if avg_heap > 0 else "unknown",
+                "task_status": ("green" if task_health_pct >= task_target else ("amber" if task_health_pct >= task_target * 0.9 else "red")) if task_health_pct is not None else "unknown",
             },
             "trend": [
                 {
