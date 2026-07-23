@@ -93,3 +93,30 @@ None — overnight jobs running.
 
 ## Additional Fix This Session
 * Kafka Connect search: now searches both connector name AND connector_class (e.g. "elasticsearch", "debezium")
+
+## Session Update — 2026-07-23
+### Completed
+* Per-cluster job architecture: kafka-{type}-{cluster_id} job IDs
+* Consumer lag optimization: 47s (was 144s) — single consumer session, skip zero offsets
+* Stuck run cleanup on startup
+* Large Topics KPI fix
+* Topics table pagination from postgres (50 per page)
+* Topic detail reads from postgres
+* Consumer lag real calculation (47s for 642 groups)
+* kafka-consumer-lag-full removed (redundant)
+
+### Pending (Next Session)
+1. Fix brokers data inconsistency — Overview tab vs Brokers tab show different data
+2. Job Management UI — multi-job/multi-cluster with registry + run monitor
+3. Topic Details popup (balloon) instead of expanded row
+4. Schema Registry performance fix
+5. ZooKeeper tab revamp → Governance
+6. SLI/SLO for Kafka cluster (include connector SLOs)
+7. kafka-topic-structure job: test + enable (2 min, 90s timeout)
+
+### Job Schedules (Active)
+* kafka-broker-health-3: */2 * * * * (60s timeout)
+* kafka-consumer-lag-3: */3 * * * * (90s timeout)  
+* kafka-topic-sizes-3: */15 * * * * (30s timeout)
+* kafka-msg-rate-3: */2 * * * * (60s timeout)
+* kafka-topic-structure-3: disabled (test pending)
