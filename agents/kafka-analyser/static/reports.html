@@ -390,7 +390,8 @@
       if (reset) _runsOffset = 0;
       try {
         const statusParam = _runsFilter.status !== 'all' ? '&status=' + _runsFilter.status : '';
-        const runs = await api('/runs?limit=20&offset=' + _runsOffset + statusParam);
+        const jobParam = _runsFilter.jobType !== 'all' ? '&job_type=' + _runsFilter.jobType : '';
+        const runs = await api('/runs?limit=20&offset=' + _runsOffset + statusParam + jobParam);
         const tbody = document.getElementById('runs-body');
         if (!runs.length) {
           tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:16px">No runs yet</td></tr>';

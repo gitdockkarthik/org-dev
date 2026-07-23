@@ -164,7 +164,7 @@ async def _schedule_trigger(job_id: str, schedule_id: int) -> None:
     await trigger_job(job_id, triggered_by="schedule")
 
 
-async def get_runs(job_id: str | None = None, limit: int = 50, offset: int = 0, status: str | None = None) -> list:
+async def get_runs(job_id: str | None = None, limit: int = 50, offset: int = 0, status: str | None = None, job_type: str | None = None) -> list:
     if SessionLocal is None:
         return []
     async with SessionLocal() as session:
@@ -173,6 +173,8 @@ async def get_runs(job_id: str | None = None, limit: int = 50, offset: int = 0, 
             q = q.where(KafkaJobRun.job_id == job_id)
         if status:
             q = q.where(KafkaJobRun.status == status)
+        if job_type:
+            q = q.where(KafkaJobRun.job_id.like(f'kafka-{job_type}-%'))
         result = await session.execute(q)
         runs = result.scalars().all()
     return [{"id": r.id, "job_id": r.job_id, "status": r.status, "triggered_by": r.triggered_by,
