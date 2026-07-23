@@ -178,6 +178,7 @@ async def get_counts(cluster_id: str | None = None) -> dict:
     total_urp_count = 0
     large_topics_count = 0
     total_hot_count = 0
+    total_stale_count = 0
     try:
         from storage import get_backend
         import json as _json
@@ -263,6 +264,10 @@ async def get_counts(cluster_id: str | None = None) -> dict:
                     "SELECT COUNT(*) FROM kafka_topic_metrics WHERE cluster_id=:cid AND bytes_in_per_sec > 102400"
                 ), {"cid": int(cluster_id)})
                 total_hot_count = _hot.scalar() or 0
+                _stale = await _sess3.execute(_text(
+                    "SELECT COUNT(*) FROM kafka_topic_metrics WHERE cluster_id=:cid AND bytes_in_per_sec = 0 AND size_bytes > 0"
+                ), {"cid": int(cluster_id)})
+                total_stale_count = _stale.scalar() or 0
         return {
             "total_topics": total_topics_count or structure.get("total_topics", 0),
             "total_groups": total_groups_count,
@@ -275,6 +280,7 @@ async def get_counts(cluster_id: str | None = None) -> dict:
             "top_topics_by_msg_rate": metrics.get("top_topics_by_msg_rate", []),
             "total_hot": total_hot_count,
             "large_topics_count": large_topics_count,
+            "total_stale": total_stale_count,
         }
     except Exception as _e:
         return {"empty": True, "error": str(_e)}

@@ -1084,6 +1084,16 @@
             <div class="kpi__value">${(window._clusterCounts && window._clusterCounts.large_topics_count) || 0}</div>
             <div class="kpi__sub">&gt; 10GB storage</div>
           </div>
+          <div class="kpi kpi--warn">
+            <div class="kpi__label">Stale Topics</div>
+            <div class="kpi__value">${(window._clusterCounts && window._clusterCounts.total_stale) || 0}</div>
+            <div class="kpi__sub">no activity, has data</div>
+          </div>
+          <div class="kpi ${(window._clusterCounts && window._clusterCounts.total_urp) > 0 ? 'kpi--danger' : 'kpi--success'}">
+            <div class="kpi__label">Under-replicated</div>
+            <div class="kpi__value">${(window._clusterCounts && window._clusterCounts.total_urp) || 0}</div>
+            <div class="kpi__sub">partitions at risk</div>
+          </div>
         </div>`;
 
       const topByMsgs = [...allTopics].sort((a, b) => msgRate(b) - msgRate(a)).slice(0, 10);
@@ -3068,6 +3078,8 @@
       const lowRep = counts.total_rf1 != null ? counts.total_rf1 : topics.filter(t => t.replication_factor === 1 && t.partition_count > 0).length;
       const hotTopics = counts.total_hot != null ? counts.total_hot : 0;
       const largeTopics = counts.large_topics_count != null ? counts.large_topics_count : 0;
+      const staleTopics = counts.total_stale != null ? counts.total_stale : 0;
+      const urpCount = counts.total_urp != null ? counts.total_urp : 0;
       if (isDone) {
         kpis[0].textContent = realTotal.toLocaleString();
         kpis[0].classList.remove('kpi-loading');
@@ -3078,6 +3090,8 @@
         kpis[2].classList.remove('kpi-loading');
         kpis[3].textContent = largeTopics;
         kpis[3].classList.remove('kpi-loading');
+        if (kpis[4]) { kpis[4].textContent = staleTopics; kpis[4].classList.remove('kpi-loading'); }
+        if (kpis[5]) { kpis[5].textContent = urpCount; kpis[5].style.color = urpCount > 0 ? 'var(--red)' : ''; kpis[5].classList.remove('kpi-loading'); }
       } else {
         kpis[0].textContent = realTotal.toLocaleString();
         kpis[1].textContent = lowRep.toLocaleString();
@@ -3086,6 +3100,8 @@
         kpis[2].classList.add('kpi-loading');
         kpis[3].textContent = largeTopics;
         kpis[3].classList.add('kpi-loading');
+        if (kpis[4]) { kpis[4].textContent = staleTopics; kpis[4].classList.add('kpi-loading'); }
+        if (kpis[5]) { kpis[5].textContent = urpCount; kpis[5].classList.add('kpi-loading'); }
       }
     }
     async function _streamTopicDetails() {
