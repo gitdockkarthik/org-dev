@@ -500,11 +500,14 @@ async def get_broker_distribution(cluster_id: str | None = None) -> dict:
 
 @router.get("/dashboard/connectors")
 async def get_connectors(cluster_id: str | None = None, hours: int | None = None) -> dict:
-    """Connector state and per-task health."""
-    data = kafka_store.get_cluster_data(cluster_id, hours=hours)
-    if data is None:
-        return {"empty": True}
-    return {"connectors": data["connectors"]}
+    """Connector state — reads from live Kafka Connect REST API."""
+    if not cluster_id:
+        return {"connectors": []}
+    try:
+        kc = await get_kafka_connect(cluster_id=cluster_id)
+        return {"connectors": kc.get("connectors", [])}
+    except Exception:
+        return {"connectors": []}
 
 
 @router.get("/dashboard/insights")
@@ -1632,13 +1635,26 @@ async def search_topics(cluster_id: str, q: str = ""):
     """Live search across all topics on the cluster."""
     if not q or len(q) < 2:
         return {"topics": [], "query": q}
-    collector = await _collector_for_cluster(cluster_id)
     try:
-        matched_names = await collector.search_topics(q)
-        if not matched_names:
-            return {"topics": [], "query": q}
-        details = await collector.fetch_topic_details(matched_names[:50])
-        return {"topics": details, "query": q, "total_matches": len(matched_names)}
+        from database import SessionLocal
+        from sqlalchemy import text as _tq
+        if SessionLocal:
+            async with SessionLocal() as sess:
+                rows = await sess.execute(_tq("""
+                    SELECT topic, size_bytes, partition_count, replication_factor, bytes_in_per_sec
+                    FROM kafka_topic_metrics
+                    WHERE cluster_id=:cid AND topic ILIKE :q
+                    ORDER BY size_bytes DESC LIMIT 50
+                """), {"cid": int(cluster_id), "q": f"%{q}%"})
+                topics = [{"name": r.topic, "topic": r.topic, "size_bytes": r.size_bytes,
+                           "partition_count": r.partition_count, "replication_factor": r.replication_factor,
+                           "bytes_in_per_sec": r.bytes_in_per_sec or 0.0}
+                          for r in rows.fetchall()]
+                cnt = await sess.execute(_tq(
+                    "SELECT COUNT(*) FROM kafka_topic_metrics WHERE cluster_id=:cid AND topic ILIKE :q"
+                ), {"cid": int(cluster_id), "q": f"%{q}%"})
+                total = cnt.scalar() or 0
+            return {"topics": topics, "query": q, "total_matches": total}
     except Exception as exc:
         return {"topics": [], "query": q, "error": str(exc)}
 
@@ -1648,10 +1664,23 @@ async def search_groups(cluster_id: str, q: str = ""):
     """Search consumer groups by name."""
     if not q or len(q) < 2:
         return {"groups": [], "query": q}
-    data = kafka_store.get_cluster_data(cluster_id)
-    all_groups = (data or {}).get("consumer_groups", [])
-    ql = q.lower()
-    matched = [g for g in all_groups if ql in g["group_id"].lower()][:100]
+    # Search from postgres
+    try:
+        from database import SessionLocal
+        from sqlalchemy import text as _gst
+        if SessionLocal:
+            async with SessionLocal() as sess:
+                rows = await sess.execute(_gst("""
+                    SELECT group_id, state, total_lag, topic_count
+                    FROM kafka_consumer_group_lag
+                    WHERE cluster_id=:cid AND group_id ILIKE :q
+                    ORDER BY total_lag DESC LIMIT 100
+                """), {"cid": int(cluster_id), "q": f"%{q}%"})
+                matched = [{"group_id": r.group_id, "state": r.state,
+                            "total_lag": r.total_lag, "topic_count": r.topic_count}
+                           for r in rows.fetchall()]
+    except Exception:
+        matched = []
     if not matched:
         return {"groups": matched, "query": q}
     # Fetch real lag for matched groups
@@ -1694,10 +1723,13 @@ async def search_connectors(cluster_id: str, q: str = ""):
     """Search connectors by name."""
     if not q or len(q) < 2:
         return {"connectors": [], "query": q}
-    data = kafka_store.get_cluster_data(cluster_id)
-    all_connectors = (data or {}).get("connectors", [])
-    ql = q.lower()
-    matched = [c for c in all_connectors if ql in c.get("name", "").lower()][:50]
+    try:
+        kc = await get_kafka_connect(cluster_id=cluster_id)
+        all_connectors = kc.get("connectors", [])
+        ql = q.lower()
+        matched = [c for c in all_connectors if ql in c.get("name", "").lower()][:50]
+    except Exception:
+        matched = []
     return {"connectors": matched, "query": q}
 
 @router.get("/dashboard/schemas/search")
