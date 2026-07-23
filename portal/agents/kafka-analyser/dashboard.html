@@ -1991,7 +1991,12 @@
           if ((c.failed_tasks || 0) === 0) return false;
         } else if (st.status !== 'all' && c.state !== st.status) return false;
         if (st.type !== 'all' && (c.type || '').toLowerCase() !== st.type) return false;
-        if (st.search && !(c.name || '').toLowerCase().includes(st.search.toLowerCase())) return false;
+        if (st.search) {
+          const q = st.search.toLowerCase();
+          const matchName = (c.name || '').toLowerCase().includes(q);
+          const matchClass = (c.connector_class || '').toLowerCase().includes(q);
+          if (!matchName && !matchClass) return false;
+        }
         return true;
       };
 
@@ -3065,7 +3070,7 @@
           document.getElementById('genBtn').style.display = '';
         }
       } catch(_) {}
-      loadTab('overview');
+      // loadTab is called by loadClusterSelector after _currentClusterId is set
     }
 
     document.getElementById('ctrl-time').addEventListener('change', () => {
