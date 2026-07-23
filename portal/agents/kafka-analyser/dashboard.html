@@ -1179,7 +1179,7 @@
 
       document.getElementById('tab-topics').innerHTML = '<div style="display:flex;justify-content:flex-end;margin-bottom:6px"><button id="topic-analyse-btn" style="background:var(--navy-1);color:var(--accent);border:1px solid var(--accent);border-radius:20px;padding:8px 16px;font-size:.82rem;font-weight:600;cursor:pointer">🤖 Analyse</button></div>' + topicKpis + topicBarCharts + topicFilters + `
         <div class="chart-card__title" style="margin-bottom:8px">Topics by Log Size</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">Sorted by storage consumed · click row to see details · showing top 20 per page</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">Sorted by storage consumed · click row to see details</div>
         <div class="data-table-wrap">
           <table class="data-table">
             <thead><tr><th>Topic</th><th style="text-align:right">Log Size</th><th>Status</th></tr></thead>
@@ -1196,7 +1196,7 @@
       if (_topicAnalyseBtn) _topicAnalyseBtn.addEventListener('click', () => { _openAIDrawer(); _runAIDrawer('topics'); });
 
       // ── Self-contained topic table view: pagination + filter group + search (AND) ──
-      const TOPIC_PAGE = 20;
+      const TOPIC_PAGE = 50;
       window._topicView = { filter: 'all', userOnly: false, search: '', visible: TOPIC_PAGE };
 
       const topicMatches = (t, st) => {
@@ -1235,7 +1235,7 @@
         const activeTopics = [];
 
         // Populate stale table
-        const staleVisible = st.staleVisible || 20;
+        const staleVisible = st.staleVisible || 50;
         const staleShown = staleTopics.slice(0, staleVisible);
         const staleTbody = document.getElementById('topic-stale-tbody');
         if (staleTbody) {
@@ -1250,7 +1250,7 @@
           const staleMore = document.getElementById('topic-stale-show-more');
           if (staleMore) staleMore.style.display = staleTopics.length > staleVisible ? 'block' : 'none';
         }
-        window._topicStaleShowMore = () => { st.staleVisible = (st.staleVisible || 20) + 20; window._applyTopicView(); };
+        window._topicStaleShowMore = () => { st.staleVisible = (st.staleVisible || 50) + 50; window._applyTopicView(); };
       };
 
       // ── Topic Compare UI ──────────────────────────────────────────────────
