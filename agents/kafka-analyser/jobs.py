@@ -70,7 +70,14 @@ async def trigger_job(job_id: str, triggered_by: str = "manual") -> dict:
     active = await _get_active_run(job_id)
     if active:
         elapsed = (datetime.now(timezone.utc) - active.started_at).total_seconds()
-        return {"ok": False, "error": f"Job already running (started {elapsed:.0f}s ago)"}
+        timeout = job.get("default_timeout_secs", 60)
+        if elapsed > timeout * 2:
+            # Stale run — clear it and allow new run
+            await _update_run(active.id, status="failed",
+                              error_message=f"Cleared stale run (stuck for {elapsed:.0f}s)")
+            logger.warning("Cleared stale run %d for job %s (stuck for %.0fs)", active.id, job_id, elapsed)
+        else:
+            return {"ok": False, "error": f"Job already running (started {elapsed:.0f}s ago)"}
     run = await _create_run(job_id, triggered_by)
     asyncio.create_task(_execute_job(job, run))
     return {"ok": True, "run_id": run.id}
