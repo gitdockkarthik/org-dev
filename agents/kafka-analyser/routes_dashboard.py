@@ -60,7 +60,31 @@ async def get_overview(cluster_id: str | None = None, hours: int | None = None) 
         return {"empty": True}
     topics = data["topics"]
     consumer_groups = data["consumer_groups"]
+    # Read brokers from postgres (authoritative source)
     brokers = data.get("brokers", [])
+    if cluster_id:
+        try:
+            from database import SessionLocal
+            from sqlalchemy import text as _bt
+            if SessionLocal:
+                async with SessionLocal() as _bs:
+                    _br = await _bs.execute(_bt(
+                        "SELECT broker_id, heap_pct, cpu_pct, gc_pause_ms, "
+                        "request_handler_idle_pct, urp_count, messages_in_per_sec, disk_pct "
+                        "FROM kafka_broker_metrics WHERE cluster_id=:cid ORDER BY broker_id"
+                    ), {"cid": int(cluster_id)})
+                    _rows = _br.fetchall()
+                    if _rows:
+                        brokers = [{"broker_id": r.broker_id, "id": r.broker_id,
+                                    "heap_pct": r.heap_pct, "cpu_pct": r.cpu_pct,
+                                    "gc_pause_ms": r.gc_pause_ms, "urp_count": r.urp_count,
+                                    "request_handler_idle_pct": r.request_handler_idle_pct,
+                                    "messages_in_per_sec": r.messages_in_per_sec,
+                                    "status": "healthy" if r.urp_count == 0 else "degraded",
+                                    "cpu_cores_configured": True}
+                                   for r in _rows]
+        except Exception:
+            pass
     # Compute health score from real metrics
     score = 100
     # URP deduction
@@ -214,18 +238,32 @@ async def get_topic_detail(name: str, cluster_id: str | None = None) -> dict:
         if not described:
             return {"error": "Topic not found"}
         topic = described[0]
-        # Get topic metrics from cache
-        import kafka_store
-        data = kafka_store.get_cluster_data(cluster_id)
-        cached_topic = next((t for t in data.get("topics", []) if t.get("name") == name), {}) if data else {}
+        # Get topic metrics from postgres
+        size_bytes = 0
+        bytes_in_per_sec = 0.0
+        try:
+            from database import SessionLocal
+            from sqlalchemy import text as _t
+            if SessionLocal:
+                async with SessionLocal() as sess:
+                    row = await sess.execute(_t(
+                        "SELECT size_bytes, bytes_in_per_sec FROM kafka_topic_metrics "
+                        "WHERE cluster_id=:cid AND topic=:topic LIMIT 1"
+                    ), {"cid": int(cluster_id), "topic": name})
+                    r = row.fetchone()
+                    if r:
+                        size_bytes = r.size_bytes or 0
+                        bytes_in_per_sec = r.bytes_in_per_sec or 0.0
+        except Exception:
+            pass
         return {
             "name": name,
             "partition_count": topic.get("partition_count", 0),
             "replication_factor": topic.get("replication_factor", 0),
             "under_replicated_partitions": topic.get("under_replicated_partitions", 0),
-            "messages_in_per_sec": cached_topic.get("messages_in_per_sec", 0.0),
-            "bytes_in_per_sec": cached_topic.get("bytes_in_per_sec", 0.0),
-            "size_bytes": cached_topic.get("size_bytes", 0),
+            "messages_in_per_sec": bytes_in_per_sec,
+            "bytes_in_per_sec": bytes_in_per_sec,
+            "size_bytes": size_bytes,
             "partitions": topic.get("partitions", []),
         }
     except Exception as exc:
@@ -313,26 +351,47 @@ async def get_topics(cluster_id: str | None = None, hours: int | None = None,
 
 @router.get("/dashboard/brokers")
 async def get_brokers(cluster_id: str | None = None, hours: int | None = None) -> dict:
-    """Per-broker CPU, heap, GC, and URP metrics — reads from DB directly."""
+    """Per-broker CPU, heap, GC, and URP metrics — reads from kafka_broker_metrics."""
     if not cluster_id:
         return {"empty": True}
     try:
         from database import SessionLocal
         from sqlalchemy import text as _text
-        import json as _json
         if SessionLocal is None:
             return {"empty": True}
         async with SessionLocal() as _sess:
-            _row = await _sess.execute(
-                _text("""SELECT data_json FROM kafka_metrics_history
-                         WHERE cluster_id = :cid AND scan_type = 'brokers'
-                         ORDER BY collected_at DESC LIMIT 1"""),
-                {"cid": cluster_id}
+            rows = await _sess.execute(
+                _text("""SELECT broker_id, heap_pct, cpu_pct, gc_pause_ms,
+                                request_handler_idle_pct, urp_count, messages_in_per_sec,
+                                disk_pct, bytes_in_per_sec, bytes_out_per_sec,
+                                produce_latency_ms, fetch_latency_ms,
+                                isr_shrinks_per_sec, isr_expands_per_sec, time
+                         FROM kafka_broker_metrics
+                         WHERE cluster_id = :cid
+                         ORDER BY broker_id"""),
+                {"cid": int(cluster_id)}
             )
-            _r = _row.fetchone()
-        if not _r:
-            return {"empty": True}
-        brokers = _json.loads(_r.data_json)
+            brokers = []
+            for r in rows.fetchall():
+                brokers.append({
+                    "broker_id": r.broker_id,
+                    "id": r.broker_id,
+                    "heap_pct": r.heap_pct,
+                    "cpu_pct": r.cpu_pct,
+                    "gc_pause_ms": r.gc_pause_ms,
+                    "request_handler_idle_pct": r.request_handler_idle_pct,
+                    "urp_count": r.urp_count,
+                    "messages_in_per_sec": r.messages_in_per_sec,
+                    "disk_pct": r.disk_pct,
+                    "status": "healthy" if r.urp_count == 0 else "degraded",
+                    "cpu_cores_configured": True,
+                    "bytes_in_per_sec": r.bytes_in_per_sec or 0.0,
+                    "bytes_out_per_sec": r.bytes_out_per_sec or 0.0,
+                    "isr_shrinks_per_sec": r.isr_shrinks_per_sec or 0.0,
+                    "isr_expands_per_sec": r.isr_expands_per_sec or 0.0,
+                    "produce_latency_ms": r.produce_latency_ms or 0.0,
+                    "fetch_latency_ms": r.fetch_latency_ms or 0.0,
+                })
         if not brokers:
             return {"empty": True}
         return {"brokers": brokers}

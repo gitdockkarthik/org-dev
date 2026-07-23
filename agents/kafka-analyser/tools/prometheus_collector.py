@@ -105,6 +105,11 @@ _FILTERED_METRICS = [
     "kafka_server_replicamanager_partitioncount",
     "kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent",
     "kafka_network_socketserver_networkprocessoravgidlepercent",
+    "kafka_server_brokertopicmetrics_bytesin_total",
+    "kafka_server_brokertopicmetrics_bytesout_total",
+    "kafka_server_replicamanager_isrshrinks_total",
+    "kafka_server_replicamanager_isrexpands_total",
+    "kafka_network_requestmetrics_totaltimems",
 ]
 
 _THROUGHPUT_PREFIXES = [

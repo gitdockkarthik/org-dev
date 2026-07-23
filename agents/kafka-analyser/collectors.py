@@ -89,8 +89,11 @@ async def collect_broker_health(cluster_id: str = ""):
                             INSERT INTO kafka_broker_metrics
                             (time, cluster_id, broker_id, heap_pct, gc_pause_ms,
                              request_handler_idle_pct, urp_count, messages_in_per_sec,
-                             cpu_pct, disk_pct)
-                            VALUES (now(), :cid, :bid, :heap, :gc, :idle, :urp, :msgs, :cpu, :disk)
+                             cpu_pct, disk_pct, bytes_in_per_sec, bytes_out_per_sec,
+                             produce_latency_ms, fetch_latency_ms,
+                             isr_shrinks_per_sec, isr_expands_per_sec)
+                            VALUES (now(), :cid, :bid, :heap, :gc, :idle, :urp, :msgs, :cpu, :disk,
+                                    :bin, :bout, :plat, :flat, :isrs, :isre)
                             ON CONFLICT (cluster_id, broker_id)
                             DO UPDATE SET
                                 time = now(),
@@ -100,7 +103,13 @@ async def collect_broker_health(cluster_id: str = ""):
                                 urp_count = EXCLUDED.urp_count,
                                 messages_in_per_sec = EXCLUDED.messages_in_per_sec,
                                 cpu_pct = EXCLUDED.cpu_pct,
-                                disk_pct = EXCLUDED.disk_pct
+                                disk_pct = EXCLUDED.disk_pct,
+                                bytes_in_per_sec = EXCLUDED.bytes_in_per_sec,
+                                bytes_out_per_sec = EXCLUDED.bytes_out_per_sec,
+                                produce_latency_ms = EXCLUDED.produce_latency_ms,
+                                fetch_latency_ms = EXCLUDED.fetch_latency_ms,
+                                isr_shrinks_per_sec = EXCLUDED.isr_shrinks_per_sec,
+                                isr_expands_per_sec = EXCLUDED.isr_expands_per_sec
                         """), {
                             "cid": int(cid),
                             "bid": bid,
@@ -111,6 +120,12 @@ async def collect_broker_health(cluster_id: str = ""):
                             "msgs": broker.get("messages_in_per_sec", 0.0),
                             "cpu": broker.get("cpu_pct", 0.0),
                             "disk": broker.get("disk_pct", 0.0),
+                            "bin": broker.get("bytes_in_per_sec", 0.0),
+                            "bout": broker.get("bytes_out_per_sec", 0.0),
+                            "plat": broker.get("produce_latency_ms", 0.0),
+                            "flat": broker.get("fetch_latency_ms", 0.0),
+                            "isrs": broker.get("isr_shrinks_per_sec", 0.0),
+                            "isre": broker.get("isr_expands_per_sec", 0.0),
                         })
                     await sess.commit()
         except Exception as db_exc:
