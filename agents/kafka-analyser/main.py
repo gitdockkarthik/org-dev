@@ -951,6 +951,28 @@ async def lifespan(app: FastAPI):
     count = await _jobs_module.load_schedules()
     logger.info("Job scheduler: loaded %d schedule(s)", count)
     _jobs_module.start_scheduler()
+    # Warm-up Kafka connections for enabled clusters to avoid cold-start timeouts
+    async def _warmup_connections():
+        try:
+            await asyncio.sleep(5)  # Let scheduler start first
+            from storage import get_backend as _gwb
+            _wclusters = await _gwb().get_clusters(settings.agent_slug)
+            _wenabled = [c for c in _wclusters if c.get("enabled") and c.get("bootstrap_servers")]
+            for _wc in _wenabled:
+                try:
+                    import functools
+                    loop = asyncio.get_event_loop()
+                    def _connect(bs):
+                        from kafka import KafkaAdminClient
+                        a = KafkaAdminClient(bootstrap_servers=bs, request_timeout_ms=10000)
+                        a.close()
+                    await loop.run_in_executor(None, functools.partial(_connect, _wc["bootstrap_servers"]))
+                    logger.info("Warm-up connection OK for cluster %s", _wc["name"])
+                except Exception as _we:
+                    logger.warning("Warm-up connection failed for %s: %s", _wc.get("name"), _we)
+        except Exception as _wue:
+            logger.warning("Warm-up failed: %s", _wue)
+    asyncio.create_task(_warmup_connections())
     yield
     _jobs_module.stop_scheduler()
 
