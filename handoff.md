@@ -44,3 +44,21 @@ Kafka Analyser — SLI/SLO feature complete with full compliance tracking.
 ## Known Issues
 * Prometheus JMX exporter port 7071: deadlocked (CloudOps needed)
 * worker01 + worker10 Kafka Connect: connection refused (CloudOps needed)
+
+## Session Update — 2026-07-24
+### Completed This Session
+* SLI/SLO full feature:
+  - 7 jobs per cluster (including connector-snapshots + slo-compliance)
+  - 7 configurable SLO targets (connector avail, task health, lag, URP, CPU, heap, failed tasks)
+  - SLO Status table showing all SLOs with target/current/status
+  - Connector trend chart from snapshots (5min resolution)
+  - Monthly comparison (graceful single/multi month)
+  - Connector detail popup (search + filter, sorted by anomaly)
+  - Consumer lag popup + Topics popup
+  - Broker availability: dynamic expected count
+  - Lag trend: negative values filtered out
+
+### Remaining SLI/SLO enhancements (next session)
+* Overall compliance trend chart (currently shows connector trend only)
+* Connector task-level SLI per connector in popup (task health %)
+* SLO breach alerts via Teams (when compliance drops below threshold)
