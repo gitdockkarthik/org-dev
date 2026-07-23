@@ -399,6 +399,43 @@ async def get_brokers(cluster_id: str | None = None, hours: int | None = None) -
         return {"empty": True, "error": str(_e)}
 
 
+@router.get("/dashboard/broker-distribution")
+async def get_broker_distribution(cluster_id: str | None = None) -> dict:
+    """Broker leader/replica partition distribution and data volume."""
+    if not cluster_id:
+        return {"empty": True}
+    try:
+        from database import SessionLocal
+        from sqlalchemy import text as _text
+        if SessionLocal is None:
+            return {"empty": True}
+        async with SessionLocal() as sess:
+            rows = await sess.execute(_text("""
+                SELECT bd.broker_id, bd.leader_partition_count, bd.replica_partition_count,
+                       bm.cpu_pct, bm.heap_pct
+                FROM kafka_broker_distribution bd
+                LEFT JOIN kafka_broker_metrics bm
+                    ON bm.cluster_id = bd.cluster_id AND bm.broker_id = bd.broker_id
+                WHERE bd.cluster_id = :cid
+                ORDER BY bd.broker_id
+            """), {"cid": int(cluster_id)})
+            brokers = [
+                {
+                    "broker_id": r.broker_id,
+                    "leader_partition_count": r.leader_partition_count,
+                    "replica_partition_count": r.replica_partition_count,
+                    "cpu_pct": r.cpu_pct or 0.0,
+                    "heap_pct": r.heap_pct or 0.0,
+                }
+                for r in rows.fetchall()
+            ]
+        if not brokers:
+            return {"empty": True}
+        return {"brokers": brokers}
+    except Exception as e:
+        return {"empty": True, "error": str(e)}
+
+
 @router.get("/dashboard/connectors")
 async def get_connectors(cluster_id: str | None = None, hours: int | None = None) -> dict:
     """Connector state and per-task health."""

@@ -1707,12 +1707,12 @@
             <div class="chart-wrap" style="height:240px"><canvas id="broker-cpu-heap-chart"></canvas></div>
           </div>
           <div class="chart-card" style="flex:1;min-width:280px;margin-bottom:0">
-            <div class="chart-card__title">Network I/O by Broker</div>
-            <div class="chart-wrap" style="height:240px"><canvas id="broker-network-chart"></canvas></div>
+            <div class="chart-card__title">Leader Partition Distribution</div>
+            <div class="chart-wrap" style="height:240px"><canvas id="broker-leader-chart"></canvas></div>
           </div>
           <div class="chart-card" style="flex:1;min-width:280px;margin-bottom:0">
-            <div class="chart-card__title">Produce &amp; Fetch Latency by Broker</div>
-            <div class="chart-wrap" style="height:240px"><canvas id="broker-latency-chart"></canvas></div>
+            <div class="chart-card__title">Replica Partition Distribution</div>
+            <div class="chart-wrap" style="height:240px"><canvas id="broker-replica-chart"></canvas></div>
           </div>
         </div>`;
 
@@ -1748,60 +1748,51 @@
           });
         }
 
-        if (window._brokerNetworkChart) { window._brokerNetworkChart.destroy(); window._brokerNetworkChart = null; }
-        const netCtx = document.getElementById('broker-network-chart')?.getContext('2d');
-        if (netCtx) {
-          const fmtNet = v => v >= 1048576
-            ? (v / 1048576).toFixed(1) + ' MB/s'
-            : (v / 1024).toFixed(1) + ' KB/s';
-          window._brokerNetworkChart = new Chart(netCtx, {
-            type: 'bar',
-            data: {
-              labels: brokerLabels,
-              datasets: [
-                { label: 'Bytes In',  data: brokers.map(b => b.bytes_in_per_sec || 0),  backgroundColor: '#4CAF50', borderWidth: 0 },
-                { label: 'Bytes Out', data: brokers.map(b => b.bytes_out_per_sec || 0), backgroundColor: '#FF9800', borderWidth: 0 },
-              ],
-            },
-            options: {
-              responsive: true,
-              maintainAspectRatio: false,
-              plugins: {
-                legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
-                title: { display: false },
-                tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmtNet(c.parsed.y)}` } },
-              },
-              scales: {
-                x: { ticks: { font: { size: 10 } } },
-                y: { beginAtZero: true, ticks: { callback: v => fmtNet(v), font: { size: 10 } } },
-              },
-            },
-          });
+        // Leader partition distribution chart
+        if (window._brokerLeaderChart) { window._brokerLeaderChart.destroy(); window._brokerLeaderChart = null; }
+        const leaderCtx = document.getElementById('broker-leader-chart')?.getContext('2d');
+        if (leaderCtx) {
+          fetch(`${PROXY}/dashboard/broker-distribution?cluster_id=${_currentClusterId || ''}`, { headers: _authHeaders(), cache: 'no-store' })
+            .then(r => r.json()).then(d => {
+              if (d.empty || !d.brokers) return;
+              const distLabels = d.brokers.map(b => 'Broker ' + b.broker_id);
+              window._brokerLeaderChart = new Chart(leaderCtx, {
+                type: 'bar',
+                data: {
+                  labels: distLabels,
+                  datasets: [
+                    { label: 'Leader Partitions', data: d.brokers.map(b => b.leader_partition_count), backgroundColor: '#FF6B35', borderWidth: 0 },
+                  ],
+                },
+                options: {
+                  responsive: true, maintainAspectRatio: false,
+                  plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } },
+                  scales: { x: { ticks: { font: { size: 10 } } }, y: { ticks: { font: { size: 10 } } } },
+                },
+              });
+              // Replica chart
+              if (window._brokerReplicaChart) { window._brokerReplicaChart.destroy(); window._brokerReplicaChart = null; }
+              const repCtx = document.getElementById('broker-replica-chart')?.getContext('2d');
+              if (repCtx) {
+                window._brokerReplicaChart = new Chart(repCtx, {
+                  type: 'bar',
+                  data: {
+                    labels: distLabels,
+                    datasets: [
+                      { label: 'Leader', data: d.brokers.map(b => b.leader_partition_count), backgroundColor: '#FF6B35', borderWidth: 0 },
+                      { label: 'Replica', data: d.brokers.map(b => b.replica_partition_count - b.leader_partition_count), backgroundColor: '#4FC3F7', borderWidth: 0 },
+                    ],
+                  },
+                  options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } },
+                    scales: { x: { ticks: { font: { size: 10 } } }, y: { ticks: { font: { size: 10 } }, stacked: true }, x: { stacked: true } },
+                  },
+                });
+              }
+            }).catch(() => {});
         }
-
-        if (window._brokerLatencyChart) { window._brokerLatencyChart.destroy(); window._brokerLatencyChart = null; }
-        const latCtx = document.getElementById('broker-latency-chart')?.getContext('2d');
-        if (latCtx) {
-          window._brokerLatencyChart = new Chart(latCtx, {
-            type: 'bar',
-            data: {
-              labels: brokerLabels,
-              datasets: [
-                { label: 'Produce Latency', data: brokers.map(b => b.produce_latency_ms || 0), backgroundColor: '#9C27B0', borderWidth: 0 },
-                { label: 'Fetch Latency',   data: brokers.map(b => b.fetch_latency_ms || 0),   backgroundColor: '#00BCD4', borderWidth: 0 },
-              ],
-            },
-            options: {
-              responsive: true,
-              maintainAspectRatio: false,
-              plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } }, title: { display: false } },
-              scales: {
-                x: { ticks: { font: { size: 10 } } },
-                y: { beginAtZero: true, ticks: { callback: v => v + 'ms', font: { size: 10 } } },
-              },
-            },
-          });
-        }
+        // (latency chart removed — replaced by distribution charts above)
       }, 0);
       window._renderTabAI('brokers', document.getElementById('tab-brokers'));
     }

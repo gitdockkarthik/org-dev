@@ -361,6 +361,54 @@ async def collect_topic_structure(cluster_id: str = ""):
             data["counts"]["total_urp"] = total_urp
             _ks.set_cluster_data(data, source_type=c.get("source_type", "live"), cluster_id=cid)
             results.append(f"{c['name']}: {len(described_topics)} topics, {total_rf1} RF=1, {total_urp} URP")
+            # Collect broker leader distribution
+            try:
+                from kafka import KafkaAdminClient
+                import collections as _col
+                security = {}
+                if c.get("auth_type") not in (None, "none"):
+                    security = {
+                        "security_protocol": "SASL_PLAINTEXT",
+                        "sasl_mechanism": c.get("sasl_mechanism", "PLAIN"),
+                        "sasl_plain_username": c.get("sasl_username"),
+                        "sasl_plain_password": c.get("sasl_password"),
+                    }
+                _admin = KafkaAdminClient(
+                    bootstrap_servers=c["bootstrap_servers"],
+                    request_timeout_ms=15000,
+                    **security,
+                )
+                _all_topics = [t for t in _admin.list_topics() if not t.startswith('_')]
+                leader_counts = _col.defaultdict(int)
+                replica_counts = _col.defaultdict(int)
+                BATCH = 500
+                for _i in range(0, len(_all_topics), BATCH):
+                    _meta = _admin.describe_topics(_all_topics[_i:_i+BATCH])
+                    for _tm in _meta:
+                        for _p in _tm.get('partitions', []):
+                            leader_counts[str(_p['leader'])] += 1
+                            for _r in _p.get('replicas', []):
+                                replica_counts[str(_r)] += 1
+                _admin.close()
+                # Get data volume per broker from kafka_topic_metrics + leader assignments
+                from database import SessionLocal
+                from sqlalchemy import text as _st
+                async with SessionLocal() as _sess:
+                    for broker_id, lcount in leader_counts.items():
+                        await _sess.execute(_st("""
+                            INSERT INTO kafka_broker_distribution
+                            (cluster_id, broker_id, leader_partition_count, replica_partition_count, data_gb, updated_at)
+                            VALUES (:cid, :bid, :lcount, :rcount, 0, now())
+                            ON CONFLICT (cluster_id, broker_id) DO UPDATE SET
+                                leader_partition_count = EXCLUDED.leader_partition_count,
+                                replica_partition_count = EXCLUDED.replica_partition_count,
+                                updated_at = now()
+                        """), {"cid": int(cid), "bid": broker_id,
+                               "lcount": lcount, "rcount": replica_counts.get(broker_id, 0)})
+                    await _sess.commit()
+                logger.info("Broker distribution updated for %s: %s brokers", c["name"], len(leader_counts))
+            except Exception as _be:
+                logger.warning("Broker distribution failed for %s: %s", c["name"], _be)
     except Exception as e:
         logger.warning("topic_structure failed for %s: %s", c["name"], e)
     collect_topic_structure._last_result = results[0] if results else "No data collected"
