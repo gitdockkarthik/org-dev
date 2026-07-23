@@ -290,6 +290,7 @@
       if (/^\d+-\d+\/(\d+)$/.test(min)) return `Every ${min.split('/')[1]} min`;
       if (min === '0' && hour.startsWith('*/')) return `Every ${hour.slice(2)}h`;
       if (min === '0' && hour === '0') return 'Daily midnight';
+      if (/^\d+$/.test(min) && hour === '*') return `Hourly at :${min.padStart(2,'0')}`;
       return cron;
     }
 
@@ -443,11 +444,25 @@
       await loadRunMonitor(true);
     }
 
+    function setSchedMode(mode) {
+      document.getElementById('sched-preset-section').style.display = mode === 'preset' ? 'block' : 'none';
+      document.getElementById('sched-custom-section').style.display = mode === 'custom' ? 'block' : 'none';
+      document.getElementById('sched-mode-preset').className = mode === 'preset' ? 'btn btn--primary btn--sm' : 'btn btn--ghost btn--sm';
+      document.getElementById('sched-mode-custom').className = mode === 'custom' ? 'btn btn--primary btn--sm' : 'btn btn--ghost btn--sm';
+    }
+
     let _editJobId = null, _editSchedId = null;
     function openEditSchedule(jobId, schedId, cron, timeout) {
       _editJobId = jobId; _editSchedId = schedId;
       const sel = document.getElementById('edit-sched-freq');
-      for (const opt of sel.options) { if (opt.value === cron) { opt.selected = true; break; } }
+      let matched = false;
+      for (const opt of sel.options) { if (opt.value === cron) { opt.selected = true; matched = true; break; } }
+      if (matched) {
+        setSchedMode('preset');
+      } else {
+        setSchedMode('custom');
+        document.getElementById('edit-sched-custom').value = cron;
+      }
       document.getElementById('edit-sched-timeout').value = timeout;
       document.getElementById('edit-sched-modal').style.display = 'flex';
     }
@@ -455,7 +470,9 @@
       document.getElementById('edit-sched-modal').style.display = 'none';
     }
     async function saveEditSchedule() {
-      const cron = document.getElementById('edit-sched-freq').value;
+      const isCustom = document.getElementById('sched-custom-section').style.display !== 'none';
+      const cron = isCustom ? document.getElementById('edit-sched-custom').value.trim() : document.getElementById('edit-sched-freq').value;
+      if (!cron) { showToast('Please enter a cron expression', 'warning'); return; }
       const timeout = parseInt(document.getElementById('edit-sched-timeout').value);
       try {
         await api('/jobs/' + _editJobId + '/schedules/' + _editSchedId, {
@@ -490,7 +507,11 @@
 <div id="edit-sched-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;align-items:center;justify-content:center">
   <div style="background:var(--navy-2);border-radius:12px;padding:24px;min-width:320px;box-shadow:0 8px 32px rgba(0,0,0,.4)">
     <div style="font-size:1rem;font-weight:700;margin-bottom:16px">✏ Edit Schedule</div>
-    <div style="margin-bottom:12px">
+    <div style="margin-bottom:8px;display:flex;gap:8px">
+      <button id="sched-mode-preset" onclick="setSchedMode('preset')" class="btn btn--primary btn--sm">Preset</button>
+      <button id="sched-mode-custom" onclick="setSchedMode('custom')" class="btn btn--ghost btn--sm">Custom Cron</button>
+    </div>
+    <div id="sched-preset-section" style="margin-bottom:12px">
       <label style="display:block;font-size:.8rem;color:var(--text-muted);margin-bottom:4px">Frequency</label>
       <select id="edit-sched-freq" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text)">
         <option value="*/2 * * * *">Every 2 minutes</option>
@@ -505,6 +526,12 @@
         <option value="0 */12 * * *">Every 12 hours</option>
         <option value="0 0 * * *">Daily midnight</option>
       </select>
+    </div>
+    <div id="sched-custom-section" style="margin-bottom:12px;display:none">
+      <label style="display:block;font-size:.8rem;color:var(--text-muted);margin-bottom:4px">Custom Cron Expression</label>
+      <input type="text" id="edit-sched-custom" placeholder="e.g. 5 * * * *"
+        style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text);font-family:monospace">
+      <div style="font-size:.72rem;color:var(--text-muted);margin-top:3px">Standard cron format: min hour day month weekday</div>
     </div>
     <div style="margin-bottom:16px">
       <label style="display:block;font-size:.8rem;color:var(--text-muted);margin-bottom:4px">Timeout (seconds)</label>

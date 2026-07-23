@@ -209,6 +209,7 @@
       <button class="tab-btn"                 data-tab="kafka-connect"   onclick="switchTab('kafka-connect',this)">Kafka Connect</button>
       <button class="tab-btn"                 data-tab="schema-registry" onclick="switchTab('schema-registry',this)">Schema Registry</button>
       <button class="tab-btn"                 data-tab="mirrormaker"     onclick="switchTab('mirrormaker',this)">MirrorMaker</button>
+      <button class="tab-btn"                 data-tab="slo"             onclick="switchTab('slo',this)">🎯 SLI/SLO</button>
       <button class="tab-btn"                 data-tab="insights"        onclick="switchTab('insights',this)">AI Insights</button>
     </div>
 
@@ -220,6 +221,7 @@
     <div id="tab-zookeeper" class="tab-panel"></div>
     <div id="tab-kafka-connect" class="tab-panel"></div>
     <div id="tab-mirrormaker" class="tab-panel"></div>
+    <div id="tab-slo" class="tab-panel"></div>
     <div id="tab-insights"        class="tab-panel"></div>
   </div>
 
@@ -425,6 +427,11 @@
           case 'schema-registry': {
             const d = await api('/dashboard/schema-registry');
             renderSchemaRegistry(d);
+            break;
+          }
+          case 'slo': {
+            renderSLO(null);
+            loadSLODashboard();
             break;
           }
           case 'zookeeper': {
@@ -2798,6 +2805,271 @@
       }
       window._renderTabAI('schema-registry', document.getElementById('tab-schema-registry'));
     }
+
+    // ── SLI/SLO Tab ───────────────────────────────────────────────────────────
+    let _sloData = null;
+    let _sloSubTab = 'dashboard'; // 'dashboard' or 'settings'
+
+    function renderSLO(data) {
+      const el = document.getElementById('tab-slo');
+      if (!el) return;
+      el.innerHTML = `
+        <div style="display:flex;gap:0;margin-bottom:20px;border-bottom:2px solid var(--border)">
+          <button id="slo-sub-dashboard" onclick="switchSLOTab('dashboard')"
+            style="padding:10px 20px;border:none;background:none;cursor:pointer;font-size:.88rem;font-weight:600;
+            color:${_sloSubTab==='dashboard'?'var(--accent)':'var(--text-muted)'};
+            border-bottom:${_sloSubTab==='dashboard'?'2px solid var(--accent)':'2px solid transparent'};margin-bottom:-2px">
+            📊 Dashboard
+          </button>
+          <button id="slo-sub-settings" onclick="switchSLOTab('settings')"
+            style="padding:10px 20px;border:none;background:none;cursor:pointer;font-size:.88rem;font-weight:600;
+            color:${_sloSubTab==='settings'?'var(--accent)':'var(--text-muted)'};
+            border-bottom:${_sloSubTab==='settings'?'2px solid var(--accent)':'2px solid transparent'};margin-bottom:-2px">
+            ⚙️ Settings
+          </button>
+        </div>
+        <div id="slo-sub-content">
+          ${_sloSubTab === 'dashboard' ? renderSLODashboardHTML(data) : renderSLOSettingsHTML()}
+        </div>`;
+    }
+
+    function switchSLOTab(tab) {
+      _sloSubTab = tab;
+      if (tab === 'dashboard') {
+        renderSLO(_sloData);
+        loadSLODashboard();
+      } else {
+        renderSLO(null);
+        loadSLOSettings();
+      }
+    }
+
+    function sloColor(status) {
+      return status === 'green' ? '#4CAF50' : status === 'amber' ? '#FF9800' : status === 'red' ? '#F44336' : '#666';
+    }
+    function sloIcon(status) {
+      return status === 'green' ? '✅' : status === 'amber' ? '⚠️' : status === 'red' ? '🔴' : '—';
+    }
+    function sloArrow(pct, target) {
+      if (pct === null || pct === undefined) return '';
+      if (pct >= target) return '<span style="color:#4CAF50">↑</span>';
+      if (pct >= target * 0.9) return '<span style="color:#FF9800">→</span>';
+      return '<span style="color:#F44336">↓</span>';
+    }
+
+    function renderSLODashboardHTML(data) {
+      if (!data) return '<div style="text-align:center;padding:40px;color:var(--text-muted)">⟳ Loading SLO data...</div>';
+      const c = data.current || {};
+      const t = data.targets || {};
+      // Infra health strip
+      const infraHtml = `
+        <div class="chart-card" style="margin-bottom:16px">
+          <div class="chart-card__title">🖥 Cluster Infrastructure Health</div>
+          <div style="display:flex;gap:24px;flex-wrap:wrap;padding:12px 0">
+            <div style="text-align:center">
+              <div style="font-size:1.8rem;font-weight:700;color:${c.broker_count>0?'#4CAF50':'#F44336'}">${c.broker_count||0}</div>
+              <div style="font-size:.75rem;color:var(--text-muted)">Brokers Online</div>
+              <div>${sloIcon(c.broker_status)}</div>
+            </div>
+            <div style="text-align:center">
+              <div style="font-size:1.8rem;font-weight:700;color:${c.urp===0?'#4CAF50':'#F44336'}">${c.urp||0}</div>
+              <div style="font-size:.75rem;color:var(--text-muted)">Under-replicated</div>
+              <div>${sloIcon(c.urp_status)}</div>
+            </div>
+            <div style="text-align:center">
+              <div style="font-size:1.8rem;font-weight:700;color:${sloColor(c.connector_status)}">${c.connector_running||0}/${(c.connector_running||0)+(c.connector_failed||0)}</div>
+              <div style="font-size:.75rem;color:var(--text-muted)">Connectors Active</div>
+              <div style="font-size:.7rem;color:var(--text-muted)">${c.connector_paused||0} paused (excluded)</div>
+            </div>
+            <div style="text-align:center">
+              <div style="font-size:1.8rem;font-weight:700;color:${sloColor(c.lag_status)}">${((c.consumer_lag||0)/1000000).toFixed(1)}M</div>
+              <div style="font-size:.75rem;color:var(--text-muted)">Total Consumer Lag</div>
+              <div>${sloIcon(c.lag_status)}</div>
+            </div>
+          </div>
+        </div>`;
+      // SLO compliance bars
+      const sloRows = [
+        { label: 'Connector Availability', pct: c.connector_availability_pct, target: t.connector_availability, status: c.connector_status },
+        { label: 'Consumer Lag Compliance', pct: null, target: t.consumer_lag, status: c.lag_status, display: c.lag_status === 'green' ? '✅ Within target' : `${((c.consumer_lag||0)/1000000).toFixed(1)}M (target: <${(t.consumer_lag||10000).toLocaleString()})` },
+        { label: 'Broker Availability', pct: 100, target: 100, status: c.broker_status },
+        { label: 'Under-replicated Partitions', pct: c.urp === 0 ? 100 : 0, target: 100, status: c.urp_status },
+      ];
+      const sloBarHtml = `
+        <div class="chart-card" style="margin-bottom:16px">
+          <div class="chart-card__title">📊 SLO Compliance — Current</div>
+          <div style="display:flex;flex-direction:column;gap:12px;padding:8px 0">
+            ${sloRows.map(r => `
+              <div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                  <span style="font-size:.85rem;font-weight:600">${sloIcon(r.status)} ${r.label}</span>
+                  <span style="font-size:.85rem;color:${sloColor(r.status)};font-weight:700">
+                    ${r.display || (r.pct !== null ? r.pct.toFixed(1)+'%' : '—')}
+                    ${r.pct !== null ? `<span style="color:var(--text-muted);font-weight:400"> / target ${r.target}%</span>` : ''}
+                  </span>
+                </div>
+                ${r.pct !== null ? `<div style="height:8px;background:var(--navy-1);border-radius:4px">
+                  <div style="height:100%;width:${Math.min(100,r.pct)}%;background:${sloColor(r.status)};border-radius:4px;transition:width .3s"></div>
+                </div>` : ''}
+              </div>`).join('')}
+          </div>
+        </div>`;
+      // Trend chart placeholder
+      const trendHtml = `
+        <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px">
+          <div class="chart-card" style="flex:1;min-width:300px;margin-bottom:0">
+            <div class="chart-card__title">📈 Connector Availability Trend</div>
+            <div class="chart-wrap" style="height:200px"><canvas id="slo-conn-trend-chart"></canvas></div>
+          </div>
+          <div class="chart-card" style="flex:1;min-width:300px;margin-bottom:0">
+            <div class="chart-card__title">📈 Overall SLO Compliance Trend</div>
+            <div class="chart-wrap" style="height:200px"><canvas id="slo-overall-trend-chart"></canvas></div>
+          </div>
+        </div>`;
+      // Connector detail table
+      const connectors = data.connectors || [];
+      const connTableHtml = `
+        <div class="chart-card">
+          <div class="chart-card__title">🔌 Connector SLO Detail
+            <span style="font-size:.78rem;color:var(--text-muted);font-weight:400;margin-left:8px">
+              ${c.connector_running||0} running · ${c.connector_failed||0} failed · ${c.connector_paused||0} paused (excluded from SLI)
+            </span>
+          </div>
+          <div class="data-table-wrap">
+            <table class="data-table">
+              <thead><tr>
+                <th>Connector</th><th>Type</th><th>State</th><th>Tasks</th><th>SLI</th>
+              </tr></thead>
+              <tbody>
+                ${connectors.map(c2 => {
+                  const isPaused = c2.state === 'PAUSED';
+                  const isRunning = c2.state === 'RUNNING';
+                  const stateColor = isRunning ? '#4CAF50' : c2.state === 'FAILED' ? '#F44336' : isPaused ? '#FF9800' : '#666';
+                  const taskOk = c2.failed_tasks === 0;
+                  const sli = isPaused ? '— excluded' : isRunning && taskOk ? '✅ 100%' : isRunning && !taskOk ? `⚠️ ${Math.round(c2.running_tasks/c2.total_tasks*100)}%` : '🔴 0%';
+                  return `<tr>
+                    <td><code style="font-size:.78rem">${c2.name}</code></td>
+                    <td style="font-size:.8rem;text-transform:capitalize">${c2.type||'—'}</td>
+                    <td><span style="color:${stateColor};font-weight:600">${c2.state}</span>${isPaused?'<span style="font-size:.7rem;color:var(--text-muted);margin-left:4px">(excl.)</span>':''}</td>
+                    <td style="font-size:.8rem">${c2.running_tasks||0}/${c2.total_tasks||0}</td>
+                    <td>${sli}</td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>`;
+      return infraHtml + sloBarHtml + trendHtml + connTableHtml;
+    }
+
+    function renderSLOSettingsHTML() {
+      return `
+        <div class="chart-card" style="max-width:500px">
+          <div class="chart-card__title">⚙️ SLO Targets</div>
+          <div style="display:flex;flex-direction:column;gap:16px;padding:8px 0">
+            <div>
+              <label style="display:block;font-size:.8rem;color:var(--text-muted);margin-bottom:4px">Connector Availability Target (%)</label>
+              <input type="number" id="slo-conn-target" min="0" max="100" step="0.1"
+                style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text)">
+            </div>
+            <div>
+              <label style="display:block;font-size:.8rem;color:var(--text-muted);margin-bottom:4px">Max Consumer Lag (messages)</label>
+              <input type="number" id="slo-lag-target" min="0"
+                style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text)">
+            </div>
+            <div>
+              <label style="display:block;font-size:.8rem;color:var(--text-muted);margin-bottom:4px">Max Under-replicated Partitions</label>
+              <input type="number" id="slo-urp-target" min="0"
+                style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text)">
+            </div>
+            <button class="btn btn--primary" onclick="saveSLOSettings()">Save Targets</button>
+            <div id="slo-settings-msg" style="font-size:.82rem;color:var(--success)"></div>
+          </div>
+        </div>`;
+    }
+
+    async function loadSLODashboard() {
+      const cid = _currentClusterId || document.getElementById('ctrl-cluster')?.value || '';
+      if (!cid) return;
+      try {
+        const data = await fetch(`${PROXY}/slo/dashboard?cluster_id=${cid}&hours=24`, { headers: _authHeaders(), cache: 'no-store' }).then(r => r.json());
+        _sloData = data;
+        const el = document.getElementById('slo-sub-content');
+        if (el && _sloSubTab === 'dashboard') el.innerHTML = renderSLODashboardHTML(data);
+        // Render trend charts
+        setTimeout(() => {
+          const trend = data.trend || [];
+          const labels = trend.map(t => new Date(t.time).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}));
+          // Connector trend
+          const connCtx = document.getElementById('slo-conn-trend-chart')?.getContext('2d');
+          if (connCtx && trend.length > 0) {
+            new Chart(connCtx, {
+              type: 'line',
+              data: { labels, datasets: [{
+                label: 'Availability %', data: trend.map(t => t.connector_pct),
+                borderColor: '#4CAF50', backgroundColor: 'rgba(76,175,80,0.1)',
+                borderWidth: 2, tension: 0.3, fill: true, pointRadius: 2,
+              }]},
+              options: { responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: { y: { min: 0, max: 100, ticks: { callback: v => v+'%', font: {size:10} } },
+                          x: { ticks: { maxTicksLimit: 12, font: {size:10} } } } }
+            });
+          } else if (connCtx) {
+            connCtx.canvas.parentElement.innerHTML = '<div style="text-align:center;padding:60px;color:var(--text-muted);font-size:.82rem">No trend data yet — SLO compliance job runs hourly</div>';
+          }
+          // Overall trend
+          const overallCtx = document.getElementById('slo-overall-trend-chart')?.getContext('2d');
+          if (overallCtx && trend.length > 0) {
+            new Chart(overallCtx, {
+              type: 'line',
+              data: { labels, datasets: [{
+                label: 'Overall %', data: trend.map(t => t.overall_pct),
+                borderColor: '#FF6B35', backgroundColor: 'rgba(255,107,53,0.1)',
+                borderWidth: 2, tension: 0.3, fill: true, pointRadius: 2,
+              }]},
+              options: { responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: { y: { min: 0, max: 100, ticks: { callback: v => v+'%', font: {size:10} } },
+                          x: { ticks: { maxTicksLimit: 12, font: {size:10} } } } }
+            });
+          } else if (overallCtx) {
+            overallCtx.canvas.parentElement.innerHTML = '<div style="text-align:center;padding:60px;color:var(--text-muted);font-size:.82rem">No trend data yet — SLO compliance job runs hourly</div>';
+          }
+        }, 100);
+      } catch(e) {
+        const el = document.getElementById('slo-sub-content');
+        if (el) el.innerHTML = `<div style="color:var(--danger)">Error: ${e.message}</div>`;
+      }
+    }
+
+    async function loadSLOSettings() {
+      const cid = _currentClusterId || document.getElementById('ctrl-cluster')?.value || '';
+      if (!cid) return;
+      try {
+        const t = await fetch(`${PROXY}/slo/targets?cluster_id=${cid}`, { headers: _authHeaders() }).then(r => r.json());
+        document.getElementById('slo-conn-target').value = t.connector_availability_target || 99;
+        document.getElementById('slo-lag-target').value = t.consumer_lag_target || 10000;
+        document.getElementById('slo-urp-target').value = t.urp_target || 0;
+      } catch(e) { console.warn('SLO settings load failed', e); }
+    }
+
+    async function saveSLOSettings() {
+      const cid = _currentClusterId || document.getElementById('ctrl-cluster')?.value || '';
+      try {
+        await fetch(`${PROXY}/slo/targets?cluster_id=${cid}`, {
+          method: 'POST', headers: { ..._authHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            connector_availability_target: parseFloat(document.getElementById('slo-conn-target').value),
+            consumer_lag_target: parseInt(document.getElementById('slo-lag-target').value),
+            urp_target: parseInt(document.getElementById('slo-urp-target').value),
+          })
+        });
+        document.getElementById('slo-settings-msg').textContent = '✅ Saved';
+        setTimeout(() => { if(document.getElementById('slo-settings-msg')) document.getElementById('slo-settings-msg').textContent = ''; }, 3000);
+      } catch(e) { showToast('Failed to save: ' + e.message, 'error'); }
+    }
+    // ── End SLI/SLO ──────────────────────────────────────────────────────────
 
     function renderZooKeeper(data) {
       const el = document.getElementById('tab-zookeeper');
