@@ -595,26 +595,10 @@
           </div>`).join('');
 
       // ── Anomalies table ─────────────────────────────────────────────────────
-      const anomalyRows = anomalies.length
-        ? anomalies.map(a => `
-            <tr>
-              <td>${sevBadge(a.severity)}</td>
-              <td style="font-size:.78rem;color:var(--text-muted);text-transform:uppercase;font-weight:600">${a.category.replace(/_/g,' ')}</td>
-              <td>${a.description}</td>
-            </tr>`).join('')
-        : `<tr><td colspan="3" class="data-table__empty">✅ No active anomalies</td></tr>`;
-
       document.getElementById('tab-overview').innerHTML =
         kpis + healthStrip + overviewCharts + `
         <div class="chart-card__title">Broker Health</div>
-        <div class="broker-grid">${brokerCards}</div>
-        <div class="chart-card__title">Active Anomalies</div>
-        <div class="data-table-wrap">
-          <table class="data-table">
-            <thead><tr><th>Severity</th><th>Category</th><th>Description</th></tr></thead>
-            <tbody>${anomalyRows}</tbody>
-          </table>
-        </div>`;
+        <div class="broker-grid">${brokerCards}</div>`;
 
       setTimeout(async () => {
         if (window._overviewActivityChart) { window._overviewActivityChart.destroy(); window._overviewActivityChart = null; }

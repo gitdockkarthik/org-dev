@@ -275,6 +275,19 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
                         await sess.commit()
         except Exception as _ge:
             logger.warning("consumer group lag upsert failed: %s", _ge)
+        # Insert lag snapshot for trend chart
+        try:
+            from database import SessionLocal
+            from sqlalchemy import text as _lst
+            async with SessionLocal() as sess:
+                await sess.execute(_lst("""
+                    INSERT INTO kafka_lag_snapshots (cluster_id, total_lag, group_count, collected_at)
+                    VALUES (:cid, :lag, :cnt, NOW())
+                """), {"cid": str(cid), "lag": int(result["total_lag"]),
+                       "cnt": result["group_states"]["consumer"]})
+                await sess.commit()
+        except Exception as _lse:
+            logger.warning("lag snapshot insert failed: %s", _lse)
         total_groups += result["group_states"]["consumer"]
     except Exception as e:
         logger.warning("consumer_lag_active failed for %s: %s", c["name"], e)

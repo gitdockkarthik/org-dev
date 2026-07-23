@@ -172,6 +172,12 @@ async def get_counts(cluster_id: str | None = None) -> dict:
     """Cluster counts — reads from DB directly, not cache."""
     if not cluster_id:
         return {"empty": True}
+    total_groups_count = 0
+    total_rf1_count = 0
+    total_partitions_count = 0
+    total_urp_count = 0
+    large_topics_count = 0
+    total_hot_count = 0
     try:
         from storage import get_backend
         import json as _json
@@ -233,18 +239,42 @@ async def get_counts(cluster_id: str | None = None) -> dict:
                     "SELECT COUNT(*) FROM kafka_topic_metrics WHERE cluster_id = :cid"
                 ), {"cid": int(cluster_id)})
                 total_topics_count = _cnt.scalar() or 0
+                _gcnt = await _sess3.execute(_text(
+                    "SELECT COUNT(*) FROM kafka_consumer_group_lag WHERE cluster_id = :cid"
+                ), {"cid": int(cluster_id)})
+                total_groups_count = _gcnt.scalar() or 0
+                _rf1 = await _sess3.execute(_text(
+                    "SELECT COUNT(*) FROM kafka_topic_metrics WHERE cluster_id=:cid AND replication_factor=1 AND partition_count>0"
+                ), {"cid": int(cluster_id)})
+                total_rf1_count = _rf1.scalar() or 0
+                _parts = await _sess3.execute(_text(
+                    "SELECT COALESCE(SUM(partition_count),0) FROM kafka_topic_metrics WHERE cluster_id=:cid"
+                ), {"cid": int(cluster_id)})
+                total_partitions_count = _parts.scalar() or 0
+                _urp = await _sess3.execute(_text(
+                    "SELECT COALESCE(SUM(urp_count),0) FROM kafka_broker_metrics WHERE cluster_id=:cid"
+                ), {"cid": int(cluster_id)})
+                total_urp_count = _urp.scalar() or 0
+                _large = await _sess3.execute(_text(
+                    "SELECT COUNT(*) FROM kafka_topic_metrics WHERE cluster_id=:cid AND size_bytes > 10737418240"
+                ), {"cid": int(cluster_id)})
+                large_topics_count = _large.scalar() or 0
+                _hot = await _sess3.execute(_text(
+                    "SELECT COUNT(*) FROM kafka_topic_metrics WHERE cluster_id=:cid AND bytes_in_per_sec > 102400"
+                ), {"cid": int(cluster_id)})
+                total_hot_count = _hot.scalar() or 0
         return {
             "total_topics": total_topics_count or structure.get("total_topics", 0),
-            "total_groups": structure.get("total_groups", 0),
+            "total_groups": total_groups_count,
             "total_brokers": structure.get("total_brokers", len(brokers)),
             "total_connectors": 0,
-            "total_rf1": structure.get("total_rf1", 0),
-            "total_urp": structure.get("total_urp", 0),
-            "total_partitions": structure.get("total_partitions", 0),
+            "total_rf1": total_rf1_count,
+            "total_urp": total_urp_count,
+            "total_partitions": total_partitions_count,
             "top_topics_by_size": top_topics_by_size,
             "top_topics_by_msg_rate": metrics.get("top_topics_by_msg_rate", []),
-            "total_hot": 0,  # updated by msg rate job
-            "large_topics_count": len([t for t in top_topics_by_size if t["size_bytes"] > 10*1024**3]),
+            "total_hot": total_hot_count,
+            "large_topics_count": large_topics_count,
         }
     except Exception as _e:
         return {"empty": True, "error": str(_e)}
