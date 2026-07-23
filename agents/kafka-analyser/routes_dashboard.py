@@ -55,11 +55,47 @@ async def _collector_for_cluster(cluster_id: str) -> RealKafkaCollector:
 @router.get("/dashboard/overview")
 async def get_overview(cluster_id: str | None = None, hours: int | None = None) -> dict:
     """Cluster health, broker status, anomaly summary."""
-    data = kafka_store.get_cluster_data(cluster_id, hours=hours)
-    if data is None:
+    # Read all data from postgres — no kafka_store dependency
+    if not cluster_id:
+        # Try to get first enabled cluster
+        try:
+            from storage import get_backend as _gb2
+            _cls = await _gb2().get_clusters("kafka-analyser")
+            _en = [c for c in _cls if c.get("enabled")]
+            cluster_id = str(_en[0]["id"]) if _en else None
+        except Exception:
+            pass
+    if not cluster_id:
         return {"empty": True}
-    topics = data["topics"]
-    consumer_groups = data["consumer_groups"]
+    data = kafka_store.get_cluster_data(cluster_id, hours=hours) or {}
+    # Topic count from postgres
+    topic_count_pg = 0
+    try:
+        from database import SessionLocal
+        from sqlalchemy import text as _ovt
+        if SessionLocal:
+            async with SessionLocal() as _ovs:
+                _ovr = await _ovs.execute(_ovt(
+                    "SELECT COUNT(*) FROM kafka_topic_metrics WHERE cluster_id=:cid"
+                ), {"cid": int(cluster_id)})
+                topic_count_pg = _ovr.scalar() or 0
+    except Exception as _tce:
+        logger.warning("topic count query failed: %s", _tce)
+    topics = data.get("topics", [])
+    # Consumer groups from postgres
+    consumer_groups = []
+    try:
+        from database import SessionLocal as _SL
+        from sqlalchemy import text as _cgt2
+        if _SL:
+            async with _SL() as _cgs:
+                _cgr = await _cgs.execute(_cgt2(
+                    "SELECT group_id, total_lag FROM kafka_consumer_group_lag "
+                    "WHERE cluster_id=:cid ORDER BY total_lag DESC"
+                ), {"cid": int(cluster_id)})
+                consumer_groups = [{"group_id": r.group_id, "total_lag": r.total_lag} for r in _cgr.fetchall()]
+    except Exception:
+        consumer_groups = data.get("consumer_groups", [])
     # Read brokers from postgres (authoritative source)
     brokers = data.get("brokers", [])
     if cluster_id:
@@ -107,7 +143,7 @@ async def get_overview(cluster_id: str | None = None, hours: int | None = None) 
     elif rf1 > 0:
         score -= 5
     health_score = max(0, min(100, score))
-    cluster = {**data["cluster"], "health_score": health_score}
+    cluster = {**data.get("cluster", {}), "health_score": health_score}
     # Determine status
     if health_score >= 80:
         cluster["status"] = "healthy"
@@ -118,14 +154,14 @@ async def get_overview(cluster_id: str | None = None, hours: int | None = None) 
     return {
         "cluster": {
             **cluster,
-            "topic_count": data.get("counts", {}).get("total_topics") or len(topics),
-            "consumer_group_count": data.get("counts", {}).get("total_groups") or len(consumer_groups),
+            "topic_count": topic_count_pg or len(topics) or data.get("counts", {}).get("total_topics", 0),
+            "consumer_group_count": len(consumer_groups),
             "critical_count": len(critical_groups),
         },
         "brokers": brokers,
         "anomalies": data.get("anomalies", []),
-        "topic_count": data.get("counts", {}).get("total_topics") or len(topics),
-        "consumer_group_count": data.get("counts", {}).get("total_groups") or len(consumer_groups),
+        "topic_count": topic_count_pg or len(topics) or data.get("counts", {}).get("total_topics", 0),
+        "consumer_group_count": len(consumer_groups),
         "health_score": health_score,
         "critical_count": len(critical_groups),
     }
