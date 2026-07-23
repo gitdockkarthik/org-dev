@@ -12,7 +12,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_MAX_SUBJECTS = 1000  # Cap for large registries
+_MAX_SUBJECTS = 200  # Cap for large registries — detail fetch is slow
 
 
 class SchemaRegistryCollector:
@@ -33,9 +33,9 @@ class SchemaRegistryCollector:
                 # Fetch global compatibility first
                 global_compat = await self._get_global_compatibility(client)
 
-                # Fetch subject details in parallel batches of 50
+                # Fetch subject details in parallel batches of 100
                 subject_details = []
-                _BATCH = 50
+                _BATCH = 100
                 for i in range(0, len(subjects), _BATCH):
                     batch = subjects[i:i + _BATCH]
                     results = await asyncio.gather(
@@ -78,21 +78,16 @@ class SchemaRegistryCollector:
 
     async def _get_subject_detail(self, client: httpx.AsyncClient, subject: str) -> dict | None:
         try:
-            # Get versions and latest in parallel
-            versions_resp, latest_resp = await asyncio.gather(
-                client.get(f"{self._url}/subjects/{subject}/versions"),
-                client.get(f"{self._url}/subjects/{subject}/versions/latest"),
-            )
-            versions_resp.raise_for_status()
+            latest_resp = await client.get(f"{self._url}/subjects/{subject}/versions/latest")
             latest_resp.raise_for_status()
-            versions = versions_resp.json()
             latest = latest_resp.json()
             schema_type = latest.get("schemaType", "AVRO")
+            latest_version = latest.get("version", 0)
 
             return {
                 "subject": subject,
-                "version_count": len(versions),
-                "latest_version": max(versions) if versions else 0,
+                "version_count": latest_version,
+                "latest_version": latest_version,
                 "schema_type": schema_type,
                 "compatibility": "GLOBAL",
                 "schema_id": latest.get("id"),
