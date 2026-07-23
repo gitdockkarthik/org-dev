@@ -207,13 +207,18 @@
     async function loadDataSource() {
       const el = document.getElementById('data-source-body');
       try {
-        const cfg = await api('/settings').catch(() => ({}));
+        const [d, clusterResp] = await Promise.all([
+          api('/reports'),
+          api('/settings/clusters').catch(() => ({ clusters: [] }))
+        ]);
+        const enabledCount = (clusterResp.clusters || []).filter(c => c.enabled).length;
         let html = '';
-        const sourceLabel = cfg.collector_type || 'Not configured';
-        const lastSync = cfg.last_synced;
-        html += `<div class="info-card__row"><div class="info-card__label">Source Type</div><div class="info-card__value">${sourceLabel}</div></div>`;
-        html += `<div class="info-card__row"><div class="info-card__label">Last Synced</div><div class="info-card__value">${lastSync ? new Date(lastSync).toLocaleString('en-GB', {timeZone:'UTC'}) + ' UTC' : 'Never'}</div></div>`;
-        html += `<div class="info-card__row"><div class="info-card__label">Clusters Configured</div><div class="info-card__value">${cfg.cluster_count || 0}</div></div>`;
+        html += `<div class="info-card__row"><div class="info-card__label">Source Type</div><div class="info-card__value">${d.source_type || 'live'}</div></div>`;
+        html += `<div class="info-card__row"><div class="info-card__label">Clusters Configured</div><div class="info-card__value">${enabledCount}</div></div>`;
+        html += `<div class="info-card__row"><div class="info-card__label">Brokers</div><div class="info-card__value">${d.broker_count || 0}</div></div>`;
+        html += `<div class="info-card__row"><div class="info-card__label">Topics</div><div class="info-card__value">${(d.topic_count || 0).toLocaleString()}</div></div>`;
+        html += `<div class="info-card__row"><div class="info-card__label">Consumer Groups</div><div class="info-card__value">${(d.consumer_group_count || 0).toLocaleString()}</div></div>`;
+        html += `<div class="info-card__row"><div class="info-card__label">Connectors</div><div class="info-card__value">${d.connector_count || 0}</div></div>`;
         el.innerHTML = html;
       } catch(e) {
         el.innerHTML = `<div style="color:var(--danger);font-size:.85rem">Failed: ${e.message}</div>`;
