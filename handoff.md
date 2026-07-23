@@ -120,3 +120,13 @@ None — overnight jobs running.
 * kafka-topic-sizes-3: */15 * * * * (30s timeout)
 * kafka-msg-rate-3: */2 * * * * (60s timeout)
 * kafka-topic-structure-3: disabled (test pending)
+
+## Backlog (Deprioritised — Must Not Be Missed)
+* **AI Insights — remove kafka_store dependency**: Build `_build_ai_context(cluster_id, tab)` 
+  helper reading from postgres tables. Currently AI insights (tab + per-tab analyse buttons) 
+  read from kafka_store which is stale after restarts. Risk: low for single cluster, 
+  HIGH when Prod cluster added. Must fix before Prod onboarding.
+  Lines to fix: routes_dashboard.py:516, 689, 710, 748, 1139, 1308, 1309
+  
+* **Mirrormaker tab**: reads from kafka_store (lines 689, 710). Low priority — 
+  not used for DevQA. Fix when MirrorMaker is configured.
