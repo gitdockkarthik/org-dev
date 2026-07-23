@@ -1,132 +1,63 @@
 # Session Handoff
 
-## Engineering Priorities (Always Follow This Order)
-1. **Accuracy** — critical always, non-negotiable
-2. **Performance** — maximum optimisation
-3. **User Experience** — no application-caused friction
-4. **Operations** — no OOM, no extended CPU/mem, optimised storage
-5. **Consistency** — no bugs causing misbehaviours
+## Engineering Priorities
+1. Accuracy 2. Performance 3. UX 4. Operations 5. Consistency
 
-## Current Feature
-Kafka Analyser — Multi-Job Architecture + Dashboard Revamp
+## Current State
+Kafka Analyser — postgres migration complete for core data, per-cluster jobs working.
 
-## Objective
-Complete remaining Kafka dashboard tabs and job management UI.
+## Next Session Agenda (in order)
+1. **Topic Details popup** — re-enable row click, fix endpoint to read from postgres, change expanded row to floating popup
+2. **ZooKeeper tab revamp** — rename to Governance, show useful Kafka admin metrics from postgres
+3. **Schema Registry slowness** — investigate and fix performance
 
-## Status
+## Following Session
+4. **SLI/SLO** — key feature, richest/most actionable monitoring capability
+   - Connector availability SLO (% RUNNING, target >99%)
+   - Consumer lag SLO (per group threshold)
+   - Broker availability SLO
+   - Under-replicated partition SLO
+   - Bytes throughput baseline
 
-### Completed This Session
-* Multi-job architecture replacing monolithic _collection_loop
-* collect_broker_health: Prometheus Phase 1 → upsert kafka_broker_metrics (6s)
-* collect_topic_sizes: describe_log_dirs → bulk upsert all 16k topics (8s, 0.45s collection)
-* collect_consumer_lag_active: AdminClient per-group offsets (54s, 663 groups)
-* collect_msg_rate: describe_log_dirs delta → bytes_in_per_sec (14s per cycle)
-* kafka_topic_metrics: unique constraint + last_seen + bulk upsert (0.65s for 16k rows)
-* kafka_broker_metrics: unique constraint + upsert per broker
-* /dashboard/topics: reads from postgres with pagination + search (16,352 topics)
-* /dashboard/counts: top_topics_by_size + large_topics_count + top_topics_by_msg_rate from postgres
-* /dashboard/brokers: reads from postgres (broker_id fixed)
-* Message Rate Trends chart: working from kafka_topic_metrics_hourly
-* Kafka Connect: multi-worker parallel (0.6s for 291 connectors across 10 workers)
-* Kafka Connect: fingerprint deduplication (worker05-08 same cluster)
-* Kafka Connect: worker node status section (up/down per node)
-* Kafka Connect: IP→hostname resolution for worker_id
-* Kafka Connect: Paused KPI card + Failed Tasks filter
-* Kafka Connect: single expand API call (replaces per-connector calls)
-* HA failover: comma-separated URLs for Connect/Schema Registry/ZooKeeper
-* Migrations 0012 (broker unique) + 0013 (topic unique + last_seen)
-* Scheduled 4 jobs for overnight: broker-health, topic-sizes, msg-rate, consumer-lag-active
+## Completed This Session
+* Per-cluster job architecture: kafka-{type}-{cluster_id}
+* Consumer lag: real lag calculation (47s, batched, single consumer session)
+* kafka_consumer_group_lag table: upsert, dashboard reads from postgres
+* kafka_broker_distribution table: leader/replica partitions per broker
+* Broker tab charts replaced: Leader + Replica partition distribution
+* kafka_topic_metrics: partition_count + RF updated by topic-structure job
+* Topics tab: pagination from postgres, no streaming
+* Consumer Groups tab: from postgres, no streaming
+* Search endpoints: topics/groups/connectors from postgres/live
+* Anomalies section removed from overview
+* Job Management UI: per-cluster registry + run monitor
+* Reports tab: all counts from postgres
+* topic-structure: enabled, 2-hourly schedule
 
-### Pending
-* Large Topics KPI card fix (Topics tab — shows 0, data is correct in API)
-* Job Management UI — show all 6 jobs (remove connectors + schema registry jobs)
-* Schema Registry — validate data collection (REST API, confirm no job needed)
-* Tooltip for UNASSIGNED task pills in Kafka Connect table
-* kafka-topic-structure job: test + enable (2 min cycle, 90s timeout)
-* kafka-consumer-lag-full job: test + enable (daily schedule, 180s timeout)
-* Consumer Groups tab — validate data showing correctly
-* ZooKeeper tab → rename to Governance tab
-* Tab-level chat for alert and kafka
-* Alert settings page cleanup (remove Sync Schedule/Status cards, Phase lock labels)
-* must_change_password not enforced at login
-
-## Architecture Decisions (Frozen)
-* Jobs → kafka_store (write-through cache) → PostgreSQL → dashboard reads postgres
-* No kafka_store as source of truth — postgres is authoritative
-* Topic sizes: bulk upsert all 16k topics (not top N)
-* Topic cleanup: last_seen < 35 min → deleted (stale topic detection)
-* Msg rate: describe_log_dirs delta (bytes/sec, not msgs/sec — Kafka platform metric)
-* Hot Topics threshold: >100 KB/s bytes_in_per_sec
-* Kafka Connect: live REST API (no job) — 0.6s response
-* Schema Registry: live REST API (no job) — instant
-* kafka-connectors + kafka-schema-registry jobs: removed
-* Connect cluster deduplication: fingerprint by connector name set
-
-## Job Schedules (Enabled for Overnight)
-* kafka-broker-health: */2 * * * * (60s timeout, ~6s runtime)
-* kafka-consumer-lag-active: 1 */2 * * * (90s timeout, ~54s runtime)
-* kafka-topic-sizes: */15 * * * * (30s timeout, ~8s runtime)
-* kafka-msg-rate: */2 * * * * (30s timeout, ~14s runtime)
-
-## Disabled Jobs (Test Tomorrow)
-* kafka-topic-structure: 2 min cycle, 90s timeout (35s runtime)
-* kafka-consumer-lag-full: daily, 180s timeout (governance)
-
-## Known Constraints
-* DevQA Kafka: 16,593 topics, 27,327 partitions, 663 consumer groups
-* Kafka Connect: 10 workers, worker01 down, 291 unique connectors across 5 clusters
-* Broker CPU: 83-89% (causes slow requests)
-* Prometheus JMX exporter: deadlocked on port 7071 (HTTP hangs, TCP works)
-* LLM_PROVIDER=bedrock, LLM_MODEL=us.anthropic.claude-sonnet-5
-* CACHE_VERSION = "v2" in routes_dashboard.py
-
-## Next Checkpoint
-1. Large Topics KPI card fix
-2. Job Management UI for 6 jobs
-3. Schema Registry validation
-4. kafka-topic-structure job test + enable
-5. Consumer Groups tab validation
-6. ZooKeeper → Governance tab rename
-
-## Blocked
-None — overnight jobs running.
-
-## Additional Fix This Session
-* Kafka Connect search: now searches both connector name AND connector_class (e.g. "elasticsearch", "debezium")
-
-## Session Update — 2026-07-23
-### Completed
-* Per-cluster job architecture: kafka-{type}-{cluster_id} job IDs
-* Consumer lag optimization: 47s (was 144s) — single consumer session, skip zero offsets
-* Stuck run cleanup on startup
-* Large Topics KPI fix
-* Topics table pagination from postgres (50 per page)
-* Topic detail reads from postgres
-* Consumer lag real calculation (47s for 642 groups)
-* kafka-consumer-lag-full removed (redundant)
-
-### Pending (Next Session)
-1. Fix brokers data inconsistency — Overview tab vs Brokers tab show different data
-2. Job Management UI — multi-job/multi-cluster with registry + run monitor
-3. Topic Details popup (balloon) instead of expanded row
-4. Schema Registry performance fix
-5. ZooKeeper tab revamp → Governance
-6. SLI/SLO for Kafka cluster (include connector SLOs)
-7. kafka-topic-structure job: test + enable (2 min, 90s timeout)
-
-### Job Schedules (Active)
+## Active Job Schedules
 * kafka-broker-health-3: */2 * * * * (60s timeout)
-* kafka-consumer-lag-3: */3 * * * * (90s timeout)  
+* kafka-consumer-lag-3: */3 * * * * (90s timeout, ~47s runtime)
 * kafka-topic-sizes-3: */15 * * * * (30s timeout)
 * kafka-msg-rate-3: */2 * * * * (60s timeout)
-* kafka-topic-structure-3: disabled (test pending)
+* kafka-topic-structure-3: 0 */2 * * * (90s timeout, ~82s runtime)
 
-## Backlog (Deprioritised — Must Not Be Missed)
-* **AI Insights — remove kafka_store dependency**: Build `_build_ai_context(cluster_id, tab)` 
-  helper reading from postgres tables. Currently AI insights (tab + per-tab analyse buttons) 
-  read from kafka_store which is stale after restarts. Risk: low for single cluster, 
-  HIGH when Prod cluster added. Must fix before Prod onboarding.
-  Lines to fix: routes_dashboard.py:516, 689, 710, 748, 1139, 1308, 1309
-  
-* **Mirrormaker tab**: reads from kafka_store (lines 689, 710). Low priority — 
-  not used for DevQA. Fix when MirrorMaker is configured.
+## Backlog (Must Not Miss Before Prod)
+* AI Insights: remove kafka_store dependency → _build_ai_context from postgres
+  (routes_dashboard.py lines: 516, 689, 710, 748, 1139, 1308, 1309)
+* Mirrormaker tab: reads from kafka_store (low priority, not configured)
+
+## Known Issues
+* kafka-topic-structure-3 runtime 82s — bulk partition update adds 30s
+  Consider: separate partition update job or optimize bulk UPDATE
+* Prometheus JMX exporter port 7071: deadlocked (TCP ok, HTTP hangs)
+  CloudOps action needed to restart exporter process
+* worker01 + worker10 Kafka Connect: connection refused (CloudOps needed)
+
+## Architecture (Frozen)
+* Jobs: per-cluster (kafka-{type}-{cluster_id})
+* Storage: postgres is authoritative, kafka_store is write-through cache only
+* No kafka_store for dashboard reads (except AI insights — backlogged)
+* Topic sizes: bulk upsert all topics (describe_log_dirs, 0.45s)
+* Consumer lag: batched 100 groups + single consumer session
+* Kafka Connect: live REST API, multi-worker parallel, fingerprint dedup
+* Schema Registry + ZooKeeper: live REST API on tab click
