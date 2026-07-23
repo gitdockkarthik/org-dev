@@ -61,3 +61,21 @@ Kafka Analyser — postgres migration complete for core data, per-cluster jobs w
 * Consumer lag: batched 100 groups + single consumer session
 * Kafka Connect: live REST API, multi-worker parallel, fingerprint dedup
 * Schema Registry + ZooKeeper: live REST API on tab click
+
+## Session Update — 2026-07-23 (continued)
+### Completed
+* Job Management UI fully working:
+  - Human-readable cron display (Every 2 min, Every 2h, etc.)
+  - Edit Schedule button per job (frequency + timeout modal)
+  - Run Monitor filters: job type + status (server-side)
+  - Reports & Data: shows correct cluster info from postgres
+* Lag snapshot insert in consumer lag collector (overview chart working)
+* Job resilience: warm-up connections + retry on timeout
+* All counts in /dashboard/counts from postgres
+
+### Next
+1. Topic Details popup (balloon instead of expanded row)
+2. ZooKeeper tab revamp → Governance
+3. Schema Registry performance
+4. SLI/SLO feature
+
