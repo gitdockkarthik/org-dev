@@ -282,55 +282,36 @@ async def get_counts(cluster_id: str | None = None) -> dict:
 
 @router.get("/dashboard/topics/detail")
 async def get_topic_detail(name: str, cluster_id: str | None = None) -> dict:
-    """Describe a single topic live from Kafka — partitions, RF, leaders, ISR."""
-    from storage import get_backend
-    clusters = await get_backend().get_clusters("kafka-analyser")
-    c = next((c for c in clusters if str(c.get("id")) == str(cluster_id) and c.get("enabled")), None)
-    if not c:
-        return {"error": "Cluster not found"}
+    """Topic detail — reads entirely from postgres (no live Kafka call)."""
+    if not cluster_id:
+        return {"error": "cluster_id required"}
     try:
-        from tools.real_kafka import RealKafkaCollector
-        collector = RealKafkaCollector({
-            "bootstrap_servers": c["bootstrap_servers"],
-            "auth_type": "none" if c["auth_type"] == "none" else "sasl",
-            "sasl_username": c.get("sasl_username"),
-            "sasl_password": c.get("sasl_password"),
-            "sasl_mechanism": c.get("sasl_mechanism", "PLAIN"),
-            "tls_enabled": c.get("tls_enabled", False),
-            "cluster_label": c["name"],
-        })
-        # Describe single topic
-        described, _ = await collector.describe_all_topics([name], workers=1)
-        if not described:
+        from database import SessionLocal
+        from sqlalchemy import text as _t
+        if SessionLocal is None:
+            return {"error": "Database not available"}
+        async with SessionLocal() as sess:
+            row = await sess.execute(_t("""
+                SELECT topic, size_bytes, partition_count, replication_factor,
+                       bytes_in_per_sec, messages_in_per_sec, total_messages, last_seen
+                FROM kafka_topic_metrics
+                WHERE cluster_id=:cid AND topic=:topic
+                LIMIT 1
+            """), {"cid": int(cluster_id), "topic": name})
+            r = row.fetchone()
+        if not r:
             return {"error": "Topic not found"}
-        topic = described[0]
-        # Get topic metrics from postgres
-        size_bytes = 0
-        bytes_in_per_sec = 0.0
-        try:
-            from database import SessionLocal
-            from sqlalchemy import text as _t
-            if SessionLocal:
-                async with SessionLocal() as sess:
-                    row = await sess.execute(_t(
-                        "SELECT size_bytes, bytes_in_per_sec FROM kafka_topic_metrics "
-                        "WHERE cluster_id=:cid AND topic=:topic LIMIT 1"
-                    ), {"cid": int(cluster_id), "topic": name})
-                    r = row.fetchone()
-                    if r:
-                        size_bytes = r.size_bytes or 0
-                        bytes_in_per_sec = r.bytes_in_per_sec or 0.0
-        except Exception:
-            pass
         return {
-            "name": name,
-            "partition_count": topic.get("partition_count", 0),
-            "replication_factor": topic.get("replication_factor", 0),
-            "under_replicated_partitions": topic.get("under_replicated_partitions", 0),
-            "messages_in_per_sec": bytes_in_per_sec,
-            "bytes_in_per_sec": bytes_in_per_sec,
-            "size_bytes": size_bytes,
-            "partitions": topic.get("partitions", []),
+            "name": r.topic,
+            "partition_count": r.partition_count or 0,
+            "replication_factor": r.replication_factor or 0,
+            "under_replicated_partitions": 0,
+            "bytes_in_per_sec": r.bytes_in_per_sec or 0.0,
+            "messages_in_per_sec": r.bytes_in_per_sec or 0.0,
+            "size_bytes": r.size_bytes or 0,
+            "total_messages": r.total_messages or 0,
+            "last_seen": r.last_seen.isoformat() if r.last_seen else None,
+            "partitions": [],
         }
     except Exception as exc:
         return {"error": str(exc)}
