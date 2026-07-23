@@ -3014,7 +3014,14 @@
           <div id="slo-top-topics-table" style="margin-top:12px"></div>
         </div>`;
 
-      return section1 + section2 + section3 + section4 + section5;
+      const section6 = `
+        <div class="chart-card" style="margin-bottom:16px">
+          <div class="chart-card__title">📅 Monthly SLO Comparison
+            <span style="font-size:.72rem;color:var(--text-muted);font-weight:400;margin-left:8px">Month-over-month compliance trend</span>
+          </div>
+          <div id="slo-monthly-content"><div style="color:var(--text-muted);font-size:.82rem;padding:8px">Loading...</div></div>
+        </div>`;
+      return section1 + section2 + section3 + section4 + section5 + section6;
     }
 
     function renderSLOSettingsHTML() {
@@ -3165,6 +3172,65 @@
                 lagCtx.canvas.parentElement.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:.82rem">No lag trend data</div>';
               }
             }).catch(() => {});
+
+          // Load monthly comparison
+          fetch(`${PROXY}/slo/monthly?cluster_id=${cid}&months=6`, { headers: _authHeaders() })
+            .then(r => r.json()).then(md => {
+              const el = document.getElementById('slo-monthly-content');
+              if (!el) return;
+              const months = md.months || [];
+              if (months.length === 0) {
+                el.innerHTML = '<div style="color:var(--text-muted);font-size:.82rem;padding:8px">No monthly data yet — compliance data accumulates hourly.</div>';
+                return;
+              }
+              if (months.length === 1) {
+                const m = months[0];
+                el.innerHTML = `<div style="color:var(--text-muted);font-size:.82rem;padding:8px">
+                  Only 1 month of data available (${m.month}). Monthly comparison will show as more data accumulates.
+                  <div style="margin-top:8px;display:flex;gap:16px;flex-wrap:wrap">
+                    ${[
+                      {label:'Overall', val:m.overall_pct, col:m.overall_pct>=95?'#4CAF50':m.overall_pct>=80?'#FF9800':'#F44336'},
+                      {label:'Connector', val:m.connector_pct, col:m.connector_pct>=95?'#4CAF50':m.connector_pct>=80?'#FF9800':'#F44336'},
+                      {label:'Lag', val:m.lag_pct, col:m.lag_pct>=95?'#4CAF50':m.lag_pct>=80?'#FF9800':'#F44336'},
+                      {label:'URP', val:m.urp_pct, col:m.urp_pct>=95?'#4CAF50':m.urp_pct>=80?'#FF9800':'#F44336'},
+                    ].map(x => `<div style="text-align:center">
+                      <div style="font-size:1.2rem;font-weight:700;color:${x.col||'#666'}">${x.val!=null?x.val.toFixed(1)+'%':'—'}</div>
+                      <div style="font-size:.72rem;color:var(--text-muted)">${x.label}</div>
+                    </div>`).join('')}
+                  </div>
+                </div>`;
+                return;
+              }
+              // Multiple months — show grouped bar chart
+              el.innerHTML = '<canvas id="slo-monthly-chart" height="120"></canvas>';
+              setTimeout(() => {
+                const ctx = document.getElementById('slo-monthly-chart')?.getContext('2d');
+                if (!ctx) return;
+                new Chart(ctx, {
+                  type: 'bar',
+                  data: {
+                    labels: months.map(m => m.month),
+                    datasets: [
+                      {label:'Overall', data:months.map(m=>m.overall_pct), backgroundColor:'#FF6B35', borderWidth:0},
+                      {label:'Connector', data:months.map(m=>m.connector_pct), backgroundColor:'#4CAF50', borderWidth:0},
+                      {label:'Consumer Lag', data:months.map(m=>m.lag_pct), backgroundColor:'#F44336', borderWidth:0},
+                      {label:'URP', data:months.map(m=>m.urp_pct), backgroundColor:'#4FC3F7', borderWidth:0},
+                    ]
+                  },
+                  options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: {size:10} } } },
+                    scales: {
+                      y: { min:0, max:100, ticks: { callback: v => v+'%', font: {size:10} } },
+                      x: { ticks: { font: {size:10} } }
+                    }
+                  }
+                });
+              }, 50);
+            }).catch(() => {
+              const el = document.getElementById('slo-monthly-content');
+              if (el) el.innerHTML = '<div style="color:var(--text-muted);font-size:.82rem;padding:8px">Monthly data unavailable.</div>';
+            });
 
           // Load top lag groups
           fetch(`${PROXY}/dashboard/consumer-groups?cluster_id=${cid}`, { headers: _authHeaders() })

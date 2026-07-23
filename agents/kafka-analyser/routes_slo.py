@@ -282,7 +282,7 @@ async def get_slo_monthly(cluster_id: str, months: int = 3) -> dict:
                        COUNT(*) as data_points
                 FROM kafka_slo_compliance
                 WHERE cluster_id=:cid
-                AND hour_bucket >= DATE_TRUNC('month', NOW()) - INTERVAL ':months months'
+                AND hour_bucket >= DATE_TRUNC('month', NOW()) - (:months * INTERVAL '1 month')
                 GROUP BY DATE_TRUNC('month', hour_bucket)
                 ORDER BY month ASC
             """), {"cid": int(cluster_id), "months": months})
