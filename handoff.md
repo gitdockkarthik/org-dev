@@ -57,3 +57,32 @@ Kafka Analyser — postgres migration complete for core data, per-cluster jobs w
 * Consumer lag: batched 100 groups + single consumer session
 * Kafka Connect: live REST API, multi-worker parallel, fingerprint dedup
 * Schema Registry + ZooKeeper: live REST API on tab click
+
+## SLI/SLO Session Update — 2026-07-24
+### Completed
+* Migration 0017: kafka_slo_targets, kafka_connector_snapshots, kafka_slo_compliance
+* collect_connector_snapshots: saves 291 connector states every 2 min (Job 7)
+* compute_slo_compliance: hourly compliance computation (Job 8, runs at :05)
+* routes_slo.py: GET/POST /slo/targets, GET /slo/dashboard, GET /slo/monthly
+* SLI definitions frozen:
+  - Connector Availability = RUNNING/(RUNNING+FAILED) — excludes PAUSED/UNASSIGNED
+  - Task Health = connectors with ALL tasks healthy / total active connectors
+* Basic SLI/SLO tab UI working with data
+
+### SLI/SLO UI — Pending (Full Rebuild)
+Frozen design to implement:
+1. Time range selector: [24h | 7d | 30d | Custom]
+2. Infra Health: gauges (CPU%, Heap%), status rings (Brokers, URP), sparkline (msg/sec)
+3. SLO Summary: overall compliance donut + area chart trend
+4. Per-SLO table: Target | Current | Compliance% | Trend arrow (color coded)
+5. Connector Health: stacked bar (Running/Paused/Failed over time) + detail table
+   - Columns: Name | Type | State | Tasks | Connector SLI | Task SLI | Trend
+6. Consumer Lag: area chart trend + top 10 lagging groups horizontal bar
+7. Monthly Comparison: grouped bar chart month-over-month
+
+### SLI/SLO Data Available
+* Connector snapshots: every 2 min in kafka_connector_snapshots ✅
+* Lag snapshots: every 3 min in kafka_lag_snapshots ✅
+* Broker metrics: every 2 min in kafka_broker_metrics ✅
+* Hourly compliance: kafka_slo_compliance (data accumulates hourly) ✅
+* API: GET /slo/dashboard?cluster_id=3&hours=24 returns current + trend + connectors
