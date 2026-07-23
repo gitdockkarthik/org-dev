@@ -252,7 +252,17 @@ async def get_topics(cluster_id: str | None = None, hours: int | None = None,
     logger = logging.getLogger(__name__)
     if SessionLocal is None:
         return {"empty": True}
-    cid = cluster_id or "3"
+    if not cluster_id:
+        from storage import get_backend as _gb
+        try:
+            clusters = await _gb().get_clusters("kafka-analyser")
+            enabled = [c for c in clusters if c.get("enabled")]
+            cluster_id = str(enabled[0]["id"]) if enabled else None
+        except Exception:
+            cluster_id = None
+    if not cluster_id:
+        return {"topics": [], "total": 0, "limit": limit, "offset": offset}
+    cid = cluster_id
     try:
         async with SessionLocal() as sess:
             # Total count

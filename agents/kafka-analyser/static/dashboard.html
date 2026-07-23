@@ -1175,45 +1175,47 @@
         }
       };
 
-      window._applyTopicView = function () {
+      let _topicTableOffset = 0;
+      let _topicTableTotal = 0;
+      let _topicTableRows = [];
+
+      async function _loadTopicTable(reset) {
+        if (reset) { _topicTableOffset = 0; _topicTableRows = []; }
         const st = window._topicView;
-        const filtered = allTopics.filter(t => topicMatches(t, st));
+        const search = (st.search || '').trim();
+        const params = new URLSearchParams();
+        params.set('limit', '50');
+        params.set('offset', String(_topicTableOffset));
+        if (search) params.set('search', search);
+        try {
+          const res = await fetch(`${PROXY}/dashboard/topics?${params.toString()}`, { headers: _authHeaders(), cache: 'no-store' });
+          const data = await res.json();
+          const newTopics = (data.topics || []).filter(t => st.userOnly ? !(t.name||'').startsWith('_') : true);
+          _topicTableRows = _topicTableRows.concat(newTopics);
+          _topicTableTotal = data.total || 0;
+          _topicTableOffset += newTopics.length;
+        } catch(e) { console.warn('topic table load failed', e); }
+        _renderTopicTable();
+      }
 
-        // Single top-20 table by log size — no active/stale split
-        const topBySize = (window._clusterCounts && window._clusterCounts.top_topics_by_size) || [];
-        const _search = (st.search || '').toLowerCase().trim();
-        const staleTopics = [...topBySize]
-          .filter(t => {
-            if (_search && !(t.name || '').toLowerCase().includes(_search)) return false;
-            if (st.userOnly && (t.name || '').startsWith('_')) return false;
-            return true;
-          })
-          .sort((a, b) => (b.size_bytes || 0) - (a.size_bytes || 0))
-          .map(t => ({
-            ...t,
-            status: (t.size_bytes || 0) > 50 * 1024 * 1024 * 1024 ? 'retention-critical' :
-                    (t.size_bytes || 0) > 10 * 1024 * 1024 * 1024 ? 'retention-warning' : 'healthy'
-          }));
-        const activeTopics = [];
-
-        // Populate stale table
-        const staleVisible = st.staleVisible || 50;
-        const staleShown = staleTopics.slice(0, staleVisible);
+      function _renderTopicTable() {
         const staleTbody = document.getElementById('topic-stale-tbody');
-        if (staleTbody) {
-          staleTbody.innerHTML = staleShown.map(t => `
-            <tr class="topic-row" data-name="${t.name}" style="cursor:pointer" onclick="window._expandTopicRow(this, '${t.name}')">
-              <td><code style="font-size:.8rem">${t.name}</code></td>
-              <td style="text-align:right">${fmtBytes(t.size_bytes || 0)}</td>
-              <td>${topicStatusBadge(t)}</td>
-            </tr>`).join('') || '<tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:16px">No topics match your search</td></tr>';
-          const staleLabel = document.getElementById('topic-stale-count-label');
-          if (staleLabel) staleLabel.textContent = `Showing ${staleShown.length} of ${staleTopics.length} topics by log size`;
-          const staleMore = document.getElementById('topic-stale-show-more');
-          if (staleMore) staleMore.style.display = staleTopics.length > staleVisible ? 'block' : 'none';
-        }
-        window._topicStaleShowMore = () => { st.staleVisible = (st.staleVisible || 50) + 50; window._applyTopicView(); };
-      };
+        const staleLabel = document.getElementById('topic-stale-count-label');
+        const staleMore = document.getElementById('topic-stale-show-more');
+        if (!staleTbody) return;
+        staleTbody.innerHTML = _topicTableRows.map(t => `
+          <tr class="topic-row" data-name="${t.name||t.topic}" style="cursor:pointer" onclick="window._expandTopicRow(this, '${(t.name||t.topic||'').replace(/'/g,"\\'")}')">
+            <td><code style="font-size:.8rem">${t.name||t.topic||'Unknown'}</code></td>
+            <td style="text-align:right">${fmtBytes(t.size_bytes || 0)}</td>
+            <td>${topicStatusBadge(t)}</td>
+          </tr>`).join('') || '<tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:16px">No topics match your search</td></tr>';
+        if (staleLabel) staleLabel.textContent = `Showing ${_topicTableRows.length} of ${_topicTableTotal.toLocaleString()} topics by log size`;
+        if (staleMore) staleMore.style.display = _topicTableOffset < _topicTableTotal ? 'block' : 'none';
+      }
+
+      window._topicStaleShowMore = async function() { await _loadTopicTable(false); };
+      window._topicSearch = function(val) { if (window._topicView) window._topicView.search = val; _loadTopicTable(true); };
+      window._applyTopicView = function() { _loadTopicTable(true); };
 
       // ── Topic Compare UI ──────────────────────────────────────────────────
       window._topicCompareSelected = [];
