@@ -888,6 +888,20 @@ async def lifespan(app: FastAPI):
     if _db_engine is not None:
         async with _db_engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+    # Clear any stuck running jobs from previous session
+    if SessionLocal is not None:
+        try:
+            from sqlalchemy import text as _stext
+            async with SessionLocal() as _sess:
+                result = await _sess.execute(_stext(
+                    "UPDATE kafka_job_runs SET status='failed', ended_at=now(), "
+                    "error_message='Cleared on restart' WHERE status='running'"
+                ))
+                if result.rowcount > 0:
+                    logger.info("Cleared %d stuck job run(s) on startup", result.rowcount)
+                await _sess.commit()
+        except Exception as _e:
+            logger.warning("Failed to clear stuck runs: %s", _e)
     # Register all 8 individual collection jobs
     from collectors import (
         collect_broker_health, collect_consumer_lag_active, collect_topic_sizes,
