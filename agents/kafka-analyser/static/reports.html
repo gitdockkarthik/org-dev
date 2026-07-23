@@ -326,6 +326,7 @@
               <td>${statusBadge}</td>
               <td style="text-align:right;white-space:nowrap">
                 <button class="btn btn--primary btn--sm" onclick="triggerJob('${j.id}')">▶ Run</button>
+                ${s ? `<button class="btn btn--ghost btn--sm" style="margin-left:4px" onclick="openEditSchedule('${j.id}',${s.id},'${s.cron_expression}',${s.timeout_secs})">✏ Edit</button>` : ''}
                 ${s ? `<button class="btn btn--ghost btn--sm" style="margin-left:4px" onclick="toggleSchedule('${j.id}', ${s.id}, ${!enabled})">${enabled ? 'Disable' : 'Enable'}</button>` : ''}
               </td>
             </tr>`;
@@ -421,6 +422,31 @@
       await loadRunMonitor(true);
     }
 
+    let _editJobId = null, _editSchedId = null;
+    function openEditSchedule(jobId, schedId, cron, timeout) {
+      _editJobId = jobId; _editSchedId = schedId;
+      const sel = document.getElementById('edit-sched-freq');
+      for (const opt of sel.options) { if (opt.value === cron) { opt.selected = true; break; } }
+      document.getElementById('edit-sched-timeout').value = timeout;
+      document.getElementById('edit-sched-modal').style.display = 'flex';
+    }
+    function closeEditSchedule() {
+      document.getElementById('edit-sched-modal').style.display = 'none';
+    }
+    async function saveEditSchedule() {
+      const cron = document.getElementById('edit-sched-freq').value;
+      const timeout = parseInt(document.getElementById('edit-sched-timeout').value);
+      try {
+        await api('/jobs/' + _editJobId + '/schedules/' + _editSchedId, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cron_expression: cron, timeout_secs: timeout })
+        });
+        showToast('Schedule updated', 'success');
+        closeEditSchedule();
+        loadJobRegistry();
+      } catch(e) { showToast('Failed: ' + e.message, 'error'); }
+    }
+
     (async () => {
       await portalReady;
       loadDataSource();
@@ -440,5 +466,34 @@
       if (lbl) lbl.style.display = 'inline';
     }
   </script>
+<div id="edit-sched-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;align-items:center;justify-content:center">
+  <div style="background:var(--navy-2);border-radius:12px;padding:24px;min-width:320px;box-shadow:0 8px 32px rgba(0,0,0,.4)">
+    <div style="font-size:1rem;font-weight:700;margin-bottom:16px">✏ Edit Schedule</div>
+    <div style="margin-bottom:12px">
+      <label style="display:block;font-size:.8rem;color:var(--text-muted);margin-bottom:4px">Frequency</label>
+      <select id="edit-sched-freq" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text)">
+        <option value="*/2 * * * *">Every 2 minutes</option>
+        <option value="*/3 * * * *">Every 3 minutes</option>
+        <option value="*/5 * * * *">Every 5 minutes</option>
+        <option value="*/10 * * * *">Every 10 minutes</option>
+        <option value="*/15 * * * *">Every 15 minutes</option>
+        <option value="*/30 * * * *">Every 30 minutes</option>
+        <option value="0 * * * *">Every hour</option>
+        <option value="0 */2 * * *">Every 2 hours</option>
+        <option value="0 */6 * * *">Every 6 hours</option>
+        <option value="0 */12 * * *">Every 12 hours</option>
+        <option value="0 0 * * *">Daily midnight</option>
+      </select>
+    </div>
+    <div style="margin-bottom:16px">
+      <label style="display:block;font-size:.8rem;color:var(--text-muted);margin-bottom:4px">Timeout (seconds)</label>
+      <input type="number" id="edit-sched-timeout" min="10" max="3600" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text)">
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn--primary" onclick="saveEditSchedule()">Save</button>
+      <button class="btn btn--ghost" onclick="closeEditSchedule()">Cancel</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
