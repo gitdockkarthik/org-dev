@@ -902,41 +902,52 @@ async def lifespan(app: FastAPI):
                 await _sess.commit()
         except Exception as _e:
             logger.warning("Failed to clear stuck runs: %s", _e)
-    # Register all 8 individual collection jobs
+    # Register per-cluster jobs
     from collectors import (
         collect_broker_health, collect_consumer_lag_active, collect_topic_sizes,
-        collect_topic_structure, collect_consumer_lag_full,
-        collect_msg_rate,
+        collect_topic_structure, collect_msg_rate,
     )
-    _jobs_module.register_job("kafka-broker-health", "Broker Health",
-        "Broker JVM metrics via Prometheus Phase 1", collect_broker_health, default_timeout_secs=30)
-    _jobs_module.register_job("kafka-consumer-lag-active", "Consumer Lag (Active)",
-        "Lag for STABLE and REBALANCING groups only", collect_consumer_lag_active, default_timeout_secs=60)
-    _jobs_module.register_job("kafka-topic-sizes", "Topic Sizes",
-        "Topic sizes via AdminClient describe_log_dirs", collect_topic_sizes, default_timeout_secs=30)
-    _jobs_module.register_job("kafka-topic-structure", "Topic Structure",
-        "Full topic metadata: partitions, RF, URP", collect_topic_structure, default_timeout_secs=180)
-    _jobs_module.register_job("kafka-consumer-lag-full", "Consumer Lag (Full Audit)",
-        "All groups including EMPTY/DEAD for governance", collect_consumer_lag_full, default_timeout_secs=180)
-    _jobs_module.register_job("kafka-msg-rate", "Message Rate",
-        "Producer msg/sec from offset deltas", collect_msg_rate, default_timeout_secs=30)
+    from storage import get_backend as _gb
+    _clusters = await _gb().get_clusters(settings.agent_slug)
+    _enabled_clusters = [c for c in _clusters if c.get("enabled")]
 
-    # Register default schedules if none exist
-    default_schedules = [
-        ("kafka-broker-health",        "*/2 * * * *",  30),
-        ("kafka-consumer-lag-active",  "1 */2 * * *",  60),
-        ("kafka-topic-sizes",          "*/15 * * * *", 30),
-        ("kafka-topic-structure",      "2 */30 * * *", 180),
-        ("kafka-consumer-lag-full",    "3 */30 * * *", 180),
-        ("kafka-msg-rate",             "*/2 * * * *",  30),
+    # Job type definitions: (suffix, name, handler, default_timeout, default_cron, default_enabled)
+    _job_types = [
+        ("broker-health",    "Broker Health",    collect_broker_health,    60,  "*/2 * * * *",  True),
+        ("consumer-lag",     "Consumer Lag",     collect_consumer_lag_active, 120, "1 */2 * * *", True),
+        ("topic-sizes",      "Topic Sizes",      collect_topic_sizes,      30,  "*/15 * * * *", True),
+        ("topic-structure",  "Topic Structure",  collect_topic_structure,  90,  "2 */30 * * *", False),
+        ("msg-rate",         "Message Rate",     collect_msg_rate,         60,  "*/2 * * * *",  True),
     ]
+
     from sqlalchemy import select as _sel
-    for job_id, cron, timeout in default_schedules:
-        async with SessionLocal() as _sess:
-            existing = await _sess.execute(_sel(KafkaJobSchedule).where(KafkaJobSchedule.job_id == job_id))
-            if not existing.scalar_one_or_none():
-                await _jobs_module.create_schedule(job_id, cron, enabled=True, timeout_secs=timeout)
-                logger.info("Created default schedule for %s: %s", job_id, cron)
+    for _cluster in _enabled_clusters:
+        _cid_str = str(_cluster["id"])
+        _cname = _cluster["name"]
+        for _suffix, _jname, _handler, _timeout, _cron, _enabled in _job_types:
+            _job_id = f"kafka-{_suffix}-{_cid_str}"
+            # Create cluster-specific handler with cluster_id bound
+            import functools
+            _bound_handler = functools.partial(_handler, cluster_id=_cid_str)
+            _bound_handler.__name__ = _job_id
+            _jobs_module.register_job(
+                _job_id,
+                f"{_jname} — {_cname}",
+                f"{_jname} for cluster {_cname}",
+                _bound_handler,
+                default_timeout_secs=_timeout,
+            )
+            # Create schedule if not exists
+            async with SessionLocal() as _sess:
+                existing = await _sess.execute(
+                    _sel(KafkaJobSchedule).where(KafkaJobSchedule.job_id == _job_id)
+                )
+                if not existing.scalar_one_or_none():
+                    await _jobs_module.create_schedule(
+                        _job_id, _cron, enabled=_enabled, timeout_secs=_timeout
+                    )
+                    logger.info("Created schedule for %s (%s): %s enabled=%s",
+                                _job_id, _cname, _cron, _enabled)
     count = await _jobs_module.load_schedules()
     logger.info("Job scheduler: loaded %d schedule(s)", count)
     _jobs_module.start_scheduler()
