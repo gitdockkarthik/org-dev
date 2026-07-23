@@ -1242,7 +1242,7 @@
         const staleMore = document.getElementById('topic-stale-show-more');
         if (!staleTbody) return;
         staleTbody.innerHTML = _topicTableRows.map(t => `
-          <tr class="topic-row" data-name="${t.name||t.topic}" style="cursor:pointer" onclick="window._expandTopicRow(this, '${(t.name||t.topic||'').replace(/'/g,"\\'")}')">
+          <tr class="topic-row" data-name="${t.name||t.topic}" style="cursor:default">
             <td><code style="font-size:.8rem">${t.name||t.topic||'Unknown'}</code></td>
             <td style="text-align:right">${fmtBytes(t.size_bytes || 0)}</td>
             <td>${topicStatusBadge(t)}</td>
@@ -1536,7 +1536,7 @@
       row.parentNode.insertBefore(detailRow, row.nextSibling);
       try {
         const url = '/dashboard/topics/detail';
-        const res = await fetch(PROXY + url + '?name=' + encodeURIComponent(topicName) + '&cluster_id=' + (_currentClusterId || '3'), {
+        const res = await fetch(PROXY + url + '?name=' + encodeURIComponent(topicName) + '&cluster_id=' + (_currentClusterId || document.getElementById('ctrl-cluster')?.value || ''), {
           headers: _authHeaders ? _authHeaders() : {},
           cache: 'no-store'
         });
