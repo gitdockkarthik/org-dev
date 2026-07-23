@@ -174,5 +174,30 @@ async def generate_sample() -> dict:
 
 @router.get("")
 async def list_reports() -> dict:
-    """Return current sync metadata."""
-    return kafka_store.get_sync_meta()
+    """Return current sync metadata from postgres."""
+    try:
+        from database import SessionLocal
+        from sqlalchemy import text as _t
+        if SessionLocal is None:
+            return kafka_store.get_sync_meta()
+        async with SessionLocal() as sess:
+            # Get counts from postgres tables
+            brokers = await sess.execute(_t("SELECT COUNT(*) FROM kafka_broker_metrics WHERE cluster_id IN (SELECT id FROM kafka_clusters WHERE agent_slug='kafka-analyser' AND enabled=true)"))
+            topics = await sess.execute(_t("SELECT COUNT(*) FROM kafka_topic_metrics WHERE cluster_id IN (SELECT id FROM kafka_clusters WHERE agent_slug='kafka-analyser' AND enabled=true)"))
+            groups = await sess.execute(_t("SELECT COUNT(*) FROM kafka_consumer_lag WHERE cluster_id IN (SELECT id FROM kafka_clusters WHERE agent_slug='kafka-analyser' AND enabled=true)") if False else _t("SELECT 0"))
+            broker_count = brokers.scalar() or 0
+            topic_count = topics.scalar() or 0
+        # Consumer groups from postgres
+        cg = await sess.execute(_t("SELECT COUNT(*) FROM kafka_consumer_group_lag WHERE cluster_id IN (SELECT id FROM kafka_clusters WHERE agent_slug='kafka-analyser' AND enabled=true)"))
+        cg_count = cg.scalar() or 0
+        return {
+            "loaded": broker_count > 0 or topic_count > 0,
+            "source_type": "live",
+            "last_synced": None,
+            "broker_count": broker_count,
+            "consumer_group_count": cg_count,
+            "topic_count": topic_count,
+            "connector_count": 0,
+        }
+    except Exception as e:
+        return kafka_store.get_sync_meta()

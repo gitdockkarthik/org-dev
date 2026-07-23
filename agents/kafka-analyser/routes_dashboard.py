@@ -272,12 +272,38 @@ async def get_topic_detail(name: str, cluster_id: str | None = None) -> dict:
 
 @router.get("/dashboard/consumer-groups")
 async def get_consumer_groups(cluster_id: str | None = None, hours: int | None = None) -> dict:
-    """Consumer group lag leaderboard sorted worst-first."""
-    data = kafka_store.get_cluster_data(cluster_id, hours=hours)
-    if data is None:
+    """Consumer group lag leaderboard sorted worst-first — reads from postgres."""
+    if not cluster_id:
         return {"empty": True}
-    groups = sorted(data["consumer_groups"], key=lambda g: g["total_lag"], reverse=True)
-    return {"consumer_groups": groups}
+    try:
+        from database import SessionLocal
+        from sqlalchemy import text as _t
+        if SessionLocal is None:
+            return {"empty": True}
+        async with SessionLocal() as sess:
+            rows = await sess.execute(_t("""
+                SELECT group_id, state, total_lag, topic_count, committed_offsets, updated_at
+                FROM kafka_consumer_group_lag
+                WHERE cluster_id = :cid
+                ORDER BY total_lag DESC
+            """), {"cid": int(cluster_id)})
+            groups = [
+                {
+                    "group_id": r.group_id,
+                    "state": r.state,
+                    "total_lag": r.total_lag,
+                    "topic_count": r.topic_count,
+                    "committed_offsets": r.committed_offsets,
+                    "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+                }
+                for r in rows.fetchall()
+            ]
+        if not groups:
+            return {"empty": True}
+        return {"consumer_groups": groups, "total": len(groups)}
+    except Exception as e:
+        logger.error("get_consumer_groups failed: %s", e)
+        return {"empty": True}
 
 
 @router.get("/dashboard/topics")

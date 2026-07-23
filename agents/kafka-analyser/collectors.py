@@ -247,8 +247,34 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
         data["counts"]["active_groups"] = result["group_states"]["consumer"]
         data["counts"]["total_lag"] = result["total_lag"]
         _ks.set_cluster_data(data, source_type=c.get("source_type", "live"), cluster_id=cid)
-        from kafka_store import save_groups
-        await save_groups(cid)
+        # Upsert consumer group lag to postgres
+        try:
+            from database import SessionLocal
+            from sqlalchemy import text as _cgt
+            enriched = result["groups"]
+            if enriched:
+                async with SessionLocal() as sess:
+                    values = ",".join(
+                        f"({int(cid)}, '{g['group_id'].replace(chr(39), chr(39)*2)}', "
+                        f"'{g.get('state','consumer')}', {g.get('total_lag',0)}, "
+                        f"{g.get('topic_count',0)}, {g.get('committed_offsets',0)}, now())"
+                        for g in enriched if g.get('group_id')
+                    )
+                    if values:
+                        await sess.execute(_cgt(f"""
+                            INSERT INTO kafka_consumer_group_lag
+                            (cluster_id, group_id, state, total_lag, topic_count, committed_offsets, updated_at)
+                            VALUES {values}
+                            ON CONFLICT (cluster_id, group_id) DO UPDATE SET
+                                state = EXCLUDED.state,
+                                total_lag = EXCLUDED.total_lag,
+                                topic_count = EXCLUDED.topic_count,
+                                committed_offsets = EXCLUDED.committed_offsets,
+                                updated_at = now()
+                        """))
+                        await sess.commit()
+        except Exception as _ge:
+            logger.warning("consumer group lag upsert failed: %s", _ge)
         total_groups += result["group_states"]["consumer"]
     except Exception as e:
         logger.warning("consumer_lag_active failed for %s: %s", c["name"], e)
