@@ -249,3 +249,40 @@ async def get_slo_monthly(cluster_id: str, months: int = 3) -> dict:
         }
     except Exception as e:
         return {"error": str(e)}
+
+@router.get("/slo/connector-trend")
+async def get_connector_trend(cluster_id: str, hours: int = 24) -> dict:
+    """Connector availability trend from snapshots (every 2 min, not hourly)."""
+    try:
+        from database import SessionLocal
+        from sqlalchemy import text as _t
+        from datetime import datetime, timezone, timedelta
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        bucket = '5 minutes' if hours <= 24 else '1 hour' if hours <= 168 else '6 hours'
+        async with SessionLocal() as sess:
+            rows = await sess.execute(_t(f"""
+                SELECT date_bin('{bucket}'::interval, collected_at, TIMESTAMP '2001-01-01') as bucket_time,
+                       SUM(CASE WHEN state='RUNNING' THEN 1 ELSE 0 END) as running,
+                       SUM(CASE WHEN state='FAILED' THEN 1 ELSE 0 END) as failed,
+                       SUM(CASE WHEN state='PAUSED' THEN 1 ELSE 0 END) as paused,
+                       COUNT(*) as total
+                FROM kafka_connector_snapshots
+                WHERE cluster_id=:cid AND collected_at >= :since
+                AND state IN ('RUNNING','FAILED','PAUSED')
+                GROUP BY bucket_time
+                ORDER BY bucket_time ASC
+            """), {"cid": int(cluster_id), "since": since})
+            points = []
+            for r in rows.fetchall():
+                active = (r.running or 0) + (r.failed or 0)
+                avail = round(r.running / active * 100, 1) if active > 0 else None
+                points.append({
+                    "time": r.bucket_time.isoformat(),
+                    "running": r.running or 0,
+                    "failed": r.failed or 0,
+                    "paused": r.paused or 0,
+                    "availability_pct": avail,
+                })
+        return {"points": points}
+    except Exception as e:
+        return {"error": str(e), "points": []}
