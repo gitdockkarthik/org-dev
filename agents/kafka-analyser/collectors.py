@@ -669,12 +669,18 @@ async def compute_slo_compliance(cluster_id: str = ""):
             cpu_compliance_pct = 100.0 if avg_cpu <= cpu_target else max(0, round((1 - (avg_cpu - cpu_target)/cpu_target) * 100, 1))
             heap_compliance_pct = 100.0 if avg_heap <= heap_target else max(0, round((1 - (avg_heap - heap_target)/heap_target) * 100, 1))
             # Task health compliance from connector snapshots
+            # Use latest snapshot only to avoid counting multiple snapshots per connector
             task_stats = await sess.execute(_slo("""
-                SELECT COUNT(DISTINCT connector_name) as total,
+                WITH latest AS (
+                    SELECT DISTINCT ON (connector_name) connector_name, failed_tasks, state
+                    FROM kafka_connector_snapshots
+                    WHERE cluster_id=:cid AND collected_at >= :prev AND collected_at < :now
+                    AND state IN ('RUNNING', 'FAILED')
+                    ORDER BY connector_name, collected_at DESC
+                )
+                SELECT COUNT(*) as total,
                        SUM(CASE WHEN failed_tasks = 0 AND state = 'RUNNING' THEN 1 ELSE 0 END) as healthy
-                FROM kafka_connector_snapshots
-                WHERE cluster_id=:cid AND collected_at >= :prev AND collected_at < :now
-                AND state IN ('RUNNING', 'FAILED')
+                FROM latest
             """), {"cid": int(cid), "prev": prev_hour, "now": hour_bucket})
             ts = task_stats.fetchone()
             task_health_pct = round(ts.healthy / ts.total * 100, 1) if ts and ts.total > 0 else None
