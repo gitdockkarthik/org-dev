@@ -575,7 +575,7 @@
       const overviewCharts = `
         <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:22px">
           <div class="chart-card" style="flex:1;min-width:300px;margin-bottom:0">
-            <div class="chart-card__title">Cluster Activity — Messages/sec Over Time</div>
+            <div class="chart-card__title">Cluster Activity — Message Rate Over Time</div>
             <div class="chart-wrap" id="overview-activity-wrap" style="height:220px"><canvas id="overview-activity-chart"></canvas></div>
           </div>
           <div class="chart-card" style="flex:1;min-width:300px;margin-bottom:0">
@@ -653,7 +653,7 @@
                 data: {
                   labels,
                   datasets: [{
-                    label: 'Messages/sec',
+                    label: 'Bytes/sec',
                     data: totals,
                     borderColor: '#FF6B35',
                     backgroundColor: 'rgba(255,107,53,0.1)',
@@ -3108,8 +3108,6 @@
                 data: { labels: tLabels, datasets: [
                   { label: 'Overall %', data: trendData.map(t => t.overall_pct ? Math.min(100, t.overall_pct) : null),
                     borderColor: '#FF6B35', backgroundColor: 'rgba(255,107,53,0.15)', borderWidth: 2, tension: 0.3, fill: true, pointRadius: 3 },
-                  { label: 'Connector %', data: trendData.map(t => t.connector_pct),
-                    borderColor: '#4CAF50', backgroundColor: 'transparent', borderWidth: 1.5, tension: 0.3, fill: false, pointRadius: 2, borderDash: [4,3] },
                 ]},
                 options: { responsive: true, maintainAspectRatio: false,
                   plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 10, font: {size:10} } } },
