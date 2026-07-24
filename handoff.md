@@ -62,3 +62,8 @@ Kafka Analyser — SLI/SLO feature complete with full compliance tracking.
 * Overall compliance trend chart (currently shows connector trend only)
 * Connector task-level SLI per connector in popup (task health %)
 * SLO breach alerts via Teams (when compliance drops below threshold)
+
+## Fix Applied
+* SLO task health compliance: was 2838% due to counting multiple snapshots per connector
+* Fixed with DISTINCT ON per connector — now correct at 97.6%
+* Cleared corrupt compliance rows
