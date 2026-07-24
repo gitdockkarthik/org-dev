@@ -909,8 +909,19 @@ async def ds_storage_usage() -> dict:
 
 @app.get("/data-sources/active-report-id")
 async def ds_active_report_id() -> dict:
-    """Return the report_id of the currently active CUR source in the registry."""
+    """Return the report_id of the latest ready CUR report."""
     try:
+        from database import SessionLocal
+        from sqlalchemy import text as _t
+        if SessionLocal:
+            async with SessionLocal() as sess:
+                row = await sess.execute(_t(
+                    "SELECT id FROM cur_report WHERE status='ready' ORDER BY created_at DESC LIMIT 1"
+                ))
+                r = row.fetchone()
+                if r:
+                    return {"report_id": r.id}
+        # Fallback to registry
         reg = _require_registry()
         active = reg.get_active_cur()
         if not active:
