@@ -67,3 +67,14 @@ Kafka Analyser — SLI/SLO feature complete with full compliance tracking.
 * SLO task health compliance: was 2838% due to counting multiple snapshots per connector
 * Fixed with DISTINCT ON per connector — now correct at 97.6%
 * Cleared corrupt compliance rows
+
+## Session Update — 2026-07-24 (late morning)
+### Fixed
+* CUR dashboard: now defaults to latest auto-synced report (was showing manual report)
+* CUR active-report-id endpoint: reads from cur_report table (latest ready)
+
+### Monday Agenda (unchanged)
+1. Prod Kafka cluster onboarding
+2. AI Insights kafka_store removal (must before Prod)
+3. Teams SLO breach alerts
+4. SLI/SLO: lag compliance improvement (currently binary 0/100%)
