@@ -351,6 +351,19 @@ async def lifespan(app: FastAPI):
     count = await _jobs_module.load_schedules()
     logger.info("Job scheduler: loaded %d schedule(s)", count)
     _jobs_module.start_scheduler()
+    # Clear stuck running jobs from previous session
+    try:
+        from sqlalchemy import text as _ct
+        async with SessionLocal() as _sess:
+            result = await _sess.execute(_ct(
+                "UPDATE cur_job_runs SET status='failed', ended_at=now(), "
+                "error_message='Cleared on restart' WHERE status='running'"
+            ))
+            if result.rowcount > 0:
+                logger.info("Cleared %d stuck CUR job run(s) on startup", result.rowcount)
+            await _sess.commit()
+    except Exception as _e:
+        logger.warning("Failed to clear stuck CUR runs: %s", _e)
 
     yield
 
