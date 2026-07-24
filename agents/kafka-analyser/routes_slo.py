@@ -292,7 +292,7 @@ async def get_slo_monthly(cluster_id: str, months: int = 3) -> dict:
                 {
                     "month": r.month.strftime("%b %Y"),
                     "connector_pct": round(r.connector_avg, 1) if r.connector_avg else None,
-                    "lag_pct": round(r.lag_avg, 1) if r.lag_avg else None,
+                    "lag_pct": round(r.lag_avg, 1) if r.lag_avg is not None else None,
                     "urp_pct": round(r.urp_avg, 1) if r.urp_avg else None,
                     "overall_pct": round(r.overall_avg, 1) if r.overall_avg else None,
                     "data_points": r.data_points,
