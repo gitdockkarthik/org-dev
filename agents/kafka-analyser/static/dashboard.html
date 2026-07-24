@@ -2851,6 +2851,10 @@
             </div>
             <div style="margin-top:8px">${badge(overallStatus,overallStatus.toUpperCase())}</div>
           </div>
+          <div class="chart-card" style="flex:2;min-width:300px">
+            <div class="chart-card__title">Compliance Trend</div>
+            <div class="chart-wrap" style="height:200px"><canvas id="slo-overall-trend-chart"></canvas></div>
+          </div>
           <div class="chart-card" style="flex:1;min-width:300px">
             <div class="chart-card__title">SLO Status</div>
             <table style="width:100%;border-collapse:collapse;font-size:.83rem">
@@ -3087,6 +3091,35 @@
                 connCtx.canvas.parentElement.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:.82rem">Collecting data...</div>';
               }
             }).catch(() => {});
+
+          // Overall compliance trend
+          setTimeout(() => {
+            const overallCanvas = document.getElementById('slo-overall-trend-chart');
+            if (!overallCanvas) return;
+            const overallTrendCtx = overallCanvas.getContext('2d');
+            const trendData = data.trend || [];
+            if (trendData.length > 0) {
+              const tLabels = trendData.map(t => {
+                const d2 = new Date(t.time);
+                return _sloHours <= 24 ? d2.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : d2.toLocaleDateString([],{month:'short',day:'numeric'});
+              });
+              new Chart(overallTrendCtx, {
+                type: 'line',
+                data: { labels: tLabels, datasets: [
+                  { label: 'Overall %', data: trendData.map(t => t.overall_pct ? Math.min(100, t.overall_pct) : null),
+                    borderColor: '#FF6B35', backgroundColor: 'rgba(255,107,53,0.15)', borderWidth: 2, tension: 0.3, fill: true, pointRadius: 3 },
+                  { label: 'Connector %', data: trendData.map(t => t.connector_pct),
+                    borderColor: '#4CAF50', backgroundColor: 'transparent', borderWidth: 1.5, tension: 0.3, fill: false, pointRadius: 2, borderDash: [4,3] },
+                ]},
+                options: { responsive: true, maintainAspectRatio: false,
+                  plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 10, font: {size:10} } } },
+                  scales: { y: { min:0, max:100, ticks: { callback: v => v+'%', font:{size:10} } },
+                            x: { ticks: { maxTicksLimit: 8, font:{size:10} } } } }
+              });
+            } else {
+              overallCanvas.parentElement.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:.78rem">Hourly data accumulates at :05</div>';
+            }
+          }, 250);
 
           // Consumer lag trend
           const lagCtx = document.getElementById('slo-lag-trend-chart')?.getContext('2d');
