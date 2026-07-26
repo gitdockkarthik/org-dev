@@ -162,3 +162,20 @@ Kafka Analyser — SLI/SLO feature complete with full compliance tracking.
 * Add to stats cards: Total Cost ($) and Avg Cost per 1K tokens
 * Backend: include calculatedTotalCost in get_llm_usage response
 * Model pricing already configured in Langfuse (bedrock rates)
+
+## Session Update — 2026-07-26 (afternoon)
+### Completed
+* Docs Hub: Platform Observability section (Overview, Deployment Guide, Agent Onboarding)
+* API reference docs updated: kafka, alert, cur analysers
+* Memory limits set on all containers
+* LLM Usage: cost per call + Total Cost + Avg Cost/Call cards
+* LLM Usage: agent/user/model filters
+* Audit Events renamed from API Key Events
+* Audit tab as top-level nav (alongside Agents, Admin)
+* nginx: no-cache headers for HTML files
+
+### Monday Agenda (first priority unchanged)
+1. ⚠️ Hardcoded mappings audit
+2. ⚠️ Security audit
+3. Prod Kafka cluster onboarding
+4. AI Insights kafka_store removal
