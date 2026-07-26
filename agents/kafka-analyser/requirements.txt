@@ -12,3 +12,4 @@ kafka-python-ng>=2.2.3
 jpype1>=1.5.0
 boto3>=1.34.0
 apscheduler==3.10.4
+langfuse>=2.0.0

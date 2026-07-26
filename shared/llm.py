@@ -5,6 +5,28 @@ from typing import Any
 
 DEFAULT_MODEL = os.environ.get("LLM_MODEL", "us.anthropic.claude-sonnet-5")
 
+# ── Langfuse tracing (optional — disabled if not configured) ─────────────────
+def _get_langfuse():
+    """Return a Langfuse client if configured, else None."""
+    pk = os.environ.get("LANGFUSE_PUBLIC_KEY", "")
+    sk = os.environ.get("LANGFUSE_SECRET_KEY", "")
+    host = os.environ.get("LANGFUSE_HOST", "http://langfuse:3000")
+    if not pk or not sk or pk == "lf-pk-operative":
+        return None
+    try:
+        from langfuse import Langfuse
+        return Langfuse(public_key=pk, secret_key=sk, host=host)
+    except Exception:
+        return None
+
+_langfuse = None
+
+def _lf():
+    global _langfuse
+    if _langfuse is None:
+        _langfuse = _get_langfuse()
+    return _langfuse
+
 logger = logging.getLogger(__name__)
 
 def _provider() -> str:
@@ -52,6 +74,12 @@ async def create_message(
     if tools:
         kwargs["tools"] = tools
 
+    # ── Langfuse tracing ────────────────────────────────────────────────────
+    agent_slug = os.environ.get("AGENT_SLUG", "unknown")
+    lf = _lf()
+    trace = lf.trace(name=f"{agent_slug}.llm_call", metadata={"provider": resolved_provider, "model": resolved_model}) if lf else None
+    generation = trace.generation(name="create_message", model=resolved_model, input=messages) if trace else None
+
     if resolved_provider == "anthropic":
         import anthropic
         resolved_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
@@ -59,7 +87,13 @@ async def create_message(
             raise RuntimeError("Set ANTHROPIC_API_KEY env var.")
         client = anthropic.AsyncAnthropic(api_key=resolved_key)
         try:
-            return await client.messages.create(**kwargs)
+            response = await client.messages.create(**kwargs)
+            if generation:
+                generation.end(
+                    output=response.content[0].text if response.content else "",
+                    usage={"input": response.usage.input_tokens, "output": response.usage.output_tokens},
+                )
+            return response
         finally:
             await client.close()
 
@@ -75,7 +109,13 @@ async def create_message(
         # Picks up AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY from env.
         client = anthropic.AsyncAnthropicBedrock()
         try:
-            return await client.messages.create(**kwargs)
+            response = await client.messages.create(**kwargs)
+            if generation:
+                generation.end(
+                    output=response.content[0].text if response.content else "",
+                    usage={"input": response.usage.input_tokens, "output": response.usage.output_tokens},
+                )
+            return response
         finally:
             await client.close()
 

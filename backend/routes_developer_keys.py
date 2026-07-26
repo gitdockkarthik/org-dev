@@ -12,6 +12,7 @@ from core.database import get_db
 from models.developer_key import DeveloperKey
 from models.agent_owner import AgentOwner
 from models.user import User
+from audit import log_audit_event
 
 router = APIRouter()
 
@@ -75,6 +76,10 @@ async def create_key(
     db.add(key)
     await db.commit()
     await db.refresh(key)
+    await log_audit_event("apikey.created", user_email=getattr(current_user, "email", None),
+        user_role=getattr(current_user, "role", None), resource_type="api_key",
+        resource_id=key.key_id, agent_slug=key.agent_slug, action="create",
+        details={"key_name": key.key_id, "agent_slug": key.agent_slug})
     return KeyCreated(
         id=key.id,
         agent_slug=key.agent_slug,
@@ -123,6 +128,9 @@ async def delete_key(
         raise HTTPException(status_code=404, detail="Key not found")
     await db.delete(key)
     await db.commit()
+    await log_audit_event("apikey.deleted", user_email=getattr(current_user, "email", None),
+        user_role=getattr(current_user, "role", None), resource_type="api_key",
+        resource_id=str(key_id), action="delete")
 
 
 @router.patch("/api/developer/keys/{key_id}", response_model=KeyOut)
@@ -158,6 +166,10 @@ async def rotate_key(
     key.is_active = True
     await db.commit()
     await db.refresh(key)
+    await log_audit_event("apikey.rotated", user_email=getattr(current_user, "email", None),
+        user_role=getattr(current_user, "role", None), resource_type="api_key",
+        resource_id=key.key_id, agent_slug=key.agent_slug, action="rotate",
+        details={"agent_slug": key.agent_slug})
     return KeyCreated(
         id=key.id,
         agent_slug=key.agent_slug,

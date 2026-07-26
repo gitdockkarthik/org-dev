@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Audit — Unified Agent Platform</title>
+  <link rel="stylesheet" href="/css/style.css?v=3">
+  <style>
+    .audit-tab { padding:13px 18px;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--text-muted);font-size:.88rem;font-weight:500;cursor:pointer;margin-bottom:-1px; }
+    .audit-tab--active { border-bottom-color:var(--accent);color:var(--accent);font-weight:600; }
+    .stats-bar { display:flex;gap:24px;margin-bottom:24px;flex-wrap:wrap; }
+    .stat-card { background:var(--navy-1);border:1px solid var(--border);border-radius:var(--r);padding:16px 20px;flex:1;min-width:140px; }
+    .stat-label { font-size:.8rem;color:var(--text-muted);margin-bottom:4px; }
+    .stat-value { font-size:1.4rem;font-weight:700;color:var(--accent); }
+    .filter-row { display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap; }
+    .filter-row select, .filter-row input { padding:9px 12px;background:var(--navy-2);border:1.5px solid var(--border-hi);border-radius:6px;font-size:.88rem;color:var(--text);outline:none;flex:1;min-width:160px; }
+    .audit-table-wrap { overflow-x:auto; }
+    .audit-table { width:100%;border-collapse:collapse;background:var(--navy-1);border:1px solid var(--border);border-radius:var(--r);overflow:hidden; }
+    .audit-table th { background:var(--navy-2);padding:12px 14px;text-align:left;font-size:.83rem;font-weight:600;color:var(--text-muted);border-bottom:1px solid var(--border); }
+    .audit-table td { padding:12px 14px;border-bottom:1px solid var(--border);font-size:.85rem; }
+    .audit-table tr:last-child td { border-bottom:none; }
+    .load-more { display:block;margin:20px auto 0;padding:10px 24px;background:var(--navy-2);border:1.5px solid var(--border-hi);border-radius:6px;cursor:pointer;color:var(--text);font-weight:600; }
+    #langfuse-iframe { width:100%;height:600px;border:1px solid var(--border);border-radius:var(--r); }
+  </style>
+</head>
+<body class="admin-page" style="visibility:hidden">
+
+  <header class="topbar">
+    <a href="/" class="topbar__brand">
+      <span style="font-size:1.3rem;font-weight:700;color:#ffffff;letter-spacing:1px;font-family:inherit;">OPERATIVE</span>
+    </a>
+    <nav class="topbar__nav">
+      <a href="/" class="topbar__link">Agents</a>
+      <a href="/admin/" class="topbar__link" id="nav-admin" style="display:none">Admin</a>
+      <a href="/docs-hub/" class="topbar__link" target="_blank">📚 Docs</a>
+    </nav>
+    <div class="topbar__right" style="display:flex;align-items:center;gap:12px;">
+      <div id="user-badge-slot"></div>
+    </div>
+  </header>
+
+  <div class="admin-tabs" style="display:flex;gap:0;border-bottom:1px solid var(--border);background:var(--navy-1);padding:0 40px;">
+    <button class="audit-tab audit-tab--active" id="tab-events" onclick="switchAuditTab('events')" style="">API Key Events</button>
+    <button class="audit-tab" id="tab-llm" onclick="switchAuditTab('llm')">LLM Usage</button>
+  </div>
+
+  <!-- API Key Events panel -->
+  <div id="panel-events" class="admin-content">
+    <h1 class="admin-title">API Key Events</h1>
+    <p class="admin-subtitle" style="margin-bottom:20px">Audit log of developer key creation, deletion, and rotation.</p>
+
+    <div class="stats-bar" id="stats-bar"></div>
+
+    <div class="filter-row">
+      <select id="filter-event" onchange="loadAuditLogs()">
+        <option value="">All Events</option>
+        <option value="apikey.created">Created</option>
+        <option value="apikey.deleted">Deleted</option>
+        <option value="apikey.rotated">Rotated</option>
+      </select>
+      <input type="text" id="filter-email" placeholder="Filter by user email…" onkeyup="debounceLoadLogs()" style="flex:2;">
+    </div>
+
+    <div class="audit-table-wrap">
+      <table class="audit-table">
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>Event</th>
+            <th>Agent</th>
+            <th>User</th>
+            <th>Resource</th>
+            <th>Action</th>
+            <th>Outcome</th>
+          </tr>
+        </thead>
+        <tbody id="audit-tbody">
+          <tr><td colspan="7" style="text-align:center;color:var(--text-muted);">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <button class="load-more" id="load-more-btn" onclick="loadAuditLogs(true)">Load More</button>
+  </div>
+
+  <!-- LLM Usage panel -->
+  <div id="panel-llm" class="admin-content" style="display:none;">
+    <h1 class="admin-title">LLM Usage</h1>
+    <p class="admin-subtitle" style="margin-bottom:20px">Langfuse observability dashboard for LLM calls and traces.</p>
+    <div id="langfuse-container" style="background:var(--navy-1);border:1px solid var(--border);border-radius:var(--r);padding:32px;text-align:center;">
+      <div style="font-size:2rem;margin-bottom:12px">📊</div>
+      <div style="font-weight:700;font-size:1rem;margin-bottom:8px">Langfuse Observability</div>
+      <div style="color:var(--text-muted);font-size:.88rem;margin-bottom:20px">
+        LLM call traces, token usage, and cost analysis for all agents.
+      </div>
+      <div id="langfuse-link-container">
+        <a id="langfuse-link" href="#" target="_blank" class="btn btn--primary" style="display:inline-block;text-decoration:none">
+          🔗 Open Langfuse Dashboard
+        </a>
+      </div>
+      <div id="langfuse-fallback" style="display:none;color:var(--text-muted);font-size:.82rem;margin-top:12px">
+        Langfuse not configured.
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/config.js?v=3"></script>
+  <script src="/js/portal.js?v=3"></script>
+  <script>
+    let auditOffset = 0;
+    const pageSize = 50;
+    let debounceTimer;
+
+    function debounceLoadLogs() {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => { auditOffset = 0; loadAuditLogs(); }, 300);
+    }
+
+    async function loadAuditLogs(loadMore = false) {
+      if (!loadMore) auditOffset = 0;
+      const eventType = document.getElementById('filter-event').value;
+      const email = document.getElementById('filter-email').value.trim();
+
+      try {
+        const params = new URLSearchParams({ limit: pageSize, offset: auditOffset });
+        if (eventType) params.append('event_type', eventType);
+        if (email) params.append('user_email', email);
+
+        const r = await fetch(`/api/audit/logs?${params}`, { headers: _authHeaders(), credentials: 'include' });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const logs = await r.json();
+
+        const tbody = document.getElementById('audit-tbody');
+        if (logs.length === 0 && auditOffset === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);">No audit events.</td></tr>';
+          return;
+        }
+
+        if (!loadMore) tbody.innerHTML = '';
+        logs.forEach(log => {
+          const row = `<tr>
+            <td>${new Date(log.timestamp).toLocaleString()}</td>
+            <td><code style="font-size:.8rem;">${log.event_type}</code></td>
+            <td>${log.agent_slug || '—'}</td>
+            <td>${log.user_email || '—'}</td>
+            <td><code style="font-size:.8rem;">${log.resource_id || '—'}</code></td>
+            <td>${log.action || '—'}</td>
+            <td><span class="badge badge--${log.outcome === 'success' ? 'published' : 'deprecated'}">${log.outcome}</span></td>
+          </tr>`;
+          tbody.innerHTML += row;
+        });
+
+        auditOffset += logs.length;
+        document.getElementById('load-more-btn').style.display = logs.length < pageSize ? 'none' : 'block';
+      } catch (err) {
+        document.getElementById('audit-tbody').innerHTML = `<tr><td colspan="7" style="color:var(--danger);">${err.message}</td></tr>`;
+      }
+    }
+
+    async function loadAuditStats() {
+      try {
+        const r = await fetch('/api/audit/stats', { headers: _authHeaders(), credentials: 'include' });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const stats = await r.json();
+
+        let html = `
+          <div class="stat-card"><div class="stat-label">Total Events</div><div class="stat-value">${stats.total_events || 0}</div></div>
+          <div class="stat-card"><div class="stat-label">Unique Users</div><div class="stat-value">${stats.total_users || 0}</div></div>
+        `;
+        Object.entries(stats.by_type || {}).forEach(([type, count]) => {
+          html += `<div class="stat-card"><div class="stat-label">${type}</div><div class="stat-value">${count}</div></div>`;
+        });
+        document.getElementById('stats-bar').innerHTML = html;
+      } catch (err) {
+        console.error('Stats load failed:', err);
+      }
+    }
+
+    function switchAuditTab(tab) {
+      document.getElementById('panel-events').style.display = tab === 'events' ? '' : 'none';
+      document.getElementById('panel-llm').style.display = tab === 'llm' ? '' : 'none';
+      ['events', 'llm'].forEach(t => {
+        const btn = document.getElementById(`tab-${t}`);
+        btn.classList.toggle('audit-tab--active', t === tab);
+      });
+      const langfuseUrl = window.__CONFIG__?.LANGFUSE_URL || window.LANGFUSE_URL;
+      if (tab === 'llm') {
+        if (langfuseUrl) {
+          document.getElementById('langfuse-link').href = langfuseUrl;
+          document.getElementById('langfuse-link-container').style.display = '';
+          document.getElementById('langfuse-fallback').style.display = 'none';
+        } else {
+          document.getElementById('langfuse-link-container').style.display = 'none';
+          document.getElementById('langfuse-fallback').style.display = '';
+        }
+      }
+    }
+
+    fetchCurrentUser().then(user => {
+      if (!user) { window.location.replace('/'); return; }
+      const roles = (user.roles || '').split(',');
+      if (!roles.includes('admin')) { window.location.replace('/'); return; }
+      document.body.style.visibility = 'visible';
+      document.getElementById('nav-admin').style.display = '';
+      loadAuditStats();
+      loadAuditLogs();
+    });
+
+    mountUserBadge('#user-badge-slot');
+  </script>
+
+</body>
+</html>

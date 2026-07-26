@@ -3,4 +3,5 @@
 window.__CONFIG__ = {
   BACKEND_URL: '${BACKEND_URL}',
   AUTH_MODE: '${AUTH_MODE}',
+  LANGFUSE_URL: '${LANGFUSE_URL}',
 };

@@ -20,6 +20,7 @@ from orchestrator.router import router as orchestrator_router
 from registry.router import router as registry_router
 from routes_auth import router as auth_router
 from routes_developer_keys import router as dev_keys_router
+from routes_audit import router as audit_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -158,6 +159,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(dev_keys_router)
+app.include_router(audit_router)
 app.include_router(registry_router)
 app.include_router(orchestrator_router)
 app.include_router(platform_router)

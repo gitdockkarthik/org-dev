@@ -5,9 +5,10 @@ set -e
 export BACKEND_URL="${BACKEND_URL:-http://localhost:8000}"
 export PORT="${PORT:-80}"
 export AUTH_MODE="${AUTH_MODE:-none}"
+export LANGFUSE_URL="${LANGFUSE_URL:-http://localhost:3001}"
 
 # ── Step 1: inject JS config ──────────────────────────────────────────────────
-envsubst '${BACKEND_URL} ${AUTH_MODE}' \
+envsubst '${BACKEND_URL} ${AUTH_MODE} ${LANGFUSE_URL}' \
   < /etc/nginx/templates/config.template.js \
   > /usr/share/nginx/html/js/config.js
 
