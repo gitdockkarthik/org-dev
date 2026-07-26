@@ -32,6 +32,7 @@
     <nav class="topbar__nav">
       <a href="/" class="topbar__link">Agents</a>
       <a href="/admin/" class="topbar__link" id="nav-admin" style="display:none">Admin</a>
+      <a href="/admin/audit.html" class="topbar__link topbar__link--active" id="nav-audit" style="display:none">🔍 Audit</a>
       <a href="/docs-hub/" class="topbar__link" target="_blank">📚 Docs</a>
     </nav>
     <div class="topbar__right" style="display:flex;align-items:center;gap:12px;">
@@ -270,7 +271,10 @@
       const roles = (user.roles || '').split(',');
       if (!roles.includes('admin')) { window.location.replace('/'); return; }
       document.body.style.visibility = 'visible';
-      document.getElementById('nav-admin').style.display = '';
+      const adminLink = document.getElementById('nav-admin');
+      const auditLink = document.getElementById('nav-audit');
+      if (adminLink) adminLink.style.display = '';
+      if (auditLink) auditLink.style.display = '';
       loadAuditStats();
       loadAuditLogs();
     });

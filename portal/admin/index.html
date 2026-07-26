@@ -19,6 +19,7 @@
     <nav class="topbar__nav">
       <a href="/" class="topbar__link">Agents</a>
       <a href="/admin/" class="topbar__link topbar__link--active" id="nav-admin" style="display:none">Admin</a>
+      <a href="/admin/audit.html" class="topbar__link" id="nav-audit" style="display:none">🔍 Audit</a>
       <a href="/docs-hub/" class="topbar__link" target="_blank">📚 Docs</a>
     </nav>
     <div class="topbar__right" style="display:flex;align-items:center;gap:12px;">
@@ -33,7 +34,6 @@
     <button class="admin-tab" id="tab-platform" onclick="switchTab('platform')" style="padding:13px 18px;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--text-muted);font-size:.88rem;font-weight:500;cursor:pointer;margin-bottom:-1px;">Platform</button>
     <button class="admin-tab" id="tab-users" onclick="switchTab('users')" style="display:none;padding:13px 18px;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--text-muted);font-size:.88rem;font-weight:500;cursor:pointer;margin-bottom:-1px;">Users</button>
     <button class="admin-tab" id="tab-keys" onclick="switchTab('keys')" style="display:none;padding:13px 18px;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--text-muted);font-size:.88rem;font-weight:500;cursor:pointer;margin-bottom:-1px;">API Keys</button>
-    <button class="admin-tab" id="tab-audit" onclick="window.location.href='/admin/audit.html'" style="padding:13px 18px;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--text-muted);font-size:.88rem;font-weight:500;cursor:pointer;margin-bottom:-1px;">🔍 Audit</button>
   </div>
 
   <!-- Agents panel -->
@@ -845,7 +845,9 @@
     mountUserBadge('#user-badge-slot');
     fetchCurrentUser().then(user => {
       const adminLink = document.getElementById('nav-admin');
+      const auditLink = document.getElementById('nav-audit');
       if (adminLink) adminLink.style.display = '';
+      if (auditLink) auditLink.style.display = '';
       if (!user) { window.location.replace('/'); return; }
       const roles = (user.roles || '').split(',');
       const isAdmin = roles.includes('admin');

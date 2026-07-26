@@ -19,6 +19,7 @@
     <nav class="topbar__nav">
       <a href="/" class="topbar__link topbar__link--active">Agents</a>
       <a href="/admin/" class="topbar__link" id="nav-admin" style="display:none">Admin</a>
+      <a href="/admin/audit.html" class="topbar__link" id="nav-audit" style="display:none">🔍 Audit</a>
       <a href="/docs-hub/" class="topbar__link" target="_blank">📚 Docs</a>
     </nav>
     <div class="topbar__right" style="display:flex;align-items:center;gap:12px;">
@@ -216,10 +217,13 @@
         if (!adminLink) return;
         if (!user) { adminLink.style.display = 'none'; return; }
         const roles = (user.roles || '').split(',');
+        const auditLink = document.getElementById('nav-audit');
         if (roles.includes('admin') || roles.includes('developer')) {
           adminLink.style.display = '';
+          if (auditLink) auditLink.style.display = '';
         } else {
           adminLink.style.display = 'none';
+          if (auditLink) auditLink.style.display = 'none';
         }
         const registerBtn = document.getElementById('btn-register-agent');
         if (registerBtn && (roles.includes('admin') || roles.includes('developer'))) {
