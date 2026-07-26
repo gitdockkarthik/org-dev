@@ -101,6 +101,18 @@
         </div>
       </div>
       <div id="llm-stats-bar" style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+        <select id="llm-filter-agent" onchange="loadLLMUsage(false)" style="font-size:.8rem;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text)">
+          <option value="">All Agents</option>
+        </select>
+        <select id="llm-filter-user" onchange="loadLLMUsage(false)" style="font-size:.8rem;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text)">
+          <option value="">All Users</option>
+        </select>
+        <select id="llm-filter-model" onchange="loadLLMUsage(false)" style="font-size:.8rem;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text)">
+          <option value="">All Models</option>
+        </select>
+        <button onclick="_clearLLMFilters()" style="font-size:.8rem;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text-muted);cursor:pointer">Clear Filters</button>
+      </div>
       <div class="table-wrap">
         <table class="data-table" style="width:100%">
           <thead><tr>
@@ -193,6 +205,14 @@
       }
     }
 
+    function _clearLLMFilters() {
+      ['llm-filter-agent','llm-filter-user','llm-filter-model'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+      });
+      loadLLMUsage(false);
+    }
+
     let _llmPage = 1;
     async function loadLLMUsage(loadMore) {
       if (!loadMore) _llmPage = 1;
@@ -206,8 +226,29 @@
         if (!res.ok) throw new Error('Failed to fetch LLM usage');
         const data = await res.json();
         const generations = data.generations || [];
-        const filteredGens = generations.filter(g => (g.usageDetails?.total||0) > 0 || g.model);
+        const agentFilter = document.getElementById('llm-filter-agent')?.value || '';
+        const userFilter = document.getElementById('llm-filter-user')?.value || '';
+        const modelFilter = document.getElementById('llm-filter-model')?.value || '';
+        const filteredGens = generations.filter(g => {
+          if ((g.usageDetails?.total||0) === 0 && !g.model) return false;
+          if (agentFilter && !(g.name||'').startsWith(agentFilter)) return false;
+          if (userFilter && (g.metadata?.user_email||'') !== userFilter) return false;
+          if (modelFilter && (g.model||'') !== modelFilter) return false;
+          return true;
+        });
         const validCount = filteredGens.length;
+        // Populate filter dropdowns on first load
+        if (!loadMore) {
+          const agents = [...new Set(generations.map(g => (g.name||'').split('.')[0]).filter(Boolean))];
+          const users = [...new Set(generations.map(g => g.metadata?.user_email).filter(Boolean))];
+          const models = [...new Set(generations.map(g => g.model).filter(Boolean))];
+          const agentSel = document.getElementById('llm-filter-agent');
+          const userSel = document.getElementById('llm-filter-user');
+          const modelSel = document.getElementById('llm-filter-model');
+          if (agentSel && agentSel.options.length <= 1) agents.forEach(a => agentSel.add(new Option(a, a)));
+          if (userSel && userSel.options.length <= 1) users.forEach(u => userSel.add(new Option(u, u)));
+          if (modelSel && modelSel.options.length <= 1) models.forEach(m => modelSel.add(new Option(m.split('.').pop(), m)));
+        }
         if (!loadMore) {
           // Stats
           const totalTokens = filteredGens.reduce((s,g) => s + (g.usageDetails?.total||g.usage?.totalTokens||0), 0);
