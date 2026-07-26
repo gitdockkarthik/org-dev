@@ -26,7 +26,7 @@ def _lf():
         _langfuse = _get_langfuse()
     return _langfuse
 
-def _lf_trace(response: Any, model: str, provider: str, messages: list) -> None:
+def _lf_trace(response: Any, model: str, provider: str, messages: list, user_id: str | None = None, session_id: str | None = None) -> None:
     """Send LLM call trace to Langfuse using observe decorator pattern."""
     try:
         from langfuse import observe
@@ -46,8 +46,10 @@ def _lf_trace(response: Any, model: str, provider: str, messages: list) -> None:
                     "output": response.usage.output_tokens,
                     "total": response.usage.input_tokens + response.usage.output_tokens,
                 },
-                metadata={"provider": provider},
+                metadata={"provider": provider, "user_email": user_id, "session_id": session_id},
             )
+            if user_id:
+                lf.set_current_trace_io(metadata={"user_id": user_id})
         _send()
         lf.flush()
     except Exception as e:
@@ -70,6 +72,8 @@ async def create_message(
     tools: list[dict[str, Any]] | None = None,
     api_key: str | None = None,
     provider: str | None = None,
+    user_id: str | None = None,
+    session_id: str | None = None,
 ) -> Any:
     """Provider-agnostic wrapper around the Anthropic messages API.
 
@@ -111,7 +115,7 @@ async def create_message(
         client = anthropic.AsyncAnthropic(api_key=resolved_key)
         try:
             response = await client.messages.create(**kwargs)
-            _lf_trace(response, resolved_model, resolved_provider, messages)
+            _lf_trace(response, resolved_model, resolved_provider, messages, user_id=user_id, session_id=session_id)
             return response
         finally:
             await client.close()
@@ -129,7 +133,7 @@ async def create_message(
         client = anthropic.AsyncAnthropicBedrock()
         try:
             response = await client.messages.create(**kwargs)
-            _lf_trace(response, resolved_model, resolved_provider, messages)
+            _lf_trace(response, resolved_model, resolved_provider, messages, user_id=user_id, session_id=session_id)
             return response
         finally:
             await client.close()

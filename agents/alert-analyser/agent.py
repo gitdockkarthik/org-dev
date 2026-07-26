@@ -69,6 +69,7 @@ class AgentRunner:
                 messages=messages,
                 tools=self._anthropic_tools if self._tool_map else None,
                 api_key=resolved_key,
+                session_id=context.get("session_id"),
             )
             total_tokens += response.usage.input_tokens + response.usage.output_tokens
 

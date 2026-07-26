@@ -118,8 +118,30 @@ async def get_llm_usage(limit: int = 50, page: int = 1) -> dict:
             )
             traces_resp.raise_for_status()
             traces = traces_resp.json()
+        generations = data.get("data", [])
+        # Enrich with user data from audit_logs by matching session_id
+        try:
+            from core.database import AsyncSessionLocal
+            from sqlalchemy import text as _t
+            async with AsyncSessionLocal() as sess:
+                rows = await sess.execute(_t("""
+                    SELECT resource_id, user_email
+                    FROM audit_logs
+                    WHERE event_type='llm.invoke'
+                    ORDER BY timestamp DESC
+                    LIMIT 200
+                """))
+                audit_map = {r.resource_id: r.user_email for r in rows.fetchall()}
+            for g in generations:
+                session_id = (g.get("metadata") or {}).get("session_id")
+                if session_id and session_id in audit_map:
+                    if not g.get("metadata"):
+                        g["metadata"] = {}
+                    g["metadata"]["user_email"] = audit_map[session_id]
+        except Exception:
+            pass
         return {
-            "generations": data.get("data", []),
+            "generations": generations,
             "traces": traces.get("data", []),
             "meta": data.get("meta", {}),
         }
