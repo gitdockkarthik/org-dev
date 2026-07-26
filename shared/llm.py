@@ -27,31 +27,38 @@ def _lf():
     return _langfuse
 
 def _lf_trace(response: Any, model: str, provider: str, messages: list, user_id: str | None = None, session_id: str | None = None) -> None:
-    """Send LLM call trace to Langfuse using observe decorator pattern."""
+    """Send LLM call trace to Langfuse via direct SDK ingestion."""
+    logger.debug("_lf_trace called: model=%s session=%s", model, session_id)
     try:
-        from langfuse import observe
-        agent_slug = os.environ.get("AGENT_SLUG", "unknown")
         lf = _lf()
         if not lf:
             return
-
-        @observe(as_type="generation", name=f"{agent_slug}.llm_call")
-        def _send():
-            lf.update_current_generation(
-                model=model,
-                input=messages,
-                output=response.content[0].text if response.content else "",
-                usage_details={
-                    "input": response.usage.input_tokens,
-                    "output": response.usage.output_tokens,
-                    "total": response.usage.input_tokens + response.usage.output_tokens,
-                },
-                metadata={"provider": provider, "user_email": user_id, "session_id": session_id},
-            )
-            if user_id:
-                lf.set_current_trace_io(metadata={"user_id": user_id})
-        _send()
-        lf.flush()
+        agent_slug = os.environ.get("AGENT_SLUG", "unknown")
+        output_text = ""
+        for block in (response.content or []):
+            if hasattr(block, 'text'):
+                output_text = block.text
+                break
+        input_tokens = response.usage.input_tokens
+        output_tokens = response.usage.output_tokens
+        obs = lf.start_observation(
+            as_type="generation",
+            name=f"{agent_slug}.llm_call",
+            model=model,
+            input=messages,
+            output=output_text,
+            usage_details={
+                "input": input_tokens,
+                "output": output_tokens,
+                "total": input_tokens + output_tokens,
+            },
+            metadata={"provider": provider, "session_id": session_id, "user_email": user_id},
+        )
+        obs.end()
+        try:
+            lf.flush()
+        except Exception:
+            pass
     except Exception as e:
         logger.debug("Langfuse trace failed: %s", e)
 
@@ -164,6 +171,7 @@ async def stream_message(
     tool_executor: Any = None,
     api_key: str | None = None,
     provider: str | None = None,
+    session_id: str | None = None,
 ):
     """Stream messages with optional tool_use support.
 
@@ -192,7 +200,8 @@ async def stream_message(
                     yield text
                 try:
                     final = await stream.get_final_message()
-                except Exception:
+                except Exception as _fe:
+                    logger.debug("get_final_message failed: %s", _fe)
                     yield "[STOP_REASON] end_turn"
                     return
 
@@ -220,6 +229,11 @@ async def stream_message(
                 if tool_results:
                     msg_list.append({"role": "user", "content": tool_results})
             else:
+                try:
+                    _lf_trace(final, model_id, resolved_provider, msg_list,
+                              session_id=session_id)
+                except Exception:
+                    pass
                 yield f"[STOP_REASON] {final.stop_reason}"
                 return
 

@@ -222,7 +222,7 @@
         const rows = filteredGens.map(g => `<tr>
           <td style="font-size:.78rem">${g.startTime ? new Date(g.startTime).toLocaleString() : '—'}</td>
           <td style="font-size:.78rem">${g.name || '—'}</td>
-          <td style="font-size:.78rem">${g.metadata?.user || '—'}</td>
+          <td style="font-size:.78rem">${g.metadata?.user_email || '—'}</td>
           <td style="font-size:.78rem"><code>${g.model || '—'}</code></td>
           <td style="text-align:right;font-size:.82rem">${(g.usageDetails?.input||g.usage?.input||0).toLocaleString()}</td>
           <td style="text-align:right;font-size:.82rem">${(g.usageDetails?.output||g.usage?.output||0).toLocaleString()}</td>

@@ -473,6 +473,36 @@ async def proxy_agent_endpoint(
     if anthropic_key:
         fwd_headers["x-anthropic-key"] = anthropic_key
 
+    # Audit log for invoke paths
+    if "invoke" in path.lower():
+        try:
+            from audit import log_audit_event
+            from core.auth import get_current_user
+            user_email = None
+            try:
+                user = await get_current_user(request)
+                user_email = getattr(user, "email", None)
+            except Exception:
+                pass
+            body_json = {}
+            try:
+                body_json = json.loads(body) if body else {}
+            except Exception:
+                pass
+            await log_audit_event(
+                "llm.invoke",
+                user_email=user_email,
+                agent_slug=slug,
+                resource_type="chat_session",
+                resource_id=body_json.get("session_id"),
+                action="invoke_stream" if "stream" in path.lower() else "invoke",
+                outcome="success",
+                details={"path": path},
+                ip_address=request.client.host if request.client else None,
+            )
+        except Exception:
+            pass
+
     # Check if this is a streaming/SSE endpoint
     is_stream = "stream" in path.lower()
 

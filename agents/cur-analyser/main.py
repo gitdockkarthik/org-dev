@@ -1831,6 +1831,7 @@ async def stream_insights(
                     else [{"role": "user", "content": prompt}]
                 ),
                 api_key=x_anthropic_key or settings.anthropic_api_key,
+                session_id=body.session_id,
             ):
                 if chunk.startswith("[STOP_REASON]"):
                     yield f"data: {chunk}\n\n"
@@ -1945,6 +1946,7 @@ Only call build_dashboard if the user asks for data NOT listed above.
                 tools=None if is_tab_chat else (_runner._anthropic_tools if _runner._tool_map else None),
                 tool_executor=None if is_tab_chat else _execute_tool,
                 api_key=x_anthropic_key or settings.anthropic_api_key,
+                session_id=body.session_id,
             ):
                 if chunk.startswith("[STOP_REASON]"):
                     yield f"data: {chunk}\n\n"

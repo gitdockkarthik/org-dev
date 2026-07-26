@@ -515,6 +515,7 @@ async def stream_insights(
                     else [{"role": "user", "content": body.user_message}]
                 ),
                 api_key=x_anthropic_key or settings.anthropic_api_key,
+                session_id=body.session_id,
             ):
                 if chunk.startswith("[STOP_REASON]"):
                     yield f"data: {chunk}\n\n"
@@ -598,6 +599,7 @@ async def invoke_stream(
                 tools=_runner._anthropic_tools if _runner._tool_map else None,
                 tool_executor=_execute_tool,
                 api_key=x_anthropic_key or settings.anthropic_api_key,
+                session_id=body.session_id,
             ):
                 if chunk.startswith("[STOP_REASON]"):
                     yield f"data: {chunk}\n\n"
