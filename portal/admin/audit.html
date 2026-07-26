@@ -40,14 +40,14 @@
   </header>
 
   <div class="admin-tabs" style="display:flex;gap:0;border-bottom:1px solid var(--border);background:var(--navy-1);padding:0 40px;">
-    <button class="audit-tab audit-tab--active" id="tab-events" onclick="switchAuditTab('events')" style="">API Key Events</button>
+    <button class="audit-tab audit-tab--active" id="tab-events" onclick="switchAuditTab('events')" style="">Audit Events</button>
     <button class="audit-tab" id="tab-llm" onclick="switchAuditTab('llm')">LLM Usage</button>
   </div>
 
-  <!-- API Key Events panel -->
+  <!-- Audit Events panel -->
   <div id="panel-events" class="admin-content">
-    <h1 class="admin-title">API Key Events</h1>
-    <p class="admin-subtitle" style="margin-bottom:20px">Audit log of developer key creation, deletion, and rotation.</p>
+    <h1 class="admin-title">Audit Events</h1>
+    <p class="admin-subtitle" style="margin-bottom:20px">Audit log of all platform events — LLM invocations, API key management, and system actions.</p>
 
     <div class="stats-bar" id="stats-bar"></div>
 
