@@ -139,3 +139,20 @@ Kafka Analyser — SLI/SLO feature complete with full compliance tracking.
 * Audit tab UI improvements (LLM Usage charts, token trends)
 * Portal Langfuse proxy (nginx sub_filter) refinement
 * Monday: hardcoded mappings audit + security audit
+
+## Session Update — 2026-07-26 (continued)
+### Audit Tab Complete
+* Langfuse v3 + ClickHouse + Redis + MinIO + langfuse-worker
+* LLM tracing: all 3 agents, both create_message and stream_message
+* Token capture: model, input/output tokens, user email, session_id
+* Audit Events tab: all platform events (llm.invoke, apikey.*)
+* LLM Usage tab: date range filter (24h/7d/30d/all), server-side filtering
+* Audit as top-level nav alongside Agents and Admin
+* Security: AUTH_DISABLE_SIGNUP=true, admin credentials only
+* GitGuardian: placeholder secrets removed from .env.example
+
+### Monday Agenda (unchanged — first priority)
+1. ⚠️ Hardcoded mappings audit (cur-analyser/routes_reports.py lines 46-78)
+2. ⚠️ Security audit (no real customer data in source)
+3. Prod Kafka cluster onboarding
+4. AI Insights kafka_store removal
