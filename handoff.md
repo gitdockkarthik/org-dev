@@ -78,3 +78,28 @@ Kafka Analyser — SLI/SLO feature complete with full compliance tracking.
 2. AI Insights kafka_store removal (must before Prod)
 3. Teams SLO breach alerts
 4. SLI/SLO: lag compliance improvement (currently binary 0/100%)
+
+## Audit Tab — Architecture Frozen
+### Phase 1 Scope
+1. Langfuse (self-hosted) — LLM call tracing per agent/user
+2. API Key rotation audit — logged to audit_logs table in backend
+
+### Langfuse Setup
+* Docker compose service on port 3001 (verify no conflict)
+* Uses org-dev postgres, separate database: langfuse_db
+* shared/llm.py wraps every LLM call with Langfuse tracing
+
+### Audit Tab (portal platform feature, like Admin)
+* portal/admin/audit.html
+* backend/routes/audit.py
+* Sub-sections: LLM Usage (Langfuse), API Key Events (audit_logs)
+
+### audit_logs table
+* id, timestamp, event_type, agent_slug, user_email, user_role
+* resource_type, resource_id, action, outcome, details (JSONB), ip_address
+* Retention: 30 days default, configurable via platform settings
+
+### RAG + Platform Governance (this week)
+* RAG for incident response
+* Platform governance framework
+* These are separate from Audit tab — plan separately
