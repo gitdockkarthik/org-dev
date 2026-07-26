@@ -4,6 +4,8 @@ services:
   postgres:
     image: postgres:15-alpine
     restart: unless-stopped
+    mem_limit: 4g
+    mem_reservation: 1g
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -27,6 +29,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
+    mem_limit: 512m
+    mem_reservation: 256m
     ports:
       - "${BACKEND_PORT:-8010}:8000"
     environment:
@@ -139,6 +143,8 @@ services:
     build: ./job-server
     container_name: org-dev-job-server
     restart: unless-stopped
+    mem_limit: 512m
+    mem_reservation: 128m
     environment:
       DATABASE_URL: postgresql+asyncpg://operative:${POSTGRES_PASSWORD}@postgres:5432/operative_db
       API_KEY: ${BACKEND_API_KEY}
@@ -153,6 +159,8 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    mem_limit: 256m
+    mem_reservation: 32m
     command: redis-server --requirepass ${REDIS_PASSWORD:-langfuse123}
     volumes:
       - redis_data:/data
@@ -166,6 +174,8 @@ services:
   minio:
     image: minio/minio:latest
     restart: unless-stopped
+    mem_limit: 512m
+    mem_reservation: 64m
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-langfuse}
@@ -195,6 +205,8 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:24-alpine
     restart: unless-stopped
+    mem_limit: 2g
+    mem_reservation: 512m
     environment:
       CLICKHOUSE_DB: langfuse
       CLICKHOUSE_USER: langfuse
@@ -221,6 +233,8 @@ services:
   langfuse:
     image: langfuse/langfuse:3
     restart: unless-stopped
+    mem_limit: 2g
+    mem_reservation: 512m
     depends_on:
       postgres:
         condition: service_healthy
@@ -271,6 +285,8 @@ services:
   langfuse-worker:
     image: langfuse/langfuse-worker:3
     restart: unless-stopped
+    mem_limit: 1g
+    mem_reservation: 256m
     depends_on:
       postgres:
         condition: service_healthy
@@ -305,6 +321,8 @@ services:
   mcp-server:
     build: ./mcp-server
     restart: unless-stopped
+    mem_limit: 512m
+    mem_reservation: 128m
     ports:
       - "8005:8005"
     environment:
@@ -323,6 +341,7 @@ services:
       dockerfile: agents/kafka-analyser/Dockerfile
     restart: unless-stopped
     mem_limit: 2g
+    mem_reservation: 512m
     ports:
       - "${KAFKA_ANALYSER_PORT:-8003}:8003"
     environment:
@@ -351,6 +370,9 @@ services:
   # Demonstrates UAP LLM gateway integration — uses token vending instead of direct key.
   mock-agent:
     build: ./agents/mock-agent
+    restart: unless-stopped
+    mem_limit: 256m
+    mem_reservation: 64m
     ports:
       - "8099:8099"
     environment:
@@ -362,7 +384,6 @@ services:
       - PORT=8099
     depends_on:
       - backend
-    restart: unless-stopped
 
   # ── Portal ──────────────────────────────────────────────────────────────────
   # Knows only BACKEND_URL and BACKEND_API_KEY — no DB, no Anthropic, no agents.
@@ -371,6 +392,8 @@ services:
       context: ./portal
       dockerfile: Dockerfile
     restart: unless-stopped
+    mem_limit: 256m
+    mem_reservation: 64m
     ports:
       - "${PORTAL_PORT:-3000}:80"
     environment:
