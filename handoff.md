@@ -111,3 +111,31 @@ Kafka Analyser — SLI/SLO feature complete with full compliance tracking.
   3. Firewall rule to expose port 3001 externally
   Once infra ready: upgrade langfuse image to v3, configure LANGFUSE_BASEPATH,
   remove nginx sub_filter workarounds, enable native basepath support.
+
+## Session Update — 2026-07-26
+### Completed
+* Audit tab — Phase 1 complete:
+  - Langfuse v3 (self-hosted): ClickHouse + Redis + MinIO + langfuse-worker
+  - LLM tracing: model, input/output tokens captured per LLM call
+  - shared/llm.py: @observe decorator pattern (v4 SDK)
+  - audit_logs table: API key create/rotate/delete events
+  - Portal: Admin → Audit tab (API Key Events + LLM Usage)
+  - Backend proxy: /api/audit/llm-usage → Langfuse API
+  - Security: AUTH_DISABLE_SIGNUP=true, admin credentials only
+  - GitGuardian: placeholder secrets removed from .env.example
+
+### Langfuse Infrastructure
+* langfuse:3000 (internal) → nginx proxy at /langfuse/
+* langfuse-worker: processes Redis queue → ClickHouse
+* MinIO: S3-compatible storage for OTEL events
+* Redis: BullMQ job queue
+* ClickHouse: analytics DB (single node, no cluster)
+
+### Backlog — Infrastructure
+* Langfuse v3 DNS: langfuse.kpi-internal.cloud.operative.com
+* Instance upgrade: t3.xlarge → r6i family (memory optimized)
+
+### Next
+* Audit tab UI improvements (LLM Usage charts, token trends)
+* Portal Langfuse proxy (nginx sub_filter) refinement
+* Monday: hardcoded mappings audit + security audit
