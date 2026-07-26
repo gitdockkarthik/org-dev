@@ -156,3 +156,9 @@ Kafka Analyser — SLI/SLO feature complete with full compliance tracking.
 2. ⚠️ Security audit (no real customer data in source)
 3. Prod Kafka cluster onboarding
 4. AI Insights kafka_store removal
+
+## Pending — LLM Usage Cost Display
+* Add Cost column to LLM Usage table (from Langfuse calculatedTotalCost field)
+* Add to stats cards: Total Cost ($) and Avg Cost per 1K tokens
+* Backend: include calculatedTotalCost in get_llm_usage response
+* Model pricing already configured in Langfuse (bedrock rates)
