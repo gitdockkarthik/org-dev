@@ -95,10 +95,9 @@
             <th style="text-align:right">Input Tokens</th>
             <th style="text-align:right">Output Tokens</th>
             <th style="text-align:right">Total Tokens</th>
-            <th style="text-align:right">Duration</th>
           </tr></thead>
           <tbody id="llm-tbody">
-            <tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:20px">Loading LLM usage...</td></tr>
+            <tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px">Loading LLM usage...</td></tr>
           </tbody>
         </table>
       </div>
@@ -227,7 +226,6 @@
           <td style="text-align:right;font-size:.82rem">${(g.usageDetails?.input||g.usage?.input||0).toLocaleString()}</td>
           <td style="text-align:right;font-size:.82rem">${(g.usageDetails?.output||g.usage?.output||0).toLocaleString()}</td>
           <td style="text-align:right;font-size:.82rem;font-weight:600;color:#4CAF50">${(g.usageDetails?.total||g.usage?.totalTokens||0).toLocaleString()}</td>
-          <td style="text-align:right;font-size:.78rem">${g.latency > 100 ? (g.latency/1000).toFixed(1)+'s' : g.latency ? g.latency+'ms' : '—'}</td>
         </tr>`).join('');
         if (loadMore) tbody.innerHTML += rows;
         else tbody.innerHTML = rows;
