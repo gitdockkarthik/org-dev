@@ -87,6 +87,18 @@
     <h1 class="admin-title">LLM Usage</h1>
     <p class="admin-subtitle" style="margin-bottom:20px">Langfuse observability dashboard for LLM calls and traces.</p>
     <div id="langfuse-container">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+        <span style="font-size:.88rem;font-weight:600">LLM Call Traces</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <select id="llm-range" onchange="loadLLMUsage(false)" style="font-size:.8rem;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text)">
+            <option value="24">Last 24 hours</option>
+            <option value="168" selected>Last 7 days</option>
+            <option value="720">Last 30 days</option>
+            <option value="0">All time</option>
+          </select>
+          <button onclick="loadLLMUsage(false)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:.75rem;color:var(--accent)">↻ Refresh</button>
+        </div>
+      </div>
       <div id="llm-stats-bar" style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px"></div>
       <div class="table-wrap">
         <table class="data-table" style="width:100%">
@@ -186,18 +198,22 @@
       const statsBar = document.getElementById('llm-stats-bar');
       if (!tbody) return;
       try {
-        const res = await fetch(`/api/audit/llm-usage?limit=20&page=${_llmPage}`, { credentials: 'include' });
+        const range = document.getElementById('llm-range')?.value || '168';
+        const rangeParam = range !== '0' ? `&hours=${range}` : '';
+        const res = await fetch(`/api/audit/llm-usage?limit=50&page=${_llmPage}${rangeParam}`, { credentials: 'include' });
         if (!res.ok) throw new Error('Failed to fetch LLM usage');
         const data = await res.json();
         const generations = data.generations || [];
+        const filteredGens = generations.filter(g => (g.usageDetails?.total||0) > 0 || g.model);
+        const validCount = filteredGens.length;
         if (!loadMore) {
           // Stats
-          const totalTokens = generations.reduce((s,g) => s + (g.usageDetails?.total||g.usage?.totalTokens||0), 0);
-          const totalInput = generations.reduce((s,g) => s + (g.usageDetails?.input||g.usage?.input||0), 0);
-          const totalOutput = generations.reduce((s,g) => s + (g.usageDetails?.output||g.usage?.output||0), 0);
+          const totalTokens = filteredGens.reduce((s,g) => s + (g.usageDetails?.total||g.usage?.totalTokens||0), 0);
+          const totalInput = filteredGens.reduce((s,g) => s + (g.usageDetails?.input||g.usage?.input||0), 0);
+          const totalOutput = filteredGens.reduce((s,g) => s + (g.usageDetails?.output||g.usage?.output||0), 0);
           statsBar.innerHTML = `
             <div style="background:var(--navy-1);border:1px solid var(--border);border-radius:8px;padding:12px 20px;text-align:center">
-              <div style="font-size:1.3rem;font-weight:700">${generations.length}</div>
+              <div style="font-size:1.3rem;font-weight:700">${validCount}</div>
               <div style="font-size:.75rem;color:var(--text-muted)">LLM Calls</div>
             </div>
             <div style="background:var(--navy-1);border:1px solid var(--border);border-radius:8px;padding:12px 20px;text-align:center">
@@ -217,7 +233,6 @@
           tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px">No LLM calls traced yet.</td></tr>';
           return;
         }
-        const filteredGens = generations.filter(g => (g.usageDetails?.total||0) > 0 || g.model);
         const rows = filteredGens.map(g => `<tr>
           <td style="font-size:.78rem">${g.startTime ? new Date(g.startTime).toLocaleString() : '—'}</td>
           <td style="font-size:.78rem">${g.name || '—'}</td>

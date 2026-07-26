@@ -91,21 +91,25 @@ async def get_audit_stats() -> dict:
 
 
 @router.get("/api/audit/llm-usage")
-async def get_llm_usage(limit: int = 50, page: int = 1) -> dict:
+async def get_llm_usage(limit: int = 50, page: int = 1, hours: int = 168) -> dict:
     """Proxy Langfuse API for LLM usage data."""
-    import httpx
-    import os
+    import httpx, os
+    from datetime import datetime, timezone, timedelta
     langfuse_url = os.environ.get("LANGFUSE_INTERNAL_URL", "http://langfuse:3000")
     public_key = os.environ.get("LANGFUSE_PUBLIC_KEY", "")
     secret_key = os.environ.get("LANGFUSE_SECRET_KEY", "")
     if not public_key or not secret_key:
         return {"error": "Langfuse not configured", "data": [], "meta": {}}
     try:
+        params = {"limit": limit, "page": page, "type": "GENERATION"}
+        if hours > 0:
+            since = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            params["fromStartTime"] = since
         async with httpx.AsyncClient(timeout=10.0) as client:
-            # Fetch observations (LLM calls with token usage) — generations endpoint not in v2
+            # Fetch observations (LLM calls with token usage)
             resp = await client.get(
                 f"{langfuse_url}/api/public/observations",
-                params={"limit": limit, "page": page, "type": "GENERATION"},
+                params=params,
                 auth=(public_key, secret_key),
             )
             resp.raise_for_status()
@@ -118,7 +122,9 @@ async def get_llm_usage(limit: int = 50, page: int = 1) -> dict:
             )
             traces_resp.raise_for_status()
             traces = traces_resp.json()
-        generations = data.get("data", [])
+        # Filter out zero-token observations server-side
+        all_data = data.get("data", [])
+        generations = [g for g in all_data if (g.get("usageDetails") or {}).get("total", 0) > 0 or g.get("model")]
         # Enrich with user data from audit_logs by matching session_id
         try:
             from core.database import AsyncSessionLocal
