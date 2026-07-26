@@ -7,11 +7,10 @@ DEFAULT_MODEL = os.environ.get("LLM_MODEL", "us.anthropic.claude-sonnet-5")
 
 # ── Langfuse tracing (optional — disabled if not configured) ─────────────────
 def _get_langfuse():
-    """Return a Langfuse client if configured, else None."""
     pk = os.environ.get("LANGFUSE_PUBLIC_KEY", "")
     sk = os.environ.get("LANGFUSE_SECRET_KEY", "")
     host = os.environ.get("LANGFUSE_HOST", "http://langfuse:3000")
-    if not pk or not sk or pk == "lf-pk-operative":
+    if not pk or not sk:
         return None
     try:
         from langfuse import Langfuse
@@ -26,6 +25,33 @@ def _lf():
     if _langfuse is None:
         _langfuse = _get_langfuse()
     return _langfuse
+
+def _lf_trace(response: Any, model: str, provider: str, messages: list) -> None:
+    """Send LLM call trace to Langfuse using observe decorator pattern."""
+    try:
+        from langfuse import observe
+        agent_slug = os.environ.get("AGENT_SLUG", "unknown")
+        lf = _lf()
+        if not lf:
+            return
+
+        @observe(as_type="generation", name=f"{agent_slug}.llm_call")
+        def _send():
+            lf.update_current_generation(
+                model=model,
+                input=messages,
+                output=response.content[0].text if response.content else "",
+                usage_details={
+                    "input": response.usage.input_tokens,
+                    "output": response.usage.output_tokens,
+                    "total": response.usage.input_tokens + response.usage.output_tokens,
+                },
+                metadata={"provider": provider},
+            )
+        _send()
+        lf.flush()
+    except Exception as e:
+        logger.debug("Langfuse trace failed: %s", e)
 
 logger = logging.getLogger(__name__)
 
@@ -74,11 +100,8 @@ async def create_message(
     if tools:
         kwargs["tools"] = tools
 
-    # ── Langfuse tracing ────────────────────────────────────────────────────
-    agent_slug = os.environ.get("AGENT_SLUG", "unknown")
-    lf = _lf()
-    trace = lf.trace(name=f"{agent_slug}.llm_call", metadata={"provider": resolved_provider, "model": resolved_model}) if lf else None
-    generation = trace.generation(name="create_message", model=resolved_model, input=messages) if trace else None
+    # Langfuse tracing handled via @observe decorator below
+    pass
 
     if resolved_provider == "anthropic":
         import anthropic
@@ -88,11 +111,7 @@ async def create_message(
         client = anthropic.AsyncAnthropic(api_key=resolved_key)
         try:
             response = await client.messages.create(**kwargs)
-            if generation:
-                generation.end(
-                    output=response.content[0].text if response.content else "",
-                    usage={"input": response.usage.input_tokens, "output": response.usage.output_tokens},
-                )
+            _lf_trace(response, resolved_model, resolved_provider, messages)
             return response
         finally:
             await client.close()
@@ -110,11 +129,7 @@ async def create_message(
         client = anthropic.AsyncAnthropicBedrock()
         try:
             response = await client.messages.create(**kwargs)
-            if generation:
-                generation.end(
-                    output=response.content[0].text if response.content else "",
-                    usage={"input": response.usage.input_tokens, "output": response.usage.output_tokens},
-                )
+            _lf_trace(response, resolved_model, resolved_provider, messages)
             return response
         finally:
             await client.close()

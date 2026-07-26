@@ -88,3 +88,41 @@ async def get_audit_stats() -> dict:
     except Exception as e:
         logger.error("get_audit_stats failed: %s", e)
         return {"total_events": 0, "total_users": 0, "by_type": {}}
+
+
+@router.get("/api/audit/llm-usage")
+async def get_llm_usage(limit: int = 50, page: int = 1) -> dict:
+    """Proxy Langfuse API for LLM usage data."""
+    import httpx
+    import os
+    langfuse_url = os.environ.get("LANGFUSE_INTERNAL_URL", "http://langfuse:3000")
+    public_key = os.environ.get("LANGFUSE_PUBLIC_KEY", "")
+    secret_key = os.environ.get("LANGFUSE_SECRET_KEY", "")
+    if not public_key or not secret_key:
+        return {"error": "Langfuse not configured", "data": [], "meta": {}}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Fetch observations (LLM calls with token usage) — generations endpoint not in v2
+            resp = await client.get(
+                f"{langfuse_url}/api/public/observations",
+                params={"limit": limit, "page": page, "type": "GENERATION"},
+                auth=(public_key, secret_key),
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            # Fetch usage summary
+            traces_resp = await client.get(
+                f"{langfuse_url}/api/public/traces",
+                params={"limit": limit, "page": page},
+                auth=(public_key, secret_key),
+            )
+            traces_resp.raise_for_status()
+            traces = traces_resp.json()
+        return {
+            "generations": data.get("data", []),
+            "traces": traces.get("data", []),
+            "meta": data.get("meta", {}),
+        }
+    except Exception as e:
+        logger.error("get_llm_usage failed: %s", e)
+        return {"error": str(e), "generations": [], "traces": [], "meta": {}}

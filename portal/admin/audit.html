@@ -86,19 +86,24 @@
   <div id="panel-llm" class="admin-content" style="display:none;">
     <h1 class="admin-title">LLM Usage</h1>
     <p class="admin-subtitle" style="margin-bottom:20px">Langfuse observability dashboard for LLM calls and traces.</p>
-    <div id="langfuse-container" style="background:var(--navy-1);border:1px solid var(--border);border-radius:var(--r);padding:32px;text-align:center;">
-      <div style="font-size:2rem;margin-bottom:12px">📊</div>
-      <div style="font-weight:700;font-size:1rem;margin-bottom:8px">Langfuse Observability</div>
-      <div style="color:var(--text-muted);font-size:.88rem;margin-bottom:20px">
-        LLM call traces, token usage, and cost analysis for all agents.
+    <div id="langfuse-container">
+      <div id="llm-stats-bar" style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px"></div>
+      <div class="table-wrap">
+        <table class="data-table" style="width:100%">
+          <thead><tr>
+            <th>Timestamp</th><th>Agent</th><th>Model</th>
+            <th style="text-align:right">Input Tokens</th>
+            <th style="text-align:right">Output Tokens</th>
+            <th style="text-align:right">Total Tokens</th>
+            <th>Duration</th>
+          </tr></thead>
+          <tbody id="llm-tbody">
+            <tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px">Loading LLM usage...</td></tr>
+          </tbody>
+        </table>
       </div>
-      <div id="langfuse-link-container">
-        <a id="langfuse-link" href="#" target="_blank" class="btn btn--primary" style="display:inline-block;text-decoration:none">
-          🔗 Open Langfuse Dashboard
-        </a>
-      </div>
-      <div id="langfuse-fallback" style="display:none;color:var(--text-muted);font-size:.82rem;margin-top:12px">
-        Langfuse not configured.
+      <div style="margin-top:12px">
+        <button class="btn btn--secondary btn--sm" id="llm-load-more" onclick="loadLLMUsage(true)" style="display:none">Load More</button>
       </div>
     </div>
   </div>
@@ -175,6 +180,60 @@
       }
     }
 
+    let _llmPage = 1;
+    async function loadLLMUsage(loadMore) {
+      if (!loadMore) _llmPage = 1;
+      const tbody = document.getElementById('llm-tbody');
+      const statsBar = document.getElementById('llm-stats-bar');
+      if (!tbody) return;
+      try {
+        const data = await apiFetch(`/api/audit/llm-usage?limit=20&page=${_llmPage}`);
+        const generations = data.generations || [];
+        if (!loadMore) {
+          // Stats
+          const totalTokens = generations.reduce((s,g) => s + (g.usage?.totalTokens||0), 0);
+          const totalInput = generations.reduce((s,g) => s + (g.usage?.input||0), 0);
+          const totalOutput = generations.reduce((s,g) => s + (g.usage?.output||0), 0);
+          statsBar.innerHTML = `
+            <div style="background:var(--navy-1);border:1px solid var(--border);border-radius:8px;padding:12px 20px;text-align:center">
+              <div style="font-size:1.3rem;font-weight:700">${generations.length}</div>
+              <div style="font-size:.75rem;color:var(--text-muted)">LLM Calls</div>
+            </div>
+            <div style="background:var(--navy-1);border:1px solid var(--border);border-radius:8px;padding:12px 20px;text-align:center">
+              <div style="font-size:1.3rem;font-weight:700">${totalTokens.toLocaleString()}</div>
+              <div style="font-size:.75rem;color:var(--text-muted)">Total Tokens</div>
+            </div>
+            <div style="background:var(--navy-1);border:1px solid var(--border);border-radius:8px;padding:12px 20px;text-align:center">
+              <div style="font-size:1.3rem;font-weight:700">${totalInput.toLocaleString()}</div>
+              <div style="font-size:.75rem;color:var(--text-muted)">Input Tokens</div>
+            </div>
+            <div style="background:var(--navy-1);border:1px solid var(--border);border-radius:8px;padding:12px 20px;text-align:center">
+              <div style="font-size:1.3rem;font-weight:700">${totalOutput.toLocaleString()}</div>
+              <div style="font-size:.75rem;color:var(--text-muted)">Output Tokens</div>
+            </div>`;
+        }
+        if (generations.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px">No LLM calls traced yet.</td></tr>';
+          return;
+        }
+        const rows = generations.map(g => `<tr>
+          <td style="font-size:.78rem">${g.startTime ? new Date(g.startTime).toLocaleString() : '—'}</td>
+          <td style="font-size:.78rem">${g.name || '—'}</td>
+          <td style="font-size:.78rem"><code>${g.model || '—'}</code></td>
+          <td style="text-align:right;font-size:.82rem">${(g.usage?.input||0).toLocaleString()}</td>
+          <td style="text-align:right;font-size:.82rem">${(g.usage?.output||0).toLocaleString()}</td>
+          <td style="text-align:right;font-size:.82rem;font-weight:600">${(g.usage?.totalTokens||0).toLocaleString()}</td>
+          <td style="font-size:.78rem">${g.latency ? (g.latency/1000).toFixed(1)+'s' : '—'}</td>
+        </tr>`).join('');
+        if (loadMore) tbody.innerHTML += rows;
+        else tbody.innerHTML = rows;
+        document.getElementById('llm-load-more').style.display = generations.length >= 20 ? '' : 'none';
+        _llmPage++;
+      } catch(e) {
+        tbody.innerHTML = `<tr><td colspan="7" style="color:var(--danger);padding:20px">${e.message}</td></tr>`;
+      }
+    }
+
     function switchAuditTab(tab) {
       document.getElementById('panel-events').style.display = tab === 'events' ? '' : 'none';
       document.getElementById('panel-llm').style.display = tab === 'llm' ? '' : 'none';
@@ -182,15 +241,9 @@
         const btn = document.getElementById(`tab-${t}`);
         btn.classList.toggle('audit-tab--active', t === tab);
       });
-      const langfuseUrl = window.__CONFIG__?.LANGFUSE_URL || window.LANGFUSE_URL;
       if (tab === 'llm') {
-        if (langfuseUrl) {
-          document.getElementById('langfuse-link').href = langfuseUrl;
-          document.getElementById('langfuse-link-container').style.display = '';
-          document.getElementById('langfuse-fallback').style.display = 'none';
-        } else {
-          document.getElementById('langfuse-link-container').style.display = 'none';
-          document.getElementById('langfuse-fallback').style.display = '';
+        loadLLMUsage(false);
+        if (true) { // placeholder to maintain else block
         }
       }
     }

@@ -6,9 +6,10 @@ export BACKEND_URL="${BACKEND_URL:-http://localhost:8000}"
 export PORT="${PORT:-80}"
 export AUTH_MODE="${AUTH_MODE:-none}"
 export LANGFUSE_URL="${LANGFUSE_URL:-http://localhost:3001}"
+export PORTAL_HOST="${PORTAL_HOST:-localhost:3000}"
 
 # ── Step 1: inject JS config ──────────────────────────────────────────────────
-envsubst '${BACKEND_URL} ${AUTH_MODE} ${LANGFUSE_URL}' \
+envsubst '${BACKEND_URL} ${AUTH_MODE} ${LANGFUSE_URL} ${PORTAL_HOST}' \
   < /etc/nginx/templates/config.template.js \
   > /usr/share/nginx/html/js/config.js
 
@@ -24,7 +25,7 @@ fi
 
 # ── Step 3: inject PORT and AUTH_REALM into nginx conf ───────────────────────
 # Scope envsubst explicitly — nginx uses $uri, $host, etc. which must not expand.
-envsubst '${PORT} ${AUTH_REALM} ${AUTH_MODE}' \
+envsubst '${PORT} ${AUTH_REALM} ${AUTH_MODE} ${PORTAL_HOST}' \
   < /etc/nginx/templates/nginx.conf.template \
   > /etc/nginx/conf.d/default.conf
 

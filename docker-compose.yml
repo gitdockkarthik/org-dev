@@ -32,6 +32,9 @@ services:
     environment:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       BACKEND_API_KEY: ${BACKEND_API_KEY}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_INTERNAL_URL: http://langfuse:3000
       LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
       LLM_MODEL: ${LLM_MODEL:-}
       AWS_REGION: ${AWS_REGION:-us-east-1}
@@ -83,6 +86,9 @@ services:
       BACKEND_API_KEY: ${BACKEND_API_KEY}
       DATABASE_URL: ${DATABASE_URL}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_HOST: http://langfuse:3000
     depends_on:
       - backend
 
@@ -116,6 +122,9 @@ services:
       ENABLE_INVENTORY_ENRICHMENT: ${ENABLE_INVENTORY_ENRICHMENT:-true}
       # Permanent on-disk CUR file storage (file-path pipeline for large files).
       CUR_DATA_DIR: /app/data/cur
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_HOST: http://langfuse:3000
     volumes:
       # Persist uploaded CUR files across container rebuilds. The DB only keeps
       # report metadata (csv_data is empty for file-path reports), so the files
@@ -140,12 +149,86 @@ services:
       postgres:
         condition: service_healthy
 
+  # ── Redis (required for Langfuse v3 queue) ────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD:-langfuse123}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-langfuse123}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── MinIO (S3-compatible storage for Langfuse v3) ─────────────────────────
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-langfuse}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-langfuse123}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── MinIO bucket initializer ───────────────────────────────────────────────
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-langfuse} ${MINIO_ROOT_PASSWORD:-langfuse123};
+      mc mb --ignore-existing local/langfuse-events;
+      echo 'Bucket created';
+      "
+
+  # ── ClickHouse (required for Langfuse v3) ────────────────────────────────────
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: langfuse
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-langfuse}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    cap_add:
+      - SYS_NICE
+      - IPC_LOCK
+    security_opt:
+      - seccomp:unconfined
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # ── Langfuse ─────────────────────────────────────────────────────────────────
   langfuse:
-    image: langfuse/langfuse:2
+    image: langfuse/langfuse:3
     restart: unless-stopped
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      minio:
         condition: service_healthy
     ports:
       - "3001:3000"
@@ -155,6 +238,23 @@ services:
       SALT: ${LANGFUSE_SALT}
       LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "true"
       TELEMETRY_ENABLED: "false"
+      AUTH_DISABLE_SIGNUP: "true"
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-langfuse}
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_AUTH: ${REDIS_PASSWORD:-langfuse123}
+      LANGFUSE_S3_EVENT_UPLOAD_ENABLED: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: "langfuse-events"
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: "http://minio:9000"
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-langfuse}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-langfuse123}
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: "us-east-1"
+      LANGFUSE_S3_MEDIA_UPLOAD_ENABLED: "false"
       LANGFUSE_INIT_ORG_ID: operative
       LANGFUSE_INIT_ORG_NAME: Operative
       LANGFUSE_INIT_PROJECT_ID: operative-ai
@@ -166,6 +266,39 @@ services:
       LANGFUSE_INIT_USER_PASSWORD: ${ADMIN_PASSWORD}
       LANGFUSE_BASEPATH: /langfuse
       NEXTAUTH_URL: http://kpi-internal.cloud.operative.com:3000/langfuse
+
+  # ── Langfuse Worker (processes trace queue) ───────────────────────────────
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/langfuse_db
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-langfuse}
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_AUTH: ${REDIS_PASSWORD:-langfuse123}
+      LANGFUSE_S3_EVENT_UPLOAD_ENABLED: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: "langfuse-events"
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: "http://minio:9000"
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-langfuse}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-langfuse123}
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: "us-east-1"
+      LANGFUSE_S3_MEDIA_UPLOAD_ENABLED: "false"
+      ENCRYPTION_KEY: ${LANGFUSE_NEXTAUTH_SECRET}
 
   # ── MCP Server ────────────────────────────────────────────────────────────────
   # Model Context Protocol gateway — exposes all agents as MCP tools.
@@ -207,6 +340,9 @@ services:
       VERTEX_PROJECT_ID: ${VERTEX_PROJECT_ID:-}
       VERTEX_REGION: ${VERTEX_REGION:-us-east5}
       AGENT_SLUG: kafka-analyser
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_HOST: http://langfuse:3000
     depends_on:
       - backend
       - postgres
@@ -246,9 +382,13 @@ services:
       PORTAL_PASSWORD: ${PORTAL_PASSWORD:-}
       AUTH_MODE: ${AUTH_MODE:-none}
       LANGFUSE_URL: ${LANGFUSE_URL:-http://localhost:3001}
+      PORTAL_HOST: ${PORTAL_HOST:-localhost:3000}
     depends_on:
       - backend
 
 volumes:
   pgdata:
   cur_analyser_data:
+  redis_data:
+  clickhouse_data:
+  minio_data:
