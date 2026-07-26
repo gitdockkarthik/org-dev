@@ -15,7 +15,7 @@ async def get_audit_logs(
     offset: int = 0,
 ) -> list:
     try:
-        from database import AsyncSessionLocal
+        from core.database import AsyncSessionLocal
         async with AsyncSessionLocal() as sess:
             where = "WHERE 1=1"
             params: dict = {"limit": limit, "offset": offset}
@@ -58,7 +58,7 @@ async def get_audit_logs(
 async def get_audit_stats() -> dict:
     """Summary stats for the audit dashboard."""
     try:
-        from database import AsyncSessionLocal
+        from core.database import AsyncSessionLocal
         async with AsyncSessionLocal() as sess:
             rows = await sess.execute(text("""
                 SELECT event_type, COUNT(*) as count

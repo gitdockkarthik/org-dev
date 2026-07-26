@@ -21,7 +21,7 @@ async def log_audit_event(
 ) -> None:
     """Write an audit event to the audit_logs table. Never raises."""
     try:
-        from database import AsyncSessionLocal
+        from core.database import AsyncSessionLocal
         from sqlalchemy import text
         async with AsyncSessionLocal() as sess:
             await sess.execute(text("""
@@ -29,7 +29,7 @@ async def log_audit_event(
                 (timestamp, event_type, agent_slug, user_email, user_role,
                  resource_type, resource_id, action, outcome, details, ip_address)
                 VALUES
-                (now(), :et, :ag, :ue, :ur, :rt, :ri, :ac, :oc, :dt::jsonb, :ip)
+                (now(), :et, :ag, :ue, :ur, :rt, :ri, :ac, :oc, CAST(:dt AS jsonb), :ip)
             """), {
                 "et": event_type,
                 "ag": agent_slug,

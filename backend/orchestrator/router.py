@@ -148,7 +148,8 @@ async def _call_remote_agent(
                 status_code=502, detail=f"Could not reach agent '{agent.slug}': {exc}"
             )
     data = resp.json()
-    tokens = data.get("metadata", {}).get("output_tokens", 0)
+    meta = data.get("metadata", {})
+    tokens = meta.get("tokens_used") or meta.get("output_tokens") or 0
     return data["response"], tokens
 
 
@@ -235,6 +236,32 @@ async def invoke_agent(
         response_text, tokens = await _call_anthropic(agent, messages, body.context)
 
     await _persist(db, session_uuid, body.user_message, response_text, tokens)
+
+    # Audit log — capture user context from JWT if available
+    try:
+        from audit import log_audit_event
+        user_email = None
+        auth_header = request.cookies.get("operative_token")
+        if auth_header:
+            from core.auth import get_current_user
+            try:
+                user = await get_current_user(request)
+                user_email = getattr(user, "email", None)
+            except Exception:
+                pass
+        await log_audit_event(
+            "llm.invoke",
+            user_email=user_email,
+            agent_slug=agent_slug,
+            resource_type="chat_session",
+            resource_id=body.session_id,
+            action="invoke",
+            outcome="success",
+            details={"tokens_used": tokens, "model": agent.model},
+            ip_address=request.client.host if request.client else None,
+        )
+    except Exception:
+        pass
 
     return InvokeResponse(
         session_id=body.session_id,
