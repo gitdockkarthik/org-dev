@@ -199,6 +199,13 @@
     <a class="oi-sidebar__link" href="alert_analyser.html">Alert Analyser Overview</a>
     <a class="oi-sidebar__link" href="alert_analyser_api.html">API Reference</a>
   </div></div>
+  <div class="oi-sidebar__group">
+    <div class="oi-sidebar__group-label">Platform Observability <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="langfuse_overview.html">Overview</a>
+    <a class="oi-sidebar__link" href="langfuse_deployment.html">Deployment Guide</a>
+    <a class="oi-sidebar__link" href="langfuse_agent_onboarding.html">Agent Onboarding</a>
+  </div></div>
 </div>
 <div class="oi-main">
 
@@ -730,6 +737,100 @@
           <div class="response-item"><span class="response-field">pricing_term_breakdown</span> — On-Demand vs Reserved vs Spot</div>
           <div class="response-item"><span class="response-field">mom_comparison</span> — Month-over-month cost trend</div>
           <div class="response-item"><span class="response-field">region_breakdown</span> — Per-region cost distribution</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Data Source Endpoints -->
+  <section>
+    <h2>Data Source Management</h2>
+    <p>APIs for querying active data sources and synchronization state.</p>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/data-sources/active-report-id</span>
+      </div>
+      <div class="endpoint-desc">Returns the latest ready CUR report ID for dashboard queries.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">report_id</span> — UUID of the latest CUR report</div>
+          <div class="response-item"><span class="response-field">status</span> — Report status (ready, processing, failed)</div>
+          <div class="response-item"><span class="response-field">updated_at</span> — Timestamp of last update</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/data-sources/status</span>
+      </div>
+      <div class="endpoint-desc">Get current data source status and synchronization state.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">cur_sync_status</span> — Current sync state (idle, syncing, waiting)</div>
+          <div class="response-item"><span class="response-field">last_sync_time</span> — Timestamp of last successful sync</div>
+          <div class="response-item"><span class="response-field">next_sync_time</span> — Estimated next sync</div>
+          <div class="response-item"><span class="response-field">files_synced</span> — Count of CUR files in current dataset</div>
+          <div class="response-item"><span class="response-field">inventory_status</span> — Inventory data status (present, absent, outdated)</div>
+          <div class="response-item"><span class="response-field">last_inventory_update</span> — When inventory was last updated</div>
+          <div class="response-item"><span class="response-field">total_records</span> — Total line items in active CUR</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Job Management Endpoints -->
+  <section>
+    <h2>Job Management</h2>
+    <p>APIs for monitoring and controlling CUR synchronization jobs.</p>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/runs</span>
+      </div>
+      <div class="endpoint-desc">List CUR synchronization job runs with filtering and pagination.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">limit</span> <span class="param-type">(integer, default 50)</span> — Max runs to return</div>
+          <div class="param-item"><span class="param-name">offset</span> <span class="param-type">(integer, default 0)</span> — Pagination offset</div>
+          <div class="param-item"><span class="param-name">status</span> <span class="param-type">(string, optional)</span> — Filter by: success, failed, running</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">runs</span> — Array of job run records</div>
+          <div class="response-item"><span class="response-field">  run_id</span> — Unique run identifier</div>
+          <div class="response-item"><span class="response-field">  started_at</span> — Start timestamp</div>
+          <div class="response-item"><span class="response-field">  completed_at</span> — Completion timestamp (null if running)</div>
+          <div class="response-item"><span class="response-field">  status</span> — success, failed, running, timeout</div>
+          <div class="response-item"><span class="response-field">  duration_ms</span> — Execution time in milliseconds</div>
+          <div class="response-item"><span class="response-field">  files_processed</span> — Number of CUR files in this run</div>
+          <div class="response-item"><span class="response-field">  error</span> — Error message if status is failed</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-post">POST</span>
+        <span class="endpoint-path">/jobs/cur-s3-sync/trigger</span>
+      </div>
+      <div class="endpoint-desc">Manually trigger a CUR synchronization job (ignores schedule).</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">ok</span> — Boolean success</div>
+          <div class="response-item"><span class="response-field">run_id</span> — ID of triggered sync job</div>
+          <div class="response-item"><span class="response-field">status</span> — Job status (usually running)</div>
+          <div class="response-item"><span class="response-field">message</span> — Status message</div>
         </div>
       </div>
     </div>

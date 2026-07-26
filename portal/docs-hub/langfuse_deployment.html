@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Langfuse Deployment — Operative Intelligence Docs</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+      line-height: 1.6;
+      color: #333;
+      background: #f5f5f5;
+    }
+    .oi-container { display: flex; min-height: 100vh; }
+    .oi-sidebar { width: 220px; background: #ffffff; border-right: 1px solid #e2e5ea; padding: 20px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; flex-shrink: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .oi-sidebar__brand { font-size: 13px; font-weight: 700; padding: 0 20px 16px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #e2e5ea; margin-bottom: 10px; color: #1a1d23; }
+    .oi-sidebar__brand .dot { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; flex-shrink: 0; }
+    .oi-sidebar__group-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #98a2b3; padding: 10px 20px 6px; cursor: pointer; display: flex; align-items: center; justify-content: space-between; user-select: none; }
+    .oi-sidebar__link { display: block; padding: 6px 20px; font-size: 12px; color: #667085; text-decoration: none; border-left: 2px solid transparent; }
+    .oi-sidebar__link:hover { background: #f0f1f4; color: #1a1d23; }
+    .oi-sidebar__link.active { color: #2563eb; border-left-color: #2563eb; background: #f0f1f4; font-weight: 600; }
+    .oi-sidebar__group-label .oi-caret { transition: transform .15s; font-size: 9px; }
+    .oi-sidebar__group.collapsed .oi-caret { transform: rotate(-90deg); }
+    .oi-sidebar__group.collapsed .oi-sidebar__links { display: none; }
+    .oi-main { flex: 1; min-width: 0; overflow-x: auto; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 40px 20px; }
+    header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 60px 0; margin-bottom: 40px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    header .container { padding: 60px 20px; }
+    h1 { font-size: 2.5rem; margin-bottom: 10px; }
+    .header-sub { font-size: 1.1rem; opacity: 0.9; margin-bottom: 20px; }
+    .badges { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 15px; }
+    .badge { padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; background: rgba(255,255,255,0.2); color: white; border: 1px solid rgba(255,255,255,0.3); }
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 50px; }
+    .kpi-card { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    .kpi-card h3 { font-size: 1.1rem; font-weight: 700; color: #667eea; margin-bottom: 12px; }
+    .kpi-card p { font-size: 0.9rem; color: #666; }
+    section { background: white; padding: 40px; margin-bottom: 30px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    h2 { font-size: 1.8rem; margin-bottom: 20px; color: #333; border-bottom: 2px solid #667eea; padding-bottom: 10px; }
+    h3 { font-size: 1.3rem; margin-top: 25px; margin-bottom: 15px; color: #555; }
+    h4 { font-size: 1.05rem; margin-top: 15px; margin-bottom: 10px; color: #555; }
+    code { font-family: 'Monaco', 'Courier New', monospace; background: #f0f0f0; padding: 2px 6px; border-radius: 3px; }
+    pre { background: #f5f5f5; padding: 15px; border-radius: 6px; overflow-x: auto; margin: 15px 0; border-left: 4px solid #667eea; }
+    pre code { background: none; padding: 0; }
+    table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+    th { background: #f0f0f0; padding: 12px; text-align: left; font-weight: 600; border-bottom: 2px solid #ddd; }
+    td { padding: 12px; border-bottom: 1px solid #eee; }
+    tr:hover { background: #fafafa; }
+    ul, ol { margin-left: 20px; line-height: 1.8; }
+    .data-flow { display: flex; align-items: center; gap: 15px; margin: 30px 0; overflow-x: auto; padding: 20px; background: #f8f9fa; border-radius: 8px; }
+    .flow-box { background: white; border: 2px solid #ddd; border-radius: 6px; padding: 15px 20px; min-width: 140px; text-align: center; font-size: 0.9rem; font-weight: 600; flex-shrink: 0; }
+    .flow-box.primary { background: #667eea; color: white; border-color: #667eea; }
+    .flow-box.secondary { background: #0EA5E9; color: white; border-color: #0EA5E9; }
+    .flow-box.accent { background: #FF6B35; color: white; border-color: #FF6B35; }
+    .flow-arrow { flex-shrink: 0; color: #667eea; font-size: 1.5rem; font-weight: bold; }
+    @media (max-width: 768px) {
+      h1 { font-size: 1.8rem; }
+      .data-flow { flex-direction: column; gap: 10px; }
+      .oi-container { flex-direction: column; }
+      .oi-sidebar { width: 100%; height: auto; position: relative; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="oi-container">
+<div class="oi-sidebar">
+  <div class="oi-sidebar__brand"><span class="dot"></span> Operative Intelligence</div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">Incident Response <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="operative_intelligence_agentic_pipeline.html">Agentic Pipeline Concept</a>
+    <a class="oi-sidebar__link" href="operative_intelligence_pipeline.html">Agent Pipeline Overview</a>
+    <a class="oi-sidebar__link" href="incident_pipeline_monitor.html">Pipeline Monitor (Mockup)</a>
+    <a class="oi-sidebar__link" href="alert_ticketing_functional_spec.html">Functional Specification</a>
+    <a class="oi-sidebar__link" href="alert_ticketing_future_work_tracker.html">Future Work Tracker</a>
+  </div></div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">CUR Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="cur_analyser.html">CUR Analyser Overview</a>
+    <a class="oi-sidebar__link" href="cur_analyser_api.html">API Reference</a>
+  </div></div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">Kafka Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="kafka_analyser.html">Kafka Analyser Overview</a>
+    <a class="oi-sidebar__link" href="kafka_analyser_api.html">API Reference</a>
+  </div></div>
+  <div class="oi-sidebar__group collapsed">
+    <div class="oi-sidebar__group-label">Alert Analyser <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="alert_analyser.html">Alert Analyser Overview</a>
+    <a class="oi-sidebar__link" href="alert_analyser_api.html">API Reference</a>
+  </div></div>
+  <div class="oi-sidebar__group">
+    <div class="oi-sidebar__group-label">Platform Observability <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="langfuse_overview.html">Overview</a>
+    <a class="oi-sidebar__link active" href="langfuse_deployment.html">Deployment Guide</a>
+    <a class="oi-sidebar__link" href="langfuse_agent_onboarding.html">Agent Onboarding</a>
+  </div></div>
+</div>
+
+<div class="oi-main">
+
+<header>
+  <div class="container">
+    <h1>📡 Langfuse Deployment</h1>
+    <p class="header-sub">Complete deployment and infrastructure guide for Langfuse observability stack within Operative Intelligence</p>
+    <div class="badges">
+      <span class="badge">v3.0</span>
+      <span class="badge">Internal</span>
+      <span class="badge">Docker Compose</span>
+      <span class="badge">Port 3001</span>
+    </div>
+  </div>
+</header>
+
+<div class="container">
+
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <h3>Full Observability Stack</h3>
+      <p>Langfuse v3 + ClickHouse + Redis + MinIO + langfuse-worker for complete LLM tracing, cost tracking, and performance monitoring.</p>
+    </div>
+    <div class="kpi-card">
+      <h3>No External Dependencies</h3>
+      <p>All components self-contained in Docker Compose; no reliance on Langfuse Cloud. Runs on KPI box or production infrastructure.</p>
+    </div>
+    <div class="kpi-card">
+      <h3>Role-Based Access</h3>
+      <p>Portal auth controls Langfuse access. Admin credentials synced with portal. Signup disabled for security.</p>
+    </div>
+  </div>
+
+  <section>
+    <h2>Overview</h2>
+    <h3>What is Langfuse?</h3>
+    <p>Langfuse is an open-source LLM observability and analytics platform that tracks every interaction with Claude across all agents. It provides:</p>
+    <ul>
+      <li><strong>Tracing:</strong> Full request/response history with token counts, latency, and cost attribution</li>
+      <li><strong>Cost analytics:</strong> Input/output token pricing per model, per agent, per user, with cost attribution</li>
+      <li><strong>Performance metrics:</strong> Latency, error rates, tool execution times</li>
+      <li><strong>Session management:</strong> Grouped interactions for context and debugging</li>
+    </ul>
+
+    <h3>Architecture</h3>
+    <p>The deployment consists of five core components orchestrated via Docker Compose.</p>
+
+    <h3>Role in Operative Intelligence</h3>
+    <p>Langfuse is the central observability hub for the platform, enabling cost tracking, debugging, performance monitoring, audit trails, and Audit tab integration.</p>
+  </section>
+
+  <section>
+    <h2>Prerequisites</h2>
+    <h3>Environment & Ports</h3>
+    <ul>
+      <li>Docker Compose 2.0+, Docker Engine 20.10+</li>
+      <li>8 GB RAM minimum (16 GB recommended), 20 GB free disk</li>
+      <li>Port 3001 (internal): Langfuse web UI proxied via portal nginx</li>
+      <li>Port 3000 (internal): Langfuse API for agent SDKs</li>
+    </ul>
+
+    <h3>Required Environment Variables</h3>
+    <table>
+      <thead>
+        <tr><th>Variable</th><th>Purpose</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>LANGFUSE_PUBLIC_KEY</code></td><td>Public SDK auth key</td></tr>
+        <tr><td><code>LANGFUSE_SECRET_KEY</code></td><td>Secret API key (keep secure)</td></tr>
+        <tr><td><code>LANGFUSE_DATABASE_URL</code></td><td>PostgreSQL connection string</td></tr>
+        <tr><td><code>LANGFUSE_REDIS_URL</code></td><td>Redis connection string</td></tr>
+        <tr><td><code>LANGFUSE_S3_ENDPOINT</code></td><td>MinIO S3 endpoint</td></tr>
+        <tr><td><code>LANGFUSE_S3_ACCESS_KEY</code></td><td>MinIO access key</td></tr>
+        <tr><td><code>LANGFUSE_S3_SECRET_KEY</code></td><td>MinIO secret key</td></tr>
+        <tr><td><code>LANGFUSE_AUTH_DISABLE_SIGNUP</code></td><td>Disable user self-signup (set: true)</td></tr>
+        <tr><td><code>LANGFUSE_ADMIN_EMAIL</code></td><td>Admin email (synced with portal)</td></tr>
+        <tr><td><code>LANGFUSE_ADMIN_PASSWORD</code></td><td>Admin password (synced with portal)</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Infrastructure Components</h2>
+
+    <h3>ClickHouse (Time-Series Database)</h3>
+    <p><strong>Purpose:</strong> Stores all traces, events, metrics in analytics-optimized schema.</p>
+    <p><strong>Image:</strong> <code>clickhouse/clickhouse-server:latest</code></p>
+    <p><strong>Key Config:</strong> Database <code>langfuse</code>, volume <code>./data/clickhouse</code>, 4GB memory pool</p>
+    <p><strong>Resources:</strong> 2 cores, 4 GB RAM, 10+ GB disk</p>
+
+    <h3>Redis (Session Cache & Queue)</h3>
+    <p><strong>Purpose:</strong> Caches sessions, queues langfuse-worker jobs, stores real-time metrics.</p>
+    <p><strong>Image:</strong> <code>redis:7-alpine</code></p>
+    <p><strong>Key Config:</strong> No auth (internal only), allkeys-lru eviction, 1 GB max memory</p>
+    <p><strong>Resources:</strong> 1 core, 1 GB RAM, minimal disk</p>
+
+    <h3>MinIO (Object Storage)</h3>
+    <p><strong>Purpose:</strong> Stores trace exports, uploads, backups in S3-compatible format.</p>
+    <p><strong>Image:</strong> <code>minio/minio:latest</code></p>
+    <p><strong>Key Config:</strong> Bucket <code>langfuse-traces</code>, volume <code>./data/minio</code>, root user <code>minioadmin</code></p>
+    <p><strong>Resources:</strong> 1 core, 512 MB RAM, 5+ GB disk</p>
+
+    <h3>langfuse-worker (Background Job Processor)</h3>
+    <p><strong>Purpose:</strong> Processes async jobs: roll-ups, aggregation, cost calculations, exports.</p>
+    <p><strong>Image:</strong> <code>ghcr.io/langfuse/langfuse:latest</code> with worker entrypoint</p>
+    <p><strong>Key Config:</strong> Entrypoint <code>node --max-old-space-size=2048 /app/dist/server-worker.js</code></p>
+    <p><strong>Resources:</strong> 1 core per worker, 512 MB-1 GB RAM, minimal disk</p>
+
+    <h3>Langfuse v3 (API & Web UI)</h3>
+    <p><strong>Purpose:</strong> Main server: trace ingestion, API, dashboard, authentication.</p>
+    <p><strong>Image:</strong> <code>ghcr.io/langfuse/langfuse:latest</code></p>
+    <p><strong>Key Config:</strong> Health check <code>GET /api/health</code>, ~30 sec startup (migrations)</p>
+    <p><strong>Resources:</strong> 2 cores, 2 GB RAM, minimal disk (stateless)</p>
+  </section>
+
+  <section>
+    <h2>Docker Compose Configuration</h2>
+    <p>Add to <code>docker-compose.yml</code>. Services depend on postgres, redis, minio. Health checks ensure startup order.</p>
+    <pre><code>langfuse:
+  image: ghcr.io/langfuse/langfuse:latest
+  environment:
+    - LANGFUSE_DATABASE_URL=postgresql://langfuse:${LANGFUSE_DB_PASSWORD}@postgres:5432/langfuse
+    - LANGFUSE_REDIS_URL=redis://redis:6379
+    - LANGFUSE_S3_ENDPOINT=http://minio:9000
+    - LANGFUSE_S3_ACCESS_KEY=${LANGFUSE_S3_ACCESS_KEY}
+    - LANGFUSE_S3_SECRET_KEY=${LANGFUSE_S3_SECRET_KEY}
+    - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+    - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+    - LANGFUSE_AUTH_DISABLE_SIGNUP=true
+    - LANGFUSE_ADMIN_EMAIL=${ADMIN_EMAIL}
+    - LANGFUSE_ADMIN_PASSWORD=${ADMIN_PASSWORD}
+  ports:
+    - "3000:3000"
+
+langfuse-worker:
+  image: ghcr.io/langfuse/langfuse:latest
+  entrypoint: node --max-old-space-size=2048 /app/dist/server-worker.js
+  environment: [same as langfuse above]</code></pre>
+  </section>
+
+  <section>
+    <h2>nginx Proxy Configuration</h2>
+    <h3>Portal nginx Setup</h3>
+    <p>Add to <code>portal/nginx.conf</code>:</p>
+    <pre><code>location /langfuse/ {
+  proxy_pass http://langfuse:3000/;
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Frame-Options "";
+}</code></pre>
+
+    <h3>Authentication & Integration</h3>
+    <ul>
+      <li><code>/langfuse/api/auth/session</code> checks portal <code>operative_token</code> JWT cookie</li>
+      <li><code>/langfuse/api/auth/signin</code> uses portal admin credentials</li>
+      <li><code>AUTH_DISABLE_SIGNUP=true</code> prevents self-registration</li>
+      <li>Portal Audit → LLM Usage tab embeds Langfuse dashboard as iframe</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Security</h2>
+    <h3>Access Control & Data Protection</h3>
+    <ul>
+      <li><strong>Access:</strong> Portal auth gate required; no direct external access</li>
+      <li><strong>Credentials:</strong> Signup disabled. Admin email/password synced with portal.</li>
+      <li><strong>Secrets:</strong> LANGFUSE_SECRET_KEY, S3 keys stored in <code>.env</code> (gitignored)</li>
+      <li><strong>Network:</strong> All components on Docker internal network (no public exposure)</li>
+      <li><strong>Encryption:</strong> Internal communication via Docker network, VPN required for portal access</li>
+      <li><strong>Audit:</strong> All traces logged with timestamp, model, user email, tokens in ClickHouse</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Known Issues & Backlog</h2>
+    <h3>Current Issues</h3>
+    <table>
+      <thead>
+        <tr><th>Issue</th><th>Severity</th><th>Workaround</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>No DNS entry for Langfuse v3; uses <code>/langfuse/</code> proxy path</td>
+          <td>Low</td>
+          <td>Use <code>window.location.href = '/langfuse/'</code> in iframe navigation</td>
+        </tr>
+        <tr>
+          <td>MinIO bucket not auto-created</td>
+          <td>Medium</td>
+          <td>Pre-create <code>langfuse-traces</code> bucket via minio CLI</td>
+        </tr>
+        <tr>
+          <td>ClickHouse 23.4+ required</td>
+          <td>Medium</td>
+          <td>Pin image to <code>clickhouse/clickhouse-server:23.4</code> or later</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Future Enhancements</h3>
+    <ul>
+      <li>Langfuse v4 upgrade (tool cost attribution, Slack integration)</li>
+      <li>Export to data warehouse (daily S3 snapshots for Athena/Redshift)</li>
+      <li>Cost anomaly detection (auto-flag 10x token spikes)</li>
+      <li>Per-user cost dashboards in portal</li>
+      <li>Trace sampling (configurable rate to reduce storage)</li>
+      <li>Custom agent metrics (tool execution time, classification accuracy)</li>
+    </ul>
+  </section>
+
+</div>
+
+</div>
+
+<script>
+document.querySelectorAll('.oi-sidebar__group-label').forEach(label => {
+  label.addEventListener('click', () => {
+    const group = label.parentElement;
+    const isCollapsed = group.classList.contains('collapsed');
+    document.querySelectorAll('.oi-sidebar__group').forEach(g => g.classList.add('collapsed'));
+    if (isCollapsed) group.classList.remove('collapsed');
+  });
+});
+</script>
+
+</body>
+</html>

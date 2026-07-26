@@ -199,6 +199,13 @@
     <a class="oi-sidebar__link" href="alert_analyser.html">Alert Analyser Overview</a>
     <a class="oi-sidebar__link active" href="alert_analyser_api.html">API Reference</a>
   </div></div>
+  <div class="oi-sidebar__group">
+    <div class="oi-sidebar__group-label">Platform Observability <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="langfuse_overview.html">Overview</a>
+    <a class="oi-sidebar__link" href="langfuse_deployment.html">Deployment Guide</a>
+    <a class="oi-sidebar__link" href="langfuse_agent_onboarding.html">Agent Onboarding</a>
+  </div></div>
 </div>
 <div class="oi-main">
 
@@ -660,6 +667,194 @@
           <div class="response-item"><span class="response-field">ok</span> — Boolean (connection works)</div>
           <div class="response-item"><span class="response-field">latency_ms</span> — Round-trip time to API</div>
           <div class="response-item"><span class="response-field">alert_count</span> — Alerts available in source</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Job Management Endpoints -->
+  <section>
+    <h2>Job Management</h2>
+    <p>APIs for monitoring and controlling alert analysis jobs.</p>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/runs</span>
+      </div>
+      <div class="endpoint-desc">List alert analyser job runs with filtering and pagination.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">limit</span> <span class="param-type">(integer, default 50)</span> — Max runs to return</div>
+          <div class="param-item"><span class="param-name">offset</span> <span class="param-type">(integer, default 0)</span> — Pagination offset</div>
+          <div class="param-item"><span class="param-name">status</span> <span class="param-type">(string, optional)</span> — Filter by: success, failed, running</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">runs</span> — Array of job run records</div>
+          <div class="response-item"><span class="response-field">  run_id</span> — Unique run identifier</div>
+          <div class="response-item"><span class="response-field">  started_at</span> — Start timestamp</div>
+          <div class="response-item"><span class="response-field">  completed_at</span> — Completion timestamp (null if running)</div>
+          <div class="response-item"><span class="response-field">  status</span> — success, failed, running, timeout</div>
+          <div class="response-item"><span class="response-field">  duration_ms</span> — Execution time in milliseconds</div>
+          <div class="response-item"><span class="response-field">  alerts_processed</span> — Number of alerts analyzed in this run</div>
+          <div class="response-item"><span class="response-field">  error</span> — Error message if status is failed</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-post">POST</span>
+        <span class="endpoint-path">/jobs/{job_id}/trigger</span>
+      </div>
+      <div class="endpoint-desc">Manually trigger an alert analysis job (ignores schedule).</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">ok</span> — Boolean success</div>
+          <div class="response-item"><span class="response-field">run_id</span> — ID of triggered job run</div>
+          <div class="response-item"><span class="response-field">status</span> — Job status (usually running)</div>
+          <div class="response-item"><span class="response-field">message</span> — Status message</div>
+        </div>
+      </div>
+    </div>
+  </section>
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/jobs</span>
+      </div>
+      <div class="endpoint-desc">List all registered alert analysis jobs with schedule info.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">jobs</span> — Array of job objects</div>
+          <div class="response-item"><span class="response-field">  job_id</span> — Unique job identifier</div>
+          <div class="response-item"><span class="response-field">  name</span> — Human-readable job name</div>
+          <div class="response-item"><span class="response-field">  job_type</span> — Type: noise_detection, deduplication, analysis</div>
+          <div class="response-item"><span class="response-field">  status</span> — Current status: enabled, disabled, paused</div>
+          <div class="response-item"><span class="response-field">  schedules</span> — Array of active schedules (cron expressions)</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/jobs/{job_id}/runs</span>
+      </div>
+      <div class="endpoint-desc">Get run history for a specific job.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">limit</span> <span class="param-type">(integer, default 50)</span> — Max runs to return</div>
+          <div class="param-item"><span class="param-name">offset</span> <span class="param-type">(integer, default 0)</span> — Pagination offset</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">runs</span> — Array of run records (see GET /runs for details)</div>
+          <div class="response-item"><span class="response-field">total</span> — Total count of runs for this job</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/jobs/{job_id}/schedules</span>
+      </div>
+      <div class="endpoint-desc">Get all schedules for a job.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">schedules</span> — Array of schedule objects</div>
+          <div class="response-item"><span class="response-field">  schedule_id</span> — Unique schedule identifier</div>
+          <div class="response-item"><span class="response-field">  cron_expression</span> — Cron schedule (e.g., "0 */5 * * *")</div>
+          <div class="response-item"><span class="response-field">  timeout_secs</span> — Job timeout in seconds</div>
+          <div class="response-item"><span class="response-field">  enabled</span> — Boolean schedule status</div>
+          <div class="response-item"><span class="response-field">  next_run</span> — Next scheduled execution timestamp</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-post">POST</span>
+        <span class="endpoint-path">/jobs/{job_id}/schedules</span>
+      </div>
+      <div class="endpoint-desc">Create a new schedule for a job.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Request Body</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cron_expression</span> <span class="param-type">(string, required)</span> — Cron schedule (e.g., "0 */5 * * *")</div>
+          <div class="param-item"><span class="param-name">timeout_secs</span> <span class="param-type">(integer, optional, default 300)</span> — Job timeout</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">ok</span> — Boolean success</div>
+          <div class="response-item"><span class="response-field">schedule_id</span> — ID of created schedule</div>
+          <div class="response-item"><span class="response-field">next_run</span> — Next scheduled execution timestamp</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-put">PUT</span>
+        <span class="endpoint-path">/jobs/{job_id}/schedules/{schedule_id}</span>
+      </div>
+      <div class="endpoint-desc">Update a schedule (cron expression and/or timeout).</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Request Body</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cron_expression</span> <span class="param-type">(string, optional)</span> — New cron schedule</div>
+          <div class="param-item"><span class="param-name">timeout_secs</span> <span class="param-type">(integer, optional)</span> — New timeout</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">ok</span> — Boolean success</div>
+          <div class="response-item"><span class="response-field">schedule_id</span> — Updated schedule ID</div>
+          <div class="response-item"><span class="response-field">next_run</span> — Recalculated next execution time</div>
+        </div>
+      </div>
+    </div>
+
+
+  <!-- AI Insights -->
+  <section>
+    <h2>AI Insights</h2>
+    <p>Streaming API for real-time alert analysis and AI-powered insights.</p>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-post">POST</span>
+        <span class="endpoint-path">/invoke/stream-insights</span>
+      </div>
+      <div class="endpoint-desc">Stream AI insights analysis for alerts — used by the AI Insights tab for real-time alert analysis with Claude.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Request Body</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">session_id</span> <span class="param-type">(string, optional)</span> — Session to group conversation</div>
+          <div class="param-item"><span class="param-name">user_message</span> <span class="param-type">(string, required)</span> — User query about alerts</div>
+          <div class="param-item"><span class="param-name">context</span> <span class="param-type">(object, optional)</span> — Additional context (filters, selected alerts, etc.)</div>
+          <div class="param-item"><span class="param-name">history</span> <span class="param-type">(array, optional)</span> — Previous messages in conversation</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response (Streaming)</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">text</span> — Text chunks streamed as they are generated by Claude</div>
+          <div class="response-item"><span class="response-field">metadata</span> — (final chunk) Analysis metadata: tokens_used, duration_ms, etc.</div>
         </div>
       </div>
     </div>

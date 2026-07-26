@@ -199,6 +199,13 @@
     <a class="oi-sidebar__link" href="alert_analyser.html">Alert Analyser Overview</a>
     <a class="oi-sidebar__link" href="alert_analyser_api.html">API Reference</a>
   </div></div>
+  <div class="oi-sidebar__group">
+    <div class="oi-sidebar__group-label">Platform Observability <span class="oi-caret">▾</span></div>
+    <div class="oi-sidebar__links">
+    <a class="oi-sidebar__link" href="langfuse_overview.html">Overview</a>
+    <a class="oi-sidebar__link" href="langfuse_deployment.html">Deployment Guide</a>
+    <a class="oi-sidebar__link" href="langfuse_agent_onboarding.html">Agent Onboarding</a>
+  </div></div>
 </div>
 <div class="oi-main">
 
@@ -771,6 +778,407 @@
           <div class="response-item"><span class="response-field">brokers</span> — Count created</div>
           <div class="response-item"><span class="response-field">topics</span> — Count created</div>
           <div class="response-item"><span class="response-field">consumer_groups</span> — Count created</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Job Management -->
+  <section>
+    <h2>Job Management</h2>
+    <p>APIs for managing background jobs, scheduling, and monitoring runs. Jobs are async operations like metric collection, anomaly detection, and reconciliation.</p>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/jobs</span>
+      </div>
+      <div class="endpoint-desc">List all registered jobs with schedule info.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">jobs</span> — Array of job objects</div>
+          <div class="response-item"><span class="response-field">  job_id</span> — Unique job identifier</div>
+          <div class="response-item"><span class="response-field">  name</span> — Human-readable job name</div>
+          <div class="response-item"><span class="response-field">  job_type</span> — Type: metrics, anomalies, reconciliation</div>
+          <div class="response-item"><span class="response-field">  status</span> — Current status: enabled, disabled, paused</div>
+          <div class="response-item"><span class="response-field">  schedules</span> — Array of active schedules (cron expressions)</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/jobs/{job_id}/runs</span>
+      </div>
+      <div class="endpoint-desc">Get run history for a job.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">limit</span> <span class="param-type">(integer, default 50)</span> — Max runs to return</div>
+          <div class="param-item"><span class="param-name">offset</span> <span class="param-type">(integer, default 0)</span> — Pagination offset</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">runs</span> — Array of run records</div>
+          <div class="response-item"><span class="response-field">  run_id</span> — Unique run identifier</div>
+          <div class="response-item"><span class="response-field">  started_at</span> — Start timestamp</div>
+          <div class="response-item"><span class="response-field">  completed_at</span> — Completion timestamp (null if running)</div>
+          <div class="response-item"><span class="response-field">  status</span> — success, failed, timeout, running</div>
+          <div class="response-item"><span class="response-field">  duration_ms</span> — Execution time in milliseconds</div>
+          <div class="response-item"><span class="response-field">  error</span> — Error message if status is failed</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/jobs/{job_id}/schedules</span>
+      </div>
+      <div class="endpoint-desc">Get all schedules for a job.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">schedules</span> — Array of schedule objects</div>
+          <div class="response-item"><span class="response-field">  schedule_id</span> — Unique schedule identifier</div>
+          <div class="response-item"><span class="response-field">  cron_expression</span> — Cron schedule (e.g., "0 */5 * * *")</div>
+          <div class="response-item"><span class="response-field">  timeout_secs</span> — Job timeout in seconds</div>
+          <div class="response-item"><span class="response-field">  enabled</span> — Boolean schedule status</div>
+          <div class="response-item"><span class="response-field">  next_run</span> — Next scheduled execution timestamp</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-post">POST</span>
+        <span class="endpoint-path">/jobs/{job_id}/trigger</span>
+      </div>
+      <div class="endpoint-desc">Manually trigger a job run (ignores schedule).</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">ok</span> — Boolean success</div>
+          <div class="response-item"><span class="response-field">run_id</span> — ID of triggered run</div>
+          <div class="response-item"><span class="response-field">status</span> — Run status (usually running)</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-post">POST</span>
+        <span class="endpoint-path">/jobs/{job_id}/schedules</span>
+      </div>
+      <div class="endpoint-desc">Create a new schedule for a job.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Request Body</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cron_expression</span> <span class="param-type">(string, required)</span> — Cron schedule (e.g., "0 */5 * * *")</div>
+          <div class="param-item"><span class="param-name">timeout_secs</span> <span class="param-type">(integer, default 300)</span> — Job timeout</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">ok</span> — Boolean success</div>
+          <div class="response-item"><span class="response-field">schedule_id</span> — ID of created schedule</div>
+          <div class="response-item"><span class="response-field">next_run</span> — Next scheduled execution timestamp</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-post">PUT</span>
+        <span class="endpoint-path">/jobs/{job_id}/schedules/{schedule_id}</span>
+      </div>
+      <div class="endpoint-desc">Update a schedule (cron expression and/or timeout).</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Request Body</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cron_expression</span> <span class="param-type">(string, optional)</span> — New cron schedule</div>
+          <div class="param-item"><span class="param-name">timeout_secs</span> <span class="param-type">(integer, optional)</span> — New timeout</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">ok</span> — Boolean success</div>
+          <div class="response-item"><span class="response-field">schedule_id</span> — Updated schedule ID</div>
+          <div class="response-item"><span class="response-field">next_run</span> — Recalculated next execution time</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-delete">DELETE</span>
+        <span class="endpoint-path">/jobs/{job_id}/schedules/{schedule_id}</span>
+      </div>
+      <div class="endpoint-desc">Delete a schedule.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">ok</span> — Boolean success</div>
+          <div class="response-item"><span class="response-field">deleted</span> — Schedule ID that was removed</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/runs</span>
+      </div>
+      <div class="endpoint-desc">List all runs across all jobs with filtering and pagination.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">limit</span> <span class="param-type">(integer, default 50)</span> — Max runs to return</div>
+          <div class="param-item"><span class="param-name">offset</span> <span class="param-type">(integer, default 0)</span> — Pagination offset</div>
+          <div class="param-item"><span class="param-name">status</span> <span class="param-type">(string, optional)</span> — Filter by: success, failed, timeout, running</div>
+          <div class="param-item"><span class="param-name">job_type</span> <span class="param-type">(string, optional)</span> — Filter by job type</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">runs</span> — Array of run records (see /jobs/{job_id}/runs)</div>
+          <div class="response-item"><span class="response-field">total</span> — Total count of runs matching filter</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SLI/SLO Management -->
+  <section>
+    <h2>SLI/SLO Management</h2>
+    <p>Service Level Indicator and Service Level Objective tracking for Kafka clusters. Define targets, view compliance, and monitor trends.</p>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/slo/targets</span>
+      </div>
+      <div class="endpoint-desc">Get SLO targets for a cluster.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cluster_id</span> <span class="param-type">(integer, required)</span> — Cluster to query</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">cluster_id</span> — Cluster identifier</div>
+          <div class="response-item"><span class="response-field">connector_availability_target</span> — Target % (e.g., 99.5)</div>
+          <div class="response-item"><span class="response-field">consumer_lag_target</span> — Max acceptable lag in messages</div>
+          <div class="response-item"><span class="response-field">broker_availability_target</span> — Target % for broker uptime</div>
+          <div class="response-item"><span class="response-field">urp_target</span> — Max acceptable URP count</div>
+          <div class="response-item"><span class="response-field">max_broker_cpu_pct</span> — CPU threshold %</div>
+          <div class="response-item"><span class="response-field">max_broker_heap_pct</span> — Heap threshold %</div>
+          <div class="response-item"><span class="response-field">min_task_health_pct</span> — Min healthy task % for KafkaConnect</div>
+          <div class="response-item"><span class="response-field">max_failed_tasks</span> — Max failed tasks allowed</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-post">POST</span>
+        <span class="endpoint-path">/slo/targets</span>
+      </div>
+      <div class="endpoint-desc">Save or update SLO targets for a cluster.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cluster_id</span> <span class="param-type">(integer, required)</span> — Cluster to update</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Request Body</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">connector_availability_target</span> <span class="param-type">(float, optional)</span> — Availability target %</div>
+          <div class="param-item"><span class="param-name">consumer_lag_target</span> <span class="param-type">(integer, optional)</span> — Max lag messages</div>
+          <div class="param-item"><span class="param-name">broker_availability_target</span> <span class="param-type">(float, optional)</span> — Broker uptime %</div>
+          <div class="param-item"><span class="param-name">urp_target</span> <span class="param-type">(integer, optional)</span> — Max URP</div>
+          <div class="param-item"><span class="param-name">max_broker_cpu_pct</span> <span class="param-type">(float, optional)</span> — CPU %</div>
+          <div class="param-item"><span class="param-name">max_broker_heap_pct</span> <span class="param-type">(float, optional)</span> — Heap %</div>
+          <div class="param-item"><span class="param-name">min_task_health_pct</span> <span class="param-type">(float, optional)</span> — Task health %</div>
+          <div class="param-item"><span class="param-name">max_failed_tasks</span> <span class="param-type">(integer, optional)</span> — Max failed</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">ok</span> — Boolean success</div>
+          <div class="response-item"><span class="response-field">cluster_id</span> — Updated cluster</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/slo/dashboard</span>
+      </div>
+      <div class="endpoint-desc">Get full SLO dashboard data with current state, trends, and connector health.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cluster_id</span> <span class="param-type">(integer, required)</span> — Cluster to query</div>
+          <div class="param-item"><span class="param-name">hours</span> <span class="param-type">(integer, default 24)</span> — Hours of trend data</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">current_state</span> — Current SLO compliance metrics</div>
+          <div class="response-item"><span class="response-field">targets</span> — SLO targets for comparison</div>
+          <div class="response-item"><span class="response-field">trend</span> — Metric trends over requested period</div>
+          <div class="response-item"><span class="response-field">connectors</span> — Connector availability snapshot</div>
+          <div class="response-item"><span class="response-field">compliance_score</span> — Overall % compliance (0-100)</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/slo/monthly</span>
+      </div>
+      <div class="endpoint-desc">Get monthly SLO compliance summary.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cluster_id</span> <span class="param-type">(integer, required)</span> — Cluster to query</div>
+          <div class="param-item"><span class="param-name">months</span> <span class="param-type">(integer, default 1)</span> — Number of months to return</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">months</span> — Array of monthly summaries</div>
+          <div class="response-item"><span class="response-field">  month</span> — YYYY-MM format</div>
+          <div class="response-item"><span class="response-field">  compliance_score</span> — Overall compliance %</div>
+          <div class="response-item"><span class="response-field">  breaches</span> — Count of SLO breaches</div>
+          <div class="response-item"><span class="response-field">  breach_details</span> — List of which targets were breached</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/slo/connector-trend</span>
+      </div>
+      <div class="endpoint-desc">Get connector availability trend from snapshots.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cluster_id</span> <span class="param-type">(integer, required)</span> — Cluster to query</div>
+          <div class="param-item"><span class="param-name">hours</span> <span class="param-type">(integer, default 24)</span> — Hours of trend data</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">connector_trends</span> — Array of connector snapshots</div>
+          <div class="response-item"><span class="response-field">  timestamp</span> — Snapshot time</div>
+          <div class="response-item"><span class="response-field">  healthy_count</span> — Number of healthy connectors</div>
+          <div class="response-item"><span class="response-field">  failed_count</span> — Number of failed connectors</div>
+          <div class="response-item"><span class="response-field">  availability_pct</span> — Availability percentage</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Dashboard Enhancements -->
+  <section>
+    <h2>Dashboard Enhancements</h2>
+    <p>Advanced dashboard endpoints for detailed metrics, topic inspection, and trend analysis.</p>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/dashboard/counts</span>
+      </div>
+      <div class="endpoint-desc">Get cluster counts with health indicators: topics, consumer groups, brokers, with URP, stale topics, and large topic flagging.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cluster_id</span> <span class="param-type">(integer, required)</span> — Cluster to query</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">topic_count</span> — Total topics</div>
+          <div class="response-item"><span class="response-field">consumer_group_count</span> — Total consumer groups</div>
+          <div class="response-item"><span class="response-field">broker_count</span> — Total brokers</div>
+          <div class="response-item"><span class="response-field">urp_count</span> — Under-replicated partitions</div>
+          <div class="response-item"><span class="response-field">stale_topics</span> — Topics with no recent messages</div>
+          <div class="response-item"><span class="response-field">large_topics</span> — Topics exceeding size threshold</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/dashboard/topics/detail</span>
+      </div>
+      <div class="endpoint-desc">Get detailed information for a single topic from PostgreSQL storage.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">name</span> <span class="param-type">(string, required)</span> — Topic name</div>
+          <div class="param-item"><span class="param-name">cluster_id</span> <span class="param-type">(integer, required)</span> — Cluster containing topic</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">name</span> — Topic name</div>
+          <div class="response-item"><span class="response-field">partition_count</span> — Number of partitions</div>
+          <div class="response-item"><span class="response-field">replication_factor</span> — Replication level</div>
+          <div class="response-item"><span class="response-field">size_bytes</span> — Total topic size</div>
+          <div class="response-item"><span class="response-field">retention_ms</span> — Retention period in ms</div>
+          <div class="response-item"><span class="response-field">messages_in_per_sec</span> — Ingestion rate</div>
+          <div class="response-item"><span class="response-field">bytes_in_per_sec</span> — Bytes ingestion rate</div>
+          <div class="response-item"><span class="response-field">consumer_groups</span> — Groups consuming this topic</div>
+          <div class="response-item"><span class="response-field">urp</span> — Under-replicated partitions</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="api-endpoint">
+      <div class="endpoint-header">
+        <span class="method-badge method-get">GET</span>
+        <span class="endpoint-path">/dashboard/overview/lag-trend</span>
+      </div>
+      <div class="endpoint-desc">Get consumer lag trend over time for historical analysis and anomaly detection.</div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Query Parameters</div>
+        <div class="endpoint-params">
+          <div class="param-item"><span class="param-name">cluster_id</span> <span class="param-type">(integer, required)</span> — Cluster to query</div>
+          <div class="param-item"><span class="param-name">minutes</span> <span class="param-type">(integer, default 60)</span> — Minutes of trend data</div>
+        </div>
+      </div>
+      <div class="endpoint-section">
+        <div class="endpoint-section-title">Response</div>
+        <div class="endpoint-response">
+          <div class="response-item"><span class="response-field">datapoints</span> — Array of lag measurements</div>
+          <div class="response-item"><span class="response-field">  timestamp</span> — Measurement time</div>
+          <div class="response-item"><span class="response-field">  total_lag</span> — Sum of all consumer group lags</div>
+          <div class="response-item"><span class="response-field">  max_lag</span> — Highest lag in any group</div>
+          <div class="response-item"><span class="response-field">  group_count</span> — Number of active consumer groups</div>
+          <div class="response-item"><span class="response-field">  trend</span> — "growing", "stable", or "recovering"</div>
         </div>
       </div>
     </div>
