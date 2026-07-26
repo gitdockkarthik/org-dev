@@ -108,9 +108,10 @@
             <th style="text-align:right">Input Tokens</th>
             <th style="text-align:right">Output Tokens</th>
             <th style="text-align:right">Total Tokens</th>
+            <th style="text-align:right">Cost (USD)</th>
           </tr></thead>
           <tbody id="llm-tbody">
-            <tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px">Loading LLM usage...</td></tr>
+            <tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:20px">Loading LLM usage...</td></tr>
           </tbody>
         </table>
       </div>
@@ -212,6 +213,8 @@
           const totalTokens = filteredGens.reduce((s,g) => s + (g.usageDetails?.total||g.usage?.totalTokens||0), 0);
           const totalInput = filteredGens.reduce((s,g) => s + (g.usageDetails?.input||g.usage?.input||0), 0);
           const totalOutput = filteredGens.reduce((s,g) => s + (g.usageDetails?.output||g.usage?.output||0), 0);
+          const totalCost = filteredGens.reduce((s,g) => s + (g.calculatedTotalCost||0), 0);
+          const avgCost = validCount > 0 ? totalCost / validCount : 0;
           statsBar.innerHTML = `
             <div style="background:var(--navy-1);border:1px solid var(--border);border-radius:8px;padding:12px 20px;text-align:center">
               <div style="font-size:1.3rem;font-weight:700">${validCount}</div>
@@ -228,10 +231,18 @@
             <div style="background:var(--navy-1);border:1px solid var(--border);border-radius:8px;padding:12px 20px;text-align:center">
               <div style="font-size:1.3rem;font-weight:700">${totalOutput.toLocaleString()}</div>
               <div style="font-size:.75rem;color:var(--text-muted)">Output Tokens</div>
+            </div>
+            <div style="background:var(--navy-1);border:1px solid var(--border);border-radius:8px;padding:12px 20px;text-align:center">
+              <div style="font-size:1.3rem;font-weight:700">$${totalCost.toFixed(4)}</div>
+              <div style="font-size:.75rem;color:var(--text-muted)">Total Cost</div>
+            </div>
+            <div style="background:var(--navy-1);border:1px solid var(--border);border-radius:8px;padding:12px 20px;text-align:center">
+              <div style="font-size:1.3rem;font-weight:700">$${avgCost.toFixed(4)}</div>
+              <div style="font-size:.75rem;color:var(--text-muted)">Avg Cost/Call</div>
             </div>`;
         }
         if (generations.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px">No LLM calls traced yet.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:20px">No LLM calls traced yet.</td></tr>';
           return;
         }
         const rows = filteredGens.map(g => `<tr>
@@ -242,13 +253,14 @@
           <td style="text-align:right;font-size:.82rem">${(g.usageDetails?.input||g.usage?.input||0).toLocaleString()}</td>
           <td style="text-align:right;font-size:.82rem">${(g.usageDetails?.output||g.usage?.output||0).toLocaleString()}</td>
           <td style="text-align:right;font-size:.82rem;font-weight:600;color:#4CAF50">${(g.usageDetails?.total||g.usage?.totalTokens||0).toLocaleString()}</td>
+          <td style="text-align:right;font-size:.82rem;font-weight:600;color:#FF9800">${g.calculatedTotalCost ? '$'+g.calculatedTotalCost.toFixed(4) : '—'}</td>
         </tr>`).join('');
         if (loadMore) tbody.innerHTML += rows;
         else tbody.innerHTML = rows;
         document.getElementById('llm-load-more').style.display = generations.length >= 20 ? '' : 'none';
         _llmPage++;
       } catch(e) {
-        tbody.innerHTML = `<tr><td colspan="7" style="color:var(--danger);padding:20px">${e.message}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" style="color:var(--danger);padding:20px">${e.message}</td></tr>`;
       }
     }
 
