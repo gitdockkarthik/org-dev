@@ -103,3 +103,11 @@ Kafka Analyser — SLI/SLO feature complete with full compliance tracking.
 * RAG for incident response
 * Platform governance framework
 * These are separate from Audit tab — plan separately
+
+## Backlog — Infrastructure
+* **Langfuse v3 upgrade**: Requires ClickHouse (analytics DB). Raise Jira for:
+  1. ClickHouse service provisioned on KPI box or separate node
+  2. DNS entry for langfuse.kpi-internal.cloud.operative.com (port 443)
+  3. Firewall rule to expose port 3001 externally
+  Once infra ready: upgrade langfuse image to v3, configure LANGFUSE_BASEPATH,
+  remove nginx sub_filter workarounds, enable native basepath support.
