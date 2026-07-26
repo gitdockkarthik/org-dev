@@ -95,7 +95,7 @@
             <th style="text-align:right">Input Tokens</th>
             <th style="text-align:right">Output Tokens</th>
             <th style="text-align:right">Total Tokens</th>
-            <th>Duration</th>
+            <th style="text-align:right">Duration</th>
           </tr></thead>
           <tbody id="llm-tbody">
             <tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:20px">Loading LLM usage...</td></tr>
@@ -193,9 +193,9 @@
         const generations = data.generations || [];
         if (!loadMore) {
           // Stats
-          const totalTokens = generations.reduce((s,g) => s + (g.usage?.totalTokens||0), 0);
-          const totalInput = generations.reduce((s,g) => s + (g.usage?.input||0), 0);
-          const totalOutput = generations.reduce((s,g) => s + (g.usage?.output||0), 0);
+          const totalTokens = generations.reduce((s,g) => s + (g.usageDetails?.total||g.usage?.totalTokens||0), 0);
+          const totalInput = generations.reduce((s,g) => s + (g.usageDetails?.input||g.usage?.input||0), 0);
+          const totalOutput = generations.reduce((s,g) => s + (g.usageDetails?.output||g.usage?.output||0), 0);
           statsBar.innerHTML = `
             <div style="background:var(--navy-1);border:1px solid var(--border);border-radius:8px;padding:12px 20px;text-align:center">
               <div style="font-size:1.3rem;font-weight:700">${generations.length}</div>
@@ -218,15 +218,16 @@
           tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px">No LLM calls traced yet.</td></tr>';
           return;
         }
-        const rows = generations.map(g => `<tr>
+        const filteredGens = generations.filter(g => (g.usageDetails?.total||0) > 0 || g.model);
+        const rows = filteredGens.map(g => `<tr>
           <td style="font-size:.78rem">${g.startTime ? new Date(g.startTime).toLocaleString() : '—'}</td>
           <td style="font-size:.78rem">${g.name || '—'}</td>
           <td style="font-size:.78rem">${g.metadata?.user || '—'}</td>
           <td style="font-size:.78rem"><code>${g.model || '—'}</code></td>
-          <td style="text-align:right;font-size:.82rem">${(g.usage?.input||0).toLocaleString()}</td>
-          <td style="text-align:right;font-size:.82rem">${(g.usage?.output||0).toLocaleString()}</td>
-          <td style="text-align:right;font-size:.82rem;font-weight:600">${(g.usage?.totalTokens||0).toLocaleString()}</td>
-          <td style="font-size:.78rem">${g.latency ? (g.latency/1000).toFixed(1)+'s' : '—'}</td>
+          <td style="text-align:right;font-size:.82rem">${(g.usageDetails?.input||g.usage?.input||0).toLocaleString()}</td>
+          <td style="text-align:right;font-size:.82rem">${(g.usageDetails?.output||g.usage?.output||0).toLocaleString()}</td>
+          <td style="text-align:right;font-size:.82rem;font-weight:600;color:#4CAF50">${(g.usageDetails?.total||g.usage?.totalTokens||0).toLocaleString()}</td>
+          <td style="text-align:right;font-size:.78rem">${g.latency > 100 ? (g.latency/1000).toFixed(1)+'s' : g.latency ? g.latency+'ms' : '—'}</td>
         </tr>`).join('');
         if (loadMore) tbody.innerHTML += rows;
         else tbody.innerHTML = rows;
