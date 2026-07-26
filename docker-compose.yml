@@ -151,20 +151,21 @@ services:
       - "3001:3000"
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/langfuse_db
-      NEXTAUTH_URL: http://localhost:3001
-      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-changeme-nextauth-secret}
-      SALT: ${LANGFUSE_SALT:-changeme-salt}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET}
+      SALT: ${LANGFUSE_SALT}
       LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "true"
       TELEMETRY_ENABLED: "false"
       LANGFUSE_INIT_ORG_ID: operative
       LANGFUSE_INIT_ORG_NAME: Operative
       LANGFUSE_INIT_PROJECT_ID: operative-ai
       LANGFUSE_INIT_PROJECT_NAME: Operative Intelligence
-      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-lf-pk-operative}
-      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-lf-sk-operative}
-      LANGFUSE_INIT_USER_EMAIL: ${ADMIN_EMAIL:-admin@operative.com}
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_INIT_USER_EMAIL: ${ADMIN_EMAIL}
       LANGFUSE_INIT_USER_NAME: Admin
-      LANGFUSE_INIT_USER_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      LANGFUSE_INIT_USER_PASSWORD: ${ADMIN_PASSWORD}
+      LANGFUSE_BASEPATH: /langfuse
+      NEXTAUTH_URL: http://kpi-internal.cloud.operative.com:3000/langfuse
 
   # ── MCP Server ────────────────────────────────────────────────────────────────
   # Model Context Protocol gateway — exposes all agents as MCP tools.
