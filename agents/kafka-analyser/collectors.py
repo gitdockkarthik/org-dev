@@ -435,12 +435,19 @@ async def collect_topic_structure(cluster_id: str = ""):
                 import collections as _col
                 security = {}
                 if c.get("auth_type") not in (None, "none"):
+                    import ssl as _ssl2
+                    _tls2 = c.get("tls_enabled", False)
                     security = {
-                        "security_protocol": "SASL_PLAINTEXT",
+                        "security_protocol": "SASL_SSL" if _tls2 else "SASL_PLAINTEXT",
                         "sasl_mechanism": c.get("sasl_mechanism", "PLAIN"),
                         "sasl_plain_username": c.get("sasl_username"),
                         "sasl_plain_password": c.get("sasl_password"),
                     }
+                    if _tls2:
+                        _ssl_ctx2 = _ssl2.create_default_context()
+                        _ssl_ctx2.check_hostname = False
+                        _ssl_ctx2.verify_mode = _ssl2.CERT_NONE
+                        security["ssl_context"] = _ssl_ctx2
                 _admin = KafkaAdminClient(
                     bootstrap_servers=c["bootstrap_servers"],
                     request_timeout_ms=15000,
@@ -914,6 +921,30 @@ async def collect_msg_rate(cluster_id: str = ""):
                     """), {"cid": int(cid), "topic": topic, "rate": round(rate/1024, 2)})
                 await sess2.commit()
         hot_count = sum(1 for r in active_topics.values() if r > 100*1024)
+        # Update kafka_counts_metrics with top topics by msg rate
+        if active_topics:
+            top_by_rate = sorted(active_topics.items(), key=lambda x: -x[1])[:20]
+            top_msg_rate = [{"name": t, "bytes_in_per_sec": round(r, 2)} for t, r in top_by_rate]
+            try:
+                from routes_settings import _upsert
+                import json as _jm
+                existing_raw = None
+                from database import SessionLocal as _SLm
+                from sqlalchemy import text as _tm
+                async with _SLm() as _sm:
+                    _er = await _sm.execute(_tm(
+                        "SELECT value FROM agent_config WHERE agent_slug='kafka-analyser' AND key=:key"
+                    ), {"key": f"kafka_counts_metrics_{cid}"})
+                    _er_row = _er.fetchone()
+                    if _er_row:
+                        existing_raw = _er_row.value
+                existing = _jm.loads(existing_raw) if existing_raw else {}
+                if isinstance(existing, str):
+                    existing = _jm.loads(existing)
+                existing["top_topics_by_msg_rate"] = top_msg_rate
+                await _upsert(f"kafka_counts_metrics_{cid}", _jm.dumps(existing))
+            except Exception as _me:
+                logger.warning("msg_rate counts update failed: %s", _me)
         collect_msg_rate._last_result = f"Rates updated: {len(active_topics)} active topics, {hot_count} hot (>100KB/s)"
     except Exception as e:
         logger.warning("msg_rate failed for %s: %s", c["name"], e)

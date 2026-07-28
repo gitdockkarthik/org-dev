@@ -107,7 +107,7 @@ async def get_overview(cluster_id: str | None = None, hours: int | None = None) 
                     _br = await _bs.execute(_bt(
                         "SELECT broker_id, heap_pct, cpu_pct, gc_pause_ms, "
                         "request_handler_idle_pct, urp_count, messages_in_per_sec, disk_pct "
-                        "FROM kafka_broker_metrics WHERE cluster_id=:cid ORDER BY broker_id"
+                        "FROM kafka_broker_metrics WHERE cluster_id=:cid AND time=(SELECT MAX(time) FROM kafka_broker_metrics bm2 WHERE bm2.cluster_id=:cid) ORDER BY broker_id"
                     ), {"cid": int(cluster_id)})
                     _rows = _br.fetchall()
                     if _rows:
@@ -447,6 +447,7 @@ async def get_brokers(cluster_id: str | None = None, hours: int | None = None) -
                                 isr_shrinks_per_sec, isr_expands_per_sec, time
                          FROM kafka_broker_metrics
                          WHERE cluster_id = :cid
+                         AND time = (SELECT MAX(time) FROM kafka_broker_metrics bm2 WHERE bm2.cluster_id = :cid AND bm2.broker_id = kafka_broker_metrics.broker_id)
                          ORDER BY broker_id"""),
                 {"cid": int(cluster_id)}
             )

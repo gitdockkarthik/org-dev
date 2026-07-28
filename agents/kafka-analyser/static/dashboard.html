@@ -735,7 +735,7 @@
                   },
                   scales: {
                     x: { ticks: { maxTicksLimit: 10, font: { size: 10 }, maxRotation: 45 } },
-                    y: { ticks: { callback: v => v >= 1000000 ? (v/1000000).toFixed(1)+'M' : v >= 1000 ? (v/1000).toFixed(0)+'K' : v, font: { size: 10 } }, beginAtZero: false },
+                    y: { ticks: { callback: v => v >= 1000000 ? (v/1000000).toFixed(1)+'M' : v >= 1000 ? (v/1000).toFixed(0)+'K' : v, font: { size: 10 } }, beginAtZero: true },
                   },
                 },
               });
@@ -2521,20 +2521,21 @@
     document.getElementById('ctrl-cluster').addEventListener('change', function() {
       _currentClusterId = this.value;
       window._clusterCounts = null;
-      // Show loading state on active tab only
+      // Reset to first-load state — clear all loaded tabs and chart instances
+      _loaded.clear();
+      // Destroy all known chart instances
+      if (window._overviewLagTrendChart) { window._overviewLagTrendChart.destroy(); window._overviewLagTrendChart = null; }
+      if (window._overviewActivityChart) { window._overviewActivityChart.destroy(); window._overviewActivityChart = null; }
+      if (window._topicTimeSeriesChart) { window._topicTimeSeriesChart.destroy(); window._topicTimeSeriesChart = null; }
+      Object.keys(charts).forEach(k => { if (charts[k]) { charts[k].destroy(); delete charts[k]; } });
+      // Reset all tab panel content to skeleton so stale data is never visible
+      document.querySelectorAll('.tab-panel').forEach(p => {
+        p.innerHTML = skeletonHTML();
+      });
+      // Load active tab fresh — same as first load
       const activeBtn = document.querySelector('.tab-btn--active');
       const activeTab = activeBtn ? activeBtn.dataset.tab : 'overview';
-      const activePanel = document.getElementById('tab-' + activeTab);
-      if (activePanel) {
-        activePanel.style.opacity = '0.4';
-        activePanel.style.pointerEvents = 'none';
-      }
-      loadTab(activeTab).finally(() => {
-        if (activePanel) {
-          activePanel.style.opacity = '1';
-          activePanel.style.pointerEvents = '';
-        }
-      });
+      loadTab(activeTab);
     });
 
     // ── Tab filters ───────────────────────────────────────────────
