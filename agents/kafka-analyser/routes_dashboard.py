@@ -562,7 +562,20 @@ async def get_schema_registry(cluster_id: str | None = None) -> dict:
     from tools.schema_registry import SchemaRegistryCollector
     sr_username = cluster.get("schema_registry_username")
     sr_password = cluster.get("schema_registry_password")
-    collector = SchemaRegistryCollector(sr_url, username=sr_username, password=sr_password)
+    # Get topics for restricted SR fallback
+    _sr_topics = []
+    try:
+        from database import SessionLocal
+        from sqlalchemy import text as _t2
+        if SessionLocal:
+            async with SessionLocal() as _sess:
+                _tr = await _sess.execute(_t2(
+                    "SELECT topic_name FROM kafka_topic_names WHERE cluster_id=:cid LIMIT 100"
+                ), {"cid": int(cluster_id)})
+                _sr_topics = [r.topic_name for r in _tr.fetchall()]
+    except Exception:
+        pass
+    collector = SchemaRegistryCollector(sr_url, username=sr_username, password=sr_password, topics=_sr_topics)
     return await collector.collect()
 
 
@@ -1728,7 +1741,8 @@ async def stream_schema_details(cluster_id: str, limit: int = 50):
         return {"subjects": [], "status": "not_configured"}
     sr = SchemaRegistryCollector(cluster["schema_registry_url"],
         username=cluster.get("schema_registry_username"),
-        password=cluster.get("schema_registry_password"))
+        password=cluster.get("schema_registry_password"),
+        topics=[])
     try:
         result = await sr.collect()
         total_subjects = result.get("subject_count", len(result.get("subjects", [])))
@@ -1765,7 +1779,8 @@ async def search_schemas(cluster_id: str, q: str = ""):
         return {"subjects": [], "query": q}
     sr = SchemaRegistryCollector(cluster["schema_registry_url"],
         username=cluster.get("schema_registry_username"),
-        password=cluster.get("schema_registry_password"))
+        password=cluster.get("schema_registry_password"),
+        topics=[])
     try:
         result = await sr.collect()
         ql = q.lower()

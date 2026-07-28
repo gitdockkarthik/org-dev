@@ -16,9 +16,10 @@ _MAX_SUBJECTS = 200  # Cap for large registries — detail fetch is slow
 
 
 class SchemaRegistryCollector:
-    def __init__(self, url: str, username: str | None = None, password: str | None = None) -> None:
+    def __init__(self, url: str, username: str | None = None, password: str | None = None, topics: list[str] | None = None) -> None:
         self._url = url.rstrip("/")
         self._auth = (username, password) if username and password else None
+        self._topics = topics or []
 
     async def collect(self) -> dict[str, Any]:
         """Fetch schema registry data and return structured dict."""
@@ -82,12 +83,38 @@ class SchemaRegistryCollector:
         try:
             resp = await client.get(f"{self._url}/subjects")
             if resp.status_code == 422:
-                logger.warning("Schema Registry subject listing restricted (RBAC) at %s", self._url)
-                return []
+                logger.warning("Schema Registry subject listing restricted (RBAC) at %s — trying topic-derived subjects", self._url)
+                return await self._get_subjects_from_topics(client)
             resp.raise_for_status()
             return resp.json()
         except Exception:
             return []
+
+    async def _get_subjects_from_topics(self, client: httpx.AsyncClient) -> list[str]:
+        """Derive subject names from Kafka topic names when listing is restricted."""
+        if not self._topics:
+            return []
+        subjects = []
+        candidates = []
+        for topic in self._topics[:100]:
+            candidates.append(f"{topic}-key")
+            candidates.append(f"{topic}-value")
+        import asyncio as _aio
+        async def check(name: str) -> str | None:
+            try:
+                r = await client.get(f"{self._url}/subjects/{name}/versions/latest")
+                if r.status_code == 200:
+                    return name
+            except Exception:
+                pass
+            return None
+        batch_size = 20
+        for i in range(0, len(candidates), batch_size):
+            batch = candidates[i:i+batch_size]
+            results = await _aio.gather(*[check(c) for c in batch])
+            subjects.extend([r for r in results if r])
+        logger.info("Topic-derived SR subjects found: %d", len(subjects))
+        return subjects
 
     async def _get_subject_detail(self, client: httpx.AsyncClient, subject: str) -> dict | None:
         try:

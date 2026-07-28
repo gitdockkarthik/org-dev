@@ -835,7 +835,20 @@ async def collect_schema_registry():
             from tools.schema_registry import SchemaRegistryCollector
             sr_username = c.get("schema_registry_username")
             sr_password = c.get("schema_registry_password")
-            collector = SchemaRegistryCollector(sr_url, username=sr_username, password=sr_password)
+            # Get topic names from postgres for topic-derived subject fallback
+            topics = []
+            try:
+                from database import SessionLocal
+                from sqlalchemy import text as _t
+                if SessionLocal:
+                    async with SessionLocal() as sess:
+                        tr = await sess.execute(_t(
+                            "SELECT topic_name FROM kafka_topic_names WHERE cluster_id=:cid LIMIT 100"
+                        ), {"cid": int(cid)})
+                        topics = [r.topic_name for r in tr.fetchall()]
+            except Exception:
+                pass
+            collector = SchemaRegistryCollector(sr_url, username=sr_username, password=sr_password, topics=topics)
             sr_data = await collector.collect()
             data = _ks.get_cluster_data(cid) or {}
             data["schema_registry"] = sr_data
