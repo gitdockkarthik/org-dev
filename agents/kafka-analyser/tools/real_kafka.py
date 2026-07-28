@@ -90,7 +90,10 @@ class RealKafkaCollector(KafkaCollector):
                 "sasl_plain_password": self.sasl_password,
             }
             if self.tls_enabled:
-                kwargs["ssl_context"] = ssl.create_default_context()
+                ssl_ctx = ssl.create_default_context()
+                ssl_ctx.check_hostname = False
+                ssl_ctx.verify_mode = ssl.CERT_NONE
+                kwargs["ssl_context"] = ssl_ctx
             return kwargs
 
         raise RuntimeError(

@@ -833,7 +833,9 @@ async def collect_schema_registry():
             continue
         try:
             from tools.schema_registry import SchemaRegistryCollector
-            collector = SchemaRegistryCollector(sr_url)
+            sr_username = c.get("schema_registry_username")
+            sr_password = c.get("schema_registry_password")
+            collector = SchemaRegistryCollector(sr_url, username=sr_username, password=sr_password)
             sr_data = await collector.collect()
             data = _ks.get_cluster_data(cid) or {}
             data["schema_registry"] = sr_data

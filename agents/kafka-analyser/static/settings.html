@@ -388,6 +388,16 @@
           <div class="form-row">
             <label for="cf-sr-url">Schema Registry URL <span style="font-size:.75rem;color:var(--text-muted)">(optional)</span></label>
             <input type="text" id="cf-sr-url" placeholder="http://schema-registry:8081" />
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px">
+              <div>
+                <label for="cf-sr-username" style="font-size:.8rem;color:var(--text-muted)">SR Username <span style="font-size:.75rem">(if RBAC)</span></label>
+                <input type="text" id="cf-sr-username" placeholder="optional" autocomplete="off" />
+              </div>
+              <div>
+                <label for="cf-sr-password" style="font-size:.8rem;color:var(--text-muted)">SR Password</label>
+                <input type="password" id="cf-sr-password" placeholder="optional" autocomplete="off" />
+              </div>
+            </div>
           </div>
           <div class="form-row">
             <label for="cf-zk-url">ZooKeeper URL <span style="font-size:.75rem;color:var(--text-muted)">(optional)</span></label>
@@ -1108,6 +1118,8 @@
       document.getElementById('cf-mechanism').value = c.sasl_mechanism || 'PLAIN';
       document.getElementById('cf-tls').checked = c.tls_enabled || false;
       document.getElementById('cf-sr-url').value = c.schema_registry_url || '';
+      document.getElementById('cf-sr-username').value = c.schema_registry_username || '';
+      document.getElementById('cf-sr-password').value = c.schema_registry_password || '';
       document.getElementById('cf-zk-url').value = c.zookeeper_url || '';
       document.getElementById('cf-connect-url').value = c.kafka_connect_url || '';
       document.getElementById('cf-jmx-port').value = c.jmx_port || '';
@@ -1161,6 +1173,8 @@
       document.getElementById('cf-password').value = '';
       document.getElementById('cf-tls').checked = false;
       document.getElementById('cf-sr-url').value = '';
+      document.getElementById('cf-sr-username').value = '';
+      document.getElementById('cf-sr-password').value = '';
       document.getElementById('cf-zk-url').value = '';
       document.getElementById('cf-connect-url').value = '';
       document.getElementById('cf-mirror-mode').value = 'none';
@@ -1227,6 +1241,8 @@
         sasl_mechanism: document.getElementById('cf-mechanism').value,
         tls_enabled: document.getElementById('cf-tls').checked,
         schema_registry_url: document.getElementById('cf-sr-url').value.trim(),
+        schema_registry_username: document.getElementById('cf-sr-username').value.trim() || null,
+        schema_registry_password: document.getElementById('cf-sr-password').value.trim() || null,
         zookeeper_url: document.getElementById('cf-zk-url').value.trim(),
         kafka_connect_url: document.getElementById('cf-connect-url').value.trim(),
         jmx_port: document.getElementById('cf-jmx-port').value.trim() ? parseInt(document.getElementById('cf-jmx-port').value.trim()) : null,

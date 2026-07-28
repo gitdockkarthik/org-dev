@@ -166,6 +166,8 @@ class ClusterPayload(BaseModel):
     sasl_mechanism: str = "PLAIN"
     tls_enabled: bool = False
     schema_registry_url: str = ""
+    schema_registry_username: str | None = None
+    schema_registry_password: str | None = None
     zookeeper_url: str = ""
     kafka_connect_url: str = ""
     jmx_port: int | None = None

@@ -165,6 +165,15 @@ async def _init_config() -> None:
                 logger.warning("cpu_cores migration skipped: %s", _mig_exc3)
             try:
                 await conn.execute(text(
+                    "ALTER TABLE kafka_clusters ADD COLUMN IF NOT EXISTS schema_registry_username TEXT"
+                ))
+                await conn.execute(text(
+                    "ALTER TABLE kafka_clusters ADD COLUMN IF NOT EXISTS schema_registry_password TEXT"
+                ))
+            except Exception as _mig_exc4:
+                logger.warning("schema_registry_auth migration skipped: %s", _mig_exc4)
+            try:
+                await conn.execute(text(
                     "ALTER TABLE kafka_topic_names ADD COLUMN IF NOT EXISTS partition_count INTEGER DEFAULT 0"
                 ))
                 await conn.execute(text(

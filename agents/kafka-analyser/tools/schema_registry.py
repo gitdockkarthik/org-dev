@@ -16,15 +16,25 @@ _MAX_SUBJECTS = 200  # Cap for large registries — detail fetch is slow
 
 
 class SchemaRegistryCollector:
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, username: str | None = None, password: str | None = None) -> None:
         self._url = url.rstrip("/")
+        self._auth = (username, password) if username and password else None
 
     async def collect(self) -> dict[str, Any]:
         """Fetch schema registry data and return structured dict."""
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            auth = httpx.BasicAuth(self._auth[0], self._auth[1]) if self._auth else None
+            async with httpx.AsyncClient(timeout=10.0, auth=auth) as client:
                 subjects = await self._get_subjects(client)
                 total_subject_count = len(subjects)
+                sr_restricted = False
+                if not subjects:
+                    try:
+                        config_resp = await client.get(f"{self._url}/config")
+                        if config_resp.status_code == 200:
+                            sr_restricted = True
+                    except Exception:
+                        pass
 
                 # Cap subjects for performance on large registries
                 if len(subjects) > _MAX_SUBJECTS:
@@ -50,7 +60,7 @@ class SchemaRegistryCollector:
                 proto_count = sum(1 for s in subject_details if s.get("schema_type") == "PROTOBUF")
 
                 return {
-                    "status": "healthy",
+                    "status": "restricted" if sr_restricted else "healthy",
                     "url": self._url,
                     "subject_count": total_subject_count,
                     "total_versions": total_versions,
@@ -71,6 +81,9 @@ class SchemaRegistryCollector:
     async def _get_subjects(self, client: httpx.AsyncClient) -> list[str]:
         try:
             resp = await client.get(f"{self._url}/subjects")
+            if resp.status_code == 422:
+                logger.warning("Schema Registry subject listing restricted (RBAC) at %s", self._url)
+                return []
             resp.raise_for_status()
             return resp.json()
         except Exception:

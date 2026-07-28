@@ -73,7 +73,6 @@ async def create_agent(body: AgentCreate, db: AsyncSession = Depends(get_db), re
         # Fall back to API key auth if no JWT
         if caller_user is None and api_key != backend_key:
             from core.security import require_api_key as _rak
-            from fastapi import HTTPException
             raise HTTPException(status_code=403, detail="Invalid API key")
 
     existing = await db.execute(select(Agent).where(Agent.slug == body.slug))

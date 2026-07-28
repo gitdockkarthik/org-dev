@@ -41,6 +41,8 @@ class KafkaCluster(Base):
     sasl_mechanism: Mapped[str] = mapped_column(String(32), nullable=False, default="PLAIN")
     tls_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     schema_registry_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    schema_registry_username: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    schema_registry_password: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     zookeeper_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     kafka_connect_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     jmx_port: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

@@ -560,7 +560,9 @@ async def get_schema_registry(cluster_id: str | None = None) -> dict:
         }
 
     from tools.schema_registry import SchemaRegistryCollector
-    collector = SchemaRegistryCollector(sr_url)
+    sr_username = cluster.get("schema_registry_username")
+    sr_password = cluster.get("schema_registry_password")
+    collector = SchemaRegistryCollector(sr_url, username=sr_username, password=sr_password)
     return await collector.collect()
 
 
@@ -1724,7 +1726,9 @@ async def stream_schema_details(cluster_id: str, limit: int = 50):
     cluster = await get_backend().get_cluster(int(cluster_id))
     if not cluster or not cluster.get("schema_registry_url"):
         return {"subjects": [], "status": "not_configured"}
-    sr = SchemaRegistryCollector(cluster["schema_registry_url"])
+    sr = SchemaRegistryCollector(cluster["schema_registry_url"],
+        username=cluster.get("schema_registry_username"),
+        password=cluster.get("schema_registry_password"))
     try:
         result = await sr.collect()
         total_subjects = result.get("subject_count", len(result.get("subjects", [])))
@@ -1759,7 +1763,9 @@ async def search_schemas(cluster_id: str, q: str = ""):
     cluster = await get_backend().get_cluster(int(cluster_id))
     if not cluster or not cluster.get("schema_registry_url"):
         return {"subjects": [], "query": q}
-    sr = SchemaRegistryCollector(cluster["schema_registry_url"])
+    sr = SchemaRegistryCollector(cluster["schema_registry_url"],
+        username=cluster.get("schema_registry_username"),
+        password=cluster.get("schema_registry_password"))
     try:
         result = await sr.collect()
         ql = q.lower()
