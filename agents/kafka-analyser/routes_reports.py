@@ -194,12 +194,9 @@ async def list_reports(cluster_id: str | None = None) -> dict:
         cg_count = cg.scalar() or 0
         connector_count = 0
         try:
-            from routes_dashboard import get_kafka_connect
-            from storage import get_backend as _gb3
-            _cls3 = await _gb3().get_clusters("kafka-analyser")
-            _en3 = [c for c in _cls3 if c.get("enabled") and c.get("kafka_connect_url")]
-            if _en3:
-                _cdata = await get_kafka_connect(cluster_id=str(_en3[0].get("id","")))
+            if cluster_id:
+                from routes_dashboard import get_kafka_connect
+                _cdata = await get_kafka_connect(cluster_id=cluster_id)
                 connector_count = _cdata.get("connector_count", 0)
         except Exception:
             pass

@@ -218,26 +218,18 @@
     async function loadDataSource() {
       const el = document.getElementById('data-source-body');
       try {
-        const selCluster = document.getElementById('report-cluster-sel')?.value || '';
-        const [d, clusterResp] = await Promise.all([
-          api('/reports' + (selCluster ? '?cluster_id=' + selCluster : '')),
-          api('/settings/clusters').catch(() => ({ clusters: [] }))
-        ]);
-        // Update select to reflect current value
-        const sel = document.getElementById('report-cluster-sel');
-        if (sel && selCluster) sel.value = selCluster;
+        const clusterResp = await api('/settings/clusters').catch(() => ({ clusters: [] }));
         const enabledClusters = (clusterResp.clusters || []).filter(c => c.enabled);
         const enabledCount = enabledClusters.length;
-        // Add cluster selector
         const existingSel = document.getElementById('report-cluster-sel');
         const currentVal = existingSel?.value || (enabledClusters[0]?.id?.toString() || '');
-        const selHtml = `<div class="info-card__row"><div class="info-card__label">Cluster</div><div class="info-card__value">
+        const d = await api('/reports' + (currentVal ? '?cluster_id=' + currentVal : ''));
+        const selHtml = `<div class="info-card__row"><div class="info-card__label">Cluster <span style="font-size:.75rem;color:var(--text-muted)">(${enabledCount} configured)</span></div><div class="info-card__value">
           <select id="report-cluster-sel" style="font-size:.8rem;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text)" onchange="loadDataSource()">
             ${enabledClusters.map(c=>`<option value="${c.id}" ${c.id.toString()===currentVal?'selected':''}>${c.name}</option>`).join('')}
           </select></div></div>`;
         let html = selHtml;
         html += `<div class="info-card__row"><div class="info-card__label">Source Type</div><div class="info-card__value">${d.source_type || 'live'}</div></div>`;
-        html += `<div class="info-card__row"><div class="info-card__label">Clusters Configured</div><div class="info-card__value">${enabledCount}</div></div>`;
         html += `<div class="info-card__row"><div class="info-card__label">Brokers</div><div class="info-card__value">${d.broker_count || 0}</div></div>`;
         html += `<div class="info-card__row"><div class="info-card__label">Topics</div><div class="info-card__value">${(d.topic_count || 0).toLocaleString()}</div></div>`;
         html += `<div class="info-card__row"><div class="info-card__label">Consumer Groups</div><div class="info-card__value">${(d.consumer_group_count || 0).toLocaleString()}</div></div>`;
