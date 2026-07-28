@@ -603,9 +603,7 @@
 
       // ── Anomalies table ─────────────────────────────────────────────────────
       document.getElementById('tab-overview').innerHTML =
-        kpis + healthStrip + overviewCharts + `
-        <div class="chart-card__title">Broker Health</div>
-        <div class="broker-grid">${brokerCards}</div>`;
+        kpis + healthStrip + overviewCharts;
 
       setTimeout(async () => {
         if (window._overviewActivityChart) { window._overviewActivityChart.destroy(); window._overviewActivityChart = null; }

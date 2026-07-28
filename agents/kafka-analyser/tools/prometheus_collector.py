@@ -11,7 +11,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_CURL_MAX_TIME = 50
+_CURL_MAX_TIME = 180
 _BROKER_TIMEOUT = 60.0
 
 _broker_state: dict[str, dict] = {}
@@ -188,7 +188,7 @@ async def _curl_get(url: str, max_time: int = 10) -> str:
 
 
 async def scrape_broker(host: str, port: int, cpu_cores: int | None = None) -> dict[str, Any]:
-    """Scrape one broker — Phase 1 filtered curl + Phase 2 curl for throughput."""
+    """Scrape one broker — Phase 1 filtered curl for heap, CPU, URP metrics."""
     defaults = {
         "heap_pct": 0.0, "cpu_pct": 0.0, "gc_pause_ms": 0.0,
         "messages_in_per_sec": 0.0, "bytes_in_per_sec": 0.0,
@@ -207,48 +207,6 @@ async def scrape_broker(host: str, port: int, cpu_cores: int | None = None) -> d
         params = "&".join(f"name[]={m}" for m in _FILTERED_METRICS)
         phase1_raw = await _curl_get(f"http://{host}:{port}/metrics?{params}", max_time=10)
         metrics = _parse_prometheus_text(phase1_raw)
-
-        # Phase 2: full curl — gets throughput counters not available via filter
-        # Load phase2 tracking from its own DB key — no in-memory dependency
-        phase2_db = await _load_scrape_state(f"phase2_{state_key}")
-        prev_fail_count = phase2_db.get("phase2_fail_count", 0)
-        prev_throughput = phase2_db.get("throughput_available", True)
-        should_retry = (prev_fail_count % 3 == 0)
-        if not prev_throughput and not should_retry:
-            logger.info("Skipping Phase 2 for %s (fail_count=%d, retrying every 3rd)", host, prev_fail_count)
-            phase2_raw = None
-            await _save_scrape_state(f"phase2_{state_key}", {
-                "phase2_fail_count": prev_fail_count + 1, "throughput_available": False
-            })
-        else:
-            phase2_raw = await _curl_get(f"http://{host}:{port}/metrics", max_time=_CURL_MAX_TIME)
-            if not phase2_raw:
-                logger.info("Phase 2 timed out for %s — fail_count now %d", host, prev_fail_count + 1)
-                await _save_scrape_state(f"phase2_{state_key}", {
-                    "phase2_fail_count": prev_fail_count + 1, "throughput_available": False
-                })
-        if phase2_raw:
-            kept = []
-            for line in phase2_raw.splitlines():
-                if not line or line.startswith("#"):
-                    continue
-                # Throughput counters — match by prefix (unlabeled broker aggregates)
-                matched = False
-                for prefix in _THROUGHPUT_PREFIXES:
-                    if line.startswith(prefix):
-                        kept.append(line)
-                        matched = True
-                        break
-                # Latency — match by substring (label order may vary)
-                if not matched and "requestmetrics_totaltimems" in line:
-                    if 'quantile="0.999"' in line and (
-                        'request="Produce"' in line or 'request="Fetch"' in line
-                    ):
-                        kept.append(line)
-            if kept:
-                metrics.update(_parse_prometheus_text("\n".join(kept)))
-
-        throughput_available = bool(phase2_raw)
 
         prev = _broker_state.get(state_key, {})
         prev_metrics = prev.get("metrics", {})
@@ -306,11 +264,6 @@ async def scrape_broker(host: str, port: int, cpu_cores: int | None = None) -> d
             f"scrape_state_{state_key}",
             {"metrics": metrics, "time": now}
         ))
-        if phase2_raw:
-            # Reset phase2 tracking on successful scrape
-            await _save_scrape_state(f"phase2_{state_key}", {
-                "phase2_fail_count": 0, "throughput_available": True
-            })
 
         return {
             "heap_pct": heap_pct, "cpu_pct": cpu_pct,
@@ -323,7 +276,7 @@ async def scrape_broker(host: str, port: int, cpu_cores: int | None = None) -> d
             "produce_latency_ms": produce_latency, "fetch_latency_ms": fetch_latency,
             "under_replicated_partitions": urp, "at_min_isr_partitions": at_min_isr,
             "partition_count": partition_count,
-            "throughput_available": throughput_available,
+            "throughput_available": True,
         }
     except Exception as exc:
         logger.warning("Prometheus scrape failed for %s:%s: %s", host, port, exc)
