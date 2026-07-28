@@ -1243,7 +1243,7 @@
         mirror_source_cluster_id: document.getElementById('cf-mirror-source').value ?
           parseInt(document.getElementById('cf-mirror-source').value) : null,
         mirror_mode: document.getElementById('cf-mirror-mode').value,
-        enabled: false,
+        enabled: document.getElementById('cf-enabled')?.checked || false,
       };
       if (!payload.name || !payload.bootstrap_servers) {
         msg.textContent = '✗ Name and Bootstrap Servers are required';
