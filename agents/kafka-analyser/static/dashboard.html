@@ -3586,7 +3586,7 @@
 
       const groupCount = (data.mm1 && data.mm1.group_count) ?? (data.mm2 && data.mm2.group_count) ?? 0;
       const totalLag   = (data.mm1 && data.mm1.total_lag) ?? (data.mm2 && data.mm2.total_lag) ?? 0;
-      const mmStatus   = (data.mm1 && data.mm1.status) || (data.mm2 && data.mm2.status) || 'unknown';
+      const mmStatus   = (data.mm1 && (data.mm1.health || data.mm1.status)) || (data.mm2 && (data.mm2.health || data.mm2.status)) || 'unknown';
       const isHealthy  = mmStatus === 'healthy';
       const lagClass   = totalLag > 10000 ? 'kpi--danger' : totalLag > 1000 ? 'kpi--warn' : 'kpi--success';
 
