@@ -91,15 +91,6 @@
         </div>
       </div>
 
-      <!-- Cluster Snapshot -->
-      <div class="section-card">
-        <div class="section-card__header">
-          🏪 Cluster Snapshot
-        </div>
-        <div id="snapshot-body" style="padding:16px 20px">
-          <div style="color:var(--text-muted);font-size:.85rem">Loading...</div>
-        </div>
-      </div>
     </div><!-- end tab-reports -->
 
     <!-- ── Jobs Tab ────────────────────────────────────────────────────────── -->
@@ -232,13 +223,17 @@
           api('/reports' + (selCluster ? '?cluster_id=' + selCluster : '')),
           api('/settings/clusters').catch(() => ({ clusters: [] }))
         ]);
+        // Update select to reflect current value
+        const sel = document.getElementById('report-cluster-sel');
+        if (sel && selCluster) sel.value = selCluster;
         const enabledClusters = (clusterResp.clusters || []).filter(c => c.enabled);
         const enabledCount = enabledClusters.length;
         // Add cluster selector
-        const selHtml = `<div class="info-card__row"><div class="info-card__label">Filter by Cluster</div><div class="info-card__value">
+        const existingSel = document.getElementById('report-cluster-sel');
+        const currentVal = existingSel?.value || (enabledClusters[0]?.id?.toString() || '');
+        const selHtml = `<div class="info-card__row"><div class="info-card__label">Cluster</div><div class="info-card__value">
           <select id="report-cluster-sel" style="font-size:.8rem;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text)" onchange="loadDataSource()">
-            <option value="">All Clusters</option>
-            ${enabledClusters.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}
+            ${enabledClusters.map(c=>`<option value="${c.id}" ${c.id.toString()===currentVal?'selected':''}>${c.name}</option>`).join('')}
           </select></div></div>`;
         let html = selHtml;
         html += `<div class="info-card__row"><div class="info-card__label">Source Type</div><div class="info-card__value">${d.source_type || 'live'}</div></div>`;
@@ -516,7 +511,6 @@
     (async () => {
       await portalReady;
       loadDataSource();
-      loadSnapshot();
       if (document.getElementById('tab-jobs').style.display !== 'none') loadJobs();
     })();
   </script>
