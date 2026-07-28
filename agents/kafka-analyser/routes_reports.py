@@ -173,7 +173,7 @@ async def generate_sample() -> dict:
 
 
 @router.get("")
-async def list_reports() -> dict:
+async def list_reports(cluster_id: str | None = None) -> dict:
     """Return current sync metadata from postgres."""
     try:
         from database import SessionLocal
@@ -182,13 +182,15 @@ async def list_reports() -> dict:
             return kafka_store.get_sync_meta()
         async with SessionLocal() as sess:
             # Get counts from postgres tables
-            brokers = await sess.execute(_t("SELECT COUNT(*) FROM kafka_broker_metrics WHERE cluster_id IN (SELECT id FROM kafka_clusters WHERE agent_slug='kafka-analyser' AND enabled=true)"))
-            topics = await sess.execute(_t("SELECT COUNT(*) FROM kafka_topic_metrics WHERE cluster_id IN (SELECT id FROM kafka_clusters WHERE agent_slug='kafka-analyser' AND enabled=true)"))
-            groups = await sess.execute(_t("SELECT COUNT(*) FROM kafka_consumer_lag WHERE cluster_id IN (SELECT id FROM kafka_clusters WHERE agent_slug='kafka-analyser' AND enabled=true)") if False else _t("SELECT 0"))
+            cid_filter = "AND cluster_id=:cid" if cluster_id else ""
+            cid_params = {"cid": int(cluster_id)} if cluster_id else {}
+            brokers = await sess.execute(_t(f"SELECT COUNT(*) FROM kafka_broker_metrics WHERE cluster_id IN (SELECT id FROM kafka_clusters WHERE agent_slug='kafka-analyser' AND enabled=true) {cid_filter}"), cid_params)
+            topics = await sess.execute(_t(f"SELECT COUNT(*) FROM kafka_topic_metrics WHERE cluster_id IN (SELECT id FROM kafka_clusters WHERE agent_slug='kafka-analyser' AND enabled=true) {cid_filter}"), cid_params)
+            groups = await sess.execute(_t(f"SELECT COUNT(*) FROM kafka_consumer_lag WHERE cluster_id IN (SELECT id FROM kafka_clusters WHERE agent_slug='kafka-analyser' AND enabled=true) {cid_filter}") if False else _t("SELECT 0"), cid_params)
             broker_count = brokers.scalar() or 0
             topic_count = topics.scalar() or 0
         # Consumer groups from postgres
-        cg = await sess.execute(_t("SELECT COUNT(*) FROM kafka_consumer_group_lag WHERE cluster_id IN (SELECT id FROM kafka_clusters WHERE agent_slug='kafka-analyser' AND enabled=true)"))
+        cg = await sess.execute(_t(f"SELECT COUNT(*) FROM kafka_consumer_group_lag WHERE cluster_id IN (SELECT id FROM kafka_clusters WHERE agent_slug='kafka-analyser' AND enabled=true) {cid_filter}"), cid_params)
         cg_count = cg.scalar() or 0
         connector_count = 0
         try:

@@ -122,6 +122,9 @@
           <div>
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
               <span style="font-size:.88rem;font-weight:600">📋 Run Monitor</span>
+              <select id="run-filter-cluster" style="font-size:.8rem;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text)" onchange="_runsFilter.clusterId=this.value;loadRunMonitor(true)">
+                <option value="all">All Clusters</option>
+              </select>
               <select id="run-filter-job" style="font-size:.8rem;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text)" onchange="_runsFilter.jobType=this.value;loadRunMonitor(true)">
                 <option value="all">All Jobs</option>
                 <option value="broker-health">Broker Health</option>
@@ -224,12 +227,20 @@
     async function loadDataSource() {
       const el = document.getElementById('data-source-body');
       try {
+        const selCluster = document.getElementById('report-cluster-sel')?.value || '';
         const [d, clusterResp] = await Promise.all([
-          api('/reports'),
+          api('/reports' + (selCluster ? '?cluster_id=' + selCluster : '')),
           api('/settings/clusters').catch(() => ({ clusters: [] }))
         ]);
-        const enabledCount = (clusterResp.clusters || []).filter(c => c.enabled).length;
-        let html = '';
+        const enabledClusters = (clusterResp.clusters || []).filter(c => c.enabled);
+        const enabledCount = enabledClusters.length;
+        // Add cluster selector
+        const selHtml = `<div class="info-card__row"><div class="info-card__label">Filter by Cluster</div><div class="info-card__value">
+          <select id="report-cluster-sel" style="font-size:.8rem;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text)" onchange="loadDataSource()">
+            <option value="">All Clusters</option>
+            ${enabledClusters.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}
+          </select></div></div>`;
+        let html = selHtml;
         html += `<div class="info-card__row"><div class="info-card__label">Source Type</div><div class="info-card__value">${d.source_type || 'live'}</div></div>`;
         html += `<div class="info-card__row"><div class="info-card__label">Clusters Configured</div><div class="info-card__value">${enabledCount}</div></div>`;
         html += `<div class="info-card__row"><div class="info-card__label">Brokers</div><div class="info-card__value">${d.broker_count || 0}</div></div>`;
@@ -323,11 +334,24 @@
 
         // Store cluster names for run monitor
         Object.entries(clusters).forEach(([cid, c]) => _clusterNames[cid] = c.name);
+        // Populate cluster filter dropdown
+        const clusterSel = document.getElementById('run-filter-cluster');
+        if (clusterSel) {
+          const existing = clusterSel.innerHTML;
+          Object.entries(clusters).forEach(([cid, c]) => {
+            if (!clusterSel.querySelector(`option[value="${cid}"]`)) {
+              clusterSel.innerHTML += `<option value="${cid}">${c.name}</option>`;
+            }
+          });
+        }
 
         let html = '';
         Object.entries(clusters).forEach(([cid, cluster]) => {
-          html += `<div style="margin-bottom:20px">
-            <div style="font-size:.88rem;font-weight:700;margin-bottom:8px;color:var(--accent)">📡 ${cluster.name}</div>
+          html += `<div style="margin-bottom:8px">
+            <div style="font-size:.88rem;font-weight:700;padding:10px 14px;background:var(--navy-1);border:1px solid var(--border);border-radius:6px;cursor:pointer;display:flex;justify-content:space-between;align-items:center" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none';this.querySelector('.acc-arrow').textContent=this.nextElementSibling.style.display==='none'?'▶':'▼'">
+              <span>📡 ${cluster.name}</span><span class="acc-arrow">▶</span>
+            </div>
+            <div style="display:none">
             <table class="data-table" style="width:100%">
               <thead><tr>
                 <th>Job Type</th><th>Schedule</th><th>Timeout</th><th>Status</th><th style="text-align:right">Actions</th>
@@ -351,7 +375,7 @@
               </td>
             </tr>`;
           });
-          html += `</tbody></table></div>`;
+          html += `</tbody></table></div></div>`;
         });
         document.getElementById('schedules-body').innerHTML = html || '<div style="color:var(--text-muted)">No jobs registered</div>';
       } catch(e) {
