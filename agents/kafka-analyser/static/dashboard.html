@@ -1554,44 +1554,16 @@
             })()}
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px">
               <div class="bm">
-                <div class="bm__label">GC Pauses</div>
-                <div class="bm__value" style="color:${(b.gc_pause_count ?? b.gc_pause_ms ?? 0) > 0 ? '#d97706' : 'var(--success)'}">${(b.gc_pause_count ?? b.gc_pause_ms ?? 0)}</div>
-              </div>
-              <div class="bm">
                 <div class="bm__label">Under-Replicated</div>
                 <div class="bm__value" style="color:${b.urp_count > 0 ? 'var(--danger)' : 'var(--success)'}">${b.urp_count}</div>
               </div>
               <div class="bm">
-                <div class="bm__label">Msgs/sec</div>
-                <div class="bm__value" style="font-size:.9rem">${b.throughput_available === false ? '—' : fmtRate(b.messages_in_per_sec || 0)}</div>
-              </div>
-              <div class="bm">
-                <div class="bm__label">Req Idle %</div>
-                <div class="bm__value" style="font-size:.9rem;color:${b.request_handler_idle_pct >= 80 ? 'var(--success)' : b.request_handler_idle_pct >= 50 ? '#d97706' : 'var(--danger)'}">${b.request_handler_idle_pct}%</div>
-              </div>
-              <div class="bm">
                 <div class="bm__label">Bytes In/s</div>
-                <div class="bm__value" style="font-size:.85rem">${b.throughput_available === false ? '—' : fmtBytes(b.bytes_in_per_sec || 0)+'/s'}</div>
+                <div class="bm__value" style="font-size:.85rem">${fmtBytes(b.bytes_in_per_sec || 0)+'/s'}</div>
               </div>
               <div class="bm">
-                <div class="bm__label">Bytes Out/s</div>
-                <div class="bm__value" style="font-size:.85rem">${b.throughput_available === false ? '—' : fmtBytes(b.bytes_out_per_sec || 0)+'/s'}</div>
-              </div>
-              <div class="bm">
-                <div class="bm__label">ISR Shrink/s</div>
-                <div class="bm__value" style="font-size:.85rem;color:${(b.isr_shrinks_per_sec || 0) > 0 ? 'var(--danger)' : 'var(--success)'}">${(b.isr_shrinks_per_sec || 0).toFixed(2)}</div>
-              </div>
-              <div class="bm">
-                <div class="bm__label">ISR Expand/s</div>
-                <div class="bm__value" style="font-size:.85rem;color:var(--success)">${(b.isr_expands_per_sec || 0).toFixed(2)}</div>
-              </div>
-              <div class="bm">
-                <div class="bm__label">Produce Latency</div>
-                <div class="bm__value" style="font-size:.85rem">${(b.produce_latency_ms || 0).toFixed(1)}ms</div>
-              </div>
-              <div class="bm">
-                <div class="bm__label">Fetch Latency</div>
-                <div class="bm__value" style="font-size:.85rem">${(b.fetch_latency_ms || 0).toFixed(1)}ms</div>
+                <div class="bm__label">Data Volume</div>
+                <div class="bm__value" style="font-size:.85rem">${(b.data_gb || 0).toFixed(2)} GB</div>
               </div>
             </div>
           </div>`;
