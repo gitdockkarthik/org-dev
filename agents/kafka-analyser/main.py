@@ -173,6 +173,23 @@ async def _init_config() -> None:
             except Exception as _mig_exc4:
                 logger.warning("schema_registry_auth migration skipped: %s", _mig_exc4)
             try:
+                await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS kafka_partition_leaders (
+                        id SERIAL PRIMARY KEY,
+                        cluster_id INTEGER NOT NULL,
+                        topic TEXT NOT NULL,
+                        partition INTEGER NOT NULL,
+                        leader_broker_id TEXT NOT NULL,
+                        updated_at TIMESTAMPTZ,
+                        CONSTRAINT uq_kafka_partition_leaders UNIQUE (cluster_id, topic, partition)
+                    )
+                """))
+                await conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_kafka_partition_leaders_cluster_broker ON kafka_partition_leaders (cluster_id, leader_broker_id)"
+                ))
+            except Exception as _mig_exc_pl:
+                logger.warning("kafka_partition_leaders migration skipped: %s", _mig_exc_pl)
+            try:
                 await conn.execute(text(
                     "ALTER TABLE kafka_clusters ADD COLUMN IF NOT EXISTS sr_restricted BOOLEAN"
                 ))

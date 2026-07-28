@@ -456,32 +456,68 @@ async def collect_topic_structure(cluster_id: str = ""):
                 _all_topics = [t for t in _admin.list_topics() if not t.startswith('_')]
                 leader_counts = _col.defaultdict(int)
                 replica_counts = _col.defaultdict(int)
+                # topic -> leader_broker_id mapping for partition leaders table
+                partition_leaders = []
                 BATCH = 500
                 for _i in range(0, len(_all_topics), BATCH):
                     _meta = _admin.describe_topics(_all_topics[_i:_i+BATCH])
                     for _tm in _meta:
+                        topic_name = _tm.get('topic', '')
                         for _p in _tm.get('partitions', []):
-                            leader_counts[str(_p['leader'])] += 1
+                            leader_id = str(_p['leader'])
+                            leader_counts[leader_id] += 1
+                            partition_leaders.append({
+                                'topic': topic_name,
+                                'partition': _p['partition'],
+                                'leader': leader_id,
+                            })
                             for _r in _p.get('replicas', []):
                                 replica_counts[str(_r)] += 1
                 _admin.close()
-                # Get data volume per broker from kafka_topic_metrics + leader assignments
                 from database import SessionLocal
                 from sqlalchemy import text as _st
                 async with SessionLocal() as _sess:
+                    # Bulk upsert partition leaders — same pattern as kafka_topic_metrics
+                    now_ts = __import__('datetime').datetime.now(__import__('datetime').timezone.utc)
+                    BULK = 1000
+                    for _bi in range(0, len(partition_leaders), BULK):
+                        batch = partition_leaders[_bi:_bi+BULK]
+                        pl_values = ", ".join(
+                            f"({int(cid)}, '{pl['topic'].replace(chr(39), chr(39)*2)}', {pl['partition']}, '{pl['leader']}')"
+                            for pl in batch
+                        )
+                        await _sess.execute(_st(f"""
+                            INSERT INTO kafka_partition_leaders
+                            (cluster_id, topic, partition, leader_broker_id, updated_at)
+                            SELECT c, t, p, l, now()
+                            FROM (VALUES {pl_values}) AS v(c, t, p, l)
+                            ON CONFLICT (cluster_id, topic, partition) DO UPDATE SET
+                                leader_broker_id = EXCLUDED.leader_broker_id,
+                                updated_at = now()
+                        """))
+                    # Aggregate data_gb per broker from kafka_topic_metrics
                     for broker_id, lcount in leader_counts.items():
+                        data_gb_row = await _sess.execute(_st("""
+                            SELECT COALESCE(SUM(tm.size_bytes), 0) / 1073741824.0
+                            FROM kafka_topic_metrics tm
+                            JOIN kafka_partition_leaders pl ON pl.cluster_id=tm.cluster_id AND pl.topic=tm.topic
+                            WHERE tm.cluster_id=:cid AND pl.leader_broker_id=:bid
+                        """), {"cid": int(cid), "bid": broker_id})
+                        data_gb = round(float(data_gb_row.scalar() or 0), 2)
                         await _sess.execute(_st("""
                             INSERT INTO kafka_broker_distribution
                             (cluster_id, broker_id, leader_partition_count, replica_partition_count, data_gb, updated_at)
-                            VALUES (:cid, :bid, :lcount, :rcount, 0, now())
+                            VALUES (:cid, :bid, :lcount, :rcount, :data_gb, now())
                             ON CONFLICT (cluster_id, broker_id) DO UPDATE SET
                                 leader_partition_count = EXCLUDED.leader_partition_count,
                                 replica_partition_count = EXCLUDED.replica_partition_count,
+                                data_gb = EXCLUDED.data_gb,
                                 updated_at = now()
                         """), {"cid": int(cid), "bid": broker_id,
-                               "lcount": lcount, "rcount": replica_counts.get(broker_id, 0)})
+                               "lcount": lcount, "rcount": replica_counts.get(broker_id, 0),
+                               "data_gb": data_gb})
                     await _sess.commit()
-                logger.info("Broker distribution updated for %s: %s brokers", c["name"], len(leader_counts))
+                logger.info("Broker distribution updated for %s: %s brokers, %s partition leaders", c["name"], len(leader_counts), len(partition_leaders))
             except Exception as _be:
                 logger.warning("Broker distribution failed for %s: %s", c["name"], _be)
     except Exception as e:

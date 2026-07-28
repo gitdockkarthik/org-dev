@@ -13,6 +13,9 @@ import kafka_store
 
 from shared.llm import stream_message as _llm_stream
 
+import logging
+logger = logging.getLogger(__name__)
+
 _lag_trend_cache: dict = {}
 _LAG_TREND_CACHE_TTL_SECS = 300  # 5 minutes — matches collection interval
 
@@ -443,21 +446,43 @@ async def get_brokers(cluster_id: str | None = None, hours: int | None = None) -
                          ORDER BY broker_id"""),
                 {"cid": int(cluster_id)}
             )
+            # Fetch broker rows first before executing next query
+            _broker_rows = rows.fetchall()
+            # Aggregate bytes_in per broker from partition leaders
+            bytes_by_broker = {}
+            data_gb_by_broker = {}
+            try:
+                _br2 = await _sess.execute(_text("""
+                    SELECT pl.leader_broker_id,
+                           COALESCE(SUM(tm.bytes_in_per_sec), 0) as bytes_in,
+                           COALESCE(SUM(tm.size_bytes), 0) / 1073741824.0 as data_gb
+                    FROM kafka_partition_leaders pl
+                    JOIN kafka_topic_metrics tm ON tm.cluster_id=pl.cluster_id AND tm.topic=pl.topic
+                    WHERE pl.cluster_id=:cid
+                    GROUP BY pl.leader_broker_id
+                """), {"cid": int(cluster_id)})
+                for _r2 in _br2.fetchall():
+                    bytes_by_broker[str(_r2.leader_broker_id)] = round(float(_r2.bytes_in or 0), 2)
+                    data_gb_by_broker[str(_r2.leader_broker_id)] = round(float(_r2.data_gb or 0), 2)
+            except Exception as _bex:
+                pass
             brokers = []
-            for r in rows.fetchall():
+            for r in _broker_rows:
+                bid = str(r.broker_id)
                 brokers.append({
                     "broker_id": r.broker_id,
                     "id": r.broker_id,
                     "heap_pct": r.heap_pct,
                     "cpu_pct": r.cpu_pct,
                     "gc_pause_ms": r.gc_pause_ms,
+                    "bytes_in_per_sec": bytes_by_broker.get(bid, 0.0),
+                    "data_gb": data_gb_by_broker.get(bid, 0.0),
                     "request_handler_idle_pct": r.request_handler_idle_pct,
                     "urp_count": r.urp_count,
                     "messages_in_per_sec": r.messages_in_per_sec,
                     "disk_pct": r.disk_pct,
                     "status": "healthy" if r.urp_count == 0 else "degraded",
                     "cpu_cores_configured": True,
-                    "bytes_in_per_sec": r.bytes_in_per_sec or 0.0,
                     "bytes_out_per_sec": r.bytes_out_per_sec or 0.0,
                     "isr_shrinks_per_sec": r.isr_shrinks_per_sec or 0.0,
                     "isr_expands_per_sec": r.isr_expands_per_sec or 0.0,
