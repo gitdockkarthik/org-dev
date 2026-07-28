@@ -31,8 +31,20 @@ class SchemaRegistryCollector:
                 return await self._collect_from_postgres()
 
             auth = httpx.BasicAuth(self._auth[0], self._auth[1]) if self._auth else None
-            async with httpx.AsyncClient(timeout=10.0, auth=auth) as client:
-                subjects = await self._get_subjects(client)
+            _timeout = 10.0
+            # Try each SR node in order until one responds
+            urls = [u.strip() for u in self._url.split(",") if u.strip()] if "," in self._url else [self._url]
+            subjects = []
+            for _url in urls:
+                try:
+                    async with httpx.AsyncClient(timeout=_timeout, auth=auth) as client:
+                        self._url = _url
+                        subjects = await self._get_subjects(client)
+                        break
+                except Exception:
+                    continue
+            else:
+                return {"status": "unreachable", "url": self._url, "subjects": [], "subject_count": 0}
                 total_subject_count = len(subjects)
                 sr_restricted = False
                 if not subjects:

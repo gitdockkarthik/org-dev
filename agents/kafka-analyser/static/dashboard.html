@@ -1143,6 +1143,7 @@
         const params = new URLSearchParams();
         params.set('limit', '50');
         params.set('offset', String(_topicTableOffset));
+        params.set('cluster_id', _currentClusterId || '');
         if (search) params.set('search', search);
         try {
           const res = await fetch(`${PROXY}/dashboard/topics?${params.toString()}`, { headers: _authHeaders(), cache: 'no-store' });
@@ -2523,6 +2524,7 @@
       window._clusterCounts = null;
       // Reset to first-load state — clear all loaded tabs and chart instances
       _loaded.clear();
+      _topicTableOffset = 0; _topicTableRows = []; _topicTableTotal = 0;
       // Destroy all known chart instances
       if (window._overviewLagTrendChart) { window._overviewLagTrendChart.destroy(); window._overviewLagTrendChart = null; }
       if (window._overviewActivityChart) { window._overviewActivityChart.destroy(); window._overviewActivityChart = null; }

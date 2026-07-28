@@ -742,7 +742,7 @@ async def collect_sr_subjects(cluster_id: str = ""):
     if not c:
         collect_sr_subjects._last_result = f"Cluster {cluster_id} not found"
         return
-    sr_url = c.get("schema_registry_url", "").split(",")[0].strip()
+    sr_url = c.get("schema_registry_url", "")
     if not sr_url:
         collect_sr_subjects._last_result = "No SR URL configured"
         return
@@ -961,7 +961,7 @@ async def collect_schema_registry():
     results = []
     for c in clusters:
         cid = _cid(c)
-        sr_url = c.get("schema_registry_url", "").split(",")[0].strip()
+        sr_url = c.get("schema_registry_url", "")
         if not sr_url:
             continue
         try:

@@ -370,14 +370,6 @@ async def get_topics(cluster_id: str | None = None, hours: int | None = None,
     if SessionLocal is None:
         return {"empty": True}
     if not cluster_id:
-        from storage import get_backend as _gb
-        try:
-            clusters = await _gb().get_clusters("kafka-analyser")
-            enabled = [c for c in clusters if c.get("enabled")]
-            cluster_id = str(enabled[0]["id"]) if enabled else None
-        except Exception:
-            cluster_id = None
-    if not cluster_id:
         return {"topics": [], "total": 0, "limit": limit, "offset": offset}
     cid = cluster_id
     try:
@@ -548,7 +540,7 @@ async def get_schema_registry(cluster_id: str | None = None) -> dict:
         try:
             cluster = await get_backend().get_cluster(int(cluster_id))
             if cluster:
-                sr_url = cluster.get("schema_registry_url", "").split(",")[0].strip()
+                sr_url = cluster.get("schema_registry_url", "")
         except Exception:
             pass
 
@@ -609,8 +601,15 @@ async def get_zookeeper(cluster_id: str | None = None) -> dict:
         }
 
     from tools.zookeeper import ZooKeeperCollector
-    collector = ZooKeeperCollector(zk_url)
-    return await collector.collect()
+    zk_nodes = [u.strip() for u in zk_url.split(",") if u.strip()]
+    last_result = None
+    for zk_node in zk_nodes:
+        collector = ZooKeeperCollector(zk_node)
+        result = await collector.collect()
+        if result.get("status") != "unreachable":
+            return result
+        last_result = result
+    return last_result or {"status": "unreachable", "url": zk_url}
 
 
 @router.get("/dashboard/kafka-connect")
@@ -628,14 +627,15 @@ async def get_kafka_connect(cluster_id: str | None = None) -> dict:
             pass
 
     if not connect_url:
-        # Use first enabled cluster if no cluster_id provided or connect_url not found
+        if cluster_id:
+            return {"status": "not_configured", "message": "No Kafka Connect URL configured for this cluster.", "connector_count": 0, "connectors": []}
         try:
             all_clusters = await get_backend().get_clusters("kafka-analyser")
             enabled = [c for c in all_clusters if c.get("enabled") and c.get("kafka_connect_url")]
             if enabled:
                 connect_url = enabled[0].get("kafka_connect_url", "")
             else:
-                return {"status": "not_configured", "message": "No Kafka Connect URL configured. Edit the cluster in Settings.", "connector_count": 0, "connectors": []}
+                return {"status": "not_configured", "message": "No Kafka Connect URL configured.", "connector_count": 0, "connectors": []}
         except Exception:
             return {"status": "not_configured", "connector_count": 0, "connectors": []}
 
@@ -1747,7 +1747,7 @@ async def stream_schema_details(cluster_id: str, limit: int = 50):
     cluster = await get_backend().get_cluster(int(cluster_id))
     if not cluster or not cluster.get("schema_registry_url"):
         return {"subjects": [], "status": "not_configured"}
-    sr = SchemaRegistryCollector(cluster["schema_registry_url"].split(",")[0].strip(),
+    sr = SchemaRegistryCollector(cluster["schema_registry_url"],
         username=cluster.get("schema_registry_username"),
         password=cluster.get("schema_registry_password"),
         topics=[])
@@ -1785,7 +1785,7 @@ async def search_schemas(cluster_id: str, q: str = ""):
     cluster = await get_backend().get_cluster(int(cluster_id))
     if not cluster or not cluster.get("schema_registry_url"):
         return {"subjects": [], "query": q}
-    sr = SchemaRegistryCollector(cluster["schema_registry_url"].split(",")[0].strip(),
+    sr = SchemaRegistryCollector(cluster["schema_registry_url"],
         username=cluster.get("schema_registry_username"),
         password=cluster.get("schema_registry_password"),
         topics=[])
