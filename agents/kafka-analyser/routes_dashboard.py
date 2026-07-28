@@ -751,8 +751,27 @@ async def get_kafka_connect(cluster_id: str | None = None) -> dict:
 @router.get("/dashboard/mirrormaker")
 async def get_mirrormaker(cluster_id: str | None = None, hours: int | None = None) -> dict:
     """Detect MirrorMaker replication and compare source/target lag."""
-    data = kafka_store.get_cluster_data(cluster_id, hours=hours)
-    if data is None:
+    # Build cluster data from postgres instead of kafka_store
+    data = {}
+    if cluster_id:
+        try:
+            from database import SessionLocal
+            from sqlalchemy import text as _mmt
+            if SessionLocal:
+                async with SessionLocal() as _mms:
+                    # Consumer groups
+                    _cg = await _mms.execute(_mmt(
+                        "SELECT group_id FROM kafka_consumer_group_lag WHERE cluster_id=:cid"
+                    ), {"cid": int(cluster_id)})
+                    data["consumer_groups"] = [{"group_id": r.group_id} for r in _cg.fetchall()]
+                    # Topics
+                    _tn = await _mms.execute(_mmt(
+                        "SELECT topic FROM kafka_topic_names WHERE cluster_id=:cid"
+                    ), {"cid": int(cluster_id)})
+                    data["topics"] = [{"name": r.topic} for r in _tn.fetchall()]
+        except Exception as _mme:
+            logger.warning("MM data fetch failed: %s", _mme)
+    if not data:
         return {
             "detected": False,
             "mode": "none",
@@ -769,6 +788,11 @@ async def get_mirrormaker(cluster_id: str | None = None, hours: int | None = Non
             cluster = await get_backend().get_cluster(int(cluster_id))
             if cluster:
                 mirror_mode = cluster.get("mirror_mode", "none")
+                # Override detection with explicit mirror_mode config
+                if mirror_mode and mirror_mode != "none" and not result.get("detected"):
+                    result["detected"] = True
+                    result["mode"] = mirror_mode
+                    result["message"] = f"MirrorMaker {mirror_mode.upper()} configured for this cluster."
                 source_id = cluster.get("mirror_source_cluster_id")
 
                 if mirror_mode != "none" and source_id:
