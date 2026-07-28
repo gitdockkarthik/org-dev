@@ -2881,7 +2881,7 @@
             <div style="flex:1;min-width:140px;text-align:center;padding:12px">
               ${c.connector_status === 'na' ? `
                 <div style="font-size:1.2rem;font-weight:700;color:var(--text-muted)">—</div>
-                <div style="font-size:.72rem;color:var(--text-muted)">Not configured</div>
+                <div style="font-size:.72rem;color:var(--text-muted)">Kafka Connect not configured</div>
               ` : `
                 <div style="font-size:1.5rem;font-weight:700;color:${col(c.connector_status)}">${c.connector_running||0}<span style="font-size:.9rem;color:var(--text-muted)">/${(c.connector_running||0)+(c.connector_failed||0)}</span></div>
                 <div style="font-size:.72rem;color:var(--text-muted)">${c.connector_paused||0} paused (excl.)</div>
