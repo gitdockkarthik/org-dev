@@ -109,7 +109,7 @@ class SchemaRegistryCollector:
                     "total_versions": 0,
                     "global_compatibility": "UNKNOWN",
                     "schema_types": {},
-                    "restricted_note": "Schema Registry RBAC enabled — background sync job collecting subjects. Check back shortly.",
+                    "restricted_note": "Schema Registry subject listing restricted by RBAC. Contact your Schema Registry administrator to grant READ access on Subject:* for full visibility.",
                 }
             subject_details = [
                 {

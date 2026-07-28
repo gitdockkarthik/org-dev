@@ -2616,6 +2616,11 @@
           `Could not connect to ${data.url}`);
         return;
       }
+      if (data.status === 'restricted' && !data.subject_count) {
+        el.innerHTML = emptyState('🔒', 'Schema Registry Access Restricted',
+          data.restricted_note || 'Subject listing restricted by RBAC. Contact your Schema Registry administrator.');
+        return;
+      }
 
       const compatColor = {
         'BACKWARD': 'var(--success)',
