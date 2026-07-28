@@ -45,6 +45,9 @@ class SchemaRegistryCollector:
                     continue
             else:
                 return {"status": "unreachable", "url": self._url, "subjects": [], "subject_count": 0}
+
+            # Continue with subjects fetched from working node
+            async with httpx.AsyncClient(timeout=_timeout, auth=auth) as client:
                 total_subject_count = len(subjects)
                 sr_restricted = False
                 if not subjects:

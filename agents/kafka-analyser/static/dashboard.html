@@ -2785,10 +2785,10 @@
     }
 
     function sloColor(status) {
-      return status === 'green' ? '#4CAF50' : status === 'amber' ? '#FF9800' : status === 'red' ? '#F44336' : '#666';
+      return status === 'green' ? '#4CAF50' : status === 'amber' ? '#FF9800' : status === 'red' ? '#F44336' : status === 'na' ? '#999' : '#666';
     }
     function sloIcon(status) {
-      return status === 'green' ? '✅' : status === 'amber' ? '⚠️' : status === 'red' ? '🔴' : '—';
+      return status === 'green' ? '✅' : status === 'amber' ? '⚠️' : status === 'red' ? '🔴' : status === 'na' ? '⊖' : '—';
     }
     function sloArrow(pct, target) {
       if (pct === null || pct === undefined) return '';
@@ -2809,9 +2809,9 @@
 
       // ── 1. SLO Compliance (top) ──────────────────────────────────────────
       const sloRows = [
-        {label:'Connector Availability', target:`>${t.connector_availability||99}%`, current:`${c.connector_availability_pct||0}%`, status:c.connector_status},
-        {label:'Task Health', target:`>${t.min_task_health_pct||95}%`, current:`${c.task_health_pct||0}%`, status:c.task_status||'unknown'},
-        {label:'Consumer Lag', target:`<${(t.consumer_lag||10000).toLocaleString()}`, current:`${((c.consumer_lag||0)/1000000).toFixed(1)}M`, status:c.lag_status},
+        {label:'Connector Availability', target:`>${t.connector_availability||99}%`, current:c.connector_status==='na' ? 'N/A' : `${c.connector_availability_pct||0}%`, status:c.connector_status},
+        {label:'Task Health', target:`>${t.min_task_health_pct||95}%`, current:c.task_status==='na' ? 'N/A' : `${c.task_health_pct||0}%`, status:c.task_status||'unknown'},
+        {label:'Consumer Lag', target:`<${(t.consumer_lag||10000).toLocaleString()}`, current:(c.consumer_lag||0) >= 1000000 ? `${((c.consumer_lag||0)/1000000).toFixed(1)}M` : (c.consumer_lag||0) >= 1000 ? `${((c.consumer_lag||0)/1000).toFixed(1)}K` : `${c.consumer_lag||0}`, status:c.lag_status},
         {label:'Broker Availability', target:`${t.expected_brokers||3}/3`, current:`${c.broker_count||0}/${c.expected_brokers||3} online`, status:c.broker_status},
         {label:'Under-replicated Partitions', target:`=${t.urp||0}`, current:`${c.urp||0}`, status:c.urp_status},
         {label:'Broker CPU', target:`<${t.max_broker_cpu_pct||85}%`, current:`${c.avg_cpu||0}%`, status:c.cpu_status||'unknown'},
@@ -2894,7 +2894,15 @@
         return s!==0?s:taskPct(a)-taskPct(b);
       });
       const topOffenders = connectors.filter(cn=>cn.state==='FAILED'||(cn.state==='RUNNING'&&cn.failed_tasks>0)).slice(0,5);
-      const section3 = `
+      const section3 = c.connector_status === 'na' ? `
+        <div class="chart-card" style="margin-bottom:16px">
+          <div class="chart-card__title">🔌 Connector Availability</div>
+          <div style="padding:24px;text-align:center;color:var(--text-muted)">
+            <div style="font-size:2rem;margin-bottom:8px">🔌</div>
+            <div style="font-weight:600;margin-bottom:4px">No Kafka Connect Configured</div>
+            <div style="font-size:.82rem">This cluster has no Kafka Connect workers. Add a Connect URL in cluster Settings to enable connector monitoring.</div>
+          </div>
+        </div>` : `
         <div class="chart-card" style="margin-bottom:16px">
           <div class="chart-card__title">🔌 Connector Availability
             <button onclick="window._openSLOPopup('connectors')" style="float:right;background:none;border:1px solid var(--border);border-radius:6px;padding:3px 10px;cursor:pointer;font-size:.75rem;color:var(--accent)">🔍 View All ${connectors.length}</button>

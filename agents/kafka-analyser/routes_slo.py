@@ -190,7 +190,7 @@ async def get_slo_dashboard(cluster_id: str, hours: int = 24) -> dict:
             # Task health: connectors with all tasks healthy / total active connectors
             total_active = conn_running + conn_failed
             conn_with_failures = sum(1 for r in connector_rows if r.failed_tasks > 0 and r.state == 'RUNNING')
-            task_health_pct = round((total_active - conn_with_failures) / total_active * 100, 1) if total_active > 0 else 100.0
+            task_health_pct = round((total_active - conn_with_failures) / total_active * 100, 1) if total_active > 0 else None
 
         # Compliance status helper
         def status(pct, target):
@@ -226,7 +226,7 @@ async def get_slo_dashboard(cluster_id: str, hours: int = 24) -> dict:
                 "avg_cpu": avg_cpu,
                 "avg_heap": avg_heap,
                 "task_health_pct": task_health_pct,
-                "connector_status": status(conn_avail_pct, conn_target),
+                "connector_status": "na" if conn_total_all == 0 else status(conn_avail_pct, conn_target),
                 "lag_status": "green" if current_lag <= lag_target else ("amber" if current_lag <= lag_target * 2 else "red"),
                 "urp_status": "green" if current_urp <= urp_target else "red",
                 "broker_count": broker_count,
@@ -235,7 +235,7 @@ async def get_slo_dashboard(cluster_id: str, hours: int = 24) -> dict:
                 "broker_status": "green" if broker_avail_pct >= 100 else ("amber" if broker_avail_pct >= 66 else "red"),
                 "cpu_status": "green" if avg_cpu <= cpu_target else ("amber" if avg_cpu <= cpu_target * 1.1 else "red") if avg_cpu > 0 else "unknown",
                 "heap_status": "green" if avg_heap <= heap_target else ("amber" if avg_heap <= heap_target * 1.1 else "red") if avg_heap > 0 else "unknown",
-                "task_status": ("green" if task_health_pct >= task_target else ("amber" if task_health_pct >= task_target * 0.9 else "red")) if task_health_pct is not None else "unknown",
+                "task_status": "na" if conn_total_all == 0 else (("green" if task_health_pct >= task_target else ("amber" if task_health_pct >= task_target * 0.9 else "red")) if task_health_pct is not None else "unknown"),
             },
             "trend": [
                 {
