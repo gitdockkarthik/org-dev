@@ -174,6 +174,26 @@ async def _init_config() -> None:
                 logger.warning("schema_registry_auth migration skipped: %s", _mig_exc4)
             try:
                 await conn.execute(text(
+                    "ALTER TABLE kafka_clusters ADD COLUMN IF NOT EXISTS sr_restricted BOOLEAN"
+                ))
+                await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS kafka_sr_subjects (
+                        id SERIAL PRIMARY KEY,
+                        cluster_id INTEGER NOT NULL,
+                        subject TEXT NOT NULL,
+                        latest_version INTEGER,
+                        schema_type TEXT,
+                        collected_at TIMESTAMPTZ,
+                        CONSTRAINT uq_kafka_sr_subjects_cluster_subject UNIQUE (cluster_id, subject)
+                    )
+                """))
+                await conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_kafka_sr_subjects_cluster_id ON kafka_sr_subjects (cluster_id)"
+                ))
+            except Exception as _mig_exc5:
+                logger.warning("sr_restricted/kafka_sr_subjects migration skipped: %s", _mig_exc5)
+            try:
+                await conn.execute(text(
                     "ALTER TABLE kafka_topic_names ADD COLUMN IF NOT EXISTS partition_count INTEGER DEFAULT 0"
                 ))
                 await conn.execute(text(
@@ -916,28 +936,31 @@ async def lifespan(app: FastAPI):
     from collectors import (
         collect_broker_health, collect_consumer_lag_active, collect_topic_sizes,
         collect_topic_structure, collect_msg_rate, collect_connector_snapshots,
-        compute_slo_compliance,
+        collect_sr_subjects, compute_slo_compliance,
     )
     from storage import get_backend as _gb
     _clusters = await _gb().get_clusters(settings.agent_slug)
     _enabled_clusters = [c for c in _clusters if c.get("enabled")]
 
-    # Job type definitions: (suffix, name, handler, default_timeout, default_cron, default_enabled)
+    # Job type definitions: (suffix, name, handler, default_timeout, default_cron, default_enabled, requires_config_key)
     _job_types = [
-        ("broker-health",        "Broker Health",        collect_broker_health,         60,  "*/2 * * * *",  True),
-        ("consumer-lag",         "Consumer Lag",         collect_consumer_lag_active,   120, "1 */2 * * *",  True),
-        ("topic-sizes",          "Topic Sizes",          collect_topic_sizes,           30,  "*/15 * * * *", True),
-        ("topic-structure",      "Topic Structure",      collect_topic_structure,       90,  "2 */30 * * *", False),
-        ("msg-rate",             "Message Rate",         collect_msg_rate,              60,  "*/2 * * * *",  True),
-        ("connector-snapshots",  "Connector Snapshots",  collect_connector_snapshots,   30,  "*/2 * * * *",  True),
-        ("slo-compliance",       "SLO Compliance",       compute_slo_compliance,        60,  "5 * * * *",    True),
+        ("broker-health",        "Broker Health",        collect_broker_health,         60,  "*/2 * * * *",  True,  None),
+        ("consumer-lag",         "Consumer Lag",         collect_consumer_lag_active,   120, "1 */2 * * *",  True,  None),
+        ("topic-sizes",          "Topic Sizes",          collect_topic_sizes,           30,  "*/15 * * * *", True,  None),
+        ("topic-structure",      "Topic Structure",      collect_topic_structure,       90,  "2 */30 * * *", False, None),
+        ("msg-rate",             "Message Rate",         collect_msg_rate,              60,  "*/2 * * * *",  True,  None),
+        ("connector-snapshots",  "Connector Snapshots",  collect_connector_snapshots,   30,  "*/2 * * * *",  True,  None),
+        ("sr-sync",              "Schema Registry Sync", collect_sr_subjects,           300, "*/30 * * * *", True,  "schema_registry_url"),
+        ("slo-compliance",       "SLO Compliance",       compute_slo_compliance,        60,  "5 * * * *",    True,  None),
     ]
 
     from sqlalchemy import select as _sel
     for _cluster in _enabled_clusters:
         _cid_str = str(_cluster["id"])
         _cname = _cluster["name"]
-        for _suffix, _jname, _handler, _timeout, _cron, _enabled in _job_types:
+        for _suffix, _jname, _handler, _timeout, _cron, _enabled, _requires in _job_types:
+            if _requires and not _cluster.get(_requires):
+                continue
             _job_id = f"kafka-{_suffix}-{_cid_str}"
             # Create cluster-specific handler with cluster_id bound
             import functools

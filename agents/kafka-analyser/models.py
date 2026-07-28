@@ -43,6 +43,7 @@ class KafkaCluster(Base):
     schema_registry_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     schema_registry_username: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     schema_registry_password: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    sr_restricted: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     zookeeper_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     kafka_connect_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     jmx_port: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

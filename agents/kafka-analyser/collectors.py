@@ -726,7 +726,95 @@ async def compute_slo_compliance(cluster_id: str = ""):
         compute_slo_compliance._last_result = f"Error: {e}"
 
 
-# ── Job 8: Message Rate ───────────────────────────────────────────────────────
+# ── Job 8: Schema Registry Subjects ───────────────────────────────────────────
+
+async def collect_sr_subjects(cluster_id: str = ""):
+    """Collect SR subjects for restricted clusters — stores in kafka_sr_subjects table.
+    Only runs for clusters where sr_restricted=True or first-time detection."""
+    c = await _get_cluster(cluster_id)
+    if not c:
+        collect_sr_subjects._last_result = f"Cluster {cluster_id} not found"
+        return
+    sr_url = c.get("schema_registry_url", "").split(",")[0].strip()
+    if not sr_url:
+        collect_sr_subjects._last_result = "No SR URL configured"
+        return
+    cid = _cid(c)
+    try:
+        import httpx
+        from tools.schema_registry import SchemaRegistryCollector
+        sr_username = c.get("schema_registry_username")
+        sr_password = c.get("schema_registry_password")
+        auth = httpx.BasicAuth(sr_username, sr_password) if sr_username and sr_password else None
+
+        # Step 1: Try /subjects — if works, cluster is not restricted, clear flag
+        async with httpx.AsyncClient(timeout=10.0, auth=auth) as client:
+            resp = await client.get(f"{sr_url}/subjects")
+            if resp.status_code == 200:
+                # Not restricted — clear sr_restricted flag and exit
+                from database import SessionLocal
+                from sqlalchemy import text as _t
+                if SessionLocal:
+                    async with SessionLocal() as sess:
+                        await sess.execute(_t(
+                            "UPDATE kafka_clusters SET sr_restricted=false WHERE id=:cid"
+                        ), {"cid": int(cid)})
+                        await sess.commit()
+                collect_sr_subjects._last_result = "SR not restricted — standard collection applies"
+                return
+
+            if resp.status_code != 422:
+                collect_sr_subjects._last_result = f"SR returned {resp.status_code}"
+                return
+
+        # Step 2: Restricted — get topics from postgres
+        from database import SessionLocal
+        from sqlalchemy import text as _t
+        topics = []
+        if SessionLocal:
+            async with SessionLocal() as sess:
+                tr = await sess.execute(_t(
+                    "SELECT topic FROM kafka_topic_names WHERE cluster_id=:cid"
+                ), {"cid": int(cid)})
+                topics = [r.topic for r in tr.fetchall()]
+
+        if not topics:
+            collect_sr_subjects._last_result = "No topics in DB yet — run topic-structure job first"
+            return
+
+        # Step 3: Derive subjects from topic names
+        collector = SchemaRegistryCollector(sr_url, username=sr_username, password=sr_password, topics=topics)
+        async with httpx.AsyncClient(timeout=300.0, auth=auth) as client:
+            subjects = await collector._get_subjects_from_topics(client)
+
+        # Step 4: Upsert subjects to postgres
+        if SessionLocal:
+            async with SessionLocal() as sess:
+                # Mark cluster as restricted
+                await sess.execute(_t(
+                    "UPDATE kafka_clusters SET sr_restricted=true WHERE id=:cid"
+                ), {"cid": int(cid)})
+                # Upsert subjects
+                now = __import__('datetime').datetime.now(__import__('datetime').timezone.utc)
+                for subject in subjects:
+                    await sess.execute(_t("""
+                        INSERT INTO kafka_sr_subjects (cluster_id, subject, collected_at)
+                        VALUES (:cid, :subject, :now)
+                        ON CONFLICT (cluster_id, subject) DO UPDATE SET collected_at=:now
+                    """), {"cid": int(cid), "subject": subject, "now": now})
+                await sess.commit()
+
+        collect_sr_subjects._last_result = f"Collected {len(subjects)} subjects from {len(topics)} topics"
+        logger.info("collect_sr_subjects: cluster %s — %d subjects stored", cid, len(subjects))
+
+    except Exception as e:
+        logger.warning("collect_sr_subjects failed for %s: %s", c.get("name"), e)
+        collect_sr_subjects._last_result = f"Failed: {e}"
+
+collect_sr_subjects._last_result = "Not yet run"
+
+
+# ── Job 9: Message Rate ───────────────────────────────────────────────────────
 _prev_offsets: dict = {}
 _prev_offset_time: float = 0.0
 

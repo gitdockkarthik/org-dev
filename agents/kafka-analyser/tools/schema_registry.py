@@ -16,14 +16,20 @@ _MAX_SUBJECTS = 200  # Cap for large registries — detail fetch is slow
 
 
 class SchemaRegistryCollector:
-    def __init__(self, url: str, username: str | None = None, password: str | None = None, topics: list[str] | None = None) -> None:
+    def __init__(self, url: str, username: str | None = None, password: str | None = None, topics: list[str] | None = None, sr_restricted: bool | None = None, cluster_id: int | None = None) -> None:
         self._url = url.rstrip("/")
         self._auth = (username, password) if username and password else None
         self._topics = topics or []
+        self._sr_restricted = sr_restricted
+        self._cluster_id = cluster_id
 
     async def collect(self) -> dict[str, Any]:
         """Fetch schema registry data and return structured dict."""
         try:
+            # Fast path: read from postgres for known restricted clusters
+            if self._sr_restricted and self._cluster_id:
+                return await self._collect_from_postgres()
+
             auth = httpx.BasicAuth(self._auth[0], self._auth[1]) if self._auth else None
             async with httpx.AsyncClient(timeout=10.0, auth=auth) as client:
                 subjects = await self._get_subjects(client)
@@ -79,6 +85,62 @@ class SchemaRegistryCollector:
             logger.warning("SchemaRegistryCollector.collect failed: %s", exc)
             return {"status": "error", "url": self._url, "error": str(exc), "subjects": [], "subject_count": 0}
 
+    async def _collect_from_postgres(self) -> dict[str, Any]:
+        """Read SR subjects from postgres for restricted clusters — instant load."""
+        try:
+            from database import SessionLocal
+            from sqlalchemy import text as _t
+            if not SessionLocal:
+                return {"status": "restricted", "url": self._url, "subject_count": 0, "subjects": [], "total_versions": 0, "global_compatibility": "UNKNOWN", "schema_types": {}}
+            async with SessionLocal() as sess:
+                rows = await sess.execute(_t("""
+                    SELECT subject, latest_version, schema_type, collected_at
+                    FROM kafka_sr_subjects
+                    WHERE cluster_id=:cid
+                    ORDER BY subject
+                """), {"cid": self._cluster_id})
+                subjects = rows.fetchall()
+            if not subjects:
+                return {
+                    "status": "restricted",
+                    "url": self._url,
+                    "subject_count": 0,
+                    "subjects": [],
+                    "total_versions": 0,
+                    "global_compatibility": "UNKNOWN",
+                    "schema_types": {},
+                    "restricted_note": "Schema Registry RBAC enabled — background sync job collecting subjects. Check back shortly.",
+                }
+            subject_details = [
+                {
+                    "subject": r.subject,
+                    "version_count": r.latest_version or 0,
+                    "latest_version": r.latest_version or 0,
+                    "schema_type": r.schema_type or "AVRO",
+                    "compatibility": "UNKNOWN",
+                    "collected_at": r.collected_at.isoformat() if r.collected_at else None,
+                }
+                for r in subjects
+            ]
+            schema_types = {}
+            for s in subject_details:
+                t = s["schema_type"]
+                schema_types[t] = schema_types.get(t, 0) + 1
+            last_collected = subjects[-1].collected_at.isoformat() if subjects[-1].collected_at else None
+            return {
+                "status": "restricted",
+                "url": self._url,
+                "subject_count": len(subjects),
+                "subjects": subject_details,
+                "total_versions": sum(s["latest_version"] for s in subject_details),
+                "global_compatibility": "UNKNOWN",
+                "schema_types": schema_types,
+                "restricted_note": f"Schema Registry RBAC enabled — {len(subjects)} subjects collected from topic names. Last synced: {last_collected}",
+            }
+        except Exception as e:
+            logger.warning("_collect_from_postgres failed: %s", e)
+            return {"status": "error", "url": self._url, "subject_count": 0, "subjects": [], "error": str(e)}
+
     async def _get_subjects(self, client: httpx.AsyncClient) -> list[str]:
         try:
             resp = await client.get(f"{self._url}/subjects")
@@ -91,15 +153,15 @@ class SchemaRegistryCollector:
             return []
 
     async def _get_subjects_from_topics(self, client: httpx.AsyncClient) -> list[str]:
-        """Derive subject names from Kafka topic names when listing is restricted."""
+        """Derive subject names from Kafka topic names when listing is restricted.
+        Checks {topic}-key and {topic}-value for all topics in batches of 20 parallel requests."""
         if not self._topics:
             return []
-        subjects = []
+        import asyncio as _aio
         candidates = []
-        for topic in self._topics[:100]:
+        for topic in self._topics:
             candidates.append(f"{topic}-key")
             candidates.append(f"{topic}-value")
-        import asyncio as _aio
         async def check(name: str) -> str | None:
             try:
                 r = await client.get(f"{self._url}/subjects/{name}/versions/latest")
@@ -108,12 +170,13 @@ class SchemaRegistryCollector:
             except Exception:
                 pass
             return None
+        subjects = []
         batch_size = 20
         for i in range(0, len(candidates), batch_size):
             batch = candidates[i:i+batch_size]
             results = await _aio.gather(*[check(c) for c in batch])
             subjects.extend([r for r in results if r])
-        logger.info("Topic-derived SR subjects found: %d", len(subjects))
+        logger.info("Topic-derived SR subjects found: %d of %d candidates checked", len(subjects), len(candidates))
         return subjects
 
     async def _get_subject_detail(self, client: httpx.AsyncClient, subject: str) -> dict | None:

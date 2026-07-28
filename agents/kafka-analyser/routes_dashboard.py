@@ -575,7 +575,14 @@ async def get_schema_registry(cluster_id: str | None = None) -> dict:
                 _sr_topics = [r.topic for r in _tr.fetchall()]
     except Exception:
         pass
-    collector = SchemaRegistryCollector(sr_url, username=sr_username, password=sr_password, topics=_sr_topics)
+    collector = SchemaRegistryCollector(
+        sr_url,
+        username=sr_username,
+        password=sr_password,
+        topics=_sr_topics,
+        sr_restricted=cluster.get("sr_restricted"),
+        cluster_id=int(cluster_id) if cluster_id else None,
+    )
     return await collector.collect()
 
 

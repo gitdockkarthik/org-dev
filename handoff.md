@@ -179,3 +179,13 @@ Kafka Analyser — SLI/SLO feature complete with full compliance tracking.
 2. ⚠️ Security audit
 3. Prod Kafka cluster onboarding
 4. AI Insights kafka_store removal
+
+## Backlog — SR RBAC Resolution
+* External staging SR (cluster 4): subject listing blocked by RBAC (error 42205)
+* kafka-sr-sync-4 job disabled — 15,718 HTTP requests per run not feasible
+* Resolution options (in priority order):
+  1. SR admin grants READ on Subject:* for service account
+  2. Implement chunked progressive collection with resume (200 topics/chunk, every 30min)
+  3. SR schema ID iteration if endpoint becomes accessible
+* Dashboard shows "restricted" status with clear message to users
+* Infrastructure ready (kafka_sr_subjects table, collect_sr_subjects collector, _collect_from_postgres)
