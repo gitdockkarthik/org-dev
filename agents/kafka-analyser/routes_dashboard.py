@@ -547,7 +547,7 @@ async def get_schema_registry(cluster_id: str | None = None) -> dict:
         try:
             cluster = await get_backend().get_cluster(int(cluster_id))
             if cluster:
-                sr_url = cluster.get("schema_registry_url", "")
+                sr_url = cluster.get("schema_registry_url", "").split(",")[0].strip()
         except Exception:
             pass
 
@@ -570,9 +570,9 @@ async def get_schema_registry(cluster_id: str | None = None) -> dict:
         if SessionLocal:
             async with SessionLocal() as _sess:
                 _tr = await _sess.execute(_t2(
-                    "SELECT topic_name FROM kafka_topic_names WHERE cluster_id=:cid LIMIT 100"
+                    "SELECT topic FROM kafka_topic_names WHERE cluster_id=:cid LIMIT 100"
                 ), {"cid": int(cluster_id)})
-                _sr_topics = [r.topic_name for r in _tr.fetchall()]
+                _sr_topics = [r.topic for r in _tr.fetchall()]
     except Exception:
         pass
     collector = SchemaRegistryCollector(sr_url, username=sr_username, password=sr_password, topics=_sr_topics)
@@ -1739,7 +1739,7 @@ async def stream_schema_details(cluster_id: str, limit: int = 50):
     cluster = await get_backend().get_cluster(int(cluster_id))
     if not cluster or not cluster.get("schema_registry_url"):
         return {"subjects": [], "status": "not_configured"}
-    sr = SchemaRegistryCollector(cluster["schema_registry_url"],
+    sr = SchemaRegistryCollector(cluster["schema_registry_url"].split(",")[0].strip(),
         username=cluster.get("schema_registry_username"),
         password=cluster.get("schema_registry_password"),
         topics=[])
@@ -1777,7 +1777,7 @@ async def search_schemas(cluster_id: str, q: str = ""):
     cluster = await get_backend().get_cluster(int(cluster_id))
     if not cluster or not cluster.get("schema_registry_url"):
         return {"subjects": [], "query": q}
-    sr = SchemaRegistryCollector(cluster["schema_registry_url"],
+    sr = SchemaRegistryCollector(cluster["schema_registry_url"].split(",")[0].strip(),
         username=cluster.get("schema_registry_username"),
         password=cluster.get("schema_registry_password"),
         topics=[])

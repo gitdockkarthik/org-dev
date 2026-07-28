@@ -149,12 +149,19 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
         from kafka import KafkaAdminClient
         security = {}
         if c.get("auth_type") not in (None, "none"):
+            import ssl as _ssl
+            tls = c.get("tls_enabled", False)
             security = {
-                "security_protocol": "SASL_PLAINTEXT",
+                "security_protocol": "SASL_SSL" if tls else "SASL_PLAINTEXT",
                 "sasl_mechanism": c.get("sasl_mechanism", "PLAIN"),
                 "sasl_plain_username": c.get("sasl_username"),
                 "sasl_plain_password": c.get("sasl_password"),
             }
+            if tls:
+                ssl_ctx = _ssl.create_default_context()
+                ssl_ctx.check_hostname = False
+                ssl_ctx.verify_mode = _ssl.CERT_NONE
+                security["ssl_context"] = ssl_ctx
         loop = asyncio.get_event_loop()
         def _fetch_all_lags():
                 admin = KafkaAdminClient(
@@ -736,12 +743,19 @@ async def collect_msg_rate(cluster_id: str = ""):
         from kafka import KafkaAdminClient
         security = {}
         if c.get("auth_type") not in (None, "none"):
+            import ssl as _ssl
+            tls = c.get("tls_enabled", False)
             security = {
-                "security_protocol": "SASL_PLAINTEXT",
+                "security_protocol": "SASL_SSL" if tls else "SASL_PLAINTEXT",
                 "sasl_mechanism": c.get("sasl_mechanism", "PLAIN"),
                 "sasl_plain_username": c.get("sasl_username"),
                 "sasl_plain_password": c.get("sasl_password"),
             }
+            if tls:
+                ssl_ctx = _ssl.create_default_context()
+                ssl_ctx.check_hostname = False
+                ssl_ctx.verify_mode = _ssl.CERT_NONE
+                security["ssl_context"] = ssl_ctx
         loop = asyncio.get_event_loop()
         def _get_partition_sizes():
             admin = KafkaAdminClient(
@@ -828,7 +842,7 @@ async def collect_schema_registry():
     results = []
     for c in clusters:
         cid = _cid(c)
-        sr_url = c.get("schema_registry_url", "")
+        sr_url = c.get("schema_registry_url", "").split(",")[0].strip()
         if not sr_url:
             continue
         try:
@@ -843,9 +857,9 @@ async def collect_schema_registry():
                 if SessionLocal:
                     async with SessionLocal() as sess:
                         tr = await sess.execute(_t(
-                            "SELECT topic_name FROM kafka_topic_names WHERE cluster_id=:cid LIMIT 100"
+                            "SELECT topic FROM kafka_topic_names WHERE cluster_id=:cid LIMIT 100"
                         ), {"cid": int(cid)})
-                        topics = [r.topic_name for r in tr.fetchall()]
+                        topics = [r.topic for r in tr.fetchall()]
             except Exception:
                 pass
             collector = SchemaRegistryCollector(sr_url, username=sr_username, password=sr_password, topics=topics)
