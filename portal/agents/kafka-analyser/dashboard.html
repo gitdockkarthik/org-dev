@@ -811,8 +811,7 @@
         let topicCellHtml = '-';
         if (g.topic_count && g.topic_count > 0) {
           if (g.topic_count === 1) {
-            const topicName = g.topic || (g.partitions && g.partitions[0] && g.partitions[0].topic) || '-';
-            topicCellHtml = `<span style="cursor:pointer;color:var(--accent,#FF6B35);text-decoration:underline;word-break:break-all" onclick="window._showGroupTopicsPopup('${groupId.replace(/'/g,"\\'")}')">${topicName}</span>`;
+            topicCellHtml = `<span style="cursor:pointer;color:var(--accent,#FF6B35);text-decoration:underline" onclick="window._showGroupTopicsPopup('${groupId.replace(/'/g,"\\'")}')"">1 Topic</span>`;
           } else {
             topicCellHtml = `<span style="cursor:pointer;color:var(--accent,#FF6B35);text-decoration:underline" onclick="window._showGroupTopicsPopup('${groupId.replace(/'/g,"\\'")}')">${g.topic_count} topics</span>`;
           }
