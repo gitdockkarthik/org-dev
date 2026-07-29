@@ -362,6 +362,44 @@ async def get_consumer_groups(cluster_id: str | None = None, hours: int | None =
         return {"empty": True}
 
 
+@router.get("/dashboard/consumer-groups/{group_id}/topics")
+async def get_consumer_group_topics(group_id: str, cluster_id: str | None = None) -> dict:
+    """Per-topic lag breakdown for a consumer group — reads entirely from postgres."""
+    if not cluster_id:
+        return {"error": "cluster_id required"}
+    try:
+        from database import SessionLocal
+        from sqlalchemy import text as _t
+        if SessionLocal is None:
+            return {"error": "Database not available"}
+        async with SessionLocal() as sess:
+            rows = await sess.execute(_t("""
+                SELECT topic, partition_count, lag, updated_at
+                FROM kafka_consumer_group_topic_lag
+                WHERE cluster_id = :cid AND group_id = :gid
+                ORDER BY lag DESC
+            """), {"cid": int(cluster_id), "gid": group_id})
+            results = rows.fetchall()
+        if not results:
+            return {"group_id": group_id, "topics": [], "total_lag": 0}
+        topics = [
+            {
+                "topic": r.topic,
+                "partition_count": r.partition_count,
+                "lag": r.lag,
+            }
+            for r in results
+        ]
+        return {
+            "group_id": group_id,
+            "topics": topics,
+            "total_lag": sum(t["lag"] for t in topics),
+            "updated_at": results[0].updated_at.isoformat() if results[0].updated_at else None,
+        }
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
 @router.get("/dashboard/topics")
 async def get_topics(cluster_id: str | None = None, hours: int | None = None,
                      limit: int = 50, offset: int = 0, search: str = "") -> dict:
