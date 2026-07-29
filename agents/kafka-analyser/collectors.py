@@ -67,6 +67,12 @@ async def collect_broker_health(cluster_id: str = ""):
         if not brokers:
             collect_broker_health._last_result = "No brokers found"
             return
+        # Collect true per-broker log directory sizes
+        log_dir_result = {"broker_sizes_gb": {}}
+        try:
+            log_dir_result = await collector.collect_broker_log_dir_sizes()
+        except Exception as log_exc:
+            logger.warning("collect_broker_log_dir_sizes failed: %s", log_exc)
         data = _ks.get_cluster_data(cid) or {}
         if not data.get("brokers"):
             data["brokers"] = brokers
@@ -85,15 +91,19 @@ async def collect_broker_health(cluster_id: str = ""):
             async with SessionLocal() as sess:
                     for broker in brokers:
                         bid = broker.get("broker_id") or broker.get("id", "")
+                        node_id = int(bid) if bid.isdigit() else None
+                        data_gb_true = None
+                        if node_id is not None:
+                            data_gb_true = log_dir_result.get("broker_sizes_gb", {}).get(node_id)
                         await sess.execute(text("""
                             INSERT INTO kafka_broker_metrics
                             (time, cluster_id, broker_id, heap_pct, gc_pause_ms,
                              request_handler_idle_pct, urp_count, messages_in_per_sec,
                              cpu_pct, disk_pct, bytes_in_per_sec, bytes_out_per_sec,
                              produce_latency_ms, fetch_latency_ms,
-                             isr_shrinks_per_sec, isr_expands_per_sec)
+                             isr_shrinks_per_sec, isr_expands_per_sec, data_gb_true)
                             VALUES (now(), :cid, :bid, :heap, :gc, :idle, :urp, :msgs, :cpu, :disk,
-                                    :bin, :bout, :plat, :flat, :isrs, :isre)
+                                    :bin, :bout, :plat, :flat, :isrs, :isre, :data_gb_true)
                             ON CONFLICT (cluster_id, broker_id)
                             DO UPDATE SET
                                 time = now(),
@@ -109,7 +119,8 @@ async def collect_broker_health(cluster_id: str = ""):
                                 produce_latency_ms = EXCLUDED.produce_latency_ms,
                                 fetch_latency_ms = EXCLUDED.fetch_latency_ms,
                                 isr_shrinks_per_sec = EXCLUDED.isr_shrinks_per_sec,
-                                isr_expands_per_sec = EXCLUDED.isr_expands_per_sec
+                                isr_expands_per_sec = EXCLUDED.isr_expands_per_sec,
+                                data_gb_true = EXCLUDED.data_gb_true
                         """), {
                             "cid": int(cid),
                             "bid": bid,
@@ -126,6 +137,7 @@ async def collect_broker_health(cluster_id: str = ""):
                             "flat": broker.get("fetch_latency_ms", 0.0),
                             "isrs": broker.get("isr_shrinks_per_sec", 0.0),
                             "isre": broker.get("isr_expands_per_sec", 0.0),
+                            "data_gb_true": data_gb_true,
                         })
                     await sess.commit()
         except Exception as db_exc:

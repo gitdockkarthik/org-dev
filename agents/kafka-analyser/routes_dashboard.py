@@ -439,7 +439,7 @@ async def get_brokers(cluster_id: str | None = None, hours: int | None = None) -
                                 request_handler_idle_pct, urp_count, messages_in_per_sec,
                                 disk_pct, bytes_in_per_sec, bytes_out_per_sec,
                                 produce_latency_ms, fetch_latency_ms,
-                                isr_shrinks_per_sec, isr_expands_per_sec, time
+                                isr_shrinks_per_sec, isr_expands_per_sec, time, data_gb_true
                          FROM kafka_broker_metrics
                          WHERE cluster_id = :cid
                          AND time = (SELECT MAX(time) FROM kafka_broker_metrics bm2 WHERE bm2.cluster_id = :cid AND bm2.broker_id = kafka_broker_metrics.broker_id)
@@ -476,7 +476,7 @@ async def get_brokers(cluster_id: str | None = None, hours: int | None = None) -
                     "cpu_pct": r.cpu_pct,
                     "gc_pause_ms": r.gc_pause_ms,
                     "bytes_in_per_sec": bytes_by_broker.get(bid, 0.0),
-                    "data_gb": data_gb_by_broker.get(bid, 0.0),
+                    "data_gb": r.data_gb_true if r.data_gb_true is not None else data_gb_by_broker.get(bid, 0.0),
                     "request_handler_idle_pct": r.request_handler_idle_pct,
                     "urp_count": r.urp_count,
                     "messages_in_per_sec": r.messages_in_per_sec,
