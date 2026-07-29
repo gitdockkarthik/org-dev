@@ -229,6 +229,7 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
                         except Exception as e:
                             logger.warning("seek_to_end failed: %s", e)
                     # Calculate lag per group
+                    group_topic_lag: dict[str, dict[str, dict]] = {}
                     for gid in consumer_gids:
                         committed = group_committed.get(gid, {})
                         group_lag = sum(
@@ -243,6 +244,14 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
                             "committed_offsets": len(committed),
                         })
                         total_lag += group_lag
+                        # Also aggregate per-topic lag for this group
+                        topic_agg: dict[str, dict] = {}
+                        for tp, committed_off in committed.items():
+                            partition_lag = max(0, end_offsets.get(tp, committed_off) - committed_off)
+                            entry = topic_agg.setdefault(tp.topic, {"lag": 0, "partitions": 0})
+                            entry["lag"] += partition_lag
+                            entry["partitions"] += 1
+                        group_topic_lag[gid] = topic_agg
                     return {
                         "groups": enriched,
                         "group_states": {
@@ -253,6 +262,7 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
                             "total": len(all_groups),
                         },
                         "total_lag": total_lag,
+                        "group_topic_lag": group_topic_lag,
                     }
                 finally:
                     admin.close()
@@ -294,6 +304,39 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
                         await sess.commit()
         except Exception as _ge:
             logger.warning("consumer group lag upsert failed: %s", _ge)
+        # Upsert per-topic lag breakdown
+        try:
+            from database import SessionLocal as _SL4
+            from sqlalchemy import text as _t4
+            group_topic_lag = result.get("group_topic_lag", {})
+            rows_to_upsert = [
+                (int(cid), gid, topic, agg["partitions"], agg["lag"])
+                for gid, topics in group_topic_lag.items()
+                for topic, agg in topics.items()
+            ]
+            if rows_to_upsert:
+                async with _SL4() as sess4:
+                    BULK = 1000
+                    for bi in range(0, len(rows_to_upsert), BULK):
+                        batch = rows_to_upsert[bi:bi+BULK]
+                        values = ", ".join(
+                            f"({c}, '{g.replace(chr(39), chr(39)*2)}', "
+                            f"'{t.replace(chr(39), chr(39)*2)}', {pc}, {lag}, now())"
+                            for c, g, t, pc, lag in batch
+                        )
+                        await sess4.execute(_t4(f"""
+                            INSERT INTO kafka_consumer_group_topic_lag
+                            (cluster_id, group_id, topic, partition_count, lag, updated_at)
+                            VALUES {values}
+                            ON CONFLICT (cluster_id, group_id, topic)
+                            DO UPDATE SET
+                                partition_count = EXCLUDED.partition_count,
+                                lag = EXCLUDED.lag,
+                                updated_at = now()
+                        """))
+                    await sess4.commit()
+        except Exception as _tl_exc:
+            logger.warning("consumer_group_topic_lag upsert failed: %s", _tl_exc)
         # Insert lag snapshot for trend chart
         try:
             from database import SessionLocal
