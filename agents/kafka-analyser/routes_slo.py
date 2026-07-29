@@ -147,7 +147,8 @@ async def get_slo_dashboard(cluster_id: str, hours: int = 24) -> dict:
             # Current broker + URP
             broker_now = await sess.execute(_t("""
                 SELECT COUNT(*) as total, SUM(urp_count) as total_urp
-                FROM kafka_broker_metrics WHERE cluster_id=:cid
+                FROM kafka_broker_metrics
+                WHERE cluster_id=:cid AND time >= NOW() - INTERVAL '10 minutes'
             """), {"cid": int(cluster_id)})
             bn = broker_now.fetchone()
             broker_count = int(bn.total) if bn else 0
