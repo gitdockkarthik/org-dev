@@ -459,7 +459,7 @@ async def collect_topic_structure(cluster_id: str = ""):
             if "counts" not in data:
                 data["counts"] = {}
             data["counts"]["total_topics"] = len(all_topic_names)
-            data["counts"]["topics_rf1"] = total_rf1
+            data["counts"]["total_rf1"] = total_rf1
             data["counts"]["total_urp"] = total_urp
             _ks.set_cluster_data(data, source_type=c.get("source_type", "live"), cluster_id=cid)
             # Bulk update partition_count and replication_factor in kafka_topic_metrics
