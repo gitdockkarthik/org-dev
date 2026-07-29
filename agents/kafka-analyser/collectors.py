@@ -931,13 +931,16 @@ async def collect_msg_rate(cluster_id: str = ""):
         if not prev_sizes:
             collect_msg_rate._last_result = "Baseline stored — rates available next cycle"
             return
-        # Calculate bytes/sec per topic
+        # Calculate bytes/sec per topic and per partition
         topic_rates = {}
+        partition_rates: dict[str, dict[int, float]] = {}
         for key, size2 in current_sizes.items():
             size1 = prev_sizes.get(key, size2)
             delta = max(0, size2 - size1)
-            topic = key.rsplit(':', 1)[0]
-            topic_rates[topic] = topic_rates.get(topic, 0) + (delta / elapsed)
+            topic, part_str = key.rsplit(':', 1)
+            rate = delta / elapsed
+            topic_rates[topic] = topic_rates.get(topic, 0) + rate
+            partition_rates.setdefault(topic, {})[int(part_str)] = rate
         # Upsert bytes_in_per_sec to postgres for active topics
         active_topics = {t: r for t, r in topic_rates.items() if r > 0}
         if active_topics:
@@ -993,6 +996,32 @@ async def collect_msg_rate(cluster_id: str = ""):
                 await _upsert(f"kafka_counts_metrics_{cid}", _jm.dumps(existing))
             except Exception as _me:
                 logger.warning("msg_rate counts update failed: %s", _me)
+        # Calculate per-broker bytes_in_per_sec from partition leaders and per-partition rates
+        try:
+            from database import SessionLocal as _SL3
+            from sqlalchemy import text as _t3
+            broker_rates: dict[str, float] = {}
+            async with _SL3() as sess3:
+                leader_rows = await sess3.execute(_t3("""
+                    SELECT topic, partition, leader_broker_id
+                    FROM kafka_partition_leaders WHERE cluster_id = :cid
+                """), {"cid": int(cid)})
+                for row in leader_rows.fetchall():
+                    rate = partition_rates.get(row.topic, {}).get(row.partition)
+                    if rate is not None:
+                        broker_rates[row.leader_broker_id] = broker_rates.get(row.leader_broker_id, 0.0) + rate
+                if broker_rates:
+                    for bid, rate in broker_rates.items():
+                        await sess3.execute(_t3("""
+                            UPDATE kafka_broker_metrics
+                            SET bytes_in_per_sec_true = :rate
+                            WHERE cluster_id = :cid AND broker_id = :bid
+                              AND time = (SELECT MAX(time) FROM kafka_broker_metrics bm2
+                                          WHERE bm2.cluster_id = :cid AND bm2.broker_id = kafka_broker_metrics.broker_id)
+                        """), {"cid": int(cid), "bid": str(bid), "rate": round(rate, 2)})
+                    await sess3.commit()
+        except Exception as _br_exc:
+            logger.warning("bytes_in_per_sec_true update failed: %s", _br_exc)
         collect_msg_rate._last_result = f"Rates updated: {len(active_topics)} active topics, {hot_count} hot (>100KB/s)"
     except Exception as e:
         logger.warning("msg_rate failed for %s: %s", c["name"], e)
