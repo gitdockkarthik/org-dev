@@ -188,7 +188,8 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
                     connect_gids = [g[0] for g in all_groups if g[1] == "connect"]
                     sr_gids = [g[0] for g in all_groups if g[1] == "sr"]
                     empty_gids = [g[0] for g in all_groups if g[1] == ""]
-                    # Fetch offsets for all consumer groups
+                    # Fetch offsets for consumer and connect groups (skip sr and empty)
+                    lag_target_gids = consumer_gids + connect_gids
                     enriched = []
                     total_lag = 0
                     # Collect ALL committed offsets first, then fetch end offsets in one consumer session
@@ -197,8 +198,8 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
                     group_committed = {}
                     end_offsets = {}
                     # Step 1: collect all committed offsets (fast — AdminClient)
-                    for batch_start in range(0, len(consumer_gids), BATCH):
-                        batch_gids = consumer_gids[batch_start:batch_start + BATCH]
+                    for batch_start in range(0, len(lag_target_gids), BATCH):
+                        batch_gids = lag_target_gids[batch_start:batch_start + BATCH]
                         for gid in batch_gids:
                             try:
                                 offsets = admin.list_consumer_group_offsets(gid)
@@ -230,7 +231,7 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
                             logger.warning("seek_to_end failed: %s", e)
                     # Calculate lag per group
                     group_topic_lag: dict[str, dict[str, dict]] = {}
-                    for gid in consumer_gids:
+                    for gid in lag_target_gids:
                         committed = group_committed.get(gid, {})
                         group_lag = sum(
                             max(0, end_offsets.get(tp, committed_off) - committed_off)
@@ -238,7 +239,7 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
                         )
                         enriched.append({
                             "group_id": gid,
-                            "state": "consumer",
+                            "state": "connect" if gid in connect_gids else "consumer",
                             "topic_count": len(set(tp.topic for tp in committed.keys())),
                             "total_lag": group_lag,
                             "committed_offsets": len(committed),
