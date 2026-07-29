@@ -715,11 +715,16 @@ async def compute_slo_compliance(cluster_id: str = ""):
             # Connector availability % in last hour
             # SLI: RUNNING / (RUNNING + FAILED) — excludes PAUSED and UNASSIGNED
             conn_stats = await sess.execute(_slo("""
+                WITH latest_conn AS (
+                    SELECT DISTINCT ON (connector_name) connector_name, state
+                    FROM kafka_connector_snapshots
+                    WHERE cluster_id=:cid AND collected_at >= :prev AND collected_at < :now
+                    AND state IN ('RUNNING', 'FAILED')
+                    ORDER BY connector_name, collected_at DESC
+                )
                 SELECT SUM(CASE WHEN state='RUNNING' THEN 1 ELSE 0 END) as running,
                        SUM(CASE WHEN state='FAILED' THEN 1 ELSE 0 END) as failed
-                FROM kafka_connector_snapshots
-                WHERE cluster_id=:cid AND collected_at >= :prev AND collected_at < :now
-                AND state IN ('RUNNING', 'FAILED')
+                FROM latest_conn
             """), {"cid": int(cid), "prev": prev_hour, "now": hour_bucket})
             cs = conn_stats.fetchone()
             conn_running = cs.running or 0
