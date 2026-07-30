@@ -271,11 +271,17 @@ async def get_counts(cluster_id: str | None = None) -> dict:
                     "SELECT COUNT(*) FROM kafka_topic_metrics WHERE cluster_id=:cid AND bytes_in_per_sec = 0 AND size_bytes > 0"
                 ), {"cid": int(cluster_id)})
                 total_stale_count = _stale.scalar() or 0
+                _conn = await _sess3.execute(_text("""
+                    SELECT COUNT(DISTINCT connector_name)
+                    FROM kafka_connector_snapshots
+                    WHERE cluster_id=:cid AND collected_at >= NOW() - INTERVAL '15 minutes'
+                """), {"cid": int(cluster_id)})
+                total_connectors_count = _conn.scalar() or 0
         return {
             "total_topics": total_topics_count or structure.get("total_topics", 0),
             "total_groups": total_groups_count,
             "total_brokers": structure.get("total_brokers", len(brokers)),
-            "total_connectors": 0,
+            "total_connectors": total_connectors_count,
             "total_rf1": total_rf1_count,
             "total_urp": total_urp_count,
             "total_partitions": total_partitions_count,
