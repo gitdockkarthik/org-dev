@@ -386,6 +386,16 @@ async def get_consumer_group_topics(group_id: str, cluster_id: str | None = None
                 ORDER BY lag DESC
             """), {"cid": int(cluster_id), "gid": group_id})
             results = rows.fetchall()
+            partition_rows = await sess.execute(_t("""
+                SELECT topic, partition, lag
+                FROM kafka_consumer_group_partition_lag
+                WHERE cluster_id = :cid AND group_id = :gid
+                ORDER BY topic, lag DESC
+            """), {"cid": int(cluster_id), "gid": group_id})
+            partition_results = partition_rows.fetchall()
+        partitions_by_topic: dict[str, list[dict]] = {}
+        for pr in partition_results:
+            partitions_by_topic.setdefault(pr.topic, []).append({"partition": pr.partition, "lag": pr.lag})
         if not results:
             return {"group_id": group_id, "topics": [], "total_lag": 0}
         topics = [
@@ -393,6 +403,7 @@ async def get_consumer_group_topics(group_id: str, cluster_id: str | None = None
                 "topic": r.topic,
                 "partition_count": r.partition_count,
                 "lag": r.lag,
+                "partitions": partitions_by_topic.get(r.topic, []),
             }
             for r in results
         ]
