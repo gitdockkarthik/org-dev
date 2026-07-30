@@ -372,6 +372,55 @@
       if (!_loaded.has(name)) loadTab(name);
     }
 
+    window._showGroupTopicsPopup = async function(groupId, connectorName) {
+      const existing = document.getElementById('group-topics-popup');
+      if (existing) existing.remove();
+      const existingOverlay = document.getElementById('group-topics-overlay');
+      if (existingOverlay) existingOverlay.remove();
+      const popup = document.createElement('div');
+      popup.id = 'group-topics-popup';
+      popup.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--navy-2);border:1px solid var(--border);border-radius:12px;padding:24px;min-width:400px;max-width:640px;max-height:70vh;overflow-y:auto;z-index:1000;box-shadow:0 8px 32px rgba(0,0,0,.4)';
+      popup.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><span style="font-weight:700;font-size:.9rem">⟳ Loading...</span><button onclick="document.getElementById(\'group-topics-popup\').remove();document.getElementById(\'group-topics-overlay\')?.remove()" style="background:none;border:none;cursor:pointer;font-size:1.2rem;color:var(--text-muted)">×</button></div>';
+      const overlay = document.createElement('div');
+      overlay.id = 'group-topics-overlay';
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:999';
+      overlay.onclick = () => { popup.remove(); overlay.remove(); };
+      document.body.appendChild(overlay);
+      document.body.appendChild(popup);
+      try {
+        const cid = _currentClusterId || document.getElementById('ctrl-cluster')?.value || '';
+        const res = await fetch(`${PROXY}/dashboard/consumer-groups/${encodeURIComponent(groupId)}/topics?cluster_id=${cid}`, { headers: _authHeaders(), cache: 'no-store' });
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        const rows = (d.topics || []).map(t => `
+          <tr>
+            <td style="padding:8px 10px;font-size:.8rem;word-break:break-all"><code>${t.topic}</code></td>
+            <td style="padding:8px 10px;text-align:right;font-size:.8rem">${t.partition_count}</td>
+            <td style="padding:8px 10px;text-align:right;font-weight:700;color:${t.lag > 10000 ? 'var(--danger)' : t.lag > 1000 ? '#d97706' : 'var(--success)'}">${fmtNum(t.lag)}</td>
+          </tr>`).join('') || '<tr><td colspan="3" style="padding:16px;text-align:center;color:var(--text-muted)">No topic data</td></tr>';
+        popup.innerHTML = `
+          <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:16px">
+            <div style="min-width:0">
+              ${connectorName ? `<div style="font-size:.72rem;text-transform:uppercase;color:var(--text-dim);margin-bottom:2px">Connector</div><div style="font-weight:700;font-size:.9rem;word-break:break-all;margin-bottom:10px">${connectorName}</div>` : ''}
+              <div style="font-size:.72rem;text-transform:uppercase;color:var(--text-dim);margin-bottom:2px">Consumer Group</div>
+              <div style="font-weight:700;font-size:.9rem;word-break:break-all">${groupId}</div>
+            </div>
+            <button onclick="document.getElementById('group-topics-popup').remove();document.getElementById('group-topics-overlay').remove()" style="background:none;border:none;cursor:pointer;font-size:1.4rem;color:var(--text-muted);margin-left:8px;flex-shrink:0">×</button>
+          </div>
+          <div style="font-size:.8rem;color:var(--text-muted);margin-bottom:12px">Total lag: <strong style="color:var(--text)">${fmtNum(d.total_lag)}</strong></div>
+          <table style="width:100%;border-collapse:collapse;font-size:.85rem">
+            <thead><tr style="border-bottom:1px solid var(--border)">
+              <th style="padding:8px 10px;text-align:left;font-size:.72rem;text-transform:uppercase;color:var(--text-dim)">Topic</th>
+              <th style="padding:8px 10px;text-align:right;font-size:.72rem;text-transform:uppercase;color:var(--text-dim)">Partitions</th>
+              <th style="padding:8px 10px;text-align:right;font-size:.72rem;text-transform:uppercase;color:var(--text-dim)">Lag</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>`;
+      } catch(e) {
+        popup.innerHTML = `<div style="color:var(--danger)">${e.message}</div><button onclick="document.getElementById('group-topics-popup').remove();document.getElementById('group-topics-overlay').remove()" style="margin-top:8px" class="btn btn--ghost btn--sm">Close</button>`;
+      }
+    };
+
     // ── Per-tab loading ──────────────────────────────────────────────────────
 
     async function loadTab(name) {
@@ -830,51 +879,6 @@
           <td>${stateBadge(g.state)}</td>
           <td><span class="sev sev--${statusClass}" ${statusTitle}>${statusLabel}</span></td>
         </tr>`;
-      };
-
-      window._showGroupTopicsPopup = async function(groupId) {
-        const existing = document.getElementById('group-topics-popup');
-        if (existing) existing.remove();
-        const existingOverlay = document.getElementById('group-topics-overlay');
-        if (existingOverlay) existingOverlay.remove();
-        const popup = document.createElement('div');
-        popup.id = 'group-topics-popup';
-        popup.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--navy-2);border:1px solid var(--border);border-radius:12px;padding:24px;min-width:400px;max-width:640px;max-height:70vh;overflow-y:auto;z-index:1000;box-shadow:0 8px 32px rgba(0,0,0,.4)';
-        popup.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><span style="font-weight:700;font-size:.9rem">⟳ Loading...</span><button onclick="document.getElementById(\'group-topics-popup\').remove();document.getElementById(\'group-topics-overlay\')?.remove()" style="background:none;border:none;cursor:pointer;font-size:1.2rem;color:var(--text-muted)">×</button></div>';
-        const overlay = document.createElement('div');
-        overlay.id = 'group-topics-overlay';
-        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:999';
-        overlay.onclick = () => { popup.remove(); overlay.remove(); };
-        document.body.appendChild(overlay);
-        document.body.appendChild(popup);
-        try {
-          const cid = _currentClusterId || document.getElementById('ctrl-cluster')?.value || '';
-          const res = await fetch(`${PROXY}/dashboard/consumer-groups/${encodeURIComponent(groupId)}/topics?cluster_id=${cid}`, { headers: _authHeaders(), cache: 'no-store' });
-          const d = await res.json();
-          if (d.error) throw new Error(d.error);
-          const rows = (d.topics || []).map(t => `
-            <tr>
-              <td style="padding:8px 10px;font-size:.8rem;word-break:break-all"><code>${t.topic}</code></td>
-              <td style="padding:8px 10px;text-align:right;font-size:.8rem">${t.partition_count}</td>
-              <td style="padding:8px 10px;text-align:right;font-weight:700;color:${t.lag > 10000 ? 'var(--danger)' : t.lag > 1000 ? '#d97706' : 'var(--success)'}">${fmtNum(t.lag)}</td>
-            </tr>`).join('') || '<tr><td colspan="3" style="padding:16px;text-align:center;color:var(--text-muted)">No topic data</td></tr>';
-          popup.innerHTML = `
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-              <span style="font-weight:700;font-size:.9rem;word-break:break-all">${groupId}</span>
-              <button onclick="document.getElementById('group-topics-popup').remove();document.getElementById('group-topics-overlay').remove()" style="background:none;border:none;cursor:pointer;font-size:1.4rem;color:var(--text-muted);margin-left:8px">×</button>
-            </div>
-            <div style="font-size:.8rem;color:var(--text-muted);margin-bottom:12px">Total lag: <strong style="color:var(--text)">${fmtNum(d.total_lag)}</strong></div>
-            <table style="width:100%;border-collapse:collapse;font-size:.85rem">
-              <thead><tr style="border-bottom:1px solid var(--border)">
-                <th style="padding:8px 10px;text-align:left;font-size:.72rem;text-transform:uppercase;color:var(--text-dim)">Topic</th>
-                <th style="padding:8px 10px;text-align:right;font-size:.72rem;text-transform:uppercase;color:var(--text-dim)">Partitions</th>
-                <th style="padding:8px 10px;text-align:right;font-size:.72rem;text-transform:uppercase;color:var(--text-dim)">Lag</th>
-              </tr></thead>
-              <tbody>${rows}</tbody>
-            </table>`;
-        } catch(e) {
-          popup.innerHTML = `<div style="color:var(--danger)">${e.message}</div><button onclick="document.getElementById('group-topics-popup').remove();document.getElementById('group-topics-overlay').remove()" style="margin-top:8px" class="btn btn--ghost btn--sm">Close</button>`;
-        }
       };
 
       const cgFilters = `
@@ -1971,7 +1975,9 @@
       const connectRowHtml = c => {
         const lagCellHtml = c.lag === null || c.lag === undefined
           ? '<span style="color:var(--text-muted)" title="No dedicated consumer group found — source connector or no offset data yet">N/A</span>'
-          : `<span style="color:${c.lag > 10000 ? 'var(--danger)' : c.lag > 1000 ? '#d97706' : 'var(--success)'};font-weight:${c.lag > 1000 ? '700' : '400'}">${fmtNum(c.lag)}</span>`;
+          : c.lag > 0
+            ? `<span style="cursor:pointer;color:${c.lag > 10000 ? 'var(--danger)' : '#d97706'};font-weight:700;text-decoration:underline" onclick="window._showGroupTopicsPopup('connect-${c.name.replace(/'/g,"\\'")}', '${c.name.replace(/'/g,"\\'")}')">${fmtNum(c.lag)}</span>`
+            : `<span style="color:var(--success)">0</span>`;
         return `<tr>
           <td style="font-weight:600"><code style="font-size:.8rem">${c.name}</code></td>
           <td style="font-size:.82rem;color:var(--text-muted);text-transform:capitalize">${c.type || '-'}</td>
