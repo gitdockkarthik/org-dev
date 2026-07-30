@@ -195,7 +195,7 @@ class RealKafkaCollector(KafkaCollector):
 
                 # Consumer group states only — no lag fetch
                 listed = admin.list_consumer_groups()
-                group_ids = [entry[0] for entry in listed]
+                group_ids = [entry[0] for entry in listed if entry[1] == "consumer"]
                 states = self._describe_group_states(admin, group_ids) if group_ids else {}
                 groups = [
                     {
@@ -961,7 +961,7 @@ class RealKafkaCollector(KafkaCollector):
         self, admin: KafkaAdminClient, security: dict[str, Any]
     ) -> list[dict[str, Any]]:
         listed = admin.list_consumer_groups()
-        group_ids = [entry[0] for entry in listed]
+        group_ids = [entry[0] for entry in listed if entry[1] == "consumer"]
         if not group_ids:
             return []
 
