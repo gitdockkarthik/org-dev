@@ -881,6 +881,12 @@
           <input class="filter-input" id="cg-search" placeholder="Search group…" oninput="_serverGroupSearch(this.value)" />
         </div>
         <div class="filter-bar">
+          <span class="dash-label">Type:</span>
+          <span class="filter-chip active" onclick="window._cgSetType('all',this)">All</span>
+          <span class="filter-chip" onclick="window._cgSetType('consumer',this)">Consumer</span>
+          <span class="filter-chip" onclick="window._cgSetType('connect',this)">Connector</span>
+        </div>
+        <div class="filter-bar">
           <span class="dash-label">Health:</span>
           <span class="filter-chip active" onclick="window._cgSetFilter('all',this)">All</span>
           <span class="filter-chip" onclick="window._cgSetFilter('critical',this)">Critical</span>
@@ -955,7 +961,7 @@
 
       // ── Self-contained consumer-group table view: pagination + filters + search (AND) ──
       const CG_PAGE = 20;
-      window._cgView = { state: 'all', filter: 'all', search: '', visible: CG_PAGE };
+      window._cgView = { state: 'all', filter: 'all', type: 'all', search: '', visible: CG_PAGE };
 
       const cgMatches = (g, st) => {
         const name = (g.group_id || g.group_name || 'Unknown');
@@ -963,6 +969,9 @@
         const gState = (g.state || '').toLowerCase();
         if (st.state === 'active' && gState === 'empty') return false;
         if (st.state === 'empty' && gState !== 'empty') return false;
+        const gType = (g.state || '').toLowerCase();
+        if (st.type === 'consumer' && gType !== 'consumer') return false;
+        if (st.type === 'connect' && gType !== 'connect') return false;
         const lag = g.total_lag || 0;
         switch (st.filter) {
           case 'critical': return lag > 10000;
@@ -983,7 +992,7 @@
         }
         const label = document.getElementById('cg-count-label');
         if (label) {
-          const _tot = (st.state === 'all' && st.filter === 'all' && !st.search)
+          const _tot = (st.state === 'all' && st.filter === 'all' && st.type === 'all' && !st.search)
             ? ((window._clusterCounts || {}).total_groups || filtered.length)
             : filtered.length;
           label.textContent = `Showing ${shown.length} of ${_tot.toLocaleString()} groups`;
@@ -1000,6 +1009,12 @@
       window._cgSetState = function (state, el) {
         window._cgView.state = state;
         window._cgView.visible = CG_PAGE; // reset Show More on filter change
+        cgSetActiveChip(el);
+        window._cgApplyView();
+      };
+      window._cgSetType = function (type, el) {
+        window._cgView.type = type;
+        window._cgView.visible = CG_PAGE;
         cgSetActiveChip(el);
         window._cgApplyView();
       };
