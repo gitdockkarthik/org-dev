@@ -67,6 +67,7 @@
     .sev--critical { background: rgba(220,38,38,.12); color: #dc2626; }
     .sev--warning  { background: rgba(217,119,6,.12);  color: #d97706; }
     .sev--healthy  { background: rgba(22,163,74,.1);   color: #16a34a; }
+    .sev--na       { background: rgba(148,163,184,.12); color: #94a3b8; }
     /* Broker cards */
     .broker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; margin-bottom: 22px; }
     .broker-card { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); padding: 16px 18px; }
@@ -816,6 +817,10 @@
             topicCellHtml = `<span style="cursor:pointer;color:var(--accent,#FF6B35);text-decoration:underline" onclick="window._showGroupTopicsPopup('${groupId.replace(/'/g,"\\'")}')">${g.topic_count} topics</span>`;
           }
         }
+        const isConnectNoOffsets = g.state === 'connect' && (!g.topic_count || g.topic_count === 0);
+        const statusClass = isConnectNoOffsets ? 'na' : (g.total_lag > 10000 ? 'critical' : g.total_lag > 1000 ? 'warning' : 'healthy');
+        const statusLabel = isConnectNoOffsets ? 'N/A' : (g.total_lag > 10000 ? 'CRITICAL' : g.total_lag > 1000 ? 'WARNING' : 'HEALTHY');
+        const statusTitle = isConnectNoOffsets ? 'title="No committed offsets found — source connector (writes to Kafka, does not consume) or currently idle. Not measurable as healthy/unhealthy."' : '';
         return `<tr>
           <td data-copy="${groupId}" title="${groupId}"><div class="cg-cell"><span class="cg-cell-text" style="font-weight:600">${groupId}</span>${copyBtn}</div></td>
           <td><div class="cg-cell"><span class="cg-cell-text"><code style="font-size:.8rem">${topicCellHtml}</code></span></div></td>
@@ -823,7 +828,7 @@
           <td>${trendHtml}</td>
           <td style="font-size:.82rem;color:var(--text-muted)">${g.lag_rate_per_min > 0 ? '+' : ''}${fmtNum(g.lag_rate_per_min)}/min</td>
           <td>${stateBadge(g.state)}</td>
-          <td><span class="sev sev--${g.total_lag > 10000 ? 'critical' : g.total_lag > 1000 ? 'warning' : 'healthy'}">${g.total_lag > 10000 ? 'CRITICAL' : g.total_lag > 1000 ? 'WARNING' : 'HEALTHY'}</span></td>
+          <td><span class="sev sev--${statusClass}" ${statusTitle}>${statusLabel}</span></td>
         </tr>`;
       };
 
@@ -1963,7 +1968,11 @@
         }).join('');
         return `<div style="display:inline-flex;gap:2px;margin-top:4px">${pills}</div>`;
       };
-      const connectRowHtml = c => `<tr>
+      const connectRowHtml = c => {
+        const lagCellHtml = c.lag === null || c.lag === undefined
+          ? '<span style="color:var(--text-muted)" title="No dedicated consumer group found — source connector or no offset data yet">N/A</span>'
+          : `<span style="color:${c.lag > 10000 ? 'var(--danger)' : c.lag > 1000 ? '#d97706' : 'var(--success)'};font-weight:${c.lag > 1000 ? '700' : '400'}">${fmtNum(c.lag)}</span>`;
+        return `<tr>
           <td style="font-weight:600"><code style="font-size:.8rem">${c.name}</code></td>
           <td style="font-size:.82rem;color:var(--text-muted);text-transform:capitalize">${c.type || '-'}</td>
           <td style="font-size:.8rem"><code style="font-size:.78rem">${shortClass(c)}</code></td>
@@ -1971,9 +1980,11 @@
             <div>${c.running_tasks ?? 0}/${c.total_tasks ?? 0}</div>
             ${taskPills(c)}
           </td>
+          <td style="text-align:right;font-size:.82rem">${lagCellHtml}</td>
           <td style="font-size:.8rem;color:var(--text-muted)" title="${c.worker_id || ''}">${(c.worker_id || c.worker || '-').split('.')[0].replace('awaos-qa-','')}</td>
           <td>${statusBadge(c.state)}</td>
         </tr>`;
+      };
 
       el.innerHTML = connectKpis + connectWorkers + connectCharts + `
         <div class="filter-bar">
@@ -2000,6 +2011,7 @@
                 <th>Type</th>
                 <th>Class</th>
                 <th style="text-align:center">Tasks</th>
+                <th style="text-align:right">Lag</th>
                 <th>Worker</th>
                 <th>Status</th>
               </tr>
@@ -2037,7 +2049,7 @@
         const tbody = document.getElementById('connect-tbody');
         if (tbody) {
           tbody.innerHTML = shown.map(connectRowHtml).join('') ||
-            `<tr><td colspan="6" class="data-table__empty">No connectors match</td></tr>`;
+            `<tr><td colspan="7" class="data-table__empty">No connectors match</td></tr>`;
         }
         const label = document.getElementById('connect-count-label');
         if (label) label.textContent = `Showing ${shown.length} of ${filtered.length} connectors`;

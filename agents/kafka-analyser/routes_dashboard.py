@@ -767,6 +767,28 @@ async def get_kafka_connect(cluster_id: str | None = None) -> dict:
     failed  = sum(1 for c in all_connectors if c.get("state") == "FAILED")
     paused  = sum(1 for c in all_connectors if c.get("state") == "PAUSED")
 
+    # Attach lag data for sink connectors with dedicated consumer groups
+    try:
+        from database import SessionLocal
+        from sqlalchemy import text as _cct
+        if all_connectors and cluster_id:
+            async with SessionLocal() as _csess:
+                connector_names = [c.get("name", "") for c in all_connectors if c.get("name")]
+                if connector_names:
+                    group_ids = [f"connect-{n}" for n in connector_names]
+                    _lag_rows = await _csess.execute(_cct("""
+                        SELECT group_id, total_lag FROM kafka_consumer_group_lag
+                        WHERE cluster_id = :cid AND group_id = ANY(:gids)
+                    """), {"cid": int(cluster_id), "gids": group_ids})
+                    lag_by_group = {r.group_id: r.total_lag for r in _lag_rows.fetchall()}
+                    for c in all_connectors:
+                        gid = f"connect-{c.get('name', '')}"
+                        c["lag"] = lag_by_group.get(gid)
+    except Exception as _lag_exc:
+        logger.warning("connector lag lookup failed: %s", _lag_exc)
+        for c in all_connectors:
+            c.setdefault("lag", None)
+
     worker_nodes = [{
         "hostname": wr["cluster"],
         "url": wr["url"],
