@@ -386,12 +386,24 @@
         const res = await fetch(`${PROXY}/dashboard/consumer-groups/${encodeURIComponent(groupId)}/topics?cluster_id=${cid}`, { headers: _authHeaders(), cache: 'no-store' });
         const d = await res.json();
         if (d.error) throw new Error(d.error);
-        const rows = (d.topics || []).map(t => `
-          <tr>
-            <td style="padding:8px 10px;font-size:.8rem;word-break:break-all"><code>${t.topic}</code></td>
-            <td style="padding:8px 10px;text-align:right;font-size:.8rem">${t.partition_count}</td>
-            <td style="padding:8px 10px;text-align:right;font-weight:700;color:${t.lag > 10000 ? 'var(--danger)' : t.lag > 1000 ? '#d97706' : 'var(--success)'}">${fmtNum(t.lag)}</td>
-          </tr>`).join('') || '<tr><td colspan="3" style="padding:16px;text-align:center;color:var(--text-muted)">No topic data</td></tr>';
+        const rows = (d.topics || []).map((t, i) => {
+          const partRows = (t.partitions || []).map(p => `
+            <tr>
+              <td style="padding:6px 10px 6px 28px;font-size:.78rem;color:var(--text-muted)">Partition ${p.partition}</td>
+              <td style="padding:6px 10px;text-align:right;font-size:.78rem;color:${p.lag > 10000 ? 'var(--danger)' : p.lag > 1000 ? '#d97706' : 'var(--success)'}">${fmtNum(p.lag)}</td>
+            </tr>`).join('');
+          const hasPartitions = (t.partitions || []).length > 0;
+          return `
+            <tr ${hasPartitions ? `style="cursor:pointer" onclick="const r=document.getElementById('part-row-${i}');r.style.display=r.style.display==='none'?'table-row':'none';const c=document.getElementById('chev-${i}');if(c)c.textContent=r.style.display==='none'?'▶':'▼';"` : ''}>
+              <td style="padding:8px 10px;font-size:.8rem;word-break:break-all">
+                ${hasPartitions ? `<span id="chev-${i}" style="display:inline-block;width:14px;color:var(--text-muted)">▶</span>` : '<span style="display:inline-block;width:14px"></span>'}
+                <code>${t.topic}</code>
+              </td>
+              <td style="padding:8px 10px;text-align:right;font-size:.8rem">${t.partition_count}</td>
+              <td style="padding:8px 10px;text-align:right;font-weight:700;color:${t.lag > 10000 ? 'var(--danger)' : t.lag > 1000 ? '#d97706' : 'var(--success)'}">${fmtNum(t.lag)}</td>
+            </tr>
+            ${hasPartitions ? `<tr id="part-row-${i}" style="display:none"><td colspan="3" style="padding:0"><table style="width:100%;border-collapse:collapse;background:rgba(0,0,0,.15)"><tbody>${partRows}</tbody></table></td></tr>` : ''}`;
+        }).join('') || '<tr><td colspan="3" style="padding:16px;text-align:center;color:var(--text-muted)">No topic data</td></tr>';
         popup.innerHTML = `
           <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:16px">
             <div style="min-width:0">
