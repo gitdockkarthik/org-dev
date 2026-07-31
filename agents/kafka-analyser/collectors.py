@@ -410,6 +410,37 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
                                 updated_at = now()
                         """))
                     await sess5.commit()
+            # Aggregate outflow (consumption) by topic, summed across all groups, for the
+            # message in/out chart (inflow populated separately by collect_topic_message_inflow)
+            try:
+                from database import SessionLocal as _SL7
+                from sqlalchemy import text as _t7
+                topic_outflow: dict[str, int] = {}
+                topic_interval: dict[str, float] = {}
+                for row in rows_to_upsert:
+                    _, gid, t, p, lag, eo, co, inflow, consumed, interval = row
+                    if consumed is not None:
+                        topic_outflow[t] = topic_outflow.get(t, 0) + consumed
+                        topic_interval[t] = interval  # last seen interval for this topic is fine (all partitions in a cycle share roughly the same interval)
+                if topic_outflow:
+                    async with _SL7() as sess7:
+                        BULK = 1000
+                        items = list(topic_outflow.items())
+                        for bi in range(0, len(items), BULK):
+                            batch = items[bi:bi+BULK]
+                            values = ", ".join(
+                                f"({int(cid)}, '{t.replace(chr(39), chr(39)*2)}', {outflow}, "
+                                f"{topic_interval[t] if topic_interval.get(t) is not None else 'NULL'}, now())"
+                                for t, outflow in batch
+                            )
+                            await sess7.execute(_t7(f"""
+                                INSERT INTO kafka_topic_message_rate_snapshots
+                                (cluster_id, topic, outflow, interval_seconds, collected_at)
+                                VALUES {values}
+                            """))
+                        await sess7.commit()
+            except Exception as _of_exc:
+                logger.warning("topic message rate (outflow) upsert failed: %s", _of_exc)
         except Exception as _pl_exc:
             logger.warning("consumer_group_partition_lag upsert failed: %s", _pl_exc)
         # Insert lag snapshot for trend chart
