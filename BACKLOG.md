@@ -1,0 +1,153 @@
+# Backlog
+
+**Rule: this file is the only source of truth for pending work.** If an item isn't here,
+committed to git, it doesn't exist — regardless of what was said in any chat session.
+Update this file in the SAME commit as the code change that creates, resolves, or modifies
+an item. Never treat "I'll add it to the backlog" as done until it's in this file and
+`git log` shows it committed.
+
+Each item: short description, why it matters, status, date added.
+
+---
+
+## Open
+
+### Message In/Out chart — Chunk 5 (chart UI)
+Final piece of the inflow vs. consumption feature. Blocked on the redesign below being
+resolved first — do not build the UI against the current in-memory-baseline collector if
+the redesign changes its output shape.
+*Added: 2026-07-31 (post-demo session)*
+
+### Message In/Out — persisted baseline redesign
+`collect_topic_message_inflow`'s in-memory `_prev_end_offsets` doesn't survive restarts —
+real production risk for K8s/EKS (rolling deploys, HPA scaling, spot reclaims are routine).
+A first attempt at a persisted-baseline redesign caused a job to run 880+ seconds, ignoring
+its own 450s timeout — root cause: `asyncio.wait_for()` cannot actually stop a thread
+running inside `run_in_executor()`, a genuine Python limitation. Reverted cleanly. Do not
+retry with just a bigger timeout — needs: (1) decouple baseline read/write from the sweep's
+critical path or commit incrementally, (2) a real process-level timeout mechanism, (3)
+consider sharding the ~27,746-partition sweep across multiple cycles instead of one pass.
+Migration 0032 already applied to DB (table exists, empty, unused) — correct starting
+point, do not delete, do not `git add` until redesign is ready to ship with it.
+*Added: 2026-07-31 (post-demo session)*
+
+### Broader in-memory-state + run_in_executor cancellation audit
+Explicit standing priority (not a one-off cleanup): audit all collectors for (a) in-memory
+state that doesn't survive a restart, (b) blocking work inside `run_in_executor` that a
+timeout can't actually cancel. Known affected: `collect_msg_rate`'s `_prev_offsets`,
+`collect_topic_message_inflow`'s `_prev_end_offsets`. Should happen before the message
+in-flow redesign above is retried.
+*Added: 2026-07-31 (post-demo session)*
+
+### Additional filters on Connector inventory table (Kafka Connect tab)
+User-recalled item, exact scope to be confirmed at start of next session — likely similar
+pattern to the Consumer/Connector Type filter already shipped on Consumer Groups tab
+(2026-07-30), applied to the Connector table instead (e.g. filter by type source/sink,
+by worker, or by lag threshold).
+*Added: 2026-08-01 (recalled from missing session, scope needs re-confirmation)*
+
+### Additional filters on Consumer Group inventory table
+Same as above — user-recalled item, exact scope to be confirmed.
+*Added: 2026-08-01 (recalled from missing session, scope needs re-confirmation)*
+
+### Sortable Lag column (Consumer Groups and/or Kafka Connect tables)
+Click column header to sort ascending/descending by lag value. Explicitly requested,
+queued after the filter items above per the original backlog ordering.
+*Added: 2026-08-01 (recalled from missing session, scope needs re-confirmation)*
+
+### Existing "State: Active/Empty" filter on Consumer Groups tab likely a no-op
+Checks `gState === 'empty'`, but `g.state` in this data source (from
+`collect_consumer_lag_active`) only ever holds `"consumer"`/`"connect"` — never
+`"empty"`. Found while adding the Type filter (2026-07-30), not fixed. Low priority,
+cosmetic/misleading rather than data-incorrect.
+*Added: 2026-07-30*
+
+### kafka-consumer-lag-3 job duration — monitor
+Timeout increased 150s → 300s after partition-level lag upserts added real write volume.
+Currently stable at 35-62s/run (6,008 partition rows for cluster 3), but worth a one-time
+check that duration isn't still trending upward as data grows.
+*Added: 2026-07-30*
+
+### Request-handler idle % — one-character metric name bug (safe to fix)
+Our code requests `kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent`;
+real exported metric is `..._requesthandleravgidle_percent` (underscore before "percent").
+Confirmed via live JMX dump — real value present and sensible (90.9% idle). Unlike the
+JMX cardinality issue below, this is entirely fixable in our own filter list, zero
+broker-side risk.
+*Added: 2026-07-30*
+
+### Message-rate/Activity chart shows 0 at the top of every UTC hour
+`kafka_topic_metrics_hourly` has no rows for a new hour bucket until `collect_msg_rate`'s
+first cycle of that hour lands (~2-4 min gap). `get_topics_history`'s bucket-alignment
+logic zero-fills missing buckets rather than omitting or carrying the previous value
+forward — misleading (looks like "no traffic" when it's actually "data still landing").
+Confirmed live, self-corrects within minutes. Low urgency, but flagged as user-facing
+misleading behavior, not just cosmetic. Fix direction: skip-render the newest incomplete
+bucket, or carry the previous value forward as placeholder.
+*Added: 2026-07-31 (found during pre-demo check)*
+
+### Legacy `_collection_loop` — decommission decision
+Currently disabled via `collection_interval_secs=0` (config only, not code removal).
+Decide: fully remove the code, or formalize the disabled state as permanent. Blocks a
+clean AI Insights fix (AI Insights partially depends on `kafka_metrics_history`, which
+only this loop populates).
+*Added: 2026-07-29*
+
+### AI Insights — full dedicated pass
+Not audited in recent sessions. Depends partly on the disabled legacy loop's stale
+`kafka_metrics_history`. Needs a full trace of what data AI Insights actually receives
+today before deciding what needs a job-pipeline replacement vs. what can be simplified away.
+*Added: 2026-07-29*
+
+### Cluster-switch race condition (Overview tab)
+No request cancellation on cluster switch — an in-flight request from the previously
+selected cluster can resolve after switching and silently render onto the wrong cluster's
+view. Confirmed via live Network tab capture. Overview tab (message-rate chart
+specifically) is the one confirmed-risky surface; all other tabs have self-evident
+identifying content (broker IDs, hostnames, topic/group names) that makes a mix-up
+obvious. Needs a dedicated, carefully validated session (AbortController on switch, or
+tag+validate responses against current cluster ID before rendering) — not a quick fix.
+*Added: 2026-07-29*
+
+### `describe_consumer_groups` — other dependent features to check
+Root cause fixed (2026-07-30, consumer-protocol filtering before the call). Worth
+checking whether anything else in the codebase depended on the old (broken) behavior in
+a way that needs re-validation now that the call succeeds where it previously failed.
+*Added: 2026-07-30*
+
+---
+
+## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
+- Orphaned/dead-write topic detection — DevQA has only ~2,557 (group, topic) pairs with
+  any committed offset, out of ~17-18k total topics. Cross-reference
+  `kafka_topic_metrics.bytes_in_per_sec > 0` against consumer-group topic coverage.
+- RF=1 topic list (not just count), cross-referenced with active bytes_in_per_sec.
+- Automatic partition-leader-imbalance alerting.
+- Dead/empty consumer group hygiene listing.
+- Schema Registry compatibility-mode risk flags (subjects set to `NONE`).
+- Read-only SSH RAM/disk-mount metrics — parked, check with Kafka team whether they want
+  this consolidated here given CloudWatch/NR already cover generic infra metrics.
+
+## Explicitly Parked (not being worked, revisit only when trigger condition below is met)
+- **JMX exporter per-topic cardinality fix** (would unlock GC/ISR/latency/bytes_out
+  filtering) — a prior attempt at a JMX exporter config change caused a broker to fail to
+  come back up, required rollback. **Trigger to revisit: only during a scheduled, reviewed
+  Kafka upgrade maintenance window**, tested by senior Kafka team review of the exact
+  exclude pattern first, never as a standalone change.
+- Kafka team's response on the ~38GB unaccounted mount-space gap on external staging.
+- Internal Staging Kafka onboarding — waiting on soak monitoring of clusters 3/4.
+
+---
+
+## Resolved (kept for reference — move here, don't delete, when an item closes)
+
+### total_connectors hardcoded to 0 — fixed 2026-07-30, commit c284a0a
+### describe_consumer_groups crash — root-caused and fixed 2026-07-30, commit a9dd92f
+### Broker-timestamp correlation hardening — fixed 2026-07-30, commit 99e85e3
+### Consumer vs. Connector filter (Consumer Groups tab) — shipped 2026-07-30, commit d73f4eb
+### Source vs. sink Connect-group lag distinction — superseded by real per-connector lag
+feature (2026-07-30, commits fd2fadb/6c46d30) — the honest "N/A" badge for zero-offset
+groups is the final answer; no further work needed.
+### Real per-connector lag on Kafka Connect tab — shipped 2026-07-30, commits fd2fadb, 6c46d30
+### Per-partition lag drill-down (Connector -> Consumer Group -> Topics -> Partitions -> Lag)
+— shipped 2026-07-30, commits 0ee1590, 423553e, 2e4694c
