@@ -31,13 +31,11 @@ Migration 0032 already applied to DB (table exists, empty, unused) — correct s
 point, do not delete, do not `git add` until redesign is ready to ship with it.
 *Added: 2026-07-31 (post-demo session)*
 
-### Broader in-memory-state + run_in_executor cancellation audit
-Explicit standing priority (not a one-off cleanup): audit all collectors for (a) in-memory
-state that doesn't survive a restart, (b) blocking work inside `run_in_executor` that a
-timeout can't actually cancel. Known affected: `collect_msg_rate`'s `_prev_offsets`,
-`collect_topic_message_inflow`'s `_prev_end_offsets`. Should happen before the message
-in-flow redesign above is retried.
-*Added: 2026-07-31 (post-demo session)*
+### Message In/Out — persisted baseline redesign is now UNBLOCKED
+Audit complete (2026-08-01) — see Resolved section below for full findings. Only
+`collect_topic_message_inflow` needs the redesign; the other 8 in-memory-state variables
+and 5 other `run_in_executor`-using jobs are confirmed low-risk/self-healing. Proceed
+directly to the redesign (item above) without further audit work.
 
 ### Lag-based filter and sortable columns (Consumer Groups / Kafka Connect)
 Quickly isolate critical groups/connectors via a lag threshold filter, plus ascending/
@@ -147,6 +145,23 @@ a way that needs re-validation now that the call succeeds where it previously fa
 - Internal Staging Kafka onboarding — waiting on soak monitoring of clusters 3/4.
 
 ---
+
+### In-memory-state + run_in_executor cancellation audit — completed 2026-08-01
+Full findings: 9 module-level state dicts total, classified by restart consequence.
+`_jobs` (jobs.py) and `_lag_trend_cache` (routes_dashboard.py) — zero risk, rebuilt from
+postgres / TTL cache in front of postgres. `_cooldown_cache` (escalation_notifier.py),
+`_broker_state`/`_topic_state` (prometheus_collector.py), `_prev_offsets` (collect_msg_rate)
+— low risk, self-healing within one short (~2 min) cycle. `_prev_end_offsets`/
+`_prev_end_offset_time` (collect_topic_message_inflow) — the real one, ~200-430s cycle
+means a restart wastes a genuinely expensive sweep, not a cheap one.
+Separately: of 9 scheduled jobs, 6 use `run_in_executor` (directly or via real_kafka.py)
+and are technically exposed to the same "timeout can't cancel a thread" limitation, but
+only `kafka-topic-inflow` has ever actually hit it (880s vs 450s timeout) — it's the only
+one sweeping tens of thousands of items per cycle; the rest operate on single-digit-to-
+low-hundreds of items. Decision: fix `collect_topic_message_inflow` specifically rather
+than a blanket fix across all 6, to avoid solving a problem with no evidence elsewhere.
+If any other job ever shows the same symptom (run time wildly exceeding its timeout),
+revisit this decision for that specific job.
 
 ## Resolved (kept for reference — move here, don't delete, when an item closes)
 
