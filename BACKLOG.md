@@ -39,21 +39,30 @@ timeout can't actually cancel. Known affected: `collect_msg_rate`'s `_prev_offse
 in-flow redesign above is retried.
 *Added: 2026-07-31 (post-demo session)*
 
-### Additional filters on Connector inventory table (Kafka Connect tab)
-User-recalled item, exact scope to be confirmed at start of next session — likely similar
-pattern to the Consumer/Connector Type filter already shipped on Consumer Groups tab
-(2026-07-30), applied to the Connector table instead (e.g. filter by type source/sink,
-by worker, or by lag threshold).
-*Added: 2026-08-01 (recalled from missing session, scope needs re-confirmation)*
+### Lag-based filter and sortable columns (Consumer Groups / Kafka Connect)
+Quickly isolate critical groups/connectors via a lag threshold filter, plus ascending/
+descending sort on the Lag column. Explicitly requested by user, queued after other items.
+*Added: 2026-07-31 (original session, recovered from re-uploaded handoff.md)*
 
-### Additional filters on Consumer Group inventory table
-Same as above — user-recalled item, exact scope to be confirmed.
-*Added: 2026-08-01 (recalled from missing session, scope needs re-confirmation)*
+### N/A status UX review for PAUSED connectors
+Currently a PAUSED connector and a source connector (architecturally no offsets) show
+identical grey "N/A" status — user wants these distinguished, since N/A appears against
+most PAUSED connectors and conflates two different meanings ("paused by someone" vs.
+"not measurable by design").
+*Added: 2026-07-31 (original session, recovered from re-uploaded handoff.md)*
 
-### Sortable Lag column (Consumer Groups and/or Kafka Connect tables)
-Click column header to sort ascending/descending by lag value. Explicitly requested,
-queued after the filter items above per the original backlog ordering.
-*Added: 2026-08-01 (recalled from missing session, scope needs re-confirmation)*
+### Source connector -> topic correlation
+Use the all-topics inflow data (once the message in-flow feature ships) to assess source
+connector health — i.e. is it actually producing. Explicitly agreed as its own separate
+future cycle, not bundled into the message-rate chart work.
+*Added: 2026-07-31 (original session, recovered from re-uploaded handoff.md)*
+
+### SLO tab snapshot timestamp
+Kafka Connect tab reads live REST (up-to-the-second); SLO tab reads the last
+kafka_connector_snapshots row (up to 2 min old) — occasional small count discrepancies
+between the two are a timing difference, not a bug, but look contradictory without
+context. Fix: surface "as of HH:MM" on the SLO tab. Low priority, cosmetic.
+*Added: 2026-07-31 (original session, recovered from re-uploaded handoff.md)*
 
 ### Existing "State: Active/Empty" filter on Consumer Groups tab likely a no-op
 Checks `gState === 'empty'`, but `g.state` in this data source (from
