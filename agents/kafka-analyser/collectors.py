@@ -1151,6 +1151,124 @@ async def collect_msg_rate(cluster_id: str = ""):
         collect_msg_rate._last_result = f"Failed: {e}"
 
 
+# ── Job 10: Topic Message Inflow (all topics, no consumer-group dependency) ────
+_prev_end_offsets: dict = {}  # global, keyed by cluster_id -> {(topic, partition): end_offset}
+_prev_end_offset_time: dict = {}  # global, keyed by cluster_id -> last collection timestamp
+
+async def collect_topic_message_inflow(cluster_id: str = ""):
+    """True message-count inflow per topic, ALL topics regardless of consumer group
+    presence — uses Kafka offsets (seek_to_end) directly, not byte-size estimates.
+    Upserts raw snapshots to kafka_topic_message_rate_snapshots."""
+    global _prev_end_offsets, _prev_end_offset_time
+    c = await _get_cluster(cluster_id)
+    if not c:
+        collect_topic_message_inflow._last_result = f"Cluster {cluster_id} not found or disabled"
+        return
+    cid = _cid(c)
+    try:
+        from kafka import KafkaConsumer, TopicPartition
+        security = {}
+        if c.get("auth_type") not in (None, "none"):
+            import ssl as _ssl
+            tls = c.get("tls_enabled", False)
+            security = {
+                "security_protocol": "SASL_SSL" if tls else "SASL_PLAINTEXT",
+                "sasl_mechanism": c.get("sasl_mechanism", "PLAIN"),
+                "sasl_plain_username": c.get("sasl_username"),
+                "sasl_plain_password": c.get("sasl_password"),
+            }
+            if tls:
+                ssl_ctx = _ssl.create_default_context()
+                ssl_ctx.check_hostname = False
+                ssl_ctx.verify_mode = _ssl.CERT_NONE
+                security["ssl_context"] = ssl_ctx
+
+        # Get full partition list from postgres (already-populated, no live Kafka call)
+        from database import SessionLocal
+        from sqlalchemy import text as _t
+        if SessionLocal is None:
+            collect_topic_message_inflow._last_result = "DB unavailable"
+            return
+        async with SessionLocal() as sess:
+            rows = await sess.execute(_t(
+                "SELECT topic, partition FROM kafka_partition_leaders WHERE cluster_id = :cid"
+            ), {"cid": int(cid)})
+            all_partitions = [(r.topic, r.partition) for r in rows.fetchall()]
+
+        if not all_partitions:
+            collect_topic_message_inflow._last_result = "No partitions found"
+            return
+
+        loop = asyncio.get_event_loop()
+        def _seek_to_end_all():
+            consumer = KafkaConsumer(
+                bootstrap_servers=c["bootstrap_servers"],
+                request_timeout_ms=20000,
+                **security,
+            )
+            try:
+                tps = [TopicPartition(t, p) for t, p in all_partitions]
+                end_offsets: dict = {}
+                SEEK_BATCH = 500
+                for i in range(0, len(tps), SEEK_BATCH):
+                    batch_tps = tps[i:i + SEEK_BATCH]
+                    consumer.assign(batch_tps)
+                    consumer.seek_to_end(*batch_tps)
+                    for tp in batch_tps:
+                        end_offsets[(tp.topic, tp.partition)] = consumer.position(tp)
+                return end_offsets
+            finally:
+                consumer.close()
+
+        now = time.time()
+        current_offsets = await loop.run_in_executor(None, _seek_to_end_all)
+
+        prev_offsets = _prev_end_offsets.get(cid, {})
+        prev_time = _prev_end_offset_time.get(cid, now)
+        interval = max(1, now - prev_time)
+        _prev_end_offsets[cid] = current_offsets
+        _prev_end_offset_time[cid] = now
+
+        if not prev_offsets:
+            collect_topic_message_inflow._last_result = "Baseline stored — inflow available next cycle"
+            return
+
+        # Aggregate per-partition deltas up to per-topic totals
+        topic_inflow: dict[str, int] = {}
+        for (topic, partition), curr_off in current_offsets.items():
+            prev_off = prev_offsets.get((topic, partition))
+            if prev_off is not None:
+                delta = max(0, curr_off - prev_off)
+                topic_inflow[topic] = topic_inflow.get(topic, 0) + delta
+
+        if not topic_inflow:
+            collect_topic_message_inflow._last_result = "No topic inflow data"
+            return
+
+        from database import SessionLocal as _SL6
+        from sqlalchemy import text as _t6
+        async with _SL6() as sess6:
+            BULK = 1000
+            items = list(topic_inflow.items())
+            for bi in range(0, len(items), BULK):
+                batch = items[bi:bi+BULK]
+                values = ", ".join(
+                    f"({int(cid)}, '{t.replace(chr(39), chr(39)*2)}', {inflow}, {round(interval, 2)}, now())"
+                    for t, inflow in batch
+                )
+                await sess6.execute(_t6(f"""
+                    INSERT INTO kafka_topic_message_rate_snapshots
+                    (cluster_id, topic, inflow, interval_seconds, collected_at)
+                    VALUES {values}
+                """))
+            await sess6.commit()
+
+        collect_topic_message_inflow._last_result = f"Inflow tracked for {len(topic_inflow)} topics"
+    except Exception as e:
+        logger.warning("collect_topic_message_inflow failed for %s: %s", c["name"], e)
+        collect_topic_message_inflow._last_result = f"Failed: {e}"
+
+
 # ── Job 9: Schema Registry ────────────────────────────────────────────────────
 async def collect_schema_registry():
     """Collect schema registry stats."""

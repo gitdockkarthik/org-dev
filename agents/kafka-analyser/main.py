@@ -952,8 +952,8 @@ async def lifespan(app: FastAPI):
     # Register per-cluster jobs
     from collectors import (
         collect_broker_health, collect_consumer_lag_active, collect_topic_sizes,
-        collect_topic_structure, collect_msg_rate, collect_connector_snapshots,
-        collect_sr_subjects, compute_slo_compliance,
+        collect_topic_structure, collect_msg_rate, collect_topic_message_inflow,
+        collect_connector_snapshots, collect_sr_subjects, compute_slo_compliance,
     )
     from storage import get_backend as _gb
     _clusters = await _gb().get_clusters(settings.agent_slug)
@@ -966,6 +966,7 @@ async def lifespan(app: FastAPI):
         ("topic-sizes",          "Topic Sizes",          collect_topic_sizes,           30,  "*/15 * * * *", True,  None),
         ("topic-structure",      "Topic Structure",      collect_topic_structure,       90,  "2 */30 * * *", False, None),
         ("msg-rate",             "Message Rate",         collect_msg_rate,              60,  "*/2 * * * *",  True,  None),
+        ("topic-inflow",         "Topic Message Inflow", collect_topic_message_inflow,  300, "*/10 * * * *", True,  None),
         ("connector-snapshots",  "Connector Snapshots",  collect_connector_snapshots,   30,  "*/2 * * * *",  True,  None),
         ("sr-sync",              "Schema Registry Sync", collect_sr_subjects,           300, "*/30 * * * *", True,  "schema_registry_url"),
         ("slo-compliance",       "SLO Compliance",       compute_slo_compliance,        60,  "5 * * * *",    True,  None),
