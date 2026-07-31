@@ -387,11 +387,32 @@
         const d = await res.json();
         if (d.error) throw new Error(d.error);
         const rows = (d.topics || []).map((t, i) => {
-          const partRows = (t.partitions || []).map(p => `
-            <tr>
-              <td style="padding:6px 10px 6px 28px;font-size:.78rem;color:var(--text-muted)">Partition ${p.partition}</td>
-              <td style="padding:6px 10px;text-align:right;font-size:.78rem;color:${p.lag > 10000 ? 'var(--danger)' : p.lag > 1000 ? '#d97706' : 'var(--success)'}">${fmtNum(p.lag)}</td>
-            </tr>`).join('');
+          const partRows = (t.partitions || []).map(p => {
+            const hasRateData = p.inflow_since_last !== null && p.inflow_since_last !== undefined
+                              && p.consumed_since_last !== null && p.consumed_since_last !== undefined;
+            let rateHtml = '';
+            if (hasRateData) {
+              const inflow = p.inflow_since_last, consumed = p.consumed_since_last;
+              if (inflow === 0 && consumed === 0 && p.lag > 0) {
+                rateHtml = `<span style="color:var(--text-muted);font-size:.72rem">⏸ stalled (no movement)</span>`;
+              } else if (inflow === 0 && consumed === 0) {
+                rateHtml = '';
+              } else if (inflow > consumed) {
+                rateHtml = `<span style="color:var(--danger);font-size:.72rem">↑ growing (+${fmtNum(inflow)} in, ${fmtNum(consumed)} out)</span>`;
+              } else if (consumed > inflow) {
+                rateHtml = `<span style="color:var(--success);font-size:.72rem">↓ draining (+${fmtNum(inflow)} in, ${fmtNum(consumed)} out)</span>`;
+              } else {
+                rateHtml = `<span style="color:#d97706;font-size:.72rem">→ steady (+${fmtNum(inflow)} in, ${fmtNum(consumed)} out)</span>`;
+              }
+            }
+            return `
+              <tr>
+                <td style="padding:6px 10px 6px 28px;font-size:.78rem;color:var(--text-muted)">
+                  Partition ${p.partition}${rateHtml ? `<br>${rateHtml}` : ''}
+                </td>
+                <td style="padding:6px 10px;text-align:right;font-size:.78rem;color:${p.lag > 10000 ? 'var(--danger)' : p.lag > 1000 ? '#d97706' : 'var(--success)'}">${fmtNum(p.lag)}</td>
+              </tr>`;
+          }).join('');
           const hasPartitions = (t.partitions || []).length > 0;
           return `
             <tr ${hasPartitions ? `style="cursor:pointer" onclick="const r=document.getElementById('part-row-${i}');r.style.display=r.style.display==='none'?'table-row':'none';const c=document.getElementById('chev-${i}');if(c)c.textContent=r.style.display==='none'?'▶':'▼';"` : ''}>
