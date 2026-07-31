@@ -253,7 +253,11 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
                             entry = topic_agg.setdefault(tp.topic, {"lag": 0, "partitions": 0})
                             entry["lag"] += partition_lag
                             entry["partitions"] += 1
-                            group_partition_lag.setdefault(gid, []).append({"topic": tp.topic, "partition": tp.partition, "lag": partition_lag})
+                            end_off = end_offsets.get(tp, committed_off)
+                            group_partition_lag.setdefault(gid, []).append({
+                                "topic": tp.topic, "partition": tp.partition, "lag": partition_lag,
+                                "end_offset": end_off, "committed_offset": committed_off,
+                            })
                         group_topic_lag[gid] = topic_agg
                     return {
                         "groups": enriched,
@@ -341,33 +345,68 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
                     await sess4.commit()
         except Exception as _tl_exc:
             logger.warning("consumer_group_topic_lag upsert failed: %s", _tl_exc)
-        # Upsert partition-level lag
+        # Upsert partition-level lag with inflow/consumption tracking
         try:
             from database import SessionLocal as _SL5
             from sqlalchemy import text as _t5
+            from datetime import datetime, timezone
             group_partition_lag_data = result.get("group_partition_lag", {})
-            partition_rows_to_upsert = [
-                (int(cid), gid, item["topic"], item["partition"], item["lag"])
+            flat_items = [
+                (gid, item["topic"], item["partition"], item["lag"], item["end_offset"], item["committed_offset"])
                 for gid, items in group_partition_lag_data.items()
                 for item in items
             ]
-            if partition_rows_to_upsert:
+            if flat_items:
                 async with _SL5() as sess5:
-                    BULK = 1000
-                    for bi in range(0, len(partition_rows_to_upsert), BULK):
-                        batch = partition_rows_to_upsert[bi:bi+BULK]
+                    # Fetch ALL previous values for this cluster in one simple query (cheap — only
+                    # thousands of rows per cluster, not worth the complexity/risk of per-key matching)
+                    prev_lookup: dict[tuple, dict] = {}
+                    prev_rows = await sess5.execute(_t5("""
+                        SELECT group_id, topic, partition, end_offset, committed_offset, updated_at
+                        FROM kafka_consumer_group_partition_lag
+                        WHERE cluster_id = :cid
+                    """), {"cid": int(cid)})
+                    for r in prev_rows.fetchall():
+                        prev_lookup[(int(cid), r.group_id, r.topic, r.partition)] = {
+                            "end_offset": r.end_offset, "committed_offset": r.committed_offset,
+                            "updated_at": r.updated_at,
+                        }
+
+                    now_ts = datetime.now(timezone.utc)
+                    rows_to_upsert = []
+                    for gid, t, p, lag, eo, co in flat_items:
+                        prev = prev_lookup.get((int(cid), gid, t, p))
+                        if prev and prev["end_offset"] is not None and prev["committed_offset"] is not None and prev["updated_at"] is not None:
+                            inflow = max(0, eo - prev["end_offset"])
+                            consumed = max(0, co - prev["committed_offset"])
+                            interval = (now_ts - prev["updated_at"]).total_seconds()
+                        else:
+                            inflow, consumed, interval = None, None, None
+                        rows_to_upsert.append((int(cid), gid, t, p, lag, eo, co, inflow, consumed, interval))
+
+                    for bi in range(0, len(rows_to_upsert), BULK):
+                        batch = rows_to_upsert[bi:bi+BULK]
                         values = ", ".join(
                             f"({c}, '{g.replace(chr(39), chr(39)*2)}', "
-                            f"'{t.replace(chr(39), chr(39)*2)}', {p}, {lag}, now())"
-                            for c, g, t, p, lag in batch
+                            f"'{t.replace(chr(39), chr(39)*2)}', {p}, {lag}, {eo}, {co}, "
+                            f"{inflow if inflow is not None else 'NULL'}, "
+                            f"{consumed if consumed is not None else 'NULL'}, "
+                            f"{interval if interval is not None else 'NULL'}, now())"
+                            for c, g, t, p, lag, eo, co, inflow, consumed, interval in batch
                         )
                         await sess5.execute(_t5(f"""
                             INSERT INTO kafka_consumer_group_partition_lag
-                            (cluster_id, group_id, topic, partition, lag, updated_at)
+                            (cluster_id, group_id, topic, partition, lag, end_offset, committed_offset,
+                             inflow_since_last, consumed_since_last, interval_seconds, updated_at)
                             VALUES {values}
                             ON CONFLICT (cluster_id, group_id, topic, partition)
                             DO UPDATE SET
                                 lag = EXCLUDED.lag,
+                                end_offset = EXCLUDED.end_offset,
+                                committed_offset = EXCLUDED.committed_offset,
+                                inflow_since_last = EXCLUDED.inflow_since_last,
+                                consumed_since_last = EXCLUDED.consumed_since_last,
+                                interval_seconds = EXCLUDED.interval_seconds,
                                 updated_at = now()
                         """))
                     await sess5.commit()
