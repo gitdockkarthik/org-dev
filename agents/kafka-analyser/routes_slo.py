@@ -188,10 +188,11 @@ async def get_slo_dashboard(cluster_id: str, hours: int = 24) -> dict:
                 ORDER BY state, connector_name
             """), {"cid": int(cluster_id)})
             connector_rows = connectors.fetchall()
-            # Task health: connectors with all tasks healthy / total active connectors
-            total_active = conn_running + conn_failed
-            conn_with_failures = sum(1 for r in connector_rows if r.failed_tasks > 0 and r.state == 'RUNNING')
-            task_health_pct = round((total_active - conn_with_failures) / total_active * 100, 1) if total_active > 0 else None
+            # Task health: sum of running tasks / sum of total tasks across active connectors
+            active_connectors = [r for r in connector_rows if r.state in ('RUNNING', 'FAILED')]
+            total_tasks_sum = sum(r.total_tasks or 0 for r in active_connectors)
+            running_tasks_sum = sum(r.running_tasks or 0 for r in active_connectors)
+            task_health_pct = round(running_tasks_sum / total_tasks_sum * 100, 1) if total_tasks_sum > 0 else None
 
         # Compliance status helper
         def status(pct, target):

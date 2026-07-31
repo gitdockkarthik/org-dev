@@ -818,18 +818,18 @@ async def compute_slo_compliance(cluster_id: str = ""):
             # Use latest snapshot only to avoid counting multiple snapshots per connector
             task_stats = await sess.execute(_slo("""
                 WITH latest AS (
-                    SELECT DISTINCT ON (connector_name) connector_name, failed_tasks, state
+                    SELECT DISTINCT ON (connector_name) connector_name, total_tasks, running_tasks, state
                     FROM kafka_connector_snapshots
                     WHERE cluster_id=:cid AND collected_at >= :prev AND collected_at < :now
                     AND state IN ('RUNNING', 'FAILED')
                     ORDER BY connector_name, collected_at DESC
                 )
-                SELECT COUNT(*) as total,
-                       SUM(CASE WHEN failed_tasks = 0 AND state = 'RUNNING' THEN 1 ELSE 0 END) as healthy
+                SELECT COALESCE(SUM(total_tasks), 0) as total_tasks_sum,
+                       COALESCE(SUM(running_tasks), 0) as running_tasks_sum
                 FROM latest
             """), {"cid": int(cid), "prev": prev_hour, "now": hour_bucket})
             ts = task_stats.fetchone()
-            task_health_pct = round(ts.healthy / ts.total * 100, 1) if ts and ts.total > 0 else None
+            task_health_pct = round(ts.running_tasks_sum / ts.total_tasks_sum * 100, 1) if ts and ts.total_tasks_sum > 0 else None
             # Overall compliance — all metrics
             metrics = [m for m in [conn_avail_pct, lag_compliance_pct, urp_compliance_pct,
                                    cpu_compliance_pct, heap_compliance_pct, task_health_pct] if m is not None]
