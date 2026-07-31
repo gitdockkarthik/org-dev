@@ -387,7 +387,7 @@ async def get_consumer_group_topics(group_id: str, cluster_id: str | None = None
             """), {"cid": int(cluster_id), "gid": group_id})
             results = rows.fetchall()
             partition_rows = await sess.execute(_t("""
-                SELECT topic, partition, lag
+                SELECT topic, partition, lag, inflow_since_last, consumed_since_last, interval_seconds
                 FROM kafka_consumer_group_partition_lag
                 WHERE cluster_id = :cid AND group_id = :gid AND updated_at >= NOW() - INTERVAL '20 minutes'
                 ORDER BY topic, lag DESC
@@ -395,7 +395,12 @@ async def get_consumer_group_topics(group_id: str, cluster_id: str | None = None
             partition_results = partition_rows.fetchall()
         partitions_by_topic: dict[str, list[dict]] = {}
         for pr in partition_results:
-            partitions_by_topic.setdefault(pr.topic, []).append({"partition": pr.partition, "lag": pr.lag})
+            partitions_by_topic.setdefault(pr.topic, []).append({
+                "partition": pr.partition, "lag": pr.lag,
+                "inflow_since_last": pr.inflow_since_last,
+                "consumed_since_last": pr.consumed_since_last,
+                "interval_seconds": pr.interval_seconds,
+            })
         if not results:
             return {"group_id": group_id, "topics": [], "total_lag": 0}
         topics = [
