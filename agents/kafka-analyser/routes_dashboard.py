@@ -94,7 +94,7 @@ async def get_overview(cluster_id: str | None = None, hours: int | None = None) 
             async with _SL() as _cgs:
                 _cgr = await _cgs.execute(_cgt2(
                     "SELECT group_id, total_lag FROM kafka_consumer_group_lag "
-                    "WHERE cluster_id=:cid ORDER BY total_lag DESC"
+                    "WHERE cluster_id=:cid AND updated_at >= NOW() - INTERVAL '20 minutes' ORDER BY total_lag DESC"
                 ), {"cid": int(cluster_id)})
                 consumer_groups = [{"group_id": r.group_id, "total_lag": r.total_lag} for r in _cgr.fetchall()]
     except Exception:
@@ -346,7 +346,7 @@ async def get_consumer_groups(cluster_id: str | None = None, hours: int | None =
             rows = await sess.execute(_t("""
                 SELECT group_id, state, total_lag, topic_count, committed_offsets, updated_at
                 FROM kafka_consumer_group_lag
-                WHERE cluster_id = :cid
+                WHERE cluster_id = :cid AND updated_at >= NOW() - INTERVAL '20 minutes'
                 ORDER BY total_lag DESC
             """), {"cid": int(cluster_id)})
             groups = [
@@ -382,14 +382,14 @@ async def get_consumer_group_topics(group_id: str, cluster_id: str | None = None
             rows = await sess.execute(_t("""
                 SELECT topic, partition_count, lag, updated_at
                 FROM kafka_consumer_group_topic_lag
-                WHERE cluster_id = :cid AND group_id = :gid
+                WHERE cluster_id = :cid AND group_id = :gid AND updated_at >= NOW() - INTERVAL '20 minutes'
                 ORDER BY lag DESC
             """), {"cid": int(cluster_id), "gid": group_id})
             results = rows.fetchall()
             partition_rows = await sess.execute(_t("""
                 SELECT topic, partition, lag
                 FROM kafka_consumer_group_partition_lag
-                WHERE cluster_id = :cid AND group_id = :gid
+                WHERE cluster_id = :cid AND group_id = :gid AND updated_at >= NOW() - INTERVAL '20 minutes'
                 ORDER BY topic, lag DESC
             """), {"cid": int(cluster_id), "gid": group_id})
             partition_results = partition_rows.fetchall()
@@ -789,7 +789,7 @@ async def get_kafka_connect(cluster_id: str | None = None) -> dict:
                     group_ids = [f"connect-{n}" for n in connector_names]
                     _lag_rows = await _csess.execute(_cct("""
                         SELECT group_id, total_lag FROM kafka_consumer_group_lag
-                        WHERE cluster_id = :cid AND group_id = ANY(:gids)
+                        WHERE cluster_id = :cid AND group_id = ANY(:gids) AND updated_at >= NOW() - INTERVAL '20 minutes'
                     """), {"cid": int(cluster_id), "gids": group_ids})
                     lag_by_group = {r.group_id: r.total_lag for r in _lag_rows.fetchall()}
                     for c in all_connectors:
@@ -879,7 +879,7 @@ async def get_mirrormaker(cluster_id: str | None = None, hours: int | None = Non
                             async with SessionLocal() as _mm1s:
                                 _mm1cg = await _mm1s.execute(_mm1t("""
                                     SELECT group_id, total_lag FROM kafka_consumer_group_lag
-                                    WHERE cluster_id=:cid AND group_id ILIKE '%mirror%'
+                                    WHERE cluster_id=:cid AND group_id ILIKE '%mirror%' AND updated_at >= NOW() - INTERVAL '20 minutes'
                                     ORDER BY total_lag DESC
                                 """), {"cid": int(cluster_id)})
                                 mm1_groups = [{"group_id": r.group_id, "total_lag": r.total_lag} for r in _mm1cg.fetchall()]
