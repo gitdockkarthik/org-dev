@@ -1423,3 +1423,67 @@ async def collect_schema_registry():
         except Exception as e:
             logger.warning("schema_registry failed for %s: %s", c["name"], e)
     collect_schema_registry._last_result = "; ".join(results) if results else "No schema registry configured"
+
+
+# ── Maintenance: Rollup & Retention ───────────────────────────────────────────
+async def rollup_topic_message_rates(retention_hours: int = 6) -> dict:
+    """Roll up kafka_topic_message_rate_snapshots rows older than retention_hours
+    into kafka_topic_message_rate_hourly_rollup (hourly granularity), then delete
+    those raw rows. Aggregate-then-delete, idempotent upsert, safe to retry on
+    partial failure -- see design notes in BACKLOG.md."""
+    from database import SessionLocal
+    from sqlalchemy import text as _t
+    from datetime import datetime, timezone, timedelta
+    if SessionLocal is None:
+        return {"error": "DB unavailable"}
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=retention_hours)
+    try:
+        async with SessionLocal() as sess:
+            # Step 1: aggregate everything older than cutoff into hourly buckets,
+            # idempotent upsert -- safe to re-run, never double-counts.
+            agg_result = await sess.execute(_t("""
+                INSERT INTO kafka_topic_message_rate_hourly_rollup
+                    (cluster_id, topic, hour_bucket, total_inflow, total_outflow, sample_count)
+                SELECT
+                    cluster_id,
+                    topic,
+                    date_trunc('hour', collected_at) AS hour_bucket,
+                    COALESCE(SUM(inflow), 0) AS total_inflow,
+                    COALESCE(SUM(outflow), 0) AS total_outflow,
+                    COUNT(*) AS sample_count
+                FROM kafka_topic_message_rate_snapshots
+                WHERE collected_at < :cutoff
+                GROUP BY cluster_id, topic, date_trunc('hour', collected_at)
+                ON CONFLICT (cluster_id, topic, hour_bucket) DO UPDATE SET
+                    total_inflow = EXCLUDED.total_inflow,
+                    total_outflow = EXCLUDED.total_outflow,
+                    sample_count = EXCLUDED.sample_count
+            """), {"cutoff": cutoff})
+            await sess.commit()
+
+            # Step 2: ONLY after step 1 succeeded, delete the now-safely-rolled-up
+            # raw rows, using the SAME cutoff.
+            del_result = await sess.execute(_t("""
+                DELETE FROM kafka_topic_message_rate_snapshots
+                WHERE collected_at < :cutoff
+            """), {"cutoff": cutoff})
+            await sess.commit()
+
+        rollup_topic_message_rates._last_result = (
+            f"Rolled up rows older than {cutoff.isoformat()}, "
+            f"deleted {del_result.rowcount} raw rows"
+        )
+        return {"deleted": del_result.rowcount}
+    except Exception as e:
+        logger.error("rollup_topic_message_rates failed: %s", e)
+        rollup_topic_message_rates._last_result = f"Failed: {e}"
+        return {"error": str(e)}
+
+
+async def run_snapshot_rollups() -> dict:
+    """Single job entry point -- calls each configured table's rollup function.
+    Add new tables here as one more function call, not a new job registration."""
+    results = {}
+    results["topic_message_rates"] = await rollup_topic_message_rates(retention_hours=6)
+    run_snapshot_rollups._last_result = f"Rollup pass: {results}"
+    return results
