@@ -523,62 +523,63 @@ class RealKafkaCollector(KafkaCollector):
     def _fetch_group_lags_sync(self, group_ids: list[str]) -> list[dict[str, Any]]:
         if not group_ids:
             return []
-        security = self._security_kwargs()
-        try:
-            admin = KafkaAdminClient(
-                bootstrap_servers=self._bootstrap_list,
-                **security,
-                request_timeout_ms=15000,
-            )
-        except Exception as exc:
-            raise RuntimeError(f"Failed to connect: {exc}") from exc
+        cluster_config = {
+            "bootstrap_servers": self.bootstrap_servers,
+            "auth_type": self.auth_type,
+            "sasl_username": self.sasl_username,
+            "sasl_password": self.sasl_password,
+            "sasl_mechanism": self.sasl_mechanism,
+            "tls_enabled": self.tls_enabled,
+        }
+        admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
         consumer = None
         try:
             groups = []
-            for gid in group_ids:
-                try:
-                    offsets = admin.list_consumer_group_offsets(gid)
-                    if not offsets:
+            with admin_lock:
+                for gid in group_ids:
+                    try:
+                        offsets = admin.list_consumer_group_offsets(gid)
+                        if not offsets:
+                            groups.append({
+                                "group_id": gid,
+                                "total_lag": 0,
+                                "topic_count": 0,
+                                "partitions": [],
+                            })
+                            continue
+                        if consumer is None:
+                            security = self._security_kwargs()
+                            consumer = KafkaConsumer(
+                                bootstrap_servers=self._bootstrap_list,
+                                enable_auto_commit=False,
+                                group_id=None,
+                                **security,
+                            )
+                        partitions, total_lag, topics = self._group_lag(consumer, offsets)
                         groups.append({
                             "group_id": gid,
-                            "total_lag": 0,
+                            "total_lag": total_lag,
+                            "topic_count": len(topics),
+                            "partitions": partitions,
+                        })
+                    except Exception as exc:
+                        groups.append({
+                            "group_id": gid,
+                            "total_lag": -1,
                             "topic_count": 0,
                             "partitions": [],
+                            "error": str(exc),
                         })
-                        continue
-                    if consumer is None:
-                        consumer = KafkaConsumer(
-                            bootstrap_servers=self._bootstrap_list,
-                            enable_auto_commit=False,
-                            group_id=None,
-                            **security,
-                        )
-                    partitions, total_lag, topics = self._group_lag(consumer, offsets)
-                    groups.append({
-                        "group_id": gid,
-                        "total_lag": total_lag,
-                        "topic_count": len(topics),
-                        "partitions": partitions,
-                    })
-                except Exception as exc:
-                    groups.append({
-                        "group_id": gid,
-                        "total_lag": -1,
-                        "topic_count": 0,
-                        "partitions": [],
-                        "error": str(exc),
-                    })
             return groups
+        except Exception as exc:
+            invalidate_client(self.bootstrap_servers)
+            raise RuntimeError(f"Failed to connect: {exc}") from exc
         finally:
             if consumer:
                 try:
                     consumer.close()
                 except Exception:
                     pass
-            try:
-                admin.close()
-            except Exception:
-                pass
 
     async def search_topics(self, query: str) -> list[str]:
         """On-demand: search topic names matching query (case-insensitive)."""
@@ -586,25 +587,24 @@ class RealKafkaCollector(KafkaCollector):
         return await loop.run_in_executor(_kafka_io_executor, self._search_topics_sync, query)
 
     def _search_topics_sync(self, query: str) -> list[str]:
-        security = self._security_kwargs()
+        cluster_config = {
+            "bootstrap_servers": self.bootstrap_servers,
+            "auth_type": self.auth_type,
+            "sasl_username": self.sasl_username,
+            "sasl_password": self.sasl_password,
+            "sasl_mechanism": self.sasl_mechanism,
+            "tls_enabled": self.tls_enabled,
+        }
+        admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
         try:
-            admin = KafkaAdminClient(
-                bootstrap_servers=self._bootstrap_list,
-                **security,
-                request_timeout_ms=10000,
-            )
+            with admin_lock:
+                names = admin.list_topics()
+                q = query.lower()
+                matched = [n for n in names if q in n.lower() and not _is_internal_topic(n)]
+                return sorted(matched)[:200]
         except Exception as exc:
+            invalidate_client(self.bootstrap_servers)
             raise RuntimeError(f"Failed to connect: {exc}") from exc
-        try:
-            names = admin.list_topics()
-            q = query.lower()
-            matched = [n for n in names if q in n.lower() and not _is_internal_topic(n)]
-            return sorted(matched)[:200]
-        finally:
-            try:
-                admin.close()
-            except Exception:
-                pass
 
     async def list_all_topics(self) -> list[str]:
         """Return ALL non-internal topic names from the cluster."""
@@ -631,53 +631,51 @@ class RealKafkaCollector(KafkaCollector):
     def _collect_sync(self) -> dict[str, Any]:
         security = self._security_kwargs()
 
-        try:
-            admin = KafkaAdminClient(
-                bootstrap_servers=self._bootstrap_list,
-                **security,
-            )
-        except Exception as exc:  # noqa: BLE001 — surface any connect failure clearly
-            raise RuntimeError(
-                f"Failed to connect to Kafka at bootstrap_servers="
-                f"{self.bootstrap_servers!r} (auth_type={self.auth_type!r}): {exc}"
-            ) from exc
+        cluster_config = {
+            "bootstrap_servers": self.bootstrap_servers,
+            "auth_type": self.auth_type,
+            "sasl_username": self.sasl_username,
+            "sasl_password": self.sasl_password,
+            "sasl_mechanism": self.sasl_mechanism,
+            "tls_enabled": self.tls_enabled,
+        }
+        admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
 
         try:
-            try:
-                cluster_info = admin.describe_cluster()
-                brokers = self._build_brokers(cluster_info)
+            with admin_lock:
+                try:
+                    cluster_info = admin.describe_cluster()
+                    brokers = self._build_brokers(cluster_info)
 
-                topic_jmx = None
-                if self.jmx_port:
-                    broker_host = cluster_info.get("brokers", [{}])[0].get("host", "")
-                    if broker_host:
-                        topic_names = [n for n in admin.list_topics() if not _is_internal_topic(n)]
-                        topic_jmx = self._query_topic_jmx(broker_host, self.jmx_port, topic_names)
-                topics, total_urp = self._build_topics(admin, topic_jmx)
-                consumer_groups = self._build_consumer_groups(admin, security)
+                    topic_jmx = None
+                    if self.jmx_port:
+                        broker_host = cluster_info.get("brokers", [{}])[0].get("host", "")
+                        if broker_host:
+                            topic_names = [n for n in admin.list_topics() if not _is_internal_topic(n)]
+                            topic_jmx = self._query_topic_jmx(broker_host, self.jmx_port, topic_names)
+                    topics, total_urp = self._build_topics(admin, topic_jmx)
+                    consumer_groups = self._build_consumer_groups(admin, security)
 
-                cluster = self._build_cluster(cluster_info, len(brokers), total_urp)
+                    cluster = self._build_cluster(cluster_info, len(brokers), total_urp)
 
-                return {
-                    "cluster": cluster,
-                    "brokers": brokers,
-                    "consumer_groups": consumer_groups,
-                    "topics": topics,
-                    "connectors": [],
-                    "anomalies": [],
-                }
-            except RuntimeError:
-                raise
-            except Exception as exc:  # noqa: BLE001
-                raise RuntimeError(
-                    f"Failed to collect from Kafka at bootstrap_servers="
-                    f"{self.bootstrap_servers!r} (auth_type={self.auth_type!r}): {exc}"
-                ) from exc
-        finally:
-            try:
-                admin.close()
-            except Exception:  # noqa: BLE001 — best-effort cleanup
-                pass
+                    return {
+                        "cluster": cluster,
+                        "brokers": brokers,
+                        "consumer_groups": consumer_groups,
+                        "topics": topics,
+                        "connectors": [],
+                        "anomalies": [],
+                    }
+                except RuntimeError:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    raise RuntimeError(
+                        f"Failed to collect from Kafka at bootstrap_servers="
+                        f"{self.bootstrap_servers!r} (auth_type={self.auth_type!r}): {exc}"
+                    ) from exc
+        except Exception as exc:
+            invalidate_client(self.bootstrap_servers)
+            raise
 
     # ------------------------------------------------------------------ #
     # Builders                                                            #
