@@ -1362,6 +1362,16 @@ async def get_topics_history(
             vals = [round(topic_data[name].get(b, 0.0), 4) for b in all_buckets]
             series.append({"name": name, "values": vals})
 
+    # Drop the current/still-forming bucket if it has no data yet anywhere — avoids
+    # misleadingly showing "0" for a bucket that simply hasn't landed data yet (the
+    # hourly collector runs on a ~2-4 min cadence after each UTC hour boundary).
+    if all_buckets and series and all(
+        (s["values"][-1] if s["values"] else 0.0) == 0.0 for s in series
+    ):
+        all_buckets = all_buckets[:-1]
+        for s in series:
+            s["values"] = s["values"][:-1]
+
     if not series:
         return {"labels": all_buckets, "series": [], "snapshot_count": total_buckets}
     return {"labels": all_buckets, "series": series, "snapshot_count": total_buckets}

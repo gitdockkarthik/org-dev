@@ -280,6 +280,19 @@
     // ── Formatters ───────────────────────────────────────────────────────────
 
     function fmtNum(n) { return (n ?? 0).toLocaleString(); }
+
+    function _sortByField(items, direction, fieldFn) {
+      if (direction === 'desc') return [...items].sort((a, b) => (fieldFn(b) ?? -Infinity) - (fieldFn(a) ?? -Infinity));
+      if (direction === 'asc') return [...items].sort((a, b) => (fieldFn(a) ?? Infinity) - (fieldFn(b) ?? Infinity));
+      return items;
+    }
+    window._toggleColumnSort = function (viewState, sortKey, arrowElId, applyFn) {
+      viewState[sortKey] = viewState[sortKey] === 'desc' ? 'asc' : viewState[sortKey] === 'asc' ? null : 'desc';
+      applyFn();
+      const arrow = document.getElementById(arrowElId);
+      if (arrow) arrow.textContent = viewState[sortKey] === 'desc' ? ' ▼' : viewState[sortKey] === 'asc' ? ' ▲' : '';
+    };
+
     function fmtRate(n) {
       if (!n) return '0/s';
       if (n >= 1e6) return (n/1e6).toFixed(1) + 'M/s';
@@ -1104,7 +1117,7 @@
         <div class="chart-card__title">Consumer Group Inventory</div>
         <div class="data-table-wrap">
           <table class="data-table cg-table">
-            <thead><tr><th style="width:22%;max-width:220px">Group</th><th style="width:25%;max-width:250px">Topic</th><th style="width:10%">Total Lag</th><th style="width:10%">Trend</th><th style="width:10%">Rate/min</th><th style="width:10%">State</th><th style="width:8%">Status</th></tr></thead>
+            <thead><tr><th style="width:22%;max-width:220px">Group</th><th style="width:25%;max-width:250px">Topic</th><th style="width:10%;cursor:pointer" onclick="window._toggleColumnSort(window._cgView, 'sortLag', 'cg-lag-sort-arrow', window._cgApplyView)">Total Lag<span id="cg-lag-sort-arrow"></span></th><th style="width:10%">Trend</th><th style="width:10%">Rate/min</th><th style="width:10%">State</th><th style="width:8%">Status</th></tr></thead>
             <tbody id="cg-tbody"></tbody>
           </table>
         </div>
@@ -1127,7 +1140,7 @@
 
       // ── Self-contained consumer-group table view: pagination + filters + search (AND) ──
       const CG_PAGE = 20;
-      window._cgView = { state: 'all', filter: 'all', type: 'all', search: '', visible: CG_PAGE };
+      window._cgView = { state: 'all', filter: 'all', type: 'all', search: '', visible: CG_PAGE, sortLag: null };
 
       const cgMatches = (g, st) => {
         const name = (g.group_id || g.group_name || 'Unknown');
@@ -1149,7 +1162,8 @@
 
       window._cgApplyView = function () {
         const st = window._cgView;
-        const filtered = groups.filter(g => cgMatches(g, st));
+        let filtered = groups.filter(g => cgMatches(g, st));
+        filtered = _sortByField(filtered, st.sortLag, g => g.total_lag);
         const shown = filtered.slice(0, st.visible);
         const tbody = document.getElementById('cg-tbody');
         if (tbody) {
@@ -2267,6 +2281,13 @@
           <span class="filter-chip" onclick="window._connectSetType('source',this)">Source</span>
           <span class="filter-chip" onclick="window._connectSetType('sink',this)">Sink</span>
         </div>
+        <div class="filter-bar">
+          <span class="dash-label">Lag:</span>
+          <span class="filter-chip active" onclick="window._connectSetLagFilter('all',this)">All</span>
+          <span class="filter-chip" onclick="window._connectSetLagFilter('critical',this)">Critical</span>
+          <span class="filter-chip" onclick="window._connectSetLagFilter('warning',this)">Warning</span>
+          <span class="filter-chip" onclick="window._connectSetLagFilter('healthy',this)">Healthy</span>
+        </div>
         <div class="chart-card__title">Connector Inventory</div>
         <div class="data-table-wrap">
           <table class="data-table">
@@ -2276,7 +2297,7 @@
                 <th>Type</th>
                 <th>Class</th>
                 <th style="text-align:center">Tasks</th>
-                <th style="text-align:right">Lag</th>
+                <th style="text-align:right;cursor:pointer" onclick="window._toggleColumnSort(window._connectView, 'sortLag', 'connect-lag-sort-arrow', window._connectApplyView)">Lag<span id="connect-lag-sort-arrow"></span></th>
                 <th>Worker</th>
                 <th>Status</th>
               </tr>
@@ -2291,13 +2312,16 @@
 
       // ── Self-contained table view: pagination + filters + search (AND) ────────
       const CONNECT_PAGE = 20;
-      window._connectView = { status: 'all', type: 'all', search: '', visible: CONNECT_PAGE };
+      window._connectView = { status: 'all', type: 'all', search: '', visible: CONNECT_PAGE, lagFilter: 'all', sortLag: null };
 
       const connectMatches = (c, st) => {
         if (st.status === 'FAILED_TASKS') {
           if ((c.failed_tasks || 0) === 0) return false;
         } else if (st.status !== 'all' && c.state !== st.status) return false;
         if (st.type !== 'all' && (c.type || '').toLowerCase() !== st.type) return false;
+        if (st.lagFilter === 'critical' && !(c.lag > 10000)) return false;
+        if (st.lagFilter === 'warning' && !(c.lag > 1000 && c.lag <= 10000)) return false;
+        if (st.lagFilter === 'healthy' && !(c.lag !== null && c.lag !== undefined && c.lag <= 1000)) return false;
         if (st.search) {
           const q = st.search.toLowerCase();
           const matchName = (c.name || '').toLowerCase().includes(q);
@@ -2309,7 +2333,8 @@
 
       window._connectApplyView = function () {
         const st = window._connectView;
-        const filtered = connectors.filter(c => connectMatches(c, st));
+        let filtered = connectors.filter(c => connectMatches(c, st));
+        filtered = _sortByField(filtered, st.sortLag, c => c.lag);
         const shown = filtered.slice(0, st.visible);
         const tbody = document.getElementById('connect-tbody');
         if (tbody) {
@@ -2335,6 +2360,12 @@
       };
       window._connectSetType = function (type, el2) {
         window._connectView.type = type;
+        window._connectView.visible = CONNECT_PAGE;
+        connectSetActiveChip(el2);
+        window._connectApplyView();
+      };
+      window._connectSetLagFilter = function (f, el2) {
+        window._connectView.lagFilter = f;
         window._connectView.visible = CONNECT_PAGE;
         connectSetActiveChip(el2);
         window._connectApplyView();
