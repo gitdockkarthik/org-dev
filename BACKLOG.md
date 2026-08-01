@@ -148,15 +148,15 @@ that item rather than treating as separately fixable. Commit: (pending, being ad
 session).
 *Added: 2026-07-30, corrected: 2026-08-01*
 
-### Message-rate/Activity chart shows 0 at the top of every UTC hour
-`kafka_topic_metrics_hourly` has no rows for a new hour bucket until `collect_msg_rate`'s
-first cycle of that hour lands (~2-4 min gap). `get_topics_history`'s bucket-alignment
-logic zero-fills missing buckets rather than omitting or carrying the previous value
-forward — misleading (looks like "no traffic" when it's actually "data still landing").
-Confirmed live, self-corrects within minutes. Low urgency, but flagged as user-facing
-misleading behavior, not just cosmetic. Fix direction: skip-render the newest incomplete
-bucket, or carry the previous value forward as placeholder.
-*Added: 2026-07-31 (found during pre-demo check)*
+### Message-rate/Activity chart hour-boundary zero-fill — FIXED 2026-08-01
+`get_topics_history` now drops the newest bucket from the response if it has zero data
+across every series (only applies to the single trailing/current bucket, not historical
+gaps, which remain legitimate zeros). Validated: cluster 3 correctly trimmed 24 buckets
+to 23 right at a fresh UTC hour boundary while genuine data existed elsewhere; a fresh
+page load with no prior cluster switches showed a correct two-point chart with a real
+trend line. (A confusing single-dot render was separately investigated and traced to the
+cluster-switch race condition, not this fix — see that item.)
+*Added: 2026-07-31 (found during pre-demo check), fixed: 2026-08-01*
 
 ### Legacy `_collection_loop` — decommission decision
 Currently disabled via `collection_interval_secs=0` (config only, not code removal).
@@ -176,10 +176,19 @@ No request cancellation on cluster switch — an in-flight request from the prev
 selected cluster can resolve after switching and silently render onto the wrong
 cluster's view. Originally scoped (2026-07-29) as "Overview tab only, other tabs have
 self-evident identifying content that makes a mix-up obvious" — that assumption is now
-KNOWN WRONG. User reproduced live (2026-08-01): after adding External Staging (cluster
-4) alongside DevQA (cluster 3), switching to cluster 4 on the Kafka Connect tab showed
-connector data — cluster 4 legitimately has none. A new user unfamiliar with which
-cluster has what would not find this "self-evident" at all; it looks like real data.
+KNOWN WRONG, with TWO separate independent live reproductions on 2026-08-01:
+1. After adding External Staging (cluster 4) alongside DevQA (cluster 3), switching to
+   cluster 4 on the Kafka Connect tab showed connector data — cluster 4 legitimately
+   has none.
+2. Overview tab's Throughput chart showed a single, stale, wrong-looking data point
+   after switching between clusters 3 and 4 within the same session — confirmed via a
+   completely fresh page load (no prior tab/cluster switches) that the SAME data,
+   fetched correctly, renders correctly as two real points with a genuine trend line.
+   The broken render ONLY appeared after switching clusters, not on first load —
+   directly confirms stale-response-overwrites-fresh-render as the mechanism, exactly
+   matching the originally suspected AbortController/response-validation root cause.
+A new user unfamiliar with which cluster has what would not find either symptom
+"self-evident" — both look like real data.
 **Elevated to critical — team handover for validation/monitoring starts next week,**
 this cannot ship to a wider audience unfixed. Needs: (1) a full re-audit of EVERY tab,
 not just Overview, to find every place stale cross-cluster data can render, (2) the
@@ -187,7 +196,8 @@ actual fix (AbortController on switch, or tag+validate every response against th
 current cluster ID before rendering — decide which during the fix session, not before).
 Dedicated, carefully validated session required — this is a correctness bug affecting
 trust in the whole dashboard, not a UX polish item.
-*Added: 2026-07-29, rescoped and elevated to critical: 2026-08-01*
+*Added: 2026-07-29, rescoped and elevated to critical: 2026-08-01, second live
+reproduction confirmed: 2026-08-01*
 
 ### `describe_consumer_groups` — other dependent features to check
 Root cause fixed (2026-07-30, consumer-protocol filtering before the call). Worth
