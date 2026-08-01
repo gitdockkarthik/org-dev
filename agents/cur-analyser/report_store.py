@@ -191,6 +191,31 @@ def add_report(
     return _public(report)
 
 
+def cleanup_old_report_files(keep_last: int = 3) -> int:
+    """Delete on-disk files for reports beyond the most recent `keep_last`.
+    Returns count of report file sets removed. Safe to call after each new
+    report is persisted — prevents unbounded parquet_dir/csv accumulation."""
+    import shutil
+    with _lock:
+        report_ids = sorted((r["id"] for r in _reports), reverse=True)
+    to_remove = report_ids[keep_last:]
+    removed = 0
+    for rid in to_remove:
+        for ext in (".parquet_dir", ".duckdb", ".csv.gz", ".csv", ".parquet"):
+            p = report_file_path(rid, ext)
+            if os.path.exists(p):
+                try:
+                    if os.path.isdir(p):
+                        shutil.rmtree(p)
+                    else:
+                        os.remove(p)
+                    removed += 1
+                    logger.info("cleanup_old_report_files: removed %s", p)
+                except Exception as e:
+                    logger.warning("cleanup_old_report_files: failed to remove %s: %s", p, e)
+    return removed
+
+
 def set_report_path(report_id: int, file_path: str) -> bool:
     """Attach a permanent on-disk CUR file path to an existing report."""
     with _lock:

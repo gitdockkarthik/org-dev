@@ -546,6 +546,11 @@ async def _process_upload_job(job: dict, tmp_path: str, filename: str, file_size
         set_report_path(report["id"], perm_path)
 
         await persist_report(report["id"])
+        try:
+            from report_store import cleanup_old_report_files
+            cleanup_old_report_files(keep_last=3)
+        except Exception as _ce:
+            logger.warning("cleanup_old_report_files failed: %s", _ce)
         invalidate_dashboard_cache(report["id"])
         invalidate_dashboard_cache(None)
 
@@ -716,6 +721,11 @@ async def _process_folder_upload_job(job: dict, tmp_paths: list[str], filenames:
 
         set_report_path(report["id"], perm_path)
         await persist_report(report["id"])
+        try:
+            from report_store import cleanup_old_report_files
+            cleanup_old_report_files(keep_last=3)
+        except Exception as _ce:
+            logger.warning("cleanup_old_report_files failed: %s", _ce)
         invalidate_dashboard_cache(report["id"])
         invalidate_dashboard_cache(None)
 
@@ -1603,6 +1613,11 @@ async def _run_s3_sync(job_id: str, bucket: str, prefix: str, region: str, folde
             # Store parquet directory as the report path
             set_report_path(report["id"], parquet_dir)
             await persist_report(report["id"])
+            try:
+                from report_store import cleanup_old_report_files
+                cleanup_old_report_files(keep_last=3)
+            except Exception as _ce:
+                logger.warning("cleanup_old_report_files failed: %s", _ce)
             # Update last synced info
             from datetime import datetime, timezone
             now = datetime.now(timezone.utc).isoformat()
