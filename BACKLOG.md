@@ -111,15 +111,23 @@ Not audited in recent sessions. Depends partly on the disabled legacy loop's sta
 today before deciding what needs a job-pipeline replacement vs. what can be simplified away.
 *Added: 2026-07-29*
 
-### Cluster-switch race condition (Overview tab)
+### CRITICAL — Cluster-switch race condition, scope broader than previously tracked
 No request cancellation on cluster switch — an in-flight request from the previously
-selected cluster can resolve after switching and silently render onto the wrong cluster's
-view. Confirmed via live Network tab capture. Overview tab (message-rate chart
-specifically) is the one confirmed-risky surface; all other tabs have self-evident
-identifying content (broker IDs, hostnames, topic/group names) that makes a mix-up
-obvious. Needs a dedicated, carefully validated session (AbortController on switch, or
-tag+validate responses against current cluster ID before rendering) — not a quick fix.
-*Added: 2026-07-29*
+selected cluster can resolve after switching and silently render onto the wrong
+cluster's view. Originally scoped (2026-07-29) as "Overview tab only, other tabs have
+self-evident identifying content that makes a mix-up obvious" — that assumption is now
+KNOWN WRONG. User reproduced live (2026-08-01): after adding External Staging (cluster
+4) alongside DevQA (cluster 3), switching to cluster 4 on the Kafka Connect tab showed
+connector data — cluster 4 legitimately has none. A new user unfamiliar with which
+cluster has what would not find this "self-evident" at all; it looks like real data.
+**Elevated to critical — team handover for validation/monitoring starts next week,**
+this cannot ship to a wider audience unfixed. Needs: (1) a full re-audit of EVERY tab,
+not just Overview, to find every place stale cross-cluster data can render, (2) the
+actual fix (AbortController on switch, or tag+validate every response against the
+current cluster ID before rendering — decide which during the fix session, not before).
+Dedicated, carefully validated session required — this is a correctness bug affecting
+trust in the whole dashboard, not a UX polish item.
+*Added: 2026-07-29, rescoped and elevated to critical: 2026-08-01*
 
 ### `describe_consumer_groups` — other dependent features to check
 Root cause fixed (2026-07-30, consumer-protocol filtering before the call). Worth
