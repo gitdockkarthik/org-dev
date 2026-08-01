@@ -390,6 +390,18 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
                             inflow, consumed, interval = None, None, None
                         rows_to_upsert.append((int(cid), gid, t, p, lag, eo, co, inflow, consumed, interval))
 
+                    # Aggregate inflow/consumed by group for group-level rate snapshots
+                    group_inflow: dict[str, int] = {}
+                    group_consumed: dict[str, int] = {}
+                    group_interval_sum: dict[str, float] = {}
+                    group_partition_count: dict[str, int] = {}
+                    for c, g, t, p, lag, eo, co, inflow, consumed, interval in rows_to_upsert:
+                        if inflow is not None and consumed is not None and interval is not None:
+                            group_inflow[g] = group_inflow.get(g, 0) + inflow
+                            group_consumed[g] = group_consumed.get(g, 0) + consumed
+                            group_interval_sum[g] = group_interval_sum.get(g, 0.0) + interval
+                            group_partition_count[g] = group_partition_count.get(g, 0) + 1
+
                     for bi in range(0, len(rows_to_upsert), BULK):
                         batch = rows_to_upsert[bi:bi+BULK]
                         values = ", ".join(
@@ -416,6 +428,29 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
                                 updated_at = now()
                         """))
                     await sess5.commit()
+            # Upsert group-level message rate snapshots
+            try:
+                if group_inflow:
+                    async with _SL5() as sess_grp:
+                        group_items = [
+                            (int(cid), g, group_inflow[g], group_consumed[g],
+                             round(group_interval_sum[g] / group_partition_count[g], 2))
+                            for g in group_inflow.keys()
+                        ]
+                        for bi in range(0, len(group_items), BULK):
+                            batch = group_items[bi:bi+BULK]
+                            values = ", ".join(
+                                f"({c}, '{g.replace(chr(39), chr(39)*2)}', {inf}, {out}, {iv}, now())"
+                                for c, g, inf, out, iv in batch
+                            )
+                            await sess_grp.execute(_t5(f"""
+                                INSERT INTO kafka_consumer_group_rate_snapshots
+                                (cluster_id, group_id, inflow, outflow, interval_seconds, collected_at)
+                                VALUES {values}
+                            """))
+                        await sess_grp.commit()
+            except Exception as _grp_rate_exc:
+                logger.warning("consumer_group_rate_snapshots insert failed: %s", _grp_rate_exc)
             # Aggregate outflow (consumption) by topic, summed across all groups, for the
             # message in/out chart (inflow populated separately by collect_topic_message_inflow)
             try:
