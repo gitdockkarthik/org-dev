@@ -146,6 +146,27 @@ bounds:
    we have no evidence the contained/bounded approach is insufficient. Revisit only if a
    dedicated-pool job is ever observed to actually exhaust its pool from repeated hangs.
 
+### Data-layer documentation for Docs Hub (ERD + table/job/functionality mapping)
+User request (2026-08-01). Deliverable for the Docs Hub, distinct from a raw ERD (user
+already has one) — needs three things:
+1. Visual ERD-style diagram, ideally close to what native DB tools (e.g. MS SQL Server's
+   built-in diagramming) produce — proper entity/relationship visualization, not just a
+   text table list.
+2. Table -> job mapping: which collector/job writes to (and reads from) each table, so
+   someone can trace "where does this data come from" without reading collectors.py
+   line by line.
+3. Table -> functionality mapping: which dashboard features/tabs/endpoints actually use
+   each table, so the data layer's purpose is traceable to real product functionality,
+   not just structurally documented.
+Scope note: this agent's schema has grown substantially and organically across many
+sessions (kafka_broker_metrics, kafka_consumer_group_lag, kafka_consumer_group_topic_lag,
+kafka_consumer_group_partition_lag, kafka_topic_message_rate_snapshots,
+kafka_topic_partition_inflow_baseline, kafka_connector_snapshots, kafka_slo_targets/
+compliance, kafka_job_schedules/runs, kafka_clusters, and more) — this is a genuinely
+sizeable documentation effort, not a quick add-on. Good candidate for its own dedicated
+session rather than squeezing in alongside feature work.
+*Added: 2026-08-01*
+
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - Orphaned/dead-write topic detection — DevQA has only ~2,557 (group, topic) pairs with
   any committed offset, out of ~17-18k total topics. Cross-reference
