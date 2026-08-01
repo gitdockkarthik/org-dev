@@ -89,3 +89,18 @@ Update this table after each work chunk — status changes, new rows appended, e
 - **Old stale manual report (id=6) removed** per request — only the live auto-synced report remains.
 - **Unresolved / lower priority follow-up:** the original mechanism by which reports 7-72 (from prior sessions) disappeared from the DB in the first place is not fully root-caused. `persist_report()` behaved correctly in this session's live test, so it may have been a one-off (e.g. a restart during an earlier session before this DB row existed) rather than a recurring bug — not chasing further unless it recurs.
 - **Process gap worth fixing:** `_run_s3_sync`'s "unchanged" check should ideally also verify a valid report record still exists (not just compare S3 timestamps) before skipping — otherwise this exact stuck state can recur any time a report is lost/deleted between sync cycles without S3 data itself having changed. Candidate for a small follow-up fix.
+
+### Additional evidence — billing periods accumulating, not separated (2026-08-01)
+- **Observed:** Dashboard "Viewing report" shows date range 2026-07-01 → 2026-09-01 (33 days,
+  5,764,986 rows) — spanning a month boundary in a single report, meaning August data is being
+  merged into the same "latest" report rather than split into its own period.
+- **S3 Browser confirms the gap:** Historical Data browser only lists "July 2026 (31 days)" and
+  "June 2026 (2 days)" as distinct periods — no separate August 2026 entry yet, consistent with
+  new data being accumulated into the existing latest report instead of starting a fresh
+  period-scoped one.
+- **Confirms:** this is the same root design gap as the billing-period retention item above — the
+  sync/report model is "always latest, single blob," with no concept of period boundaries at all.
+  Not just a retention/cleanup problem — the accumulation itself needs to be period-aware before
+  retention rules can even be meaningful.
+- **Fold into:** Item 1 (Billing-period retention redesign) — the fix needs to (a) detect and split
+  by billing period on ingest, not just (b) decide how many periods to keep afterward.
