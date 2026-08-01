@@ -79,3 +79,13 @@ Do not rely on chat memory for continuity — this file is the source of truth.
 | 10 | Attribution engine — Layer 1/2 (Product + Team) | TBD | Depends on #8, #9, and CloudOps sign-off on open questions (Linear, IBMS, cost metric) | 10 | TBD | TBD | Open |
 
 Update this table after each work chunk — status changes, new rows appended, estimates refined once actuals are known.
+
+### RESOLVED — Missing synced CUR reports, restored via forced re-sync
+- **Status:** Done
+- **Added/Resolved:** 2026-08-01
+- **What happened:** `/reports` showed only the stale manual upload (report 6, 2026-07-21) — all previously synced auto reports (7 through 72 from earlier sessions) were gone from both disk and the `cur_report` DB table.
+- **Root cause of the "stuck" state:** `s3_last_synced_at` in `agent_config` (05:14:43) matched the latest S3 folder's timestamp, so `_run_s3_sync`'s unchanged-file check (`files_unchanged and count_unchanged`) short-circuited every sync attempt with "Already up to date," even though no valid report actually existed. This check only compares S3 file timestamps/counts — it has no awareness of whether a corresponding report record still exists.
+- **Fix applied:** Manually reset `s3_last_synced_at` to an old value directly in `agent_config` via psql, then restarted the `cur-analyser` container (required because `_config` is an in-memory write-through cache populated from DB only at startup — updating the DB row alone did not affect the already-running process). Re-triggered sync afterward; it correctly detected the change and re-ingested successfully (new report id=7, 5,764,986 rows, persisted to DB correctly, confirmed via direct psql check immediately after).
+- **Old stale manual report (id=6) removed** per request — only the live auto-synced report remains.
+- **Unresolved / lower priority follow-up:** the original mechanism by which reports 7-72 (from prior sessions) disappeared from the DB in the first place is not fully root-caused. `persist_report()` behaved correctly in this session's live test, so it may have been a one-off (e.g. a restart during an earlier session before this DB row existed) rather than a recurring bug — not chasing further unless it recurs.
+- **Process gap worth fixing:** `_run_s3_sync`'s "unchanged" check should ideally also verify a valid report record still exists (not just compare S3 timestamps) before skipping — otherwise this exact stuck state can recur any time a report is lost/deleted between sync cycles without S3 data itself having changed. Candidate for a small follow-up fix.
