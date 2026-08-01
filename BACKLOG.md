@@ -6,6 +6,22 @@ Update this file in the SAME commit as the code change that creates, resolves, o
 an item. Never treat "I'll add it to the backlog" as done until it's in this file and
 `git log` shows it committed.
 
+**Rule: always run `git status` immediately before `git commit`, not just before
+`git add`.** Found 2026-08-01: a docs-only commit for one fix left the actual code
+change unstaged and forgotten, caught only because `git status` was checked before the
+NEXT commit. A separate incident the same day: two unrelated changes got bundled into
+one commit because files staged earlier were still staged when a later `git add` ran —
+harmless (nothing lost, both changes correctly committed) but produced an inaccurate
+commit message. Always check the full staged set right before committing, not just
+right after the most recent `git add`.
+
+**Primary validation surface: portal** (`http://kpi-internal.cloud.operative.com:3000/...`),
+not the static/direct dashboard — user's team will use portal in production. Static-first
+validation is still the right approach (isolated test bed catches bugs before they can
+affect the portal surface other users depend on), but portal is the one that must actually
+work before considering an item done. Always test BOTH before committing, but portal is
+the one that matters most if forced to choose.
+
 Each item: short description, why it matters, status, date added.
 
 ---
