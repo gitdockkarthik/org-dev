@@ -12,6 +12,32 @@ Each item: short description, why it matters, status, date added.
 
 ## Open
 
+### Startup sync burst competes with job scheduler on every restart
+Found 2026-08-01 while investigating consumer-lag job slowness after a routine rebuild.
+`main.py`'s `_startup_sync()` (the `"Startup: found N enabled cluster(s) — syncing in
+background"` path) runs UNCONDITIONALLY on every container restart — calling
+`collect_summary()` (list_consumer_groups, describe_group_states, topic listing, etc.)
+for EVERY enabled cluster immediately on boot. This is separate from and NOT gated by
+`collection_interval_secs=0` (which only disables that legacy loop's PERIODIC re-runs,
+not this one-time startup call). It fires at the exact same moment the job scheduler is
+also starting up and beginning to fire its own freshly-registered cron jobs — two
+independent systems competing for broker connections right as the connection pool is
+being freshly re-established.
+User confirmed this pattern happens after EVERY rebuild specifically (not just tonight,
+not explained by DevQA's separately-known chronically-high baseline broker load) — this
+is the more likely root cause of "first job after any restart is disproportionately slow
+or times out" than ambient broker load alone.
+Its own code comment ("Do NOT overwrite restored cache with partial collect_summary data
+— Parallel scans will enrich data and update cache incrementally") suggests its own
+output is already largely superseded by the DB-restored snapshot and the job pipeline's
+own incremental updates — worth checking whether this startup sync can be significantly
+simplified, delayed until job-scheduler steady-state, or removed entirely now that the
+job-pipeline architecture has fully superseded its original purpose.
+NOT investigated further tonight — flagging precisely rather than guessing at a fix.
+*Added: 2026-08-01*
+
+
+
 ### Mini message In/Out charts on Consumer Groups / Kafka Connect topic-lag popups
 User request (2026-08-01): extend the same per-topic mini-chart pattern just built and
 validated in the Topic Details popup (Topics tab) to the existing topic-lag drill-down
