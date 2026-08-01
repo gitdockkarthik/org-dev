@@ -791,14 +791,20 @@ async def get_kafka_connect(cluster_id: str | None = None) -> dict:
             async with SessionLocal() as _csess:
                 connector_names = [c.get("name", "") for c in all_connectors if c.get("name")]
                 if connector_names:
-                    group_ids = [f"connect-{n}" for n in connector_names]
+                    # Use each connector's real discovered group ID (from its config's
+                    # consumer.override.group.id) when present, falling back to the connect-{name}
+                    # default pattern only when no override is configured.
+                    group_ids = [
+                        c.get("group_id_override") or f"connect-{c.get('name', '')}"
+                        for c in all_connectors if c.get("name")
+                    ]
                     _lag_rows = await _csess.execute(_cct("""
                         SELECT group_id, total_lag FROM kafka_consumer_group_lag
                         WHERE cluster_id = :cid AND group_id = ANY(:gids) AND updated_at >= NOW() - INTERVAL '20 minutes'
                     """), {"cid": int(cluster_id), "gids": group_ids})
                     lag_by_group = {r.group_id: r.total_lag for r in _lag_rows.fetchall()}
                     for c in all_connectors:
-                        gid = f"connect-{c.get('name', '')}"
+                        gid = c.get("group_id_override") or f"connect-{c.get('name', '')}"
                         c["lag"] = lag_by_group.get(gid)
     except Exception as _lag_exc:
         logger.warning("connector lag lookup failed: %s", _lag_exc)

@@ -41,6 +41,7 @@ class KafkaConnectCollector:
                         state = connector_status.get("state", "UNKNOWN")
                         connector_type = status.get("type", info_data.get("type", "unknown"))
                         connector_class = config.get("connector.class", "").split(".")[-1]
+                        group_id_override = config.get("consumer.override.group.id")
                         total_tasks = len(tasks)
                         failed_tasks = sum(1 for t in tasks if t.get("state") == "FAILED")
                         running_tasks = sum(1 for t in tasks if t.get("state") == "RUNNING")
@@ -59,6 +60,7 @@ class KafkaConnectCollector:
                             "state": state,
                             "type": connector_type,
                             "connector_class": connector_class,
+                            "group_id_override": group_id_override,
                             "total_tasks": total_tasks,
                             "failed_tasks": failed_tasks,
                             "running_tasks": running_tasks,
