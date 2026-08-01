@@ -177,6 +177,20 @@ Not audited in recent sessions. Depends partly on the disabled legacy loop's sta
 today before deciding what needs a job-pipeline replacement vs. what can be simplified away.
 *Added: 2026-07-29*
 
+### PAUSED (not abandoned) — Cluster-switch race condition, 3 of ~5 chunks done
+User's explicit reasoning for pausing here (2026-08-01): dashboard slowness is actively
+preventing effective testing/validation of ANYTHING, including this fix itself — every
+click waits ~30s+, making rapid cluster-switch reproduction painful and unreliable to
+judge. User's stated goal: dashboard should load in <5s on open, tab switch, and cluster
+switch. Once that's true, resume finding/fixing this properly with a testable dashboard.
+Real, safe progress made so far, nothing to undo: (1) global window._loadGeneration
+counter, incremented on cluster switch; (2) Overview tab's 3 charts (activity, messages,
+lag-trend) each check generation after their fetch, before rendering; (3) loadTab's 9
+shared-pattern cases (all tabs except SLO) check generation after their fetch, before
+render. REMAINING: SLO tab's separate loadSLODashboard() function (not yet wired), plus
+a final full audit to confirm no other fetch-and-render call site was missed.
+Original CRITICAL status/detail preserved below — still valid, just paused.
+
 ### CRITICAL — Cluster-switch race condition, scope broader than previously tracked
 No request cancellation on cluster switch — an in-flight request from the previously
 selected cluster can resolve after switching and silently render onto the wrong
