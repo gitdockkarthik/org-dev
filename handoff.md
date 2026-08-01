@@ -3,6 +3,92 @@
 ## Engineering Priorities
 1. Accuracy 2. Performance 3. UX 4. Operations 5. Consistency
 
+## IMPORTANT: Durable tracking discipline (established 2026-08-01)
+`handoff.md` and `BACKLOG.md` are the ONLY sources of truth for session continuity — a
+chat session containing real, unrecovered work (2026-07-31, post-demo) went permanently
+missing, and conversation_search could not retrieve it. The actual technical state
+survived ONLY because it had been committed to `handoff.md` in git beforehand. Rule going
+forward: nothing said in conversation counts as tracked until it's committed to one of
+these two files, in the SAME commit as the code change it describes. Never rely on chat
+continuity or "I'll remember" as a substitute for a git commit.
+
+---
+
+## Session: 2026-08-01 (in-memory-state audit + message-inflow redesign)
+
+### Recovered from a lost session (2026-07-31, post-demo)
+The previous session's chat became permanently unrecoverable (conversation_search tried
+three targeted queries, found nothing). Its `handoff.md` had been uploaded as a file
+separately and was used to reconstruct the state — restored verbatim into git as the
+baseline for this session (see the section below, preserved from that recovery). Also
+recovered and reconciled into `BACKLOG.md`: the N/A-status-for-PAUSED-connectors item,
+source-connector-to-topic correlation, SLO snapshot timestamp, and lag filter/sort —
+all previously only "recalled from memory" with placeholder scope, now restored to their
+original precise wording.
+
+### In-memory-state + run_in_executor cancellation audit — completed
+Full findings in `BACKLOG.md`'s "Established Patterns" / Resolved sections. Summary: 9
+module-level state dicts total across the codebase, only ONE (`collect_topic_message_
+inflow`'s baseline) posed a real restart-fragility risk — the rest are zero-risk
+(rebuilt from postgres, TTL cache) or low-risk/self-healing within a short cycle. Of 9
+scheduled jobs, 6 technically share the `run_in_executor`-cannot-be-cancelled limitation,
+but only `kafka-topic-inflow` has ever actually hit it — decision was to fix that
+specific collector rather than a blanket fix with no evidence elsewhere.
+
+### MAJOR — Message In/Out inflow redesign: sharded + parallelized, fully validated
+Complete rewrite of `collect_topic_message_inflow`, replacing the in-memory baseline
+(non-restart-safe) with a persisted, sharded, parallel design. Full technical detail is
+in `BACKLOG.md`'s Resolved section and the new "Established Patterns" section (the
+dedicated-thread-pool-plus-bounded-chunk pattern is now documented there as a reusable
+approach for any future bulk-Kafka-work collector — cite it instead of re-deriving).
+
+**Key design decisions, in order they were made:**
+1. New per-cluster tunable `max_inflow_partitions_per_cycle` (migration 0033, default
+   5000) — adapts to clusters of very different sizes as new environments are onboarded,
+   not a hardcoded shard count.
+2. Partition-to-shard assignment via `zlib.crc32` (NOT Python's `hash()`, which is
+   per-process randomized and would silently reshuffle shard membership on every restart
+   — a real correctness bug that was caught and avoided before it shipped).
+3. First implementation: ONE shard per 10-min cycle (sequential rotation). Validated
+   correct (185.4s for ~4,711 partitions, real data), but user correctly identified this
+   gives each topic only ~hourly freshness on DevQA (6 shards) — not acceptable for
+   production spike detection.
+4. Redesigned to process ALL shards CONCURRENTLY every cycle, via a DEDICATED
+   `ThreadPoolExecutor(max_workers=10)` — isolated from the shared default executor pool
+   every other collector uses, so a hang here can't starve unrelated jobs. This exact
+   pattern (chunk + dedicated pool + run_in_executor + gather) was verified to already
+   exist and work safely in production elsewhere in this codebase (RealKafkaCollector's
+   group-lag fetching in real_kafka.py) before being applied here — direct precedent,
+   not a novel risk.
+5. Job schedule tightened from 10min/450s to 5min/300s AFTER live validation (not
+   before) — three natural cron-triggered cycles observed at 176.9s/129.6s/172.3s,
+   comfortable margin, no skipped or overlapping runs.
+
+**Validated, with real evidence at every step — not assumed:**
+- Dry-run shard-math check before touching anything live (6 shards for 27,746
+  partitions, even distribution confirmed via crc32 simulation).
+- Single-shard live trigger: 185.4s, correct baseline data written, cross-checked count.
+- Full-parallel live trigger: 189.5s for ALL 27,746 partitions — essentially the SAME
+  wall-clock time as one shard alone, confirming parallelism achieves full-cluster
+  coverage without multiplying runtime.
+- Found and correctly explained ~23,035 stale rows left over from the ORIGINAL incident
+  (the 880s hang from the prior session) — the handoff's claim that the baseline table
+  was "empty, unused" was inaccurate. Confirmed the new sharded/crc32 design is
+  self-healing for this: stale rows get naturally overwritten on their next cycle, no
+  manual cleanup needed, since shard assignment is a pure function of (topic, partition),
+  not write history.
+- Traced an initially-confusing query result (blank `inflow`, odd 722s interval) to its
+  real cause: querying the shared `kafka_topic_message_rate_snapshots` table without
+  filtering mixed in rows from a DIFFERENT collector (yesterday's outflow/consumption
+  code) — resolved by filtering `WHERE inflow IS NOT NULL`, confirming no actual bug.
+
+**Commits**: schema (`f608b40` — migration 0033 + model + finally-committed migration
+0032), collector rewrite pending commit alongside this handoff update.
+
+---
+
+## Preserved from 2026-07-31 handoff (historical record)
+
 ## Session Discipline (carried forward, non-negotiable)
 - One targeted change at a time, validated before AND after commit.
 - **Always verify a Claude Code "Done" report against the actual file/diff** before

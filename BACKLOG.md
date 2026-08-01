@@ -13,29 +13,13 @@ Each item: short description, why it matters, status, date added.
 ## Open
 
 ### Message In/Out chart — Chunk 5 (chart UI)
-Final piece of the inflow vs. consumption feature. Blocked on the redesign below being
-resolved first — do not build the UI against the current in-memory-baseline collector if
-the redesign changes its output shape.
-*Added: 2026-07-31 (post-demo session)*
+Final piece of the inflow vs. consumption feature. UNBLOCKED — redesign shipped and
+validated 2026-08-01 (see Resolved section). Next actual step on this feature: build the
+chart component against GET /dashboard/topics/message-rate, on Overview (cluster-wide)
+and Topics tab/popup (per-topic), two lines (in/out).
+*Added: 2026-07-31 (post-demo session), unblocked 2026-08-01*
 
-### Message In/Out — persisted baseline redesign
-`collect_topic_message_inflow`'s in-memory `_prev_end_offsets` doesn't survive restarts —
-real production risk for K8s/EKS (rolling deploys, HPA scaling, spot reclaims are routine).
-A first attempt at a persisted-baseline redesign caused a job to run 880+ seconds, ignoring
-its own 450s timeout — root cause: `asyncio.wait_for()` cannot actually stop a thread
-running inside `run_in_executor()`, a genuine Python limitation. Reverted cleanly. Do not
-retry with just a bigger timeout — needs: (1) decouple baseline read/write from the sweep's
-critical path or commit incrementally, (2) a real process-level timeout mechanism, (3)
-consider sharding the ~27,746-partition sweep across multiple cycles instead of one pass.
-Migration 0032 already applied to DB (table exists, empty, unused) — correct starting
-point, do not delete, do not `git add` until redesign is ready to ship with it.
-*Added: 2026-07-31 (post-demo session)*
 
-### Message In/Out — persisted baseline redesign is now UNBLOCKED
-Audit complete (2026-08-01) — see Resolved section below for full findings. Only
-`collect_topic_message_inflow` needs the redesign; the other 8 in-memory-state variables
-and 5 other `run_in_executor`-using jobs are confirmed low-risk/self-healing. Proceed
-directly to the redesign (item above) without further audit work.
 
 ### Lag-based filter and sortable columns (Consumer Groups / Kafka Connect)
 Quickly isolate critical groups/connectors via a lag threshold filter, plus ascending/
@@ -124,6 +108,42 @@ a way that needs re-validation now that the call succeeds where it previously fa
 
 ---
 
+## Established Patterns (Reference — do not re-litigate, cite this instead)
+
+### Safe pattern for bulk blocking Kafka work (large partition/group counts)
+Established 2026-08-01 during the message-inflow redesign. Applies whenever a collector
+needs to do blocking Kafka client work (KafkaConsumer/KafkaAdminClient calls) across a
+large number of items (partitions, groups, topics) that could exceed a single call's safe
+bounds:
+
+1. **Bound the blast radius of any single blocking call** — cap how many items one
+   KafkaConsumer/thread touches at once (e.g. a per-cluster tunable like
+   `max_inflow_partitions_per_cycle`, default sane for a small cluster, adjustable per
+   cluster as bigger environments are onboarded). This is what actually prevents a repeat
+   of the original incident (one unbounded 27,746-partition sweep hanging at 880s against
+   a 450s timeout) — NOT avoiding parallelism.
+2. **Use a DEDICATED ThreadPoolExecutor for this job**, not the shared default
+   `run_in_executor(None, ...)` pool used by every other collector — isolates any hang's
+   damage to just this one job, so a stuck thread here can't eventually starve unrelated
+   collectors sharing the app-wide default pool. Create it ONCE at module level, reuse
+   across every job run.
+3. **Process bounded chunks IN PARALLEL via that dedicated pool** (chunk work + dispatch
+   each chunk via `loop.run_in_executor(dedicated_executor, sync_fn, chunk)` + gather) —
+   this is safe and already proven elsewhere in this codebase (RealKafkaCollector's
+   group-lag fetching in `real_kafka.py`, running in production throughout this entire
+   session with zero hang incidents). Parallelism does NOT add risk beyond what already
+   exists in sequential execution — the underlying `asyncio.wait_for`-cannot-cancel-a-
+   thread limitation is identical either way; what actually matters is #1 and #2 above.
+4. **Give each parallel worker its own client instance** (KafkaConsumer/KafkaAdminClient
+   are not thread-safe — never share one instance across threads).
+5. **Honest, accepted residual risk**: this does NOT eliminate the underlying "can't
+   forcibly kill a hung thread" limitation — it CONTAINS the damage (isolated pool) and
+   REDUCES the likelihood (bounded chunk size), it doesn't remove the possibility. A true
+   hard-kill would need a separate OS process (`multiprocessing`, where `.terminate()`
+   genuinely works) — a materially bigger architectural change, not undertaken here since
+   we have no evidence the contained/bounded approach is insufficient. Revisit only if a
+   dedicated-pool job is ever observed to actually exhaust its pool from repeated hangs.
+
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - Orphaned/dead-write topic detection — DevQA has only ~2,557 (group, topic) pairs with
   any committed offset, out of ~17-18k total topics. Cross-reference
@@ -162,6 +182,31 @@ low-hundreds of items. Decision: fix `collect_topic_message_inflow` specifically
 than a blanket fix across all 6, to avoid solving a problem with no evidence elsewhere.
 If any other job ever shows the same symptom (run time wildly exceeding its timeout),
 revisit this decision for that specific job.
+
+### Message In/Out — persisted baseline redesign, sharded + parallelized — shipped 2026-08-01
+Full rewrite of `collect_topic_message_inflow`. Removed in-memory `_prev_end_offsets`/
+`_prev_end_offset_time` entirely. New per-cluster tunable `max_inflow_partitions_per_cycle`
+(migration 0033, default 5000) determines shard count via ceiling division. Partitions
+assigned to shards deterministically via `zlib.crc32` (NOT Python's `hash()`, which is
+per-process randomized and would silently reshuffle shard membership on every restart).
+Baseline persisted in `kafka_topic_partition_inflow_baseline` (migration 0032, finally
+committed after sitting untracked since the original rollback). All shards processed
+CONCURRENTLY every cycle via a dedicated `ThreadPoolExecutor(max_workers=10)` — isolated
+from the shared default executor pool used by every other collector, so a hang here can't
+starve unrelated jobs. See "Established Patterns" section above for the reusable version
+of this approach.
+**Validated with real production data**: single-shard test 185.4s (~4,711 partitions);
+full-parallel test 189.5s for the ENTIRE cluster (all 27,746 partitions, all 6 shards) —
+essentially the same wall-clock time as one shard alone, confirming the parallel design
+works as intended. Three natural cron-triggered cycles at the new 5-min/300s-timeout
+schedule: 176.9s, 129.6s, 172.3s — all successful, comfortable margin, no skipped or
+overlapping runs (confirmed APScheduler's default max_instances=1 protects against
+overlap even though not explicitly configured). Self-healing from ~23,035 stale rows left
+over from the original incident (crc32 shard assignment doesn't care about row history —
+stale partitions simply get overwritten on their next natural cycle, no manual cleanup
+needed). Delta computation uses each partition's own baseline `updated_at` for interval
+(not a single global interval), correctly handling the transitional catch-up period.
+Job schedule tightened from 10min/450s to 5min/300s after validation.
 
 ## Resolved (kept for reference — move here, don't delete, when an item closes)
 
