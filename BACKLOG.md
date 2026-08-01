@@ -296,13 +296,35 @@ maintained in parallel and drift has happened before (caught multiple times toda
 diff-symmetry checks). Low priority.
 *Added: 2026-08-01*
 
-### Dashboard slow to load at 24-hour time range
-User-observed performance issue: chart rendering / dashboard load is noticeably slow
-when the time period selector is set to 24 hours. Plan: address AFTER today's item #8
-(cluster-switch race condition) — possible the race condition's redundant/stale
-in-flight requests are contributing to this, worth checking if it resolves naturally
-once that's fixed before investigating further. Scheduled: tomorrow (2026-08-02).
-*Added: 2026-08-01*
+### CRITICAL (elevated) — Dashboard 24h query performance, confirmed real DB bottleneck
+Investigated properly with real evidence (2026-08-01), NOT just timing/race-condition
+related — confirmed via EXPLAIN ANALYZE this is a genuine, separate data-layer problem.
+`kafka_topic_message_rate_snapshots` has grown to 6,288,569 rows (started ~2026-07-31,
+i.e. accumulated in about a day) via raw, un-aggregated per-topic-per-cycle snapshots
+(deliberate design choice from the message-inflow redesign, to avoid the flat-line/
+zero-fill problems the old hourly-rollup table had). The table HAS correct indexes
+(cluster_id, collected_at) and (cluster_id, topic, collected_at) — but Postgres's query
+planner chooses a Parallel Seq Scan over them for the 24h window query, because a 24h
+window already covers ~64% of the table's total (very short) lifetime, making a seq
+scan genuinely cheaper by cost-based estimation than an index scan. Confirmed:
+EXPLAIN ANALYZE showed 2.99s execution time, ~4M rows scanned via Parallel Seq Scan,
+Rows Removed by Filter: 756,506 per worker.
+This will get WORSE as the table keeps growing (~6M rows/day at current collection
+rates) — not a one-time blip, a compounding problem.
+Separately confirmed (same investigation): Overview tab's three charts (activity,
+messages, lag-trend) load SEQUENTIALLY (three chained `await` calls in one function),
+not concurrently — a real, independent inefficiency worth fixing alongside this
+(should be three parallel fetches, total time = slowest one, not the sum of all three).
+Real fix needed (NOT just an index tweak — indexes are already correct): likely a
+retention/rollup policy — keep raw 5-min granularity for a short recent window (e.g.
+last 24-48h), roll up older data into coarser pre-aggregated buckets (matching the
+pattern kafka_topic_metrics_hourly already uses, but WITHOUT reintroducing that table's
+zero-fill problem — needs careful design, likely combining raw-snapshot querying for
+very recent data with a rolled-up table for anything older).
+**User explicitly wants this elevated to be fixed immediately after item #8 (cluster-
+switch race condition), same session, not deferred further** — this is a real,
+worsening architectural gap in the data layer, not a nice-to-have.
+*Added: 2026-08-01, elevated with real evidence same day*
 
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - **CSV Export for dashboard tables** (Topics, Consumer Groups, Connectors) — quick win,
