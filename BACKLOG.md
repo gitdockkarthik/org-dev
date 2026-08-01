@@ -12,12 +12,14 @@ Each item: short description, why it matters, status, date added.
 
 ## Open
 
-### Message In/Out chart — Chunk 5 (chart UI)
-Final piece of the inflow vs. consumption feature. UNBLOCKED — redesign shipped and
-validated 2026-08-01 (see Resolved section). Next actual step on this feature: build the
-chart component against GET /dashboard/topics/message-rate, on Overview (cluster-wide)
-and Topics tab/popup (per-topic), two lines (in/out).
-*Added: 2026-07-31 (post-demo session), unblocked 2026-08-01*
+### Mini message In/Out charts on Consumer Groups / Kafka Connect topic-lag popups
+User request (2026-08-01): extend the same per-topic mini-chart pattern just built and
+validated in the Topic Details popup (Topics tab) to the existing topic-lag drill-down
+popups on Consumer Groups and Kafka Connect tabs (_showGroupTopicsPopup). Same endpoint
+(GET /dashboard/topics/message-rate?topic=...), same compact chart design — should be a
+quick reuse, not a new design, since the pattern is already proven. Explicitly for demo
+impact with a wider audience — user's words: "these kind of magics will impress people."
+*Added: 2026-08-01*
 
 
 
@@ -207,6 +209,25 @@ stale partitions simply get overwritten on their next natural cycle, no manual c
 needed). Delta computation uses each partition's own baseline `updated_at` for interval
 (not a single global interval), correctly handling the transitional catch-up period.
 Job schedule tightened from 10min/450s to 5min/300s after validation.
+
+### Message In/Out chart — Chunk 5, fully complete — shipped 2026-08-01
+All three UI surfaces built and validated on both static and portal dashboards: (1)
+Overview tab — new cluster-wide two-line chart (Message Volume — Real In/Out, msgs/sec)
+alongside the existing bytes/sec throughput chart; (2) Topics tab — restructured into a
+two-column layout, Throughput Trends (bytes) next to the new cluster-wide Message Volume
+chart; (3) Topic Details popup — new per-topic mini-chart using the endpoint's
+topic= single-topic mode (the endpoint's own docstring indicated this was its intended
+use). Added inflow_rate/outflow_rate fields (messages/bucket-duration-seconds) to
+GET /dashboard/topics/message-rate for correct cross-zoom-level comparability (raw
+per-bucket counts aren't comparable across different bucket sizes as the time range
+changes). Separately fixed a real, pre-existing mislabeling: the ORIGINAL "Message Rate"
+chart titles on Overview and Topics tab were actually bytes/sec throughput
+(kafka_topic_metrics_hourly), not real message counts — renamed to "Throughput
+(Bytes/sec)" to avoid confusion now that a genuinely accurate message-count feature
+exists alongside it.
+This closes the full message-inflow feature end to end, started as Chunk 1 in the
+2026-07-31 session: schema -> sharded/parallelized collector -> endpoint -> three UI
+surfaces, all built and validated with real production data.
 
 ## Resolved (kept for reference — move here, don't delete, when an item closes)
 
