@@ -20,6 +20,7 @@ from kafka import KafkaAdminClient, KafkaConsumer
 
 from tools.base import KafkaCollector
 from collectors import _kafka_io_executor
+from shared_kafka_clients import get_shared_admin_client, invalidate_client
 
 logger = logging.getLogger(__name__)
 
@@ -400,56 +401,55 @@ class RealKafkaCollector(KafkaCollector):
     def _fetch_topic_details_sync(self, topic_names: list[str]) -> list[dict[str, Any]]:
         if not topic_names:
             return []
-        security = self._security_kwargs()
+        cluster_config = {
+            "bootstrap_servers": self.bootstrap_servers,
+            "auth_type": self.auth_type,
+            "sasl_username": self.sasl_username,
+            "sasl_password": self.sasl_password,
+            "sasl_mechanism": self.sasl_mechanism,
+            "tls_enabled": self.tls_enabled,
+        }
+        admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
         try:
-            admin = KafkaAdminClient(
-                bootstrap_servers=self._bootstrap_list,
-                **security,
-                request_timeout_ms=15000,
-            )
+            with admin_lock:
+                # Batch describe in chunks of 500
+                described = []
+                _BATCH = 500
+                for i in range(0, len(topic_names), _BATCH):
+                    described.extend(admin.describe_topics(topic_names[i:i + _BATCH]))
         except Exception as exc:
+            invalidate_client(self.bootstrap_servers)
             raise RuntimeError(f"Failed to connect: {exc}") from exc
-        try:
-            # Batch describe in chunks of 500
-            described = []
-            _BATCH = 500
-            for i in range(0, len(topic_names), _BATCH):
-                described.extend(admin.describe_topics(topic_names[i:i + _BATCH]))
 
-            topics = []
-            for meta in described:
-                name = meta.get("topic", "")
-                if not name:
-                    continue
-                partitions = meta.get("partitions", []) or []
-                partition_count = len(partitions)
-                replication_factor = len(partitions[0].get("replicas", [])) if partitions else 0
-                urp = 0
-                for part in partitions:
-                    replicas = part.get("replicas", []) or []
-                    isr = part.get("isr", []) or []
-                    if len(isr) < len(replicas):
-                        urp += 1
-                topics.append({
-                    "name": name,
-                    "partition_count": partition_count,
-                    "replication_factor": replication_factor,
-                    "messages_in_per_sec": 0.0,
-                    "bytes_in_per_sec": 0.0,
-                    "bytes_out_per_sec": 0.0,
-                    "total_messages": 0,
-                    "size_bytes": 0,
-                    "retention_bytes": -1,
-                    "retention_pct": 0.0,
-                    "under_replicated": urp,
-                    "status": "degraded" if urp else "healthy",
-                })
-            return topics
-        finally:
-            try:
-                admin.close()
-            except Exception:
-                pass
+        topics = []
+        for meta in described:
+            name = meta.get("topic", "")
+            if not name:
+                continue
+            partitions = meta.get("partitions", []) or []
+            partition_count = len(partitions)
+            replication_factor = len(partitions[0].get("replicas", [])) if partitions else 0
+            urp = 0
+            for part in partitions:
+                replicas = part.get("replicas", []) or []
+                isr = part.get("isr", []) or []
+                if len(isr) < len(replicas):
+                    urp += 1
+            topics.append({
+                "name": name,
+                "partition_count": partition_count,
+                "replication_factor": replication_factor,
+                "messages_in_per_sec": 0.0,
+                "bytes_in_per_sec": 0.0,
+                "bytes_out_per_sec": 0.0,
+                "total_messages": 0,
+                "size_bytes": 0,
+                "retention_bytes": -1,
+                "retention_pct": 0.0,
+                "under_replicated": urp,
+                "status": "degraded" if urp else "healthy",
+            })
+        return topics
 
     async def fetch_group_lags(self, group_ids: list[str]) -> list[dict[str, Any]]:
         """On-demand: fetch lag for specific consumer groups."""
@@ -616,22 +616,21 @@ class RealKafkaCollector(KafkaCollector):
         return await loop.run_in_executor(_kafka_io_executor, self._list_all_topics_sync)
 
     def _list_all_topics_sync(self) -> list[str]:
-        security = self._security_kwargs()
+        cluster_config = {
+            "bootstrap_servers": self.bootstrap_servers,
+            "auth_type": self.auth_type,
+            "sasl_username": self.sasl_username,
+            "sasl_password": self.sasl_password,
+            "sasl_mechanism": self.sasl_mechanism,
+            "tls_enabled": self.tls_enabled,
+        }
+        admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
         try:
-            admin = KafkaAdminClient(
-                bootstrap_servers=self._bootstrap_list,
-                **security,
-                request_timeout_ms=30000,
-            )
+            with admin_lock:
+                return [n for n in admin.list_topics() if not _is_internal_topic(n)]
         except Exception as exc:
+            invalidate_client(self.bootstrap_servers)
             raise RuntimeError(f"Failed to connect: {exc}") from exc
-        try:
-            return [n for n in admin.list_topics() if not _is_internal_topic(n)]
-        finally:
-            try:
-                admin.close()
-            except Exception:
-                pass
 
     def _collect_sync(self) -> dict[str, Any]:
         security = self._security_kwargs()
