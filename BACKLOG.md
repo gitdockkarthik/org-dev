@@ -296,6 +296,26 @@ inspection today; this item is specifically about closing the same gap for the
 bytes/sec chart.
 *Added: 2026-08-01, scheduled: Monday 2026-08-03 alongside data-layer documentation*
 
+### Connector-to-group naming assumption is incomplete — some connectors use non-standard group IDs
+Found 2026-08-01 while validating the N/A status UX fix. `aosqa_spot_scheduler_mapper_
+migration_connector` (sink, 10/10 tasks running) showed generic "N/A" for lag — checked
+live against the cluster and found its REAL consumer group is
+`group-spot_scheduler_mapper_migration_connector` (a `group-` prefix), NOT the assumed
+`connect-{connector_name}` pattern used throughout the connector-lag feature. This
+connector was configured with a custom `consumer.override.group.id`, bypassing Kafka
+Connect's default naming.
+This means the original validation ("225 of 290 connectors have real lag data") likely
+UNDERCOUNTS — some of the ~65-connector gap is not "no group exists" but "wrong naming
+assumption," a real data-completeness issue, not just missing/idle data. Needs proper
+investigation: how many connectors use non-standard group naming, what pattern(s) exist
+across them (all `group-` prefix? Multiple different conventions? Fully arbitrary custom
+names?), and how to reliably discover each connector's real group rather than assuming
+one fixed prefix (e.g., cross-referencing Kafka Connect's REST API config endpoint for
+each connector's `consumer.override.group.id` if set, falling back to `connect-{name}`
+only when not explicitly configured).
+NOT fixed today — flagged precisely rather than guessed at a scope/fix.
+*Added: 2026-08-01*
+
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - **CSV Export for dashboard tables** (Topics, Consumer Groups, Connectors) — quick win,
   unblocked, no dependencies. User's team will use exported data to manually tag
