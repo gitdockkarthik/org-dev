@@ -6,6 +6,7 @@ services:
     restart: unless-stopped
     mem_limit: 4g
     mem_reservation: 1g
+    shm_size: 1g
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
