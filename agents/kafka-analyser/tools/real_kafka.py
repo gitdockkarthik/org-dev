@@ -19,6 +19,7 @@ from typing import Any
 from kafka import KafkaAdminClient, KafkaConsumer
 
 from tools.base import KafkaCollector
+from collectors import _kafka_io_executor
 
 logger = logging.getLogger(__name__)
 
@@ -106,12 +107,12 @@ class RealKafkaCollector(KafkaCollector):
     # ------------------------------------------------------------------ #
     async def collect(self) -> dict[str, Any]:
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._collect_sync)
+        return await loop.run_in_executor(_kafka_io_executor, self._collect_sync)
 
     async def ping(self) -> dict:
         """Lightweight connection test — broker list only, no topic/group/JMX fetch."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._ping_sync)
+        return await loop.run_in_executor(_kafka_io_executor, self._ping_sync)
 
     def _ping_sync(self) -> dict:
         security = self._security_kwargs()
@@ -148,7 +149,7 @@ class RealKafkaCollector(KafkaCollector):
         No describe_topics, no lag fetch, no JMX, no connectors.
         Full data fetched on-demand per tab."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._collect_summary_sync)
+        return await loop.run_in_executor(_kafka_io_executor, self._collect_summary_sync)
 
     def _collect_summary_sync(self) -> dict[str, Any]:
         security = self._security_kwargs()
@@ -244,7 +245,7 @@ class RealKafkaCollector(KafkaCollector):
         """Collect topic sizes using describe_log_dirs — fast, no JMX/Prometheus needed.
         Works on Kafka 2.3+ (Confluent 5.3+). Returns top N topics by size."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._collect_topic_sizes_sync, top_n)
+        return await loop.run_in_executor(_kafka_io_executor, self._collect_topic_sizes_sync, top_n)
 
     def _collect_topic_sizes_sync(self, top_n: int = 100) -> dict[str, Any]:
         """Synchronous topic size collection via AdminClient.describe_log_dirs."""
@@ -295,7 +296,7 @@ class RealKafkaCollector(KafkaCollector):
     async def collect_brokers_only(self) -> list[dict]:
         """Fast broker list only — skips topic listing. ~1s vs 35s."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._collect_brokers_only_sync)
+        return await loop.run_in_executor(_kafka_io_executor, self._collect_brokers_only_sync)
 
     def _collect_brokers_only_sync(self) -> list[dict]:
         security = self._security_kwargs()
@@ -321,7 +322,7 @@ class RealKafkaCollector(KafkaCollector):
         per-broker breakdown including all replicas (not leader-only) and all topics
         (including internal/system topics)."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._collect_broker_log_dir_sizes_sync)
+        return await loop.run_in_executor(_kafka_io_executor, self._collect_broker_log_dir_sizes_sync)
 
     def _collect_broker_log_dir_sizes_sync(self) -> dict[str, Any]:
         from kafka.protocol.admin import DescribeLogDirsRequest
@@ -372,7 +373,7 @@ class RealKafkaCollector(KafkaCollector):
     async def collect_group_states(self) -> list[dict]:
         """Fast group states only — no lag fetch, no topic listing. ~2s."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._collect_group_states_sync)
+        return await loop.run_in_executor(_kafka_io_executor, self._collect_group_states_sync)
 
     def _collect_group_states_sync(self) -> list[dict]:
         security = self._security_kwargs()
@@ -394,7 +395,7 @@ class RealKafkaCollector(KafkaCollector):
     async def fetch_topic_details(self, topic_names: list[str]) -> list[dict[str, Any]]:
         """On-demand: describe specific topics with full partition/URP detail."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._fetch_topic_details_sync, topic_names)
+        return await loop.run_in_executor(_kafka_io_executor, self._fetch_topic_details_sync, topic_names)
 
     def _fetch_topic_details_sync(self, topic_names: list[str]) -> list[dict[str, Any]]:
         if not topic_names:
@@ -453,7 +454,7 @@ class RealKafkaCollector(KafkaCollector):
     async def fetch_group_lags(self, group_ids: list[str]) -> list[dict[str, Any]]:
         """On-demand: fetch lag for specific consumer groups."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._fetch_group_lags_sync, group_ids)
+        return await loop.run_in_executor(_kafka_io_executor, self._fetch_group_lags_sync, group_ids)
 
     async def fetch_all_group_lags(self, group_ids: list[str], workers: int = 15) -> list[dict[str, Any]]:
         """Parallel lag fetch using multiple threads — 10x faster than sequential."""
@@ -495,7 +496,6 @@ class RealKafkaCollector(KafkaCollector):
         Uses multiple threads to describe topics in parallel batches."""
         if not topic_names:
             return [], 0
-        import concurrent.futures
 
         # Split into chunks for parallel workers
         chunk_size = max(1, len(topic_names) // workers + 1)
@@ -505,18 +505,17 @@ class RealKafkaCollector(KafkaCollector):
         all_topics = []
         total_urp = 0
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(workers, len(chunks))) as executor:
-            futures = [
-                loop.run_in_executor(executor, self._fetch_topic_details_sync, chunk)
-                for chunk in chunks
-            ]
-            completed = await asyncio.gather(*futures, return_exceptions=True)
-            for i, result in enumerate(completed):
-                if isinstance(result, Exception):
-                    logger.warning("Parallel topic describe worker %d failed: %s", i, result)
-                else:
-                    all_topics.extend(result)
-                    total_urp += sum(1 for t in result if t.get("under_replicated", 0) > 0)
+        futures = [
+            loop.run_in_executor(_kafka_io_executor, self._fetch_topic_details_sync, chunk)
+            for chunk in chunks
+        ]
+        completed = await asyncio.gather(*futures, return_exceptions=True)
+        for i, result in enumerate(completed):
+            if isinstance(result, Exception):
+                logger.warning("Parallel topic describe worker %d failed: %s", i, result)
+            else:
+                all_topics.extend(result)
+                total_urp += sum(1 for t in result if t.get("under_replicated", 0) > 0)
 
         # Sort by anomaly severity: degraded first, then RF=1, then healthy
         all_topics.sort(key=lambda t: (
@@ -588,7 +587,7 @@ class RealKafkaCollector(KafkaCollector):
     async def search_topics(self, query: str) -> list[str]:
         """On-demand: search topic names matching query (case-insensitive)."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._search_topics_sync, query)
+        return await loop.run_in_executor(_kafka_io_executor, self._search_topics_sync, query)
 
     def _search_topics_sync(self, query: str) -> list[str]:
         security = self._security_kwargs()
@@ -614,7 +613,7 @@ class RealKafkaCollector(KafkaCollector):
     async def list_all_topics(self) -> list[str]:
         """Return ALL non-internal topic names from the cluster."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._list_all_topics_sync)
+        return await loop.run_in_executor(_kafka_io_executor, self._list_all_topics_sync)
 
     def _list_all_topics_sync(self) -> list[str]:
         security = self._security_kwargs()

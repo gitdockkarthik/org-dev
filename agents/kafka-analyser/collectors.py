@@ -13,10 +13,15 @@ import kafka_store as _ks
 
 logger = logging.getLogger(__name__)
 
-# Dedicated thread pool for inflow shard collection (bounded blast radius).
-# If num_shards exceeds 10 in future larger cluster onboarding, extra shards queue
-# within this same pool (reduced parallelism, not a correctness issue).
-_inflow_executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix="inflow-shard")
+# Single shared thread pool for ALL Kafka I/O work across every collector.
+# Sized for I/O-bound work on this container's 4 CPU cores (threads spend most
+# time waiting on network I/O, not computing -- ~3x core count balances real
+# parallelism against destructive oversubscription).
+# Replaces: the accidental shared Python default executor (previously used via
+# run_in_executor(None, ...) by ~12 functions) AND all ad-hoc per-job dedicated
+# pools, which were competing destructively for the same 4 physical cores when
+# multiple jobs ran concurrently.
+_kafka_io_executor = ThreadPoolExecutor(max_workers=12, thread_name_prefix="kafka-io")
 
 
 async def _get_enabled_clusters() -> list[dict]:
@@ -280,7 +285,7 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
                     }
                 finally:
                     admin.close()
-        result = await loop.run_in_executor(None, _fetch_all_lags)
+        result = await loop.run_in_executor(_kafka_io_executor, _fetch_all_lags)
         data = _ks.get_cluster_data(cid) or {}
         data["consumer_groups"] = result["groups"]
         data["group_states"] = result["group_states"]
@@ -1116,7 +1121,7 @@ async def collect_msg_rate(cluster_id: str = ""):
             finally:
                 admin.close()
         now = time.time()
-        current_sizes = await loop.run_in_executor(None, _get_partition_sizes)
+        current_sizes = await loop.run_in_executor(_kafka_io_executor, _get_partition_sizes)
         prev_key = f"{cid}_sizes"
         prev_sizes = _prev_offsets.get(prev_key, {})
         prev_time = _prev_offset_time if _prev_offset_time else now
@@ -1315,7 +1320,7 @@ async def collect_topic_message_inflow(cluster_id: str = ""):
                 consumer.close()
 
         tasks = [
-            loop.run_in_executor(_inflow_executor, _seek_to_end_for, parts)
+            loop.run_in_executor(_kafka_io_executor, _seek_to_end_for, parts)
             for parts in shards.values() if parts
         ]
         shard_results = await asyncio.gather(*tasks)
