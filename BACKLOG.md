@@ -12,8 +12,10 @@ Each item: short description, why it matters, status, date added.
 
 ## Open
 
-## Prioritized Plan (set 2026-08-01 — this table is the execution order; full detail for
-each item lives in its own entry below under ## Open)
+## Prioritized Plan (finalized 2026-08-01 — this table is the execution order; full
+detail for each item lives in its own entry below under ## Open. User also tracks a
+copy of this table in Excel for human-readable/team visibility — this file remains the
+authoritative source if the two ever diverge)
 
 ### Day 1 — Today (2026-08-01), 9.1 hrs
 | Order | Item | Est. |
@@ -33,19 +35,25 @@ each item lives in its own entry below under ## Open)
 | 9 | Startup sync burst vs. job scheduler contention | 2 hrs |
 | 10 | Source connector -> topic correlation | 2 hrs |
 | 11 | describe_consumer_groups dependent-feature check | 0.75 hr |
-| 13 | Legacy _collection_loop decommission decision | 3 hrs |
+| 12 | Legacy _collection_loop decommission decision | 3 hrs |
 
 ### Day 3 — Monday (2026-08-03), 6 hrs
 | Order | Item | Est. |
 |---|---|---|
-| 14 | Data-layer documentation (ERD + mappings) | 6 hrs |
+| 13 | Data-layer documentation (ERD + mappings) | 6 hrs |
 
-### Day 4 — Tuesday (2026-08-04), 5 hrs
+### Day 4 — Tuesday (2026-08-04), 6 hrs
 | Order | Item | Est. |
 |---|---|---|
-| 12 | AI Insights full dedicated pass | 5 hrs |
+| 14 | AI Insights full dedicated pass | 5 hrs |
+| 15 | CSV Export for Topics, Consumer Groups, Connectors | 1 hr |
 
-**Grand total: 27.85 hrs across 4 days.**
+### TBD — blocked, not scheduled
+| Order | Item | Est. |
+|---|---|---|
+| 16 | Product/Service tag mapping from SharePoint CSV | TBD — pending tag schema finalization + SharePoint read-mechanism decision |
+
+**Grand total: 28.85 hrs across 4 scheduled days (excludes TBD item).**
 
 Rule: at the start of each day's session, re-check this plan against actual progress —
 if a prior day's items slipped, re-confirm order rather than assuming this table is still
