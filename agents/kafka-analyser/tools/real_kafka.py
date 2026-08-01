@@ -116,33 +116,32 @@ class RealKafkaCollector(KafkaCollector):
         return await loop.run_in_executor(_kafka_io_executor, self._ping_sync)
 
     def _ping_sync(self) -> dict:
-        security = self._security_kwargs()
+        cluster_config = {
+            "bootstrap_servers": self.bootstrap_servers,
+            "auth_type": self.auth_type,
+            "sasl_username": self.sasl_username,
+            "sasl_password": self.sasl_password,
+            "sasl_mechanism": self.sasl_mechanism,
+            "tls_enabled": self.tls_enabled,
+        }
+        admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
         try:
-            admin = KafkaAdminClient(
-                bootstrap_servers=self._bootstrap_list,
-                **security,
-                request_timeout_ms=10000,
-            )
+            with admin_lock:
+                cluster_info = admin.describe_cluster()
+                brokers = self._build_brokers(cluster_info)
+                cluster_id = cluster_info.get('cluster_id', '') if isinstance(cluster_info, dict) else (getattr(cluster_info, 'cluster_id', '') or '')
+                return {
+                    "ok": True,
+                    "broker_count": len(brokers),
+                    "cluster_id": str(cluster_id),
+                    "topic_count": None,
+                }
         except Exception as exc:
+            invalidate_client(self.bootstrap_servers)
             raise RuntimeError(
                 f"Failed to connect to Kafka at bootstrap_servers="
                 f"{self.bootstrap_servers!r} (auth_type={self.auth_type!r}): {exc}"
             ) from exc
-        try:
-            cluster_info = admin.describe_cluster()
-            brokers = self._build_brokers(cluster_info)
-            cluster_id = cluster_info.get('cluster_id', '') if isinstance(cluster_info, dict) else (getattr(cluster_info, 'cluster_id', '') or '')
-            return {
-                "ok": True,
-                "broker_count": len(brokers),
-                "cluster_id": str(cluster_id),
-                "topic_count": None,
-            }
-        finally:
-            try:
-                admin.close()
-            except Exception:
-                pass
 
     async def collect_summary(self) -> dict[str, Any]:
         """Lightweight summary collection — fast startup/sync cycle.
@@ -153,94 +152,91 @@ class RealKafkaCollector(KafkaCollector):
         return await loop.run_in_executor(_kafka_io_executor, self._collect_summary_sync)
 
     def _collect_summary_sync(self) -> dict[str, Any]:
-        security = self._security_kwargs()
+        cluster_config = {
+            "bootstrap_servers": self.bootstrap_servers,
+            "auth_type": self.auth_type,
+            "sasl_username": self.sasl_username,
+            "sasl_password": self.sasl_password,
+            "sasl_mechanism": self.sasl_mechanism,
+            "tls_enabled": self.tls_enabled,
+        }
+        admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
         try:
-            admin = KafkaAdminClient(
-                bootstrap_servers=self._bootstrap_list,
-                **security,
-            )
+            with admin_lock:
+                try:
+                    cluster_info = admin.describe_cluster()
+                    brokers = self._build_brokers(cluster_info)
+
+                    # Topic names only — no describe, no URP
+                    all_names = [n for n in admin.list_topics() if not _is_internal_topic(n)]
+                    topic_count = len(all_names)
+
+                    # Keep 500 names in memory for streaming describe + anomaly detection
+                    # Table only renders 20 per page — 500 names is negligible memory
+                    capped_names = sorted(all_names)[:500] if len(all_names) > 500 else all_names
+
+                    # Build lightweight topic stubs — no partition/URP detail
+                    topics = [
+                        {
+                            "name": n,
+                            "partition_count": 0,
+                            "replication_factor": 0,
+                            "messages_in_per_sec": 0.0,
+                            "bytes_in_per_sec": 0.0,
+                            "bytes_out_per_sec": 0.0,
+                            "total_messages": 0,
+                            "size_bytes": 0,
+                            "retention_bytes": -1,
+                            "retention_pct": 0.0,
+                            "status": "unknown",
+                        }
+                        for n in capped_names
+                    ]
+
+                    # Consumer group states only — no lag fetch
+                    listed = admin.list_consumer_groups()
+                    group_ids = [entry[0] for entry in listed if entry[1] == "consumer"]
+                    states = self._describe_group_states(admin, group_ids) if group_ids else {}
+                    groups = [
+                        {
+                            "group_id": gid,
+                            "state": states.get(gid, "Unknown"),
+                            "total_lag": -1,
+                            "topic_count": 0,
+                            "lag_trend": "unknown",
+                            "lag_rate_per_min": 0.0,
+                            "partitions": [],
+                        }
+                        for gid in group_ids
+                    ]
+
+                    cluster = self._build_cluster(cluster_info, len(brokers), 0)
+                    cluster["topic_count"] = topic_count
+
+                    return {
+                        "cluster": cluster,
+                        "brokers": brokers,
+                        "consumer_groups": groups,
+                        "topics": topics,
+                        "connectors": [],
+                        "anomalies": [],
+                        "is_summary": True,
+                        "counts": {
+                            "total_topics": topic_count,
+                            "total_groups": len(group_ids),
+                            "total_brokers": len(brokers),
+                        },
+                    }
+                except RuntimeError:
+                    raise
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Failed to collect summary from Kafka at bootstrap_servers="
+                        f"{self.bootstrap_servers!r} (auth_type={self.auth_type!r}): {exc}"
+                    ) from exc
         except Exception as exc:
-            raise RuntimeError(
-                f"Failed to connect to Kafka at bootstrap_servers="
-                f"{self.bootstrap_servers!r} (auth_type={self.auth_type!r}): {exc}"
-            ) from exc
-        try:
-            try:
-                cluster_info = admin.describe_cluster()
-                brokers = self._build_brokers(cluster_info)
-
-                # Topic names only — no describe, no URP
-                all_names = [n for n in admin.list_topics() if not _is_internal_topic(n)]
-                topic_count = len(all_names)
-
-                # Keep 500 names in memory for streaming describe + anomaly detection
-                # Table only renders 20 per page — 500 names is negligible memory
-                capped_names = sorted(all_names)[:500] if len(all_names) > 500 else all_names
-
-                # Build lightweight topic stubs — no partition/URP detail
-                topics = [
-                    {
-                        "name": n,
-                        "partition_count": 0,
-                        "replication_factor": 0,
-                        "messages_in_per_sec": 0.0,
-                        "bytes_in_per_sec": 0.0,
-                        "bytes_out_per_sec": 0.0,
-                        "total_messages": 0,
-                        "size_bytes": 0,
-                        "retention_bytes": -1,
-                        "retention_pct": 0.0,
-                        "status": "unknown",
-                    }
-                    for n in capped_names
-                ]
-
-                # Consumer group states only — no lag fetch
-                listed = admin.list_consumer_groups()
-                group_ids = [entry[0] for entry in listed if entry[1] == "consumer"]
-                states = self._describe_group_states(admin, group_ids) if group_ids else {}
-                groups = [
-                    {
-                        "group_id": gid,
-                        "state": states.get(gid, "Unknown"),
-                        "total_lag": -1,
-                        "topic_count": 0,
-                        "lag_trend": "unknown",
-                        "lag_rate_per_min": 0.0,
-                        "partitions": [],
-                    }
-                    for gid in group_ids
-                ]
-
-                cluster = self._build_cluster(cluster_info, len(brokers), 0)
-                cluster["topic_count"] = topic_count
-
-                return {
-                    "cluster": cluster,
-                    "brokers": brokers,
-                    "consumer_groups": groups,
-                    "topics": topics,
-                    "connectors": [],
-                    "anomalies": [],
-                    "is_summary": True,
-                    "counts": {
-                        "total_topics": topic_count,
-                        "total_groups": len(group_ids),
-                        "total_brokers": len(brokers),
-                    },
-                }
-            except RuntimeError:
-                raise
-            except Exception as exc:
-                raise RuntimeError(
-                    f"Failed to collect summary from Kafka at bootstrap_servers="
-                    f"{self.bootstrap_servers!r} (auth_type={self.auth_type!r}): {exc}"
-                ) from exc
-        finally:
-            try:
-                admin.close()
-            except Exception:
-                pass
+            invalidate_client(self.bootstrap_servers)
+            raise
 
     async def collect_topic_sizes(self, top_n: int = 100) -> dict[str, Any]:
         """Collect topic sizes using describe_log_dirs — fast, no JMX/Prometheus needed.
@@ -251,48 +247,45 @@ class RealKafkaCollector(KafkaCollector):
     def _collect_topic_sizes_sync(self, top_n: int = 100) -> dict[str, Any]:
         """Synchronous topic size collection via AdminClient.describe_log_dirs."""
         import time
-        security = self._security_kwargs()
+        cluster_config = {
+            "bootstrap_servers": self.bootstrap_servers,
+            "auth_type": self.auth_type,
+            "sasl_username": self.sasl_username,
+            "sasl_password": self.sasl_password,
+            "sasl_mechanism": self.sasl_mechanism,
+            "tls_enabled": self.tls_enabled,
+        }
+        admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
         try:
-            admin = KafkaAdminClient(
-                bootstrap_servers=self._bootstrap_list,
-                request_timeout_ms=15000,
-                **security,
-            )
+            with admin_lock:
+                t = time.time()
+                result = admin.describe_log_dirs()
+                elapsed = time.time() - t
+                topic_sizes: dict[str, int] = {}
+                for log_dir in result.log_dirs:
+                    if log_dir[0] != 0:
+                        continue
+                    for topic_entry in log_dir[2]:
+                        topic = topic_entry[0]
+                        for partition in topic_entry[1]:
+                            size = partition[1]
+                            topic_sizes[topic] = topic_sizes.get(topic, 0) + size
+                total_size = sum(topic_sizes.values())
+                top_topics = sorted(topic_sizes.items(), key=lambda x: x[1], reverse=True)[:top_n]
+                return {
+                    "topic_sizes": [
+                        {"topic": t, "size_bytes": s, "size_mb": round(s / 1024 / 1024, 1)}
+                        for t, s in top_topics
+                    ],
+                    "total_topics": len(topic_sizes),
+                    "total_size_bytes": total_size,
+                    "total_size_gb": round(total_size / 1024**3, 2),
+                    "collection_time_secs": round(elapsed, 2),
+                    "error": None,
+                }
         except Exception as exc:
+            invalidate_client(self.bootstrap_servers)
             return {"error": str(exc), "topic_sizes": [], "total_size_bytes": 0}
-        try:
-            t = time.time()
-            result = admin.describe_log_dirs()
-            elapsed = time.time() - t
-            topic_sizes: dict[str, int] = {}
-            for log_dir in result.log_dirs:
-                if log_dir[0] != 0:
-                    continue
-                for topic_entry in log_dir[2]:
-                    topic = topic_entry[0]
-                    for partition in topic_entry[1]:
-                        size = partition[1]
-                        topic_sizes[topic] = topic_sizes.get(topic, 0) + size
-            total_size = sum(topic_sizes.values())
-            top_topics = sorted(topic_sizes.items(), key=lambda x: x[1], reverse=True)[:top_n]
-            return {
-                "topic_sizes": [
-                    {"topic": t, "size_bytes": s, "size_mb": round(s / 1024 / 1024, 1)}
-                    for t, s in top_topics
-                ],
-                "total_topics": len(topic_sizes),
-                "total_size_bytes": total_size,
-                "total_size_gb": round(total_size / 1024**3, 2),
-                "collection_time_secs": round(elapsed, 2),
-                "error": None,
-            }
-        except Exception as exc:
-            return {"error": str(exc), "topic_sizes": [], "total_size_bytes": 0}
-        finally:
-            try:
-                admin.close()
-            except Exception:
-                pass
 
     async def collect_brokers_only(self) -> list[dict]:
         """Fast broker list only — skips topic listing. ~1s vs 35s."""
