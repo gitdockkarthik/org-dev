@@ -74,7 +74,7 @@ async def get_overview(cluster_id: str | None = None, hours: int | None = None) 
     # Topic count from postgres
     topic_count_pg = 0
     try:
-        from database import SessionLocal
+        from database import DashboardSessionLocal as SessionLocal
         from sqlalchemy import text as _ovt
         if SessionLocal:
             async with SessionLocal() as _ovs:
@@ -88,7 +88,7 @@ async def get_overview(cluster_id: str | None = None, hours: int | None = None) 
     # Consumer groups from postgres
     consumer_groups = []
     try:
-        from database import SessionLocal as _SL
+        from database import DashboardSessionLocal as _SL
         from sqlalchemy import text as _cgt2
         if _SL:
             async with _SL() as _cgs:
@@ -103,7 +103,7 @@ async def get_overview(cluster_id: str | None = None, hours: int | None = None) 
     brokers = data.get("brokers", [])
     if cluster_id:
         try:
-            from database import SessionLocal
+            from database import DashboardSessionLocal as SessionLocal
             from sqlalchemy import text as _bt
             if SessionLocal:
                 async with SessionLocal() as _bs:
@@ -188,7 +188,7 @@ async def get_counts(cluster_id: str | None = None) -> dict:
         all_cfg = await get_backend().get_all()
 
         # Structure counts live in kafka_metrics_history (scan_type='topics_structure')
-        from database import SessionLocal
+        from database import DashboardSessionLocal as SessionLocal
         from sqlalchemy import text as _text
         structure = {}
         if SessionLocal:
@@ -301,7 +301,7 @@ async def get_topic_detail(name: str, cluster_id: str | None = None) -> dict:
     if not cluster_id:
         return {"error": "cluster_id required"}
     try:
-        from database import SessionLocal
+        from database import DashboardSessionLocal as SessionLocal
         from sqlalchemy import text as _t
         if SessionLocal is None:
             return {"error": "Database not available"}
@@ -338,7 +338,7 @@ async def get_consumer_groups(cluster_id: str | None = None, hours: int | None =
     if not cluster_id:
         return {"empty": True}
     try:
-        from database import SessionLocal
+        from database import DashboardSessionLocal as SessionLocal
         from sqlalchemy import text as _t
         if SessionLocal is None:
             return {"empty": True}
@@ -374,7 +374,7 @@ async def get_consumer_group_topics(group_id: str, cluster_id: str | None = None
     if not cluster_id:
         return {"error": "cluster_id required"}
     try:
-        from database import SessionLocal
+        from database import DashboardSessionLocal as SessionLocal
         from sqlalchemy import text as _t
         if SessionLocal is None:
             return {"error": "Database not available"}
@@ -426,7 +426,7 @@ async def get_consumer_group_topics(group_id: str, cluster_id: str | None = None
 async def get_topics(cluster_id: str | None = None, hours: int | None = None,
                      limit: int = 50, offset: int = 0, search: str = "") -> dict:
     """Topic metrics from postgres — sorted by size descending, with pagination and search."""
-    from database import SessionLocal
+    from database import DashboardSessionLocal as SessionLocal
     from sqlalchemy import text
     import logging
     logger = logging.getLogger(__name__)
@@ -489,7 +489,7 @@ async def get_brokers(cluster_id: str | None = None, hours: int | None = None) -
     if not cluster_id:
         return {"empty": True}
     try:
-        from database import SessionLocal
+        from database import DashboardSessionLocal as SessionLocal
         from sqlalchemy import text as _text
         if SessionLocal is None:
             return {"empty": True}
@@ -562,7 +562,7 @@ async def get_broker_distribution(cluster_id: str | None = None) -> dict:
     if not cluster_id:
         return {"empty": True}
     try:
-        from database import SessionLocal
+        from database import DashboardSessionLocal as SessionLocal
         from sqlalchemy import text as _text
         if SessionLocal is None:
             return {"empty": True}
@@ -643,7 +643,7 @@ async def get_schema_registry(cluster_id: str | None = None) -> dict:
     # Get topics for restricted SR fallback
     _sr_topics = []
     try:
-        from database import SessionLocal
+        from database import DashboardSessionLocal as SessionLocal
         from sqlalchemy import text as _t2
         if SessionLocal:
             async with SessionLocal() as _sess:
@@ -785,7 +785,7 @@ async def get_kafka_connect(cluster_id: str | None = None) -> dict:
 
     # Attach lag data for sink connectors with dedicated consumer groups
     try:
-        from database import SessionLocal
+        from database import DashboardSessionLocal as SessionLocal
         from sqlalchemy import text as _cct
         if all_connectors and cluster_id:
             async with SessionLocal() as _csess:
@@ -843,7 +843,7 @@ async def get_mirrormaker(cluster_id: str | None = None, hours: int | None = Non
     data = {}
     if cluster_id:
         try:
-            from database import SessionLocal
+            from database import DashboardSessionLocal as SessionLocal
             from sqlalchemy import text as _mmt
             if SessionLocal:
                 async with SessionLocal() as _mms:
@@ -884,7 +884,7 @@ async def get_mirrormaker(cluster_id: str | None = None, hours: int | None = Non
                 # For MM1: fetch mirror consumer groups from postgres
                 if mirror_mode == "mm1" and cluster_id:
                     try:
-                        from database import SessionLocal
+                        from database import DashboardSessionLocal as SessionLocal
                         from sqlalchemy import text as _mm1t
                         if SessionLocal:
                             async with SessionLocal() as _mm1s:
@@ -1056,7 +1056,7 @@ async def get_lag_trend(cluster_id: str | None = None, minutes: float = 1440.0) 
         bucket_interval = '1 day'
 
     try:
-        from database import SessionLocal
+        from database import DashboardSessionLocal as SessionLocal
         from sqlalchemy import text
         if SessionLocal is None:
             return {"empty": True, "points": []}
@@ -1112,7 +1112,9 @@ async def get_lag_trend(cluster_id: str | None = None, minutes: float = 1440.0) 
 async def get_topic_message_rate(
     cluster_id: str | None = None, minutes: float = 1440.0, topic: str | None = None
 ) -> dict:
-    """Message in/out rate over time — from kafka_topic_message_rate_snapshots.
+    """Message in/out rate over time — blends kafka_topic_message_rate_snapshots (raw,
+    <= 6h) and kafka_topic_message_rate_hourly_rollup (aggregated, > 6h). Ensures
+    completeness for queries spanning the retention cutoff.
     No topic param: summed across ALL topics (cluster-wide view).
     topic param: single-topic series (for topic-lag popup / Topics tab use)."""
     if not cluster_id:
@@ -1135,37 +1137,135 @@ async def get_topic_message_rate(
     }[bucket_interval]
 
     try:
-        from database import SessionLocal
+        from database import DashboardSessionLocal as SessionLocal
         from sqlalchemy import text
+        from datetime import datetime, timezone, timedelta
         if SessionLocal is None:
             return {"empty": True, "points": []}
 
         async with SessionLocal() as session:
+            now = datetime.now(timezone.utc)
+            range_start = now - timedelta(minutes=minutes)
+
+            # Determine the REAL boundary between rolled-up and not-yet-rolled-up data, rather
+            # than assuming a fixed cutoff — eliminates any gap since both queries agree on the
+            # same verified fact. Safe because the raw table stays small (bounded to roughly one
+            # rollup cycle) regardless of the exact boundary.
+            max_rollup_row = await session.execute(text("""
+                SELECT MAX(hour_bucket) as max_bucket FROM kafka_topic_message_rate_hourly_rollup
+                WHERE cluster_id = :cluster_id
+            """), {"cluster_id": int(cluster_id)})
+            max_bucket_row = max_rollup_row.fetchone()
+            if max_bucket_row and max_bucket_row.max_bucket:
+                cutoff = max_bucket_row.max_bucket + timedelta(hours=1)
+            else:
+                cutoff = now
+
             topic_filter_sql = "AND topic = :topic" if topic else ""
-            sql = f"""
-                SELECT
-                    date_bin(
+
+            # If the requested range doesn't reach past the cutoff, use raw table only
+            # (covers 1h, 6h views with zero added cost)
+            if range_start >= cutoff:
+                sql = f"""
+                    SELECT
+                        date_bin(
+                            '{bucket_interval}'::INTERVAL,
+                            collected_at,
+                            TIMESTAMP '2001-01-01'
+                        ) AS bucket_time,
+                        COALESCE(SUM(inflow), 0)::bigint AS total_inflow,
+                        COALESCE(SUM(outflow), 0)::bigint AS total_outflow
+                    FROM kafka_topic_message_rate_snapshots
+                    WHERE cluster_id = :cluster_id
+                    AND collected_at >= NOW() - ((:minutes) * INTERVAL '1 minute')
+                    {topic_filter_sql}
+                    GROUP BY date_bin(
                         '{bucket_interval}'::INTERVAL,
                         collected_at,
                         TIMESTAMP '2001-01-01'
-                    ) AS bucket_time,
-                    COALESCE(SUM(inflow), 0)::bigint AS total_inflow,
-                    COALESCE(SUM(outflow), 0)::bigint AS total_outflow
-                FROM kafka_topic_message_rate_snapshots
-                WHERE cluster_id = :cluster_id
-                AND collected_at >= NOW() - ((:minutes) * INTERVAL '1 minute')
-                {topic_filter_sql}
-                GROUP BY date_bin(
-                    '{bucket_interval}'::INTERVAL,
-                    collected_at,
-                    TIMESTAMP '2001-01-01'
-                )
-                ORDER BY bucket_time ASC
-            """
-            params = {"cluster_id": int(cluster_id), "minutes": minutes}
-            if topic:
-                params["topic"] = topic
-            rows = await session.execute(text(sql), params)
+                    )
+                    ORDER BY bucket_time ASC
+                """
+                params = {"cluster_id": int(cluster_id), "minutes": minutes}
+                if topic:
+                    params["topic"] = topic
+                rows = await session.execute(text(sql), params)
+            else:
+                # Range spans the cutoff — query both raw (cutoff to now) and rollup (range_start to cutoff)
+                sql_raw = f"""
+                    SELECT
+                        date_bin(
+                            '{bucket_interval}'::INTERVAL,
+                            collected_at,
+                            TIMESTAMP '2001-01-01'
+                        ) AS bucket_time,
+                        COALESCE(SUM(inflow), 0)::bigint AS total_inflow,
+                        COALESCE(SUM(outflow), 0)::bigint AS total_outflow
+                    FROM kafka_topic_message_rate_snapshots
+                    WHERE cluster_id = :cluster_id
+                    AND collected_at >= :cutoff
+                    {topic_filter_sql}
+                    GROUP BY date_bin(
+                        '{bucket_interval}'::INTERVAL,
+                        collected_at,
+                        TIMESTAMP '2001-01-01'
+                    )
+                """
+
+                sql_rollup = f"""
+                    SELECT
+                        date_bin(
+                            '{bucket_interval}'::INTERVAL,
+                            hour_bucket,
+                            TIMESTAMP '2001-01-01'
+                        ) AS bucket_time,
+                        COALESCE(SUM(total_inflow), 0)::bigint AS total_inflow,
+                        COALESCE(SUM(total_outflow), 0)::bigint AS total_outflow
+                    FROM kafka_topic_message_rate_hourly_rollup
+                    WHERE cluster_id = :cluster_id
+                    AND hour_bucket >= :range_start
+                    AND hour_bucket < :cutoff
+                    {topic_filter_sql}
+                    GROUP BY date_bin(
+                        '{bucket_interval}'::INTERVAL,
+                        hour_bucket,
+                        TIMESTAMP '2001-01-01'
+                    )
+                """
+
+                params = {"cluster_id": int(cluster_id), "cutoff": cutoff, "range_start": range_start}
+                if topic:
+                    params["topic"] = topic
+
+                # Execute both queries
+                raw_rows = await session.execute(text(sql_raw), params)
+                rollup_rows = await session.execute(text(sql_rollup), params)
+
+                # Merge results: combine into one dict keyed by bucket_time, summing duplicates
+                merged = {}
+                for r in raw_rows.fetchall():
+                    key = r.bucket_time
+                    if key not in merged:
+                        merged[key] = {"inflow": 0, "outflow": 0}
+                    merged[key]["inflow"] += r.total_inflow
+                    merged[key]["outflow"] += r.total_outflow
+
+                for r in rollup_rows.fetchall():
+                    key = r.bucket_time
+                    if key not in merged:
+                        merged[key] = {"inflow": 0, "outflow": 0}
+                    merged[key]["inflow"] += r.total_inflow
+                    merged[key]["outflow"] += r.total_outflow
+
+                # Build rows-like structure from merged dict, sorted by time
+                class MergedRow:
+                    def __init__(self, bucket_time, total_inflow, total_outflow):
+                        self.bucket_time = bucket_time
+                        self.total_inflow = total_inflow
+                        self.total_outflow = total_outflow
+
+                rows = [MergedRow(k, v["inflow"], v["outflow"]) for k, v in sorted(merged.items())]
+
             points = [
                 {
                     "time": r.bucket_time.isoformat(),
@@ -1174,7 +1274,7 @@ async def get_topic_message_rate(
                     "inflow_rate": round(r.total_inflow / bucket_seconds, 2),
                     "outflow_rate": round(r.total_outflow / bucket_seconds, 2),
                 }
-                for r in rows.fetchall()
+                for r in rows
             ]
         if not points:
             return {"empty": True, "points": []}
@@ -1210,7 +1310,7 @@ async def get_group_message_rate(
     }[bucket_interval]
 
     try:
-        from database import SessionLocal
+        from database import DashboardSessionLocal as SessionLocal
         from sqlalchemy import text
         if SessionLocal is None:
             return {"empty": True, "points": []}
@@ -1419,7 +1519,7 @@ async def stream_insights_narrative(
 
     # Read all data from DB directly — no cache dependency
     import json as _json
-    from database import SessionLocal
+    from database import DashboardSessionLocal as SessionLocal
     from sqlalchemy import text as _text
     from storage import get_backend as _gb
 
@@ -1671,7 +1771,7 @@ async def stream_tab_insights(
 
     # Read all data from DB directly
     import json as _json2
-    from database import SessionLocal as _SL2
+    from database import DashboardSessionLocal as _SL2
     from sqlalchemy import text as _text2
     from storage import get_backend as _gb2
 
@@ -1912,7 +2012,7 @@ async def stream_topic_details(cluster_id: str, limit: int = 500):
     all_names = []
     total_count = 0
     try:
-        from database import SessionLocal
+        from database import DashboardSessionLocal as SessionLocal
         from sqlalchemy import text as _tst
         if SessionLocal:
             async with SessionLocal() as _tss:
@@ -1955,7 +2055,7 @@ async def stream_group_lags(cluster_id: str):
     # Read groups from postgres sorted by lag
     group_ids = []
     try:
-        from database import SessionLocal
+        from database import DashboardSessionLocal as SessionLocal
         from sqlalchemy import text as _gst
         if SessionLocal:
             async with SessionLocal() as _gss:
@@ -1994,7 +2094,7 @@ async def search_topics(cluster_id: str, q: str = ""):
     if not q or len(q) < 2:
         return {"topics": [], "query": q}
     try:
-        from database import SessionLocal
+        from database import DashboardSessionLocal as SessionLocal
         from sqlalchemy import text as _tq
         if SessionLocal:
             async with SessionLocal() as sess:
@@ -2024,7 +2124,7 @@ async def search_groups(cluster_id: str, q: str = ""):
         return {"groups": [], "query": q}
     # Search from postgres
     try:
-        from database import SessionLocal
+        from database import DashboardSessionLocal as SessionLocal
         from sqlalchemy import text as _gst
         if SessionLocal:
             async with SessionLocal() as sess:

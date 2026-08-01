@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 async def get_slo_targets(cluster_id: str) -> dict:
     """Get SLO targets for a cluster."""
     try:
-        from database import SessionLocal
+        from database import DashboardSessionLocal as SessionLocal
         from sqlalchemy import text as _t
         if not SessionLocal:
             return {"error": "DB unavailable"}
@@ -53,7 +53,7 @@ async def get_slo_targets(cluster_id: str) -> dict:
 async def save_slo_targets(cluster_id: str, payload: dict) -> dict:
     """Save SLO targets for a cluster."""
     try:
-        from database import SessionLocal
+        from database import DashboardSessionLocal as SessionLocal
         from sqlalchemy import text as _t
         async with SessionLocal() as sess:
             await sess.execute(_t("""
@@ -95,7 +95,7 @@ async def save_slo_targets(cluster_id: str, payload: dict) -> dict:
 async def get_slo_dashboard(cluster_id: str, hours: int = 24) -> dict:
     """Get SLO dashboard data — current state + compliance trend."""
     try:
-        from database import SessionLocal
+        from database import DashboardSessionLocal as SessionLocal
         from sqlalchemy import text as _t
         from datetime import datetime, timezone, timedelta
         if not SessionLocal:
@@ -259,7 +259,7 @@ async def get_slo_dashboard(cluster_id: str, hours: int = 24) -> dict:
 async def get_slo_monthly(cluster_id: str, months: int = 3) -> dict:
     """Get monthly SLO compliance summary for trend comparison."""
     try:
-        from database import SessionLocal
+        from database import DashboardSessionLocal as SessionLocal
         from sqlalchemy import text as _t
         async with SessionLocal() as sess:
             rows = await sess.execute(_t("""
@@ -296,7 +296,7 @@ async def get_slo_monthly(cluster_id: str, months: int = 3) -> dict:
 async def get_connector_trend(cluster_id: str, hours: int = 24) -> dict:
     """Connector availability trend from snapshots (every 2 min, not hourly)."""
     try:
-        from database import SessionLocal
+        from database import DashboardSessionLocal as SessionLocal
         from sqlalchemy import text as _t
         from datetime import datetime, timezone, timedelta
         since = datetime.now(timezone.utc) - timedelta(hours=hours)
