@@ -122,7 +122,8 @@ async def get_slo_dashboard(cluster_id: str, hours: int = 24) -> dict:
                        SUM(CASE WHEN state='RUNNING' THEN 1 ELSE 0 END) as running,
                        SUM(CASE WHEN state='FAILED' THEN 1 ELSE 0 END) as failed,
                        SUM(CASE WHEN state='PAUSED' THEN 1 ELSE 0 END) as paused,
-                       SUM(CASE WHEN state='UNASSIGNED' THEN 1 ELSE 0 END) as unassigned
+                       SUM(CASE WHEN state='UNASSIGNED' THEN 1 ELSE 0 END) as unassigned,
+                       MAX(collected_at) as snapshot_time
                 FROM kafka_connector_snapshots
                 WHERE cluster_id=:cid
                 AND collected_at = (SELECT MAX(collected_at) FROM kafka_connector_snapshots WHERE cluster_id=:cid)
@@ -133,6 +134,7 @@ async def get_slo_dashboard(cluster_id: str, hours: int = 24) -> dict:
             conn_failed = cn.failed or 0
             conn_paused = cn.paused or 0
             conn_unassigned = cn.unassigned or 0
+            conn_snapshot_time = cn.snapshot_time.isoformat() if cn and cn.snapshot_time else None
             conn_active = conn_running + conn_failed  # excludes paused/unassigned
             conn_avail_pct = round(conn_running / conn_active * 100, 2) if conn_active > 0 else 0
 
@@ -222,6 +224,7 @@ async def get_slo_dashboard(cluster_id: str, hours: int = 24) -> dict:
                 "connector_failed": conn_failed,
                 "connector_paused": conn_paused,
                 "connector_unassigned": conn_unassigned,
+                "connector_snapshot_time": conn_snapshot_time,
                 "consumer_lag": current_lag,
                 "broker_count": broker_count,
                 "urp": current_urp,
