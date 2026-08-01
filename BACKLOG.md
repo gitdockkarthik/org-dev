@@ -123,11 +123,13 @@ Checks `gState === 'empty'`, but `g.state` in this data source (from
 cosmetic/misleading rather than data-incorrect.
 *Added: 2026-07-30*
 
-### kafka-consumer-lag-3 job duration — monitor
-Timeout increased 150s → 300s after partition-level lag upserts added real write volume.
-Currently stable at 35-62s/run (6,008 partition rows for cluster 3), but worth a one-time
-check that duration isn't still trending upward as data grows.
-*Added: 2026-07-30*
+### kafka-consumer-lag-3 job duration — checked 2026-08-01, stable
+Timeout is 300s. Checked last 9 runs (2026-08-01 08:30-09:03): range 32-208s, no
+failures, no upward trend — variance matches DevQA's known chronic broker load
+fluctuation, not a growing-data problem. One cycle skipped (08:33) confirming
+APScheduler's max_instances=1 overlap protection works correctly in practice (skip
+rather than stack). No action needed.
+*Added: 2026-07-30, checked and closed: 2026-08-01*
 
 ### Request-handler idle % — one-character metric name bug (safe to fix)
 Our code requests `kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent`;
