@@ -396,7 +396,7 @@
               if (inflow === 0 && consumed === 0 && p.lag > 0) {
                 rateHtml = `<span style="color:var(--text-muted);font-size:.72rem">⏸ stalled (no movement)</span>`;
               } else if (inflow === 0 && consumed === 0) {
-                rateHtml = '';
+                rateHtml = `<span style="color:var(--success);font-size:.72rem">✓ idle (no lag, no movement)</span>`;
               } else if (inflow > consumed) {
                 rateHtml = `<span style="color:var(--danger);font-size:.72rem">↑ growing (+${fmtNum(inflow)} in, ${fmtNum(consumed)} out)</span>`;
               } else if (consumed > inflow) {
