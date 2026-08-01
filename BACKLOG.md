@@ -126,12 +126,7 @@ connector health — i.e. is it actually producing. Explicitly agreed as its own
 future cycle, not bundled into the message-rate chart work.
 *Added: 2026-07-31 (original session, recovered from re-uploaded handoff.md)*
 
-### SLO tab snapshot timestamp
-Kafka Connect tab reads live REST (up-to-the-second); SLO tab reads the last
-kafka_connector_snapshots row (up to 2 min old) — occasional small count discrepancies
-between the two are a timing difference, not a bug, but look contradictory without
-context. Fix: surface "as of HH:MM" on the SLO tab. Low priority, cosmetic.
-*Added: 2026-07-31 (original session, recovered from re-uploaded handoff.md)*
+
 
 ### Existing "State: Active/Empty" filter on Consumer Groups tab likely a no-op
 Checks `gState === 'empty'`, but `g.state` in this data source (from
@@ -298,6 +293,22 @@ bytes/sec chart.
 
 
 
+### Static-vs-portal UI parity audit
+User found "a few discrepancies" between static and portal dashboards while validating
+today's SLO fix — not detailed/urgent (no plans to ship this agent to another platform
+soon), but worth a full side-by-side audit at some point given the two files are
+maintained in parallel and drift has happened before (caught multiple times today via
+diff-symmetry checks). Low priority.
+*Added: 2026-08-01*
+
+### Dashboard slow to load at 24-hour time range
+User-observed performance issue: chart rendering / dashboard load is noticeably slow
+when the time period selector is set to 24 hours. Plan: address AFTER today's item #8
+(cluster-switch race condition) — possible the race condition's redundant/stale
+in-flight requests are contributing to this, worth checking if it resolves naturally
+once that's fixed before investigating further. Scheduled: tomorrow (2026-08-02).
+*Added: 2026-08-01*
+
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - **CSV Export for dashboard tables** (Topics, Consumer Groups, Connectors) — quick win,
   unblocked, no dependencies. User's team will use exported data to manually tag
@@ -447,6 +458,23 @@ connector naming practices across teams. Logic preserved underneath, only displa
 removed.
 Validated on both static and portal dashboards: all 5 connectors now show real lag
 (previously null/N/A) with correct discovered group IDs.
+
+### SLO tab connector data made live — FIXED 2026-08-01 (far exceeded original 0.5hr scope)
+Started as a small "add as of HH:MM label" cosmetic fix. User correctly rejected that as
+insufficient after reporting a PERSISTENT (not occasional) 1-count discrepancy observed
+over a week. Full investigation: verified no code bug in either side's query/aggregation
+logic (live and DB snapshot agreed exactly when checked simultaneously, multiple times);
+verified the connector-snapshots collector job itself is healthy (real timing, real
+success, matches manual validation); verified the Kafka Connect tab's own KPI computation
+is internally consistent with its rendered table (no frontend display bug there either).
+User's own architectural instinct was the right fix, not mine: a "current state" KPI
+should never depend on a periodic snapshot when the live call is fast and cheap
+(validated: full 290-connector collect() ~3s). Implemented: SLO tab's current-state
+connector stats and connector list now call get_kafka_connect() directly — the exact
+same live source as the Connect tab — eliminating disagreement by construction rather
+than explaining it with a label. Trend chart's historical queries correctly remain
+snapshot-based (genuinely need accumulated history). Removed the now-obsolete "Snapshot
+as of HH:MM" label. Validated: both tabs now show byte-identical connector counts.
 
 ## Resolved (kept for reference — move here, don't delete, when an item closes)
 
