@@ -38,14 +38,7 @@ NOT investigated further tonight — flagging precisely rather than guessing at 
 
 
 
-### Mini message In/Out charts on Consumer Groups / Kafka Connect topic-lag popups
-User request (2026-08-01): extend the same per-topic mini-chart pattern just built and
-validated in the Topic Details popup (Topics tab) to the existing topic-lag drill-down
-popups on Consumer Groups and Kafka Connect tabs (_showGroupTopicsPopup). Same endpoint
-(GET /dashboard/topics/message-rate?topic=...), same compact chart design — should be a
-quick reuse, not a new design, since the pattern is already proven. Explicitly for demo
-impact with a wider audience — user's words: "these kind of magics will impress people."
-*Added: 2026-08-01*
+
 
 
 
@@ -275,6 +268,31 @@ exists alongside it.
 This closes the full message-inflow feature end to end, started as Chunk 1 in the
 2026-07-31 session: schema -> sharded/parallelized collector -> endpoint -> three UI
 surfaces, all built and validated with real production data.
+
+### Group-level Message In/Out mini-chart on Consumer Groups / Kafka Connect popups — shipped 2026-08-01
+Scope evolved during design from the original request (per-topic charts, reusing the
+Topics tab pattern) to a genuinely more correct group-level aggregate, after discussion
+clarified that the existing topic-level outflow table aggregates consumption ACROSS ALL
+GROUPS reading a topic — not safely attributable to a single group. Built properly
+instead: new table kafka_consumer_group_rate_snapshots (migration 0034, accumulating
+history, unlike kafka_consumer_group_partition_lag which is upsert-in-place/latest-only).
+collect_consumer_lag_active extended to aggregate its already-computed per-partition
+inflow_since_last/consumed_since_last BY GROUP (no new Kafka calls). New endpoint
+GET /dashboard/consumer-groups/{group_id}/message-rate, mirroring the topic-level one
+exactly. Wired into the single shared _showGroupTopicsPopup function, so both Consumer
+Groups and Kafka Connect tabs get it automatically with zero duplicated code.
+**Validated with exact cross-check**: connect-aosqa_resolution_scheduler_connector showed
+group-level inflow=94, matching the exact sum of its 3 non-zero partitions (32+24+38)
+from kafka_consumer_group_partition_lag for the same collection cycle — interval and
+outflow also verified exact.
+**Separately found and fixed during this work**: a genuinely idle partition (lag=0,
+inflow=0, outflow=0) was rendering as a blank line in the partition expand view —
+indistinguishable from a rendering failure. Now shows explicit "idle (no lag, no
+movement)" label.
+**Also found (documented, not fixed)**: `_startup_sync()` in main.py runs unconditionally
+on every container restart, competing with the job scheduler for broker connections —
+likely root cause of "first job after any rebuild is disproportionately slow," separate
+from DevQA's known chronically-high baseline broker load. See its own backlog entry.
 
 ## Resolved (kept for reference — move here, don't delete, when an item closes)
 
