@@ -293,19 +293,21 @@ class RealKafkaCollector(KafkaCollector):
         return await loop.run_in_executor(_kafka_io_executor, self._collect_brokers_only_sync)
 
     def _collect_brokers_only_sync(self) -> list[dict]:
-        security = self._security_kwargs()
+        cluster_config = {
+            "bootstrap_servers": self.bootstrap_servers,
+            "auth_type": self.auth_type,
+            "sasl_username": self.sasl_username,
+            "sasl_password": self.sasl_password,
+            "sasl_mechanism": self.sasl_mechanism,
+            "tls_enabled": self.tls_enabled,
+        }
+        admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
         try:
-            admin = KafkaAdminClient(
-                bootstrap_servers=self._bootstrap_list,
-                request_timeout_ms=10000,
-                **security,
-            )
-            try:
+            with admin_lock:
                 cluster_info = admin.describe_cluster()
                 return self._build_brokers(cluster_info)
-            finally:
-                admin.close()
         except Exception as exc:
+            invalidate_client(self.bootstrap_servers)
             logger.warning("collect_brokers_only failed: %s", exc)
             return []
 
@@ -320,49 +322,48 @@ class RealKafkaCollector(KafkaCollector):
 
     def _collect_broker_log_dir_sizes_sync(self) -> dict[str, Any]:
         from kafka.protocol.admin import DescribeLogDirsRequest
-        security = self._security_kwargs()
+        cluster_config = {
+            "bootstrap_servers": self.bootstrap_servers,
+            "auth_type": self.auth_type,
+            "sasl_username": self.sasl_username,
+            "sasl_password": self.sasl_password,
+            "sasl_mechanism": self.sasl_mechanism,
+            "tls_enabled": self.tls_enabled,
+        }
+        admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
         try:
-            admin = KafkaAdminClient(
-                bootstrap_servers=self._bootstrap_list,
-                request_timeout_ms=20000,
-                **security,
-            )
+            with admin_lock:
+                cluster_info = admin.describe_cluster()
+                node_ids = [node.get("node_id") for node in cluster_info.get("brokers", []) or []]
+                broker_sizes: dict[int, int | None] = {}
+                version = admin._matching_api_version(DescribeLogDirsRequest)
+                for node_id in node_ids:
+                    try:
+                        request = DescribeLogDirsRequest[version]()
+                        future = admin._send_request_to_node(node_id, request)
+                        admin._wait_for_futures([future])
+                        result = future.value
+                        total = 0
+                        for log_dir in result.log_dirs:
+                            if log_dir[0] != 0:
+                                continue
+                            for topic_entry in log_dir[2]:
+                                for partition in topic_entry[1]:
+                                    total += partition[1]
+                        broker_sizes[node_id] = total
+                    except Exception as exc:
+                        logger.warning("collect_broker_log_dir_sizes: node %s failed: %s", node_id, exc)
+                        broker_sizes[node_id] = None
+                return {
+                    "broker_sizes": broker_sizes,
+                    "broker_sizes_gb": {
+                        k: (round(v / 1024**3, 2) if v is not None else None)
+                        for k, v in broker_sizes.items()
+                    },
+                }
         except Exception as exc:
+            invalidate_client(self.bootstrap_servers)
             return {"error": str(exc), "broker_sizes": {}}
-        try:
-            cluster_info = admin.describe_cluster()
-            node_ids = [node.get("node_id") for node in cluster_info.get("brokers", []) or []]
-            broker_sizes: dict[int, int | None] = {}
-            version = admin._matching_api_version(DescribeLogDirsRequest)
-            for node_id in node_ids:
-                try:
-                    request = DescribeLogDirsRequest[version]()
-                    future = admin._send_request_to_node(node_id, request)
-                    admin._wait_for_futures([future])
-                    result = future.value
-                    total = 0
-                    for log_dir in result.log_dirs:
-                        if log_dir[0] != 0:
-                            continue
-                        for topic_entry in log_dir[2]:
-                            for partition in topic_entry[1]:
-                                total += partition[1]
-                    broker_sizes[node_id] = total
-                except Exception as exc:
-                    logger.warning("collect_broker_log_dir_sizes: node %s failed: %s", node_id, exc)
-                    broker_sizes[node_id] = None
-            return {
-                "broker_sizes": broker_sizes,
-                "broker_sizes_gb": {
-                    k: (round(v / 1024**3, 2) if v is not None else None)
-                    for k, v in broker_sizes.items()
-                },
-            }
-        finally:
-            try:
-                admin.close()
-            except Exception:
-                pass
 
     async def collect_group_states(self) -> list[dict]:
         """Fast group states only — no lag fetch, no topic listing. ~2s."""
@@ -370,19 +371,21 @@ class RealKafkaCollector(KafkaCollector):
         return await loop.run_in_executor(_kafka_io_executor, self._collect_group_states_sync)
 
     def _collect_group_states_sync(self) -> list[dict]:
-        security = self._security_kwargs()
+        cluster_config = {
+            "bootstrap_servers": self.bootstrap_servers,
+            "auth_type": self.auth_type,
+            "sasl_username": self.sasl_username,
+            "sasl_password": self.sasl_password,
+            "sasl_mechanism": self.sasl_mechanism,
+            "tls_enabled": self.tls_enabled,
+        }
+        admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
         try:
-            admin = KafkaAdminClient(
-                bootstrap_servers=self._bootstrap_list,
-                request_timeout_ms=10000,
-                **security,
-            )
-            try:
+            with admin_lock:
                 groups = admin.list_consumer_groups()
                 return [{"group_id": g[0], "state": g[1] if len(g) > 1 else "Unknown"} for g in groups]
-            finally:
-                admin.close()
         except Exception as exc:
+            invalidate_client(self.bootstrap_servers)
             logger.warning("collect_group_states failed: %s", exc)
             return []
 
