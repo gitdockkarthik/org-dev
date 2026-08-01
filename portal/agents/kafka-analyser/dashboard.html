@@ -1046,7 +1046,6 @@
           <td ${lagColor}>${fmtNum(g.total_lag)}</td>
           <td>${trendHtml}</td>
           <td style="font-size:.82rem;color:var(--text-muted)">${g.lag_rate_per_min > 0 ? '+' : ''}${fmtNum(g.lag_rate_per_min)}/min</td>
-          <td>${stateBadge(g.state)}</td>
           <td><span class="sev sev--${statusClass}" ${statusTitle}>${statusLabel}</span></td>
         </tr>`;
       };
@@ -1058,12 +1057,6 @@
           <span class="filter-chip" onclick="window._cgSetState('active',this)">Active</span>
           <span class="filter-chip" onclick="window._cgSetState('empty',this)">Empty</span>
           <input class="filter-input" id="cg-search" placeholder="Search group…" oninput="_serverGroupSearch(this.value)" />
-        </div>
-        <div class="filter-bar">
-          <span class="dash-label">Type:</span>
-          <span class="filter-chip active" onclick="window._cgSetType('all',this)">All</span>
-          <span class="filter-chip" onclick="window._cgSetType('consumer',this)">Consumer</span>
-          <span class="filter-chip" onclick="window._cgSetType('connect',this)">Connector</span>
         </div>
         <div class="filter-bar">
           <span class="dash-label">Health:</span>
@@ -1117,7 +1110,7 @@
         <div class="chart-card__title">Consumer Group Inventory</div>
         <div class="data-table-wrap">
           <table class="data-table cg-table">
-            <thead><tr><th style="width:22%;max-width:220px">Group</th><th style="width:25%;max-width:250px">Topic</th><th style="width:10%;cursor:pointer" onclick="window._toggleColumnSort(window._cgView, 'sortLag', 'cg-lag-sort-arrow', window._cgApplyView)">Total Lag<span id="cg-lag-sort-arrow"></span></th><th style="width:10%">Trend</th><th style="width:10%">Rate/min</th><th style="width:10%">State</th><th style="width:8%">Status</th></tr></thead>
+            <thead><tr><th style="width:22%;max-width:220px">Group</th><th style="width:25%;max-width:250px">Topic</th><th style="width:10%;cursor:pointer" onclick="window._toggleColumnSort(window._cgView, 'sortLag', 'cg-lag-sort-arrow', window._cgApplyView)">Total Lag<span id="cg-lag-sort-arrow"></span></th><th style="width:10%">Trend</th><th style="width:10%">Rate/min</th><th style="width:8%">Status</th></tr></thead>
             <tbody id="cg-tbody"></tbody>
           </table>
         </div>
@@ -1168,7 +1161,7 @@
         const tbody = document.getElementById('cg-tbody');
         if (tbody) {
           tbody.innerHTML = shown.map(cgRowHtml).join('') ||
-            `<tr><td colspan="7" class="data-table__empty">No consumer groups match</td></tr>`;
+            `<tr><td colspan="6" class="data-table__empty">No consumer groups match</td></tr>`;
         }
         const label = document.getElementById('cg-count-label');
         if (label) {
@@ -2246,11 +2239,23 @@
         return `<div style="display:inline-flex;gap:2px;margin-top:4px">${pills}</div>`;
       };
       const connectRowHtml = c => {
-        const lagCellHtml = c.lag === null || c.lag === undefined
-          ? '<span style="color:var(--text-muted)" title="No dedicated consumer group found — source connector or no offset data yet">N/A</span>'
-          : c.lag > 0
-            ? `<span style="cursor:pointer;color:${c.lag > 10000 ? 'var(--danger)' : '#d97706'};font-weight:700;text-decoration:underline" onclick="window._showGroupTopicsPopup('connect-${c.name.replace(/'/g,"\\'")}', '${c.name.replace(/'/g,"\\'")}')">${fmtNum(c.lag)}</span>`
-            : `<span style="color:var(--success)">0</span>`;
+        const lagCellHtml = (() => {
+          if (c.lag === null || c.lag === undefined) {
+            const isSource = (c.type || '').toLowerCase() === 'source';
+            const isPaused = c.state === 'PAUSED';
+            if (isSource) {
+              return '<span style="color:var(--text-muted)" title="Source connector — writes to Kafka, never commits consumer offsets. Not measurable by design, not an issue.">N/A (source)</span>';
+            } else if (isPaused) {
+              return '<span style="color:var(--text-muted)" title="Connector is paused — lag not currently measurable. Would show real lag if resumed.">N/A (paused)</span>';
+            } else {
+              return '<span style="color:var(--text-muted)" title="No dedicated consumer group found yet — connector may be new, idle, or its group has not been observed by our collector.">N/A</span>';
+            }
+          }
+          if (c.lag > 0) {
+            return `<span style="cursor:pointer;color:${c.lag > 10000 ? 'var(--danger)' : '#d97706'};font-weight:700;text-decoration:underline" onclick="window._showGroupTopicsPopup('connect-${c.name.replace(/'/g,"\\'")}', '${c.name.replace(/'/g,"\\'")}')">${fmtNum(c.lag)}</span>`;
+          }
+          return `<span style="color:var(--success)">0</span>`;
+        })();
         return `<tr>
           <td style="font-weight:600"><code style="font-size:.8rem">${c.name}</code></td>
           <td style="font-size:.82rem;color:var(--text-muted);text-transform:capitalize">${c.type || '-'}</td>
