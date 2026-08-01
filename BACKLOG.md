@@ -131,13 +131,21 @@ APScheduler's max_instances=1 overlap protection works correctly in practice (sk
 rather than stack). No action needed.
 *Added: 2026-07-30, checked and closed: 2026-08-01*
 
-### Request-handler idle % — one-character metric name bug (safe to fix)
-Our code requests `kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent`;
-real exported metric is `..._requesthandleravgidle_percent` (underscore before "percent").
-Confirmed via live JMX dump — real value present and sensible (90.9% idle). Unlike the
-JMX cardinality issue below, this is entirely fixable in our own filter list, zero
-broker-side risk.
-*Added: 2026-07-30*
+### Request-handler idle % — name fixed 2026-08-01, but does NOT restore real data
+CORRECTION to prior assessment: name was fixed (underscore added before "percent",
+matching the real exported metric), but live-testing the CORRECTED name against the
+filtered scrape endpoint (?name[]=...) still returns EMPTY (0 bytes) — this metric has
+the SAME filtering limitation as GC/ISR/latency (parked JMX cardinality issue), not a
+simple typo issue as previously assumed. The prior assessment ("entirely fixable in our
+own filter list") was based only on confirming the value existed in the FULL unfiltered
+dump — that test was incomplete; it did not verify the filtered endpoint specifically.
+Current state: dashboard still correctly shows 100.0 (the existing, unchanged fallback
+behavior) rather than a wrong or crashing value — no regression, but no improvement
+either. Name correction itself is harmless/more accurate and was kept. Real fix requires
+the same JMX exporter reconfiguration as the parked GC/ISR/latency issue — merge into
+that item rather than treating as separately fixable. Commit: (pending, being added this
+session).
+*Added: 2026-07-30, corrected: 2026-08-01*
 
 ### Message-rate/Activity chart shows 0 at the top of every UTC hour
 `kafka_topic_metrics_hourly` has no rows for a new hour bucket until `collect_msg_rate`'s

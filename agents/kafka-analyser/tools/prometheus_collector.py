@@ -103,7 +103,7 @@ _FILTERED_METRICS = [
     "kafka_server_replicamanager_underreplicatedpartitions",
     "kafka_server_replicamanager_atminisrpartitioncount",
     "kafka_server_replicamanager_partitioncount",
-    "kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent",
+    "kafka_server_kafkarequesthandlerpool_requesthandleravgidle_percent",
     "kafka_network_socketserver_networkprocessoravgidlepercent",
     "kafka_server_brokertopicmetrics_bytesin_total",
     "kafka_server_brokertopicmetrics_bytesout_total",
@@ -252,9 +252,9 @@ async def scrape_broker(host: str, port: int, cpu_cores: int | None = None) -> d
         at_min_isr = int(_get(metrics, "kafka_server_replicamanager_atminisrpartitioncount"))
         partition_count = int(_get(metrics, "kafka_server_replicamanager_partitioncount"))
         req_idle = _get(metrics,
-                       "kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent")
-        req_idle_pct = (req_idle if
-                       "kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent"
+                       "kafka_server_kafkarequesthandlerpool_requesthandleravgidle_percent")
+        req_idle_pct = (round(req_idle * 100, 1) if
+                       "kafka_server_kafkarequesthandlerpool_requesthandleravgidle_percent"
                        in metrics else 100.0)
         net_idle_raw = _get(metrics, "kafka_network_socketserver_networkprocessoravgidlepercent")
         net_idle_pct = round(net_idle_raw * 100, 1) if net_idle_raw else 100.0
