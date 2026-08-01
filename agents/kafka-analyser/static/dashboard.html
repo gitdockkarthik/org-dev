@@ -3292,7 +3292,6 @@
           <div class="chart-card__title">🔌 Connector Availability
             <button onclick="window._openSLOPopup('connectors')" style="float:right;background:none;border:1px solid var(--border);border-radius:6px;padding:3px 10px;cursor:pointer;font-size:.75rem;color:var(--accent)">🔍 View All ${connectors.length}</button>
           </div>
-          ${c.connector_snapshot_time ? `<div style="font-size:.72rem;color:var(--text-muted);margin-bottom:8px" title="Connector counts here are from the last periodic snapshot, taken every ~2 min. The Kafka Connect tab shows live data — small differences between the two are normal timing, not an error.">Snapshot as of ${new Date(c.connector_snapshot_time).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>` : ''}
           <div class="chart-wrap" style="height:160px;margin-bottom:12px"><canvas id="slo-conn-trend-chart"></canvas></div>
           ${topOffenders.length>0?`
           <div style="font-size:.78rem;font-weight:600;color:var(--text-muted);margin-bottom:6px">⚠️ Top Anomalies</div>

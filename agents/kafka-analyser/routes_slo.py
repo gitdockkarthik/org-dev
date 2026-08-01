@@ -102,6 +102,12 @@ async def get_slo_dashboard(cluster_id: str, hours: int = 24) -> dict:
             return {"error": "DB unavailable"}
         now = datetime.now(timezone.utc)
         since = now - timedelta(hours=hours)
+
+        # Fetch live connector data (same source as Kafka Connect tab)
+        from routes_dashboard import get_kafka_connect
+        connect_data = await get_kafka_connect(str(cluster_id))
+        live_connectors = connect_data.get("connectors", [])
+
         async with SessionLocal() as sess:
             # SLO targets
             tgt = await sess.execute(_t(
@@ -116,25 +122,12 @@ async def get_slo_dashboard(cluster_id: str, hours: int = 24) -> dict:
             task_target = float(target.min_task_health_pct) if target and target.min_task_health_pct else 95.0
             max_failed_tasks = int(target.max_failed_tasks) if target and target.max_failed_tasks is not None else 0
 
-            # Current connector state — SLI excludes PAUSED/UNASSIGNED
-            conn_now = await sess.execute(_t("""
-                SELECT COUNT(*) as total,
-                       SUM(CASE WHEN state='RUNNING' THEN 1 ELSE 0 END) as running,
-                       SUM(CASE WHEN state='FAILED' THEN 1 ELSE 0 END) as failed,
-                       SUM(CASE WHEN state='PAUSED' THEN 1 ELSE 0 END) as paused,
-                       SUM(CASE WHEN state='UNASSIGNED' THEN 1 ELSE 0 END) as unassigned,
-                       MAX(collected_at) as snapshot_time
-                FROM kafka_connector_snapshots
-                WHERE cluster_id=:cid
-                AND collected_at = (SELECT MAX(collected_at) FROM kafka_connector_snapshots WHERE cluster_id=:cid)
-            """), {"cid": int(cluster_id)})
-            cn = conn_now.fetchone()
-            conn_total_all = cn.total or 0
-            conn_running = cn.running or 0
-            conn_failed = cn.failed or 0
-            conn_paused = cn.paused or 0
-            conn_unassigned = cn.unassigned or 0
-            conn_snapshot_time = cn.snapshot_time.isoformat() if cn and cn.snapshot_time else None
+            # Current connector state — SLI excludes PAUSED/UNASSIGNED (live data)
+            conn_total_all = len(live_connectors)
+            conn_running = sum(1 for c in live_connectors if c.get("state") == "RUNNING")
+            conn_failed = sum(1 for c in live_connectors if c.get("state") == "FAILED")
+            conn_paused = sum(1 for c in live_connectors if c.get("state") == "PAUSED")
+            conn_unassigned = sum(1 for c in live_connectors if c.get("state") == "UNASSIGNED")
             conn_active = conn_running + conn_failed  # excludes paused/unassigned
             conn_avail_pct = round(conn_running / conn_active * 100, 2) if conn_active > 0 else 0
 
@@ -181,19 +174,11 @@ async def get_slo_dashboard(cluster_id: str, hours: int = 24) -> dict:
             """), {"cid": int(cluster_id), "since": since})
             trend_rows = trend.fetchall()
 
-            # Per-connector current state
-            connectors = await sess.execute(_t("""
-                SELECT connector_name, connector_type, state, total_tasks, running_tasks, failed_tasks, collected_at
-                FROM kafka_connector_snapshots
-                WHERE cluster_id=:cid
-                AND collected_at = (SELECT MAX(collected_at) FROM kafka_connector_snapshots WHERE cluster_id=:cid)
-                ORDER BY state, connector_name
-            """), {"cid": int(cluster_id)})
-            connector_rows = connectors.fetchall()
+            # Per-connector current state (live data)
             # Task health: sum of running tasks / sum of total tasks across active connectors
-            active_connectors = [r for r in connector_rows if r.state in ('RUNNING', 'FAILED')]
-            total_tasks_sum = sum(r.total_tasks or 0 for r in active_connectors)
-            running_tasks_sum = sum(r.running_tasks or 0 for r in active_connectors)
+            active_connectors = [c for c in live_connectors if c.get("state") in ("RUNNING", "FAILED")]
+            total_tasks_sum = sum(c.get("total_tasks") or 0 for c in active_connectors)
+            running_tasks_sum = sum(c.get("running_tasks") or 0 for c in active_connectors)
             task_health_pct = round(running_tasks_sum / total_tasks_sum * 100, 1) if total_tasks_sum > 0 else None
 
         # Compliance status helper
@@ -224,7 +209,6 @@ async def get_slo_dashboard(cluster_id: str, hours: int = 24) -> dict:
                 "connector_failed": conn_failed,
                 "connector_paused": conn_paused,
                 "connector_unassigned": conn_unassigned,
-                "connector_snapshot_time": conn_snapshot_time,
                 "consumer_lag": current_lag,
                 "broker_count": broker_count,
                 "urp": current_urp,
@@ -256,14 +240,14 @@ async def get_slo_dashboard(cluster_id: str, hours: int = 24) -> dict:
             ],
             "connectors": [
                 {
-                    "name": r.connector_name,
-                    "type": r.connector_type,
-                    "state": r.state,
-                    "total_tasks": r.total_tasks,
-                    "running_tasks": r.running_tasks,
-                    "failed_tasks": r.failed_tasks,
+                    "name": c.get("name"),
+                    "type": c.get("type"),
+                    "state": c.get("state"),
+                    "total_tasks": c.get("total_tasks"),
+                    "running_tasks": c.get("running_tasks"),
+                    "failed_tasks": c.get("failed_tasks"),
                 }
-                for r in connector_rows
+                for c in live_connectors
             ],
         }
     except Exception as e:
