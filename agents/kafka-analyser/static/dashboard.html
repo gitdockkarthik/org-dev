@@ -435,6 +435,9 @@
             <button onclick="document.getElementById('group-topics-popup').remove();document.getElementById('group-topics-overlay').remove()" style="background:none;border:none;cursor:pointer;font-size:1.4rem;color:var(--text-muted);margin-left:8px;flex-shrink:0">×</button>
           </div>
           <div style="font-size:.8rem;color:var(--text-muted);margin-bottom:12px">Total lag: <strong style="color:var(--text)">${fmtNum(d.total_lag)}</strong></div>
+          <div style="margin-bottom:16px">
+            <div style="height:100px" id="group-popup-chart-wrap"><canvas id="group-popup-chart"></canvas></div>
+          </div>
           <table style="width:100%;border-collapse:collapse;font-size:.85rem">
             <thead><tr style="border-bottom:1px solid var(--border)">
               <th style="padding:8px 10px;text-align:left;font-size:.72rem;text-transform:uppercase;color:var(--text-dim)">Topic</th>
@@ -443,6 +446,39 @@
             </tr></thead>
             <tbody>${rows}</tbody>
           </table>`;
+          // Load group-level message rate chart
+          try {
+            const rateRes = await fetch(`${PROXY}/dashboard/consumer-groups/${encodeURIComponent(groupId)}/message-rate?cluster_id=${cid}&minutes=60`,
+              { headers: _authHeaders(), cache: 'no-store' });
+            const rateData = await rateRes.json();
+            const groupChartCtx = document.getElementById('group-popup-chart')?.getContext('2d');
+            if (groupChartCtx && rateData.points && rateData.points.length) {
+              const labels = rateData.points.map(p => new Date(p.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+              new Chart(groupChartCtx, {
+                type: 'line',
+                data: {
+                  labels,
+                  datasets: [
+                    { label: 'In', data: rateData.points.map(p => p.inflow_rate || 0), borderColor: '#4CAF50', backgroundColor: 'rgba(76,175,80,0.08)', borderWidth: 2, pointRadius: 0, tension: 0.3, fill: true },
+                    { label: 'Out', data: rateData.points.map(p => p.outflow_rate || 0), borderColor: '#2196F3', backgroundColor: 'rgba(33,150,243,0.08)', borderWidth: 2, pointRadius: 0, tension: 0.3, fill: true },
+                  ],
+                },
+                options: {
+                  responsive: true, maintainAspectRatio: false,
+                  plugins: { legend: { display: true, position: 'top', labels: { boxWidth: 10, font: { size: 9 } } } },
+                  scales: {
+                    x: { ticks: { maxTicksLimit: 6, font: { size: 8 } } },
+                    y: { ticks: { callback: v => fmtRate(v), font: { size: 8 } }, beginAtZero: true },
+                  },
+                },
+              });
+            } else if (groupChartCtx) {
+              document.getElementById('group-popup-chart-wrap').innerHTML =
+                '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:.75rem">No message data yet</div>';
+            }
+          } catch (e) {
+            console.warn('Group popup message chart failed:', e);
+          }
       } catch(e) {
         popup.innerHTML = `<div style="color:var(--danger)">${e.message}</div><button onclick="document.getElementById('group-topics-popup').remove();document.getElementById('group-topics-overlay').remove()" style="margin-top:8px" class="btn btn--ghost btn--sm">Close</button>`;
       }
