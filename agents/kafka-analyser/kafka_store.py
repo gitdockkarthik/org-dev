@@ -265,6 +265,32 @@ async def _structure_written_today(cluster_id: str) -> bool:
         return False
 
 
+async def structure_age_minutes(cluster_id: str) -> float | None:
+    """Return how many minutes old the latest topics_structure row is for this
+    cluster, or None if no row exists. Used by startup sync to decide whether the
+    expensive describe_all_topics() call is actually needed, or whether existing
+    data is fresh enough to skip it."""
+    try:
+        from database import SessionLocal
+        from sqlalchemy import text
+        if SessionLocal is None:
+            return None
+        async with SessionLocal() as session:
+            row = (await session.execute(
+                text(
+                    f"SELECT EXTRACT(EPOCH FROM (now() - collected_at)) / 60.0 as age_minutes "
+                    f"FROM {TABLE} "
+                    f"WHERE cluster_id = :cid AND scan_type = :st "
+                    f"ORDER BY collected_at DESC LIMIT 1"
+                ),
+                {"cid": cluster_id, "st": SCAN_TOPICS_STRUCTURE},
+            )).first()
+        return float(row[0]) if row else None
+    except Exception as exc:
+        logger.warning("Failed to check structure age for %s: %s", cluster_id, exc)
+        return None
+
+
 async def cleanup_old_metrics() -> None:
     """Delete history rows older than each scan type's retention window."""
     if not await _ensure_table():
