@@ -37,10 +37,11 @@ authoritative source if the two ever diverge)
 | 11 | describe_consumer_groups dependent-feature check | 0.75 hr |
 | 12 | Legacy _collection_loop decommission decision | 3 hrs |
 
-### Day 3 — Monday (2026-08-03), 6 hrs
+### Day 3 — Monday (2026-08-03), 8 hrs
 | Order | Item | Est. |
 |---|---|---|
 | 13 | Data-layer documentation (ERD + mappings) | 6 hrs |
+| 17 | Throughput (Bytes/sec) chart — raw snapshots for 1-hour granularity | 2 hrs |
 
 ### Day 4 — Tuesday (2026-08-04), 6 hrs
 | Order | Item | Est. |
@@ -53,7 +54,7 @@ authoritative source if the two ever diverge)
 |---|---|---|
 | 16 | Product/Service tag mapping from SharePoint CSV | TBD — pending tag schema finalization + SharePoint read-mechanism decision |
 
-**Grand total: 28.85 hrs across 4 scheduled days (excludes TBD item).**
+**Grand total: 30.85 hrs across 4 scheduled days (excludes TBD item).**
 
 Rule: at the start of each day's session, re-check this plan against actual progress —
 if a prior day's items slipped, re-confirm order rather than assuming this table is still
@@ -252,6 +253,22 @@ compliance, kafka_job_schedules/runs, kafka_clusters, and more) — this is a ge
 sizeable documentation effort, not a quick add-on. Good candidate for its own dedicated
 session rather than squeezing in alongside feature work.
 *Added: 2026-08-01*
+
+### Throughput (Bytes/sec) chart — 1-hour view too coarse, always looks flat
+User finding (2026-08-01): the 1-hour zoom on Throughput Trends (Overview + Topics tab)
+only ever shows 2 HOURLY buckets even at its tightest zoom, because
+kafka_topic_metrics_hourly is a genuine hourly-rollup table — the raw ~2-min readings
+that feed it get folded into a running average and discarded, never persisted
+individually. Getting real 5/10-min granularity for the 1-hour view needs the same
+scope of work as the message-rate redesign: new raw-snapshot table, collector change to
+persist individual readings (not just the hourly rollup), endpoint change to bucket off
+raw data for short zoom levels. NOT a quick fix — comparable effort to the message-rate
+Chunk 1-3 work. Note: the newer Message Volume (real msgs/sec) chart already has this —
+kafka_topic_message_rate_snapshots stores raw individual readings, so its 1-hour view
+already shows real shape, not a flat line. That's the right tool for short-term trend
+inspection today; this item is specifically about closing the same gap for the
+bytes/sec chart.
+*Added: 2026-08-01, scheduled: Monday 2026-08-03 alongside data-layer documentation*
 
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - **CSV Export for dashboard tables** (Topics, Consumer Groups, Connectors) — quick win,
