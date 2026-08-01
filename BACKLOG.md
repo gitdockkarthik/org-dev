@@ -12,6 +12,47 @@ Each item: short description, why it matters, status, date added.
 
 ## Open
 
+## Prioritized Plan (set 2026-08-01 — this table is the execution order; full detail for
+each item lives in its own entry below under ## Open)
+
+### Day 1 — Today (2026-08-01), 9.1 hrs
+| Order | Item | Est. |
+|---|---|---|
+| 1 | Monitor kafka-consumer-lag-3 duration | 0.1 hr |
+| 2 | Request-handler idle % metric name fix | 0.25 hr |
+| 3 | Message-rate chart hour-boundary zero-fill | 1.5 hrs |
+| 4 | Lag-based filter + sortable columns | 1.5 hrs |
+| 5 | N/A status UX for PAUSED connectors | 0.75 hr |
+| 6 | SLO tab snapshot timestamp | 0.5 hr |
+| 7 | Fix "State: Active/Empty" filter no-op | 0.5 hr |
+| 8 | **Cluster-switch race condition (CRITICAL)** | 4 hrs |
+
+### Day 2 — Tomorrow (2026-08-02), 7.75 hrs
+| Order | Item | Est. |
+|---|---|---|
+| 9 | Startup sync burst vs. job scheduler contention | 2 hrs |
+| 10 | Source connector -> topic correlation | 2 hrs |
+| 11 | describe_consumer_groups dependent-feature check | 0.75 hr |
+| 13 | Legacy _collection_loop decommission decision | 3 hrs |
+
+### Day 3 — Monday (2026-08-03), 6 hrs
+| Order | Item | Est. |
+|---|---|---|
+| 14 | Data-layer documentation (ERD + mappings) | 6 hrs |
+
+### Day 4 — Tuesday (2026-08-04), 5 hrs
+| Order | Item | Est. |
+|---|---|---|
+| 12 | AI Insights full dedicated pass | 5 hrs |
+
+**Grand total: 27.85 hrs across 4 days.**
+
+Rule: at the start of each day's session, re-check this plan against actual progress —
+if a prior day's items slipped, re-confirm order rather than assuming this table is still
+accurate. Update this table (not just individual item entries) whenever priorities change.
+
+
+
 ### Startup sync burst competes with job scheduler on every restart
 Found 2026-08-01 while investigating consumer-lag job slowness after a routine rebuild.
 `main.py`'s `_startup_sync()` (the `"Startup: found N enabled cluster(s) — syncing in
@@ -195,6 +236,19 @@ session rather than squeezing in alongside feature work.
 *Added: 2026-08-01*
 
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
+- **CSV Export for dashboard tables** (Topics, Consumer Groups, Connectors) — quick win,
+  unblocked, no dependencies. User's team will use exported data to manually tag
+  entries (product, service, etc.) before uploading a completed tag mapping to
+  SharePoint. Added 2026-08-01.
+- **Product/Service tag mapping display** — read the team's tag mapping (product,
+  service, etc.) from a SharePoint location once the tag schema is finalized, and
+  correlate it against our existing tables (topics, consumer groups, connectors) to
+  show tagged ownership info in the dashboard — directly helps incident correlation
+  ("what product/service does this topic belong to"). BLOCKED on: (1) CSV Export
+  shipping first (so the team can actually populate tags), (2) the team finalizing
+  their tag schema, (3) deciding how we read from SharePoint (API? scheduled pull?
+  manual upload to our own storage?) — do not start design until those are settled.
+  Added 2026-08-01.
 - Orphaned/dead-write topic detection — DevQA has only ~2,557 (group, topic) pairs with
   any committed offset, out of ~17-18k total topics. Cross-reference
   `kafka_topic_metrics.bytes_in_per_sec > 0` against consumer-group topic coverage.
