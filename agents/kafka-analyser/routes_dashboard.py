@@ -1177,6 +1177,79 @@ async def get_topic_message_rate(
         return {"empty": True, "points": [], "error": str(exc)}
 
 
+@router.get("/dashboard/consumer-groups/{group_id}/message-rate")
+async def get_group_message_rate(
+    group_id: str, cluster_id: str | None = None, minutes: float = 1440.0
+) -> dict:
+    """Message in/out rate over time for a SPECIFIC consumer group — from
+    kafka_consumer_group_rate_snapshots. Correctly group-attributed (unlike the
+    topic-level table, which aggregates outflow across all groups reading a topic)."""
+    if not cluster_id:
+        return {"empty": True, "points": []}
+
+    if minutes <= 60:
+        bucket_interval = '5 minutes'
+    elif minutes <= 360:
+        bucket_interval = '15 minutes'
+    elif minutes <= 1440:
+        bucket_interval = '1 hour'
+    elif minutes <= 10080:
+        bucket_interval = '6 hours'
+    else:
+        bucket_interval = '1 day'
+
+    bucket_seconds = {
+        '5 minutes': 300, '15 minutes': 900, '1 hour': 3600,
+        '6 hours': 21600, '1 day': 86400,
+    }[bucket_interval]
+
+    try:
+        from database import SessionLocal
+        from sqlalchemy import text
+        if SessionLocal is None:
+            return {"empty": True, "points": []}
+
+        async with SessionLocal() as session:
+            sql = f"""
+                SELECT
+                    date_bin(
+                        '{bucket_interval}'::INTERVAL,
+                        collected_at,
+                        TIMESTAMP '2001-01-01'
+                    ) AS bucket_time,
+                    COALESCE(SUM(inflow), 0)::bigint AS total_inflow,
+                    COALESCE(SUM(outflow), 0)::bigint AS total_outflow
+                FROM kafka_consumer_group_rate_snapshots
+                WHERE cluster_id = :cluster_id
+                AND group_id = :group_id
+                AND collected_at >= NOW() - ((:minutes) * INTERVAL '1 minute')
+                GROUP BY date_bin(
+                    '{bucket_interval}'::INTERVAL,
+                    collected_at,
+                    TIMESTAMP '2001-01-01'
+                )
+                ORDER BY bucket_time ASC
+            """
+            rows = await session.execute(text(sql), {
+                "cluster_id": int(cluster_id), "group_id": group_id, "minutes": minutes
+            })
+            points = [
+                {
+                    "time": r.bucket_time.isoformat(),
+                    "inflow": r.total_inflow,
+                    "outflow": r.total_outflow,
+                    "inflow_rate": round(r.total_inflow / bucket_seconds, 2),
+                    "outflow_rate": round(r.total_outflow / bucket_seconds, 2),
+                }
+                for r in rows.fetchall()
+            ]
+        if not points:
+            return {"empty": True, "points": []}
+        return {"points": points}
+    except Exception as exc:
+        return {"empty": True, "points": [], "error": str(exc)}
+
+
 @router.get("/dashboard/topics/history")
 async def get_topics_history(
     cluster_id: str | None = None,
