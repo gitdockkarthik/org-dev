@@ -1123,6 +1123,11 @@ async def get_topic_message_rate(
     else:
         bucket_interval = '1 day'
 
+    bucket_seconds = {
+        '5 minutes': 300, '15 minutes': 900, '1 hour': 3600,
+        '6 hours': 21600, '1 day': 86400,
+    }[bucket_interval]
+
     try:
         from database import SessionLocal
         from sqlalchemy import text
@@ -1156,7 +1161,13 @@ async def get_topic_message_rate(
                 params["topic"] = topic
             rows = await session.execute(text(sql), params)
             points = [
-                {"time": r.bucket_time.isoformat(), "inflow": r.total_inflow, "outflow": r.total_outflow}
+                {
+                    "time": r.bucket_time.isoformat(),
+                    "inflow": r.total_inflow,
+                    "outflow": r.total_outflow,
+                    "inflow_rate": round(r.total_inflow / bucket_seconds, 2),
+                    "outflow_rate": round(r.total_outflow / bucket_seconds, 2),
+                }
                 for r in rows.fetchall()
             ]
         if not points:
