@@ -128,12 +128,7 @@ future cycle, not bundled into the message-rate chart work.
 
 
 
-### Existing "State: Active/Empty" filter on Consumer Groups tab likely a no-op
-Checks `gState === 'empty'`, but `g.state` in this data source (from
-`collect_consumer_lag_active`) only ever holds `"consumer"`/`"connect"` — never
-`"empty"`. Found while adding the Type filter (2026-07-30), not fixed. Low priority,
-cosmetic/misleading rather than data-incorrect.
-*Added: 2026-07-30*
+
 
 ### kafka-consumer-lag-3 job duration — checked 2026-08-01, stable
 Timeout is 300s. Checked last 9 runs (2026-08-01 08:30-09:03): range 32-208s, no
@@ -475,6 +470,15 @@ same live source as the Connect tab — eliminating disagreement by construction
 than explaining it with a label. Trend chart's historical queries correctly remain
 snapshot-based (genuinely need accumulated history). Removed the now-obsolete "Snapshot
 as of HH:MM" label. Validated: both tabs now show byte-identical connector counts.
+
+### State: Active/Empty filter (Consumer Groups tab) — removed 2026-08-01
+Confirmed non-functional: "Active" was a silent no-op (g.state never held the value
+being checked against, so the filter matched everything, same as "All"); "Empty" always
+matched zero groups (misleading, looked like a bug). No active collector captures
+genuine Kafka lifecycle state for this table (a legacy one existed, now disabled) —
+building one was far beyond scope for this item. Removed the non-functional chips,
+kept the search input (genuinely functional, unrelated). Validated on both static and
+portal dashboards.
 
 ## Resolved (kept for reference — move here, don't delete, when an item closes)
 
