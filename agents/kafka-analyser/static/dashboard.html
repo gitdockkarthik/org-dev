@@ -509,6 +509,8 @@
         if (!counts.empty) window._clusterCounts = counts;
       } catch(e) { console.warn('counts fetch failed', e); }
 
+      const _tabGen = window._loadGeneration;
+
       try {
         switch (name) {
           case 'overview': {
@@ -517,12 +519,14 @@
               api('/dashboard/consumer-groups').catch(() => ({ consumer_groups: [] })),
               api('/dashboard/topics').catch(() => ({ topics: [] })),
             ]);
+            if (_tabGen !== window._loadGeneration) return;
             _loaded.add(name);
             renderOverview(ov, (cg.consumer_groups || []), tp);
             break;
           }
           case 'consumer-groups': {
             const d = await api('/dashboard/consumer-groups');
+            if (_tabGen !== window._loadGeneration) return;
             _loaded.add(name);
             renderConsumerGroups(d);
             // Data comes from postgres — no streaming needed
@@ -533,6 +537,7 @@
           }
           case 'topics': {
             const d = await api('/dashboard/topics');
+            if (_tabGen !== window._loadGeneration) return;
             _loaded.add(name);
             renderTopics(d);
             // Data comes from postgres — no streaming needed
@@ -541,18 +546,21 @@
           }
           case 'brokers': {
             const d = await api('/dashboard/brokers');
+            if (_tabGen !== window._loadGeneration) return;
             _loaded.add(name);
             renderBrokers(d);
             break;
           }
           case 'insights': {
             const d = await api('/dashboard/insights');
+            if (_tabGen !== window._loadGeneration) return;
             _loaded.add(name);
             renderInsights(d);
             break;
           }
           case 'schema-registry': {
             const d = await api('/dashboard/schema-registry');
+            if (_tabGen !== window._loadGeneration) return;
             renderSchemaRegistry(d);
             break;
           }
@@ -563,16 +571,19 @@
           }
           case 'zookeeper': {
             const d = await api('/dashboard/zookeeper');
+            if (_tabGen !== window._loadGeneration) return;
             renderZooKeeper(d);
             break;
           }
           case 'kafka-connect': {
             const d = await api('/dashboard/kafka-connect');
+            if (_tabGen !== window._loadGeneration) return;
             renderKafkaConnect(d);
             break;
           }
           case 'mirrormaker': {
             const d = await api('/dashboard/mirrormaker');
+            if (_tabGen !== window._loadGeneration) return;
             renderMirrorMaker(d);
             break;
           }
@@ -760,8 +771,10 @@
             const qs = new URLSearchParams();
             qs.set('minutes', String(_getMinutes()));
             if (clusterId) qs.set('cluster_id', clusterId);
+            const _gen1 = window._loadGeneration;
             const hist = await fetch(`${PROXY}/dashboard/topics/history?${qs.toString()}`,
               { headers: _authHeaders(), cache: 'no-store' }).then(r => r.json());
+            if (_gen1 !== window._loadGeneration) return;
 
             if (hist.empty || !hist.series || !hist.series.length || !hist.labels || !hist.labels.length) {
               noData();
@@ -832,8 +845,10 @@
             const qs2 = new URLSearchParams();
             qs2.set('minutes', String(_getMinutes()));
             if (clusterId2) qs2.set('cluster_id', clusterId2);
+            const _gen2 = window._loadGeneration;
             const msgData = await fetch(`${PROXY}/dashboard/topics/message-rate?${qs2.toString()}`,
               { headers: _authHeaders(), cache: 'no-store' }).then(r => r.json());
+            if (_gen2 !== window._loadGeneration) return;
 
             if (msgData.empty || !msgData.points || !msgData.points.length) {
               noMessagesData();
@@ -907,8 +922,10 @@
             const qs2 = new URLSearchParams();
             qs2.set('minutes', String(_getMinutes()));
             if (clusterId) qs2.set('cluster_id', clusterId);
+            const _gen3 = window._loadGeneration;
             const lagData = await fetch(`${PROXY}/dashboard/overview/lag-trend?${qs2.toString()}`,
               { headers: _authHeaders(), cache: 'no-store' }).then(r => r.json());
+            if (_gen3 !== window._loadGeneration) return;
             if (!lagData.empty && lagData.points && lagData.points.length) {
               const timeVal = document.getElementById('ctrl-time')?.value || '24h';
               let _lastDayLabel = '';
