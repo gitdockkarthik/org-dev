@@ -2879,6 +2879,7 @@
     // ── Dashboard controls ────────────────────────────────────────
     let _refreshTimer = null;
     let _currentClusterId = null;
+    window._loadGeneration = 0;
 
     async function loadClusterSelector() {
       try {
@@ -2924,6 +2925,7 @@
     });
 
     document.getElementById('ctrl-cluster').addEventListener('change', function() {
+      window._loadGeneration++;
       _currentClusterId = this.value;
       window._clusterCounts = null;
       // Reset to first-load state — clear all loaded tabs and chart instances
