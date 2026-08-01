@@ -296,25 +296,7 @@ inspection today; this item is specifically about closing the same gap for the
 bytes/sec chart.
 *Added: 2026-08-01, scheduled: Monday 2026-08-03 alongside data-layer documentation*
 
-### Connector-to-group naming assumption is incomplete — some connectors use non-standard group IDs
-Found 2026-08-01 while validating the N/A status UX fix. `aosqa_spot_scheduler_mapper_
-migration_connector` (sink, 10/10 tasks running) showed generic "N/A" for lag — checked
-live against the cluster and found its REAL consumer group is
-`group-spot_scheduler_mapper_migration_connector` (a `group-` prefix), NOT the assumed
-`connect-{connector_name}` pattern used throughout the connector-lag feature. This
-connector was configured with a custom `consumer.override.group.id`, bypassing Kafka
-Connect's default naming.
-This means the original validation ("225 of 290 connectors have real lag data") likely
-UNDERCOUNTS — some of the ~65-connector gap is not "no group exists" but "wrong naming
-assumption," a real data-completeness issue, not just missing/idle data. Needs proper
-investigation: how many connectors use non-standard group naming, what pattern(s) exist
-across them (all `group-` prefix? Multiple different conventions? Fully arbitrary custom
-names?), and how to reliably discover each connector's real group rather than assuming
-one fixed prefix (e.g., cross-referencing Kafka Connect's REST API config endpoint for
-each connector's `consumer.override.group.id` if set, falling back to `connect-{name}`
-only when not explicitly configured).
-NOT fixed today — flagged precisely rather than guessed at a scope/fix.
-*Added: 2026-08-01*
+
 
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - **CSV Export for dashboard tables** (Topics, Consumer Groups, Connectors) — quick win,
@@ -436,6 +418,35 @@ movement)" label.
 on every container restart, competing with the job scheduler for broker connections —
 likely root cause of "first job after any rebuild is disproportionately slow," separate
 from DevQA's known chronically-high baseline broker load. See its own backlog entry.
+
+### Connector-to-group naming assumption — FIXED 2026-08-01, generalizes to any cluster
+Root cause: 5 of 290 connectors on cluster 3 use a custom `consumer.override.group.id`
+that doesn't follow Kafka Connect's default `connect-{name}` pattern. Investigated
+before building anything (user's explicit ask, given upcoming internal staging
+onboarding): tested config-based discovery against ALL 290 connectors — 100% success,
+zero errors, exactly 5 real mismatches, all cross-validated against genuine lag data
+already sitting under their true group names.
+**Fix**: `consumer.override.group.id` is already present in the config data
+`KafkaConnectCollector.collect()` fetches for `connector_class` — extracting it required
+ZERO new HTTP calls. `get_kafka_connect()` now uses each connector's real discovered
+group ID when present, falling back to `connect-{name}` only when no override is
+configured. This reads Kafka Connect's own source of truth per connector rather than
+guessing a naming pattern — correctly generalizes to any cluster's engineering practices,
+not just this one's specific `group-` prefix convention.
+**Real mistake caught during implementation**: first attempt added the extraction to
+`_get_connector_detail()`, which turned out to be DEAD CODE for this live path —
+`collect()` actually uses a separate, more efficient bulk `?expand=status&expand=info`
+call and never invokes that method. Caught via live validation (override still showed
+None), traced to the actual code path, fixed correctly, and the dead-code edit was
+reverted rather than left behind.
+**Also decided, scope-narrowed by user during design**: hid the Consumer Groups tab's
+"State: Consumer/Connector" classification from the UI entirely (column + filter) — not
+core to the primary Connector->Group->Topic->Partition tracking feature, confusing to
+explain to a wider audience, and not the user's responsibility to police non-standard
+connector naming practices across teams. Logic preserved underneath, only display
+removed.
+Validated on both static and portal dashboards: all 5 connectors now show real lag
+(previously null/N/A) with correct discovered group IDs.
 
 ## Resolved (kept for reference — move here, don't delete, when an item closes)
 
