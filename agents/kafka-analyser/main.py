@@ -954,6 +954,7 @@ async def lifespan(app: FastAPI):
         collect_broker_health, collect_consumer_lag_active, collect_topic_sizes,
         collect_topic_structure, collect_msg_rate, collect_topic_message_inflow,
         collect_connector_snapshots, collect_sr_subjects, compute_slo_compliance,
+        run_snapshot_rollups,
     )
     from storage import get_backend as _gb
     _clusters = await _gb().get_clusters(settings.agent_slug)
@@ -1002,6 +1003,28 @@ async def lifespan(app: FastAPI):
                     )
                     logger.info("Created schedule for %s (%s): %s enabled=%s",
                                 _job_id, _cname, _cron, _enabled)
+
+    # Register the snapshot-rollup maintenance job — standalone, cluster-agnostic
+    # (processes all clusters in one pass, must NOT be registered per-cluster like the
+    # jobs above)
+    _rollup_job_id = "kafka-snapshot-rollup"
+    _jobs_module.register_job(
+        _rollup_job_id,
+        "Snapshot Rollup & Retention",
+        "Rolls up aging raw snapshot data into hourly aggregates, prunes raw rows after successful rollup",
+        run_snapshot_rollups,
+        default_timeout_secs=300,
+    )
+    async with SessionLocal() as _sess:
+        existing = await _sess.execute(
+            _sel(KafkaJobSchedule).where(KafkaJobSchedule.job_id == _rollup_job_id)
+        )
+        if not existing.scalar_one_or_none():
+            await _jobs_module.create_schedule(
+                _rollup_job_id, "0 * * * *", enabled=True, timeout_secs=300
+            )
+            logger.info("Created schedule for %s: hourly", _rollup_job_id)
+
     count = await _jobs_module.load_schedules()
     logger.info("Job scheduler: loaded %d schedule(s)", count)
     _jobs_module.start_scheduler()
