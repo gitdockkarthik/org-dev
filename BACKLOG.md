@@ -358,6 +358,15 @@ topic-sizes), zero failures, all fast (1.2-80.2s) -- combined effect of this sta
 plus tonight's logging-suppression and shared connection/thread-pool fixes.
 *Added: 2026-08-02*
 
+### Disable job schedule/cron edit in UI (protect tonight's careful tuning)
+User's decision (2026-08-02): given how carefully the job schedules (cron + staggering)
+were tuned tonight to eliminate real collection failures, an accidental UI edit could
+silently undo this. Since this is currently an internal-only tool, disable the Edit
+button for job cron/timeout values in the Settings UI -- any future changes should go
+through backend scripts (with the discipline this session established: validate,
+document, commit), not casual UI editing. Low risk, quick change once picked up.
+*Added: 2026-08-02*
+
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - **CSV Export for dashboard tables** (Topics, Consumer Groups, Connectors) — quick win,
   unblocked, no dependencies. User's team will use exported data to manually tag
