@@ -340,6 +340,19 @@ switch race condition), same session, not deferred further** — this is a real,
 worsening architectural gap in the data layer, not a nice-to-have.
 *Added: 2026-08-01, elevated with real evidence same day*
 
+### Job schedule staggering to avoid same-tick collisions -- FIXED 2026-08-02
+Found live: kafka-broker-health-3 and kafka-msg-rate-3 shared the identical cron
+schedule (*/2 * * * *), meaning they fired at the exact same second every single cycle
+-- guaranteed collision, not occasional bad luck. This was the direct cause of their
+remaining ~1-2% failure rate even after all of tonight's connection/thread-pool fixes.
+Fix: offset msg-rate-3/4 to '1-59/2 * * * *' (fires at :01/:03/:05... instead of
+:00/:02/:04...) -- same 2-minute frequency, just staggered so it never lands on the
+same tick as broker-health again. Applied via direct kafka_job_schedules UPDATE (no
+migration/audit trail exists for this table -- see the separate backlog item about
+that gap). Worth auditing ALL job schedules for similar same-tick collisions as a
+follow-up, not just this one pair.
+*Added: 2026-08-02*
+
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - **CSV Export for dashboard tables** (Topics, Consumer Groups, Connectors) — quick win,
   unblocked, no dependencies. User's team will use exported data to manually tag
