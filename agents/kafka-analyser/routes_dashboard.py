@@ -244,7 +244,8 @@ async def get_counts(cluster_id: str | None = None) -> dict:
                 ), {"cid": int(cluster_id)})
                 total_topics_count = _cnt.scalar() or 0
                 _gcnt = await _sess3.execute(_text(
-                    "SELECT COUNT(*) FROM kafka_consumer_group_lag WHERE cluster_id = :cid"
+                    "SELECT COUNT(*) FROM kafka_consumer_group_lag WHERE cluster_id = :cid "
+                    "AND updated_at >= NOW() - INTERVAL '20 minutes'"
                 ), {"cid": int(cluster_id)})
                 total_groups_count = _gcnt.scalar() or 0
                 _rf1 = await _sess3.execute(_text(
