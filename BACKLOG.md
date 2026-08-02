@@ -341,16 +341,21 @@ worsening architectural gap in the data layer, not a nice-to-have.
 *Added: 2026-08-01, elevated with real evidence same day*
 
 ### Job schedule staggering to avoid same-tick collisions -- FIXED 2026-08-02
-Found live: kafka-broker-health-3 and kafka-msg-rate-3 shared the identical cron
-schedule (*/2 * * * *), meaning they fired at the exact same second every single cycle
--- guaranteed collision, not occasional bad luck. This was the direct cause of their
-remaining ~1-2% failure rate even after all of tonight's connection/thread-pool fixes.
-Fix: offset msg-rate-3/4 to '1-59/2 * * * *' (fires at :01/:03/:05... instead of
-:00/:02/:04...) -- same 2-minute frequency, just staggered so it never lands on the
-same tick as broker-health again. Applied via direct kafka_job_schedules UPDATE (no
-migration/audit trail exists for this table -- see the separate backlog item about
-that gap). Worth auditing ALL job schedules for similar same-tick collisions as a
-follow-up, not just this one pair.
+Found live: multiple job groups shared identical cron schedules, meaning they fired at
+the exact same second every cycle -- guaranteed collision, not occasional bad luck.
+This was the direct cause of the remaining ~1-2% failure rate even after all of
+tonight's connection/thread-pool fixes. Audited ALL 19 registered schedules, staggered
+the slow/resource-intensive collisions (left fast jobs like connector-snapshots and
+slo-compliance alone -- their collision window is negligible given sub-5s duration):
+- kafka-msg-rate-3/4: */2 -> 1-59/2 (separates from broker-health-3/4, same */2)
+- kafka-consumer-lag-4: */3 -> 1-59/3 (separates from consumer-lag-3)
+- kafka-topic-structure-4: */5 -> 2-59/5 (separates from topic-inflow-3/4, same */5)
+Applied via direct kafka_job_schedules UPDATEs (no migration/audit trail exists for
+this table -- see the separate backlog item about that gap).
+**Validated live**: 10 consecutive runs immediately after, spanning every job type
+(broker-health, connector-snapshots, msg-rate, sr-sync, topic-inflow, consumer-lag,
+topic-sizes), zero failures, all fast (1.2-80.2s) -- combined effect of this staggering
+plus tonight's logging-suppression and shared connection/thread-pool fixes.
 *Added: 2026-08-02*
 
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
