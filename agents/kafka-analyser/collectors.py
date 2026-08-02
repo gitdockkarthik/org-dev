@@ -1102,13 +1102,10 @@ async def collect_msg_rate(cluster_id: str = ""):
                 security["ssl_context"] = ssl_ctx
         loop = asyncio.get_event_loop()
         def _get_partition_sizes():
-            admin = KafkaAdminClient(
-                bootstrap_servers=c["bootstrap_servers"],
-                request_timeout_ms=15000,
-                **security,
-            )
+            admin, admin_lock = get_shared_admin_client(c["bootstrap_servers"], c)
             try:
-                result = admin.describe_log_dirs()
+                with admin_lock:
+                    result = admin.describe_log_dirs()
                 sizes = {}
                 for log_dir in result.log_dirs:
                     if log_dir[0] != 0: continue
@@ -1119,8 +1116,9 @@ async def collect_msg_rate(cluster_id: str = ""):
                             key = f"{topic}:{partition[0]}"
                             sizes[key] = partition[1]
                 return sizes
-            finally:
-                admin.close()
+            except Exception:
+                invalidate_client(c["bootstrap_servers"])
+                raise
         now = time.time()
         current_sizes = await loop.run_in_executor(_kafka_io_executor, _get_partition_sizes)
         prev_key = f"{cid}_sizes"
