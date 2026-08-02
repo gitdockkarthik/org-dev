@@ -655,32 +655,33 @@ async def collect_topic_structure(cluster_id: str = ""):
                         _ssl_ctx2.check_hostname = False
                         _ssl_ctx2.verify_mode = _ssl2.CERT_NONE
                         security["ssl_context"] = _ssl_ctx2
-                _admin = KafkaAdminClient(
-                    bootstrap_servers=c["bootstrap_servers"],
-                    request_timeout_ms=15000,
-                    **security,
-                )
-                _all_topics = [t for t in _admin.list_topics() if not t.startswith('_')]
-                leader_counts = _col.defaultdict(int)
-                replica_counts = _col.defaultdict(int)
-                # topic -> leader_broker_id mapping for partition leaders table
-                partition_leaders = []
-                BATCH = 500
-                for _i in range(0, len(_all_topics), BATCH):
-                    _meta = _admin.describe_topics(_all_topics[_i:_i+BATCH])
-                    for _tm in _meta:
-                        topic_name = _tm.get('topic', '')
-                        for _p in _tm.get('partitions', []):
-                            leader_id = str(_p['leader'])
-                            leader_counts[leader_id] += 1
-                            partition_leaders.append({
-                                'topic': topic_name,
-                                'partition': _p['partition'],
-                                'leader': leader_id,
-                            })
-                            for _r in _p.get('replicas', []):
-                                replica_counts[str(_r)] += 1
-                _admin.close()
+                _admin, _admin_lock = get_shared_admin_client(c["bootstrap_servers"], c)
+                try:
+                    with _admin_lock:
+                        _all_topics = [t for t in _admin.list_topics() if not t.startswith('_')]
+                    leader_counts = _col.defaultdict(int)
+                    replica_counts = _col.defaultdict(int)
+                    # topic -> leader_broker_id mapping for partition leaders table
+                    partition_leaders = []
+                    BATCH = 500
+                    for _i in range(0, len(_all_topics), BATCH):
+                        with _admin_lock:
+                            _meta = _admin.describe_topics(_all_topics[_i:_i+BATCH])
+                        for _tm in _meta:
+                            topic_name = _tm.get('topic', '')
+                            for _p in _tm.get('partitions', []):
+                                leader_id = str(_p['leader'])
+                                leader_counts[leader_id] += 1
+                                partition_leaders.append({
+                                    'topic': topic_name,
+                                    'partition': _p['partition'],
+                                    'leader': leader_id,
+                                })
+                                for _r in _p.get('replicas', []):
+                                    replica_counts[str(_r)] += 1
+                except Exception as _bld_exc:
+                    invalidate_client(c["bootstrap_servers"])
+                    raise
                 from database import SessionLocal
                 from sqlalchemy import text as _st
                 async with SessionLocal() as _sess:
