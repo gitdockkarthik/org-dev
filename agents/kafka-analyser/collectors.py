@@ -10,6 +10,7 @@ from typing import Any
 from concurrent.futures import ThreadPoolExecutor
 
 import kafka_store as _ks
+from shared_kafka_clients import get_shared_admin_client, invalidate_client
 
 logger = logging.getLogger(__name__)
 
@@ -187,14 +188,11 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
                 security["ssl_context"] = ssl_ctx
         loop = asyncio.get_event_loop()
         def _fetch_all_lags():
-                admin = KafkaAdminClient(
-                    bootstrap_servers=c["bootstrap_servers"],
-                    request_timeout_ms=15000,
-                    **security,
-                )
+                admin, admin_lock = get_shared_admin_client(c["bootstrap_servers"], c)
                 try:
                     # Get all groups with protocol types
-                    all_groups = admin.list_consumer_groups()
+                    with admin_lock:
+                        all_groups = admin.list_consumer_groups()
                     consumer_gids = [g[0] for g in all_groups if g[1] == "consumer"]
                     connect_gids = [g[0] for g in all_groups if g[1] == "connect"]
                     sr_gids = [g[0] for g in all_groups if g[1] == "sr"]
@@ -213,7 +211,8 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
                         batch_gids = lag_target_gids[batch_start:batch_start + BATCH]
                         for gid in batch_gids:
                             try:
-                                offsets = admin.list_consumer_group_offsets(gid)
+                                with admin_lock:
+                                    offsets = admin.list_consumer_group_offsets(gid)
                                 group_committed[gid] = {
                                     tp: (meta.offset if hasattr(meta, 'offset') else meta)
                                     for tp, meta in offsets.items()
@@ -283,8 +282,9 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
                         "group_topic_lag": group_topic_lag,
                         "group_partition_lag": group_partition_lag,
                     }
-                finally:
-                    admin.close()
+                except Exception as exc:
+                    invalidate_client(c["bootstrap_servers"])
+                    raise
         result = await loop.run_in_executor(_kafka_io_executor, _fetch_all_lags)
         data = _ks.get_cluster_data(cid) or {}
         data["consumer_groups"] = result["groups"]
