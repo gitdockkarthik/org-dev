@@ -266,10 +266,11 @@ async def _structure_written_today(cluster_id: str) -> bool:
 
 
 async def structure_age_minutes(cluster_id: str) -> float | None:
-    """Return how many minutes old the latest topics_structure row is for this
-    cluster, or None if no row exists. Used by startup sync to decide whether the
-    expensive describe_all_topics() call is actually needed, or whether existing
-    data is fresh enough to skip it."""
+    """Return how many minutes old the most recent topic structure data is for this
+    cluster, based on kafka_topic_metrics.last_seen (the real, currently-updated
+    data source -- NOT kafka_metrics_history, which is a legacy write path no
+    longer updated). Used by startup sync to decide whether the expensive
+    describe_all_topics() call is actually needed."""
     try:
         from database import SessionLocal
         from sqlalchemy import text
@@ -278,14 +279,12 @@ async def structure_age_minutes(cluster_id: str) -> float | None:
         async with SessionLocal() as session:
             row = (await session.execute(
                 text(
-                    f"SELECT EXTRACT(EPOCH FROM (now() - collected_at)) / 60.0 as age_minutes "
-                    f"FROM {TABLE} "
-                    f"WHERE cluster_id = :cid AND scan_type = :st "
-                    f"ORDER BY collected_at DESC LIMIT 1"
+                    "SELECT EXTRACT(EPOCH FROM (now() - MAX(last_seen))) / 60.0 as age_minutes "
+                    "FROM kafka_topic_metrics WHERE cluster_id = :cid"
                 ),
-                {"cid": cluster_id, "st": SCAN_TOPICS_STRUCTURE},
+                {"cid": int(cluster_id)},
             )).first()
-        return float(row[0]) if row else None
+        return float(row[0]) if row and row[0] is not None else None
     except Exception as exc:
         logger.warning("Failed to check structure age for %s: %s", cluster_id, exc)
         return None
