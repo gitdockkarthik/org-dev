@@ -358,14 +358,14 @@ topic-sizes), zero failures, all fast (1.2-80.2s) -- combined effect of this sta
 plus tonight's logging-suppression and shared connection/thread-pool fixes.
 *Added: 2026-08-02*
 
-### Disable job schedule/cron edit in UI (protect tonight's careful tuning)
+### Disable job schedule/cron edit in UI (protect tonight's careful tuning) -- DONE
 User's decision (2026-08-02): given how carefully the job schedules (cron + staggering)
-were tuned tonight to eliminate real collection failures, an accidental UI edit could
-silently undo this. Since this is currently an internal-only tool, disable the Edit
-button for job cron/timeout values in the Settings UI -- any future changes should go
-through backend scripts (with the discipline this session established: validate,
-document, commit), not casual UI editing. Low risk, quick change once picked up.
-*Added: 2026-08-02*
+were tuned to eliminate real collection failures, an accidental UI edit could silently
+undo this. Removed the Edit Schedule button from reports.html (static + portal) --
+future changes go through backend scripts, not casual UI editing. Run and Enable/
+Disable buttons unaffected; the underlying /jobs/{id}/schedules/{id} PUT endpoint and
+the dormant modal JS functions were left fully intact for scripted use.
+*Added: 2026-08-02, completed same day*
 
 ### Shared thread pool + schedule staggering need to scale with cluster count
 User is onboarding more clusters soon (internal staging by Tuesday, then internal prod
