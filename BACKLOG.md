@@ -177,19 +177,26 @@ Not audited in recent sessions. Depends partly on the disabled legacy loop's sta
 today before deciding what needs a job-pipeline replacement vs. what can be simplified away.
 *Added: 2026-07-29*
 
-### PAUSED (not abandoned) — Cluster-switch race condition, 3 of ~5 chunks done
-User's explicit reasoning for pausing here (2026-08-01): dashboard slowness is actively
-preventing effective testing/validation of ANYTHING, including this fix itself — every
-click waits ~30s+, making rapid cluster-switch reproduction painful and unreliable to
-judge. User's stated goal: dashboard should load in <5s on open, tab switch, and cluster
-switch. Once that's true, resume finding/fixing this properly with a testable dashboard.
-Real, safe progress made so far, nothing to undo: (1) global window._loadGeneration
-counter, incremented on cluster switch; (2) Overview tab's 3 charts (activity, messages,
-lag-trend) each check generation after their fetch, before rendering; (3) loadTab's 9
-shared-pattern cases (all tabs except SLO) check generation after their fetch, before
-render. REMAINING: SLO tab's separate loadSLODashboard() function (not yet wired), plus
-a final full audit to confirm no other fetch-and-render call site was missed.
-Original CRITICAL status/detail preserved below — still valid, just paused.
+### PARTIALLY DONE — Cluster-switch race condition, main tab-load path complete,
+### popup/interaction functions remain (2026-08-02)
+Main tab-load path DONE and validated live (static + portal, committed): (1) global
+window._loadGeneration counter, incremented on cluster switch; (2) Overview tab's 3
+charts (activity, messages, lag-trend); (3) loadTab's 9 shared-pattern cases (all main
+tabs except SLO); (4) SLO tab's loadSLODashboard -- all 5 async render points (main
+content, broker gauges, connector-trend, overall-trend, lag-trend). This covers
+everything a user sees immediately/constantly on tab load.
+REMAINING (found during the final audit that was always part of this item's scope): 9
+more functions that fetch-and-render but sit OUTSIDE the main tab-load path -- popups
+and user-triggered detail views, not always-visible content: _showGroupTopicsPopup,
+_showTopicPopup, _openSLOPopup (detail popups); _loadTopicTable, _topicCompareSearch,
+_renderTopicTimeSeries (topic table interactions); _expandTopicRow (expandable
+partition rows); _streamTopicDetails, _streamGroupLags (streaming describe flows).
+Lower risk than main content (user-triggered, modal/focused, not constantly visible),
+but the same stale-render risk applies if a cluster switch happens mid-load. Needs its
+own pass: same generation-guard pattern, static + portal, validated live.
+**Keep this item's status as Pending until this remaining piece is closed** -- user's
+explicit instruction, not marking done prematurely.
+Original CRITICAL status/detail preserved below — still valid.
 
 ### CRITICAL — Cluster-switch race condition, scope broader than previously tracked
 No request cancellation on cluster switch — an in-flight request from the previously
