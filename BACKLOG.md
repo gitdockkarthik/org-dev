@@ -431,6 +431,13 @@ Investigated shared t3.xlarge host (16GB RAM, 4 vCPU, 30GB root disk + separate 
 5. **Other teams' agents not yet live** (onboarded yesterday except appsupport, a few
    weeks old) -- made the daemon restart low-risk to do now rather than needing
    off-hours coordination.
+6. **Automated housekeeping via systemd timer** (this host uses systemd timers, not
+   crontab -- crontab isn't even installed). Created docker-housekeeping.service +
+   .timer, running twice daily (06:00 and 18:00 UTC): `docker image prune -f` (dangling
+   images) + `docker builder prune -f --filter until=24h` (build cache older than 24h,
+   leaving same-day cache intact for active rebuild sessions). Enabled and validated
+   with a manual test run (both commands exited successfully). Files: /etc/systemd/
+   system/docker-housekeeping.service and .timer.
 *Added: 2026-08-02*
 
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
