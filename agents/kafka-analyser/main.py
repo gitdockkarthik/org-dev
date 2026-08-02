@@ -672,10 +672,22 @@ async def lifespan(app: FastAPI):
                             len(data.get("topics", [])),
                         )
                         # Background parallel topic describe — ALL topics for accurate KPIs
-                        # Skip topic describe if restored snapshot already has enriched data
+                        # Skip topic describe if restored snapshot already has enriched data AND is
+                        # reasonably fresh (under 90 min -- comfortably less than topic-structure's own
+                        # 2-hour scheduled cadence, which will refresh this data soon anyway). Prevents
+                        # this expensive describe_all_topics() call from firing on every single restart
+                        # regardless of how recent the existing data already is.
+                        from kafka_store import structure_age_minutes
                         _existing_topics = data.get("topics", [])
                         _has_enriched_topics = any(t.get("partition_count", 0) > 0 for t in _existing_topics)
-                        if not _has_enriched_topics:
+                        _age_minutes = await structure_age_minutes(cid)
+                        _data_is_fresh = _age_minutes is not None and _age_minutes < 90
+                        if not _has_enriched_topics or not _data_is_fresh:
+                            if _has_enriched_topics and not _data_is_fresh:
+                                logger.info(
+                                    "Startup: existing topic structure for '%s' is %.0f min old (>90 min) -- refreshing",
+                                    c["name"], _age_minutes
+                                )
                             try:
                                 import time as _t2
                                 _topic_start = _t2.time()
