@@ -223,22 +223,37 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
                     # Step 2: get ALL end offsets in one consumer session (avoid repeated connections)
                     all_tps = list(set(tp for committed in group_committed.values() for tp in committed.keys()))
                     if all_tps:
-                        try:
-                            _consumer = KafkaConsumer(
-                                bootstrap_servers=c["bootstrap_servers"],
-                                request_timeout_ms=10000,
-                                **security,
+                        _SEEK_MAX_ATTEMPTS = 3
+                        _seek_last_exc = None
+                        for _attempt in range(1, _SEEK_MAX_ATTEMPTS + 1):
+                            try:
+                                _consumer = KafkaConsumer(
+                                    bootstrap_servers=c["bootstrap_servers"],
+                                    request_timeout_ms=10000,
+                                    **security,
+                                )
+                                SEEK_BATCH = 500
+                                for i in range(0, len(all_tps), SEEK_BATCH):
+                                    batch_tps = all_tps[i:i + SEEK_BATCH]
+                                    _consumer.assign(batch_tps)
+                                    _consumer.seek_to_end(*batch_tps)
+                                    end_offsets.update({tp: _consumer.position(tp) for tp in batch_tps})
+                                _consumer.close()
+                                _seek_last_exc = None
+                                break
+                            except Exception as e:
+                                _seek_last_exc = e
+                                logger.warning("seek_to_end attempt %d/%d failed: %s", _attempt, _SEEK_MAX_ATTEMPTS, e)
+                                end_offsets.clear()
+                                if _attempt < _SEEK_MAX_ATTEMPTS:
+                                    import time as _time
+                                    _time.sleep(2)
+                        if _seek_last_exc is not None:
+                            logger.warning(
+                                "seek_to_end failed after %d attempts: %s -- aborting this cycle, not persisting unreliable lag data",
+                                _SEEK_MAX_ATTEMPTS, _seek_last_exc
                             )
-                            # Process in batches within single connection
-                            SEEK_BATCH = 500
-                            for i in range(0, len(all_tps), SEEK_BATCH):
-                                batch_tps = all_tps[i:i + SEEK_BATCH]
-                                _consumer.assign(batch_tps)
-                                _consumer.seek_to_end(*batch_tps)
-                                end_offsets.update({tp: _consumer.position(tp) for tp in batch_tps})
-                            _consumer.close()
-                        except Exception as e:
-                            logger.warning("seek_to_end failed: %s", e)
+                            raise RuntimeError(f"end-offset fetch failed after {_SEEK_MAX_ATTEMPTS} attempts, cycle aborted: {_seek_last_exc}") from _seek_last_exc
                     # Calculate lag per group
                     group_topic_lag: dict[str, dict[str, dict]] = {}
                     group_partition_lag: dict[str, list[dict]] = {}
@@ -285,7 +300,12 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
                 except Exception as exc:
                     invalidate_client(c["bootstrap_servers"])
                     raise
-        result = await loop.run_in_executor(_kafka_io_executor, _fetch_all_lags)
+        try:
+            result = await loop.run_in_executor(_kafka_io_executor, _fetch_all_lags)
+        except Exception as _fetch_exc:
+            logger.error("collect_consumer_lag_active: cycle aborted, no data will be persisted: %s", _fetch_exc)
+            collect_consumer_lag_active._last_result = f"Aborted (unreliable data): {_fetch_exc}"
+            return
         data = _ks.get_cluster_data(cid) or {}
         data["consumer_groups"] = result["groups"]
         data["group_states"] = result["group_states"]
