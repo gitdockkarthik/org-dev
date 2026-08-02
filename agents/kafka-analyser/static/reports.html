@@ -344,7 +344,6 @@
               <td>${statusBadge}</td>
               <td style="text-align:right;white-space:nowrap">
                 <button class="btn btn--primary btn--sm" onclick="triggerJob('${j.id}')">▶ Run</button>
-                ${s ? `<button class="btn btn--ghost btn--sm" style="margin-left:4px" onclick="openEditSchedule('${j.id}',${s.id},'${s.cron_expression}',${s.timeout_secs})">✏ Edit</button>` : ''}
                 ${s ? `<button class="btn btn--ghost btn--sm" style="margin-left:4px" onclick="toggleSchedule('${j.id}', ${s.id}, ${!enabled})">${enabled ? 'Disable' : 'Enable'}</button>` : ''}
               </td>
             </tr>`;
