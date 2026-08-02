@@ -367,6 +367,25 @@ through backend scripts (with the discipline this session established: validate,
 document, commit), not casual UI editing. Low risk, quick change once picked up.
 *Added: 2026-08-02*
 
+### Shared thread pool + schedule staggering need to scale with cluster count
+User is onboarding more clusters soon (internal staging by Tuesday, then internal prod
+and external prod). Two things from tonight's fixes need revisiting as cluster count
+grows:
+1. **Shared thread pool (_kafka_io_executor, currently 12 workers)** is one pool for
+   the WHOLE application, not per-cluster -- confirmed: the AdminClient connection
+   itself is fully isolated per cluster (keyed by bootstrap_servers), but all clusters'
+   jobs compete for the same 12 worker threads. More clusters running jobs
+   simultaneously = more total demand on this one shared resource. Revisit pool size
+   when the next cluster is onboarded, based on real measured contention, not
+   speculatively now.
+2. **Schedule staggering (done tonight for clusters 3/4) does not automatically apply
+   to new clusters** -- a newly onboarded cluster's jobs will use the same default cron
+   patterns as existing clusters, recreating the same same-tick collisions we just
+   fixed, just between different clusters. Worth making this automatic (e.g. offset
+   each cluster's schedule based on cluster ID at registration time) rather than
+   manually re-staggering every time a cluster is added.
+*Added: 2026-08-02*
+
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - **CSV Export for dashboard tables** (Topics, Consumer Groups, Connectors) — quick win,
   unblocked, no dependencies. User's team will use exported data to manually tag
