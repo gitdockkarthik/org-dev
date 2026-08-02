@@ -104,3 +104,25 @@ Update this table after each work chunk — status changes, new rows appended, e
   retention rules can even be meaningful.
 - **Fold into:** Item 1 (Billing-period retention redesign) — the fix needs to (a) detect and split
   by billing period on ingest, not just (b) decide how many periods to keep afterward.
+
+### CRITICAL — cleanup_old_report_files() loses visibility into old reports after every restart
+- **Status:** Open — scheduled for Monday (priority, ahead of mid-week foundation session)
+- **Found:** 2026-08-02, during a Kafka-analyser session, while investigating host disk usage on the
+  shared t3.xlarge box.
+- **Symptom:** 8 `parquet_dir` folders on disk (IDs 6-13, ~614MB each, ~4.5GB total) when only 3
+  should exist per `keep_last=3`. Active report is ID 13.
+- **Root cause:** `cleanup_old_report_files(keep_last=3)` in `report_store.py` computes which reports
+  to delete by reading the in-memory `_reports` list — but that list starts empty on every container
+  restart, and nothing repopulates it from the database on startup. Only `add_report()` appends to it
+  going forward. So after any restart, cleanup can only "see" reports added since that restart — it
+  silently and permanently loses visibility into older reports, and their files are never cleaned up.
+- **Distinct from the Aug 1 fix:** that fix correctly wired the cleanup *call* into the sync path
+  (`main.py`). This bug is in the cleanup *function's own data source* — a deeper, separate issue.
+- **Fix direction:** Make `cleanup_old_report_files()` async; have it query `CurReport` via
+  `SessionLocal` directly for the real, persistent list of report IDs (ordered by `id desc`, filtered
+  by `agent_slug`) instead of reading `_reports`. DB-query pattern to copy from already exists in this
+  same file, in `delete_report()`. All 3 call sites in `main.py` (~lines 550, 725, 1617) need `await`
+  added once the function becomes async.
+- **Urgency:** Low technically (`/data` at 37%, 39GB free, ~600MB growth per sync, few times/day —
+  not a near-term disk risk) — but prioritizing for Monday anyway to close the gap before it compounds
+  further and to avoid a repeat of the Aug 1 stuck-sync incident pattern.
