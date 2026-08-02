@@ -393,6 +393,46 @@ grows:
    manually re-staggering every time a cluster is added.
 *Added: 2026-08-02*
 
+### Host-level disk/resource investigation and cleanup (2026-08-02)
+Investigated shared t3.xlarge host (16GB RAM, 4 vCPU, 30GB root disk + separate 60GB
+/data volume for Docker) for scaling planning. Findings:
+1. **Load average 10.95/10.91/11.33 on 4 vCPUs** (~2.75x capacity) -- NOT caused by
+   our own agent (kafka-analyser confirmed using 0.13% CPU, 414MB/2GB RAM at time of
+   check). Dominant consumer: org-dev-clickhouse-1 at 211.93% CPU (used for Langfuse
+   LLM token/cost tracking across onboarded teams), plus several other containers
+   (langfuse-worker, alert-analyser heavy I/O, redis). This is a genuine, evidence-based
+   case for a capacity request -- the box is shared and oversubscribed by combined
+   team workload, independent of our own agent's efficiency.
+2. **38 dangling Docker images + up to 1.7GB build cache** reclaimed via `docker image
+   prune -f` and `docker builder prune -f` -- safe, zero-risk (orphaned layers from
+   repeated rebuilds). Freed ~1GB+ images, all reclaimable build cache.
+3. **No Docker daemon-level log rotation was configured at all** (`daemon.json` only
+   set data-root) -- genuine unbounded-growth risk for container stdout/stderr over
+   time. Fixed: added `"log-driver": "json-file", "log-opts": {"max-size": "10m",
+   "max-file": "3"}` to /etc/docker/daemon.json (backed up first), restarted Docker
+   daemon (confirmed all 25 previously-running containers came back -- 4 needed a
+   manual `docker start` after the daemon restart: mongodb, radar-agent, rca-backend,
+   rca-frontend, since they lack an auto-restart policy -- worth flagging to their
+   owners), then `docker compose up -d --force-recreate` for org-dev's own services
+   specifically to pick up the new log config (daemon restart alone doesn't retroactively
+   apply new defaults to already-existing containers). Validated: new config confirmed
+   active via docker inspect, all 14 org-dev containers back up cleanly, kafka-analyser
+   job scheduler and dashboard confirmed working normally post-recreate.
+4. **CUR-analyser disk cleanup bug found, NOT fixed here** -- handed off to the
+   dedicated CUR-analyser session per user's explicit request (avoiding cross-agent
+   context pollution). Summary: cleanup_old_report_files(keep_last=3) reads an
+   in-memory _reports list that resets to empty on every restart and is never
+   repopulated from the database -- so it can only ever see reports added since the
+   last restart, permanently losing visibility into older ones. Confirmed live: 8
+   parquet_dir folders exist (should be 3), ~4.5GB reclaimable. Fix direction: query
+   CurReport via SessionLocal directly instead of the in-memory list (pattern already
+   exists in this file's delete_report function). Low urgency -- /data at 37% (39GB
+   free), growth ~600MB/sync, not a near-term risk.
+5. **Other teams' agents not yet live** (onboarded yesterday except appsupport, a few
+   weeks old) -- made the daemon restart low-risk to do now rather than needing
+   off-hours coordination.
+*Added: 2026-08-02*
+
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - **CSV Export for dashboard tables** (Topics, Consumer Groups, Connectors) — quick win,
   unblocked, no dependencies. User's team will use exported data to manually tag
