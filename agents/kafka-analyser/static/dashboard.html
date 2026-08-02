@@ -3389,8 +3389,10 @@
     async function loadSLODashboard() {
       const cid = _currentClusterId || document.getElementById('ctrl-cluster')?.value || '';
       if (!cid) return;
+      const _tabGen = window._loadGeneration;
       try {
         const data = await fetch(`${PROXY}/slo/dashboard?cluster_id=${cid}&hours=${_sloHours}`, { headers: _authHeaders(), cache: 'no-store' }).then(r => r.json());
+        if (_tabGen !== window._loadGeneration) return;
         _sloData = data;
         const el = document.getElementById('slo-sub-content');
         if (el && _sloSubTab === 'dashboard') el.innerHTML = renderSLODashboardHTML(data);
@@ -3431,6 +3433,7 @@
           // Get avg CPU and heap from broker data
           fetch(`${PROXY}/dashboard/brokers?cluster_id=${cid}`, { headers: _authHeaders() })
             .then(r => r.json()).then(bd => {
+              if (_tabGen !== window._loadGeneration) return;
               const brokers = bd.brokers || [];
               const avgCpu = brokers.length ? Math.round(brokers.reduce((s,b) => s+(b.cpu_pct||0), 0)/brokers.length) : 0;
               const avgHeap = brokers.length ? Math.round(brokers.reduce((s,b) => s+(b.heap_pct||0), 0)/brokers.length) : 0;
@@ -3454,6 +3457,7 @@
           // Connector availability trend — from snapshots (every 2 min)
           fetch(`${PROXY}/slo/connector-trend?cluster_id=${cid}&hours=${_sloHours}`, { headers: _authHeaders() })
             .then(r => r.json()).then(ct => {
+              if (_tabGen !== window._loadGeneration) return;
               const connCtx = document.getElementById('slo-conn-trend-chart')?.getContext('2d');
               if (!connCtx) return;
               const pts = ct.points || [];
@@ -3481,6 +3485,7 @@
 
           // Overall compliance trend
           setTimeout(() => {
+            if (_tabGen !== window._loadGeneration) return;
             const overallCanvas = document.getElementById('slo-overall-trend-chart');
             if (!overallCanvas) return;
             const overallTrendCtx = overallCanvas.getContext('2d');
@@ -3511,6 +3516,7 @@
           // Fetch lag snapshots
           fetch(`${PROXY}/dashboard/overview/lag-trend?cluster_id=${cid}&minutes=${_sloHours*60}`, { headers: _authHeaders() })
             .then(r => r.json()).then(ld => {
+              if (_tabGen !== window._loadGeneration) return;
               if (!lagCtx) return;
               const pts = ld.points || [];
               if (pts.length > 1) {
