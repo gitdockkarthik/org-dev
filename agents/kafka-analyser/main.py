@@ -43,6 +43,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Suppress noisy, low-value kafka-python internal logging -- "is still fetchable"
+# fires tens of thousands of times per minute during heavy seek operations
+# (topic-inflow, consumer-lag), and at that volume the shared logging lock itself
+# becomes a real source of cross-thread contention, unrelated to actual Kafka I/O
+# time. This is internal library noise, not useful operational signal.
+logging.getLogger("kafka.consumer.fetcher").setLevel(logging.ERROR)
+
 # ── Agent setup ───────────────────────────────────────────────────────────────
 _runner = AgentRunner(
     tools=[
