@@ -440,6 +440,30 @@ Investigated shared t3.xlarge host (16GB RAM, 4 vCPU, 30GB root disk + separate 
    system/docker-housekeeping.service and .timer.
 *Added: 2026-08-02*
 
+### Missing retention/purge on 3 of 5 large Postgres tables (found via KPI Box governance session, verified here 2026-08-02)
+Cross-session finding: governance/infra session flagged 5 tables with no retention wired
+in, totaling ~3.35GB (~93% of Postgres's footprint). Verified directly here -- CORRECTION
+to their hypothesis: kafka_topic_message_rate_snapshots (1477MB) already has WORKING
+rollup+delete logic (built same day, collectors.py ~line 1488 -- rolls up then deletes
+raw rows older than cutoff, same session/transaction). The other 4 are genuinely
+unmanaged, and growing FASTER than the governance session's own "not urgent" framing
+suggested (that framing was based on host RAM/disk headroom, not these tables'
+individual trajectories):
+- kafka_connector_snapshots (286MB): 2.08M rows, ~190K rows/day
+- kafka_topic_message_rate_hourly_rollup (400MB): 1.45M rows, ~700K+ rows/day (fastest
+  growing, zero retention at all -- the rollup table itself has no cap)
+- kafka_consumer_group_rate_snapshots (105MB): 389K rows, ~194K rows/day
+- kafka_metrics_history (891MB): 12K rows, ~50 day span -- slow/mostly-inactive legacy
+  table, lowest priority of the four
+**Plan**: reuse the exact proven pattern already validated in production (age-based
+DELETE with a real timestamp cutoff, same session/transaction as any related write,
+tested against real data before trusting it) -- same approach as the
+kafka_topic_message_rate_snapshots rollup and the cur-analyser parquet cleanup (Aug 1).
+Scope as its own item, not a quick patch -- 3-4 tables each need their own retention
+window decided (how much history is actually needed for each), then implemented and
+validated one at a time.
+*Added: 2026-08-02, cross-referenced with KPI Box governance session*
+
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - **CSV Export for dashboard tables** (Topics, Consumer Groups, Connectors) — quick win,
   unblocked, no dependencies. User's team will use exported data to manually tag
