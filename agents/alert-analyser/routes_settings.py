@@ -159,12 +159,22 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
         else:
             sync_window_days = _config.get("sync_window_days", 7)
             alerts = await source.load_alerts(sync_window_days=sync_window_days)
-        from datetime import datetime, timezone
+        from datetime import datetime, timezone, timedelta
         filename = f"opsgenie-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.json"
         from report_store import get_latest_classified
         existing = get_latest_classified()
         if existing and last_synced:
-            all_alerts_raw = [a for a in (existing or [])]
+            window_mins = _config.get("noise_threshold_window_mins", 60)
+            cutoff = datetime.now() - timedelta(minutes=window_mins * 4)
+            def _alert_ts(a):
+                try:
+                    return datetime.fromisoformat(a["createdAt"].replace("Z", ""))
+                except Exception:
+                    return None
+            all_alerts_raw = [
+                a for a in existing
+                if (_alert_ts(a) is None) or (_alert_ts(a) >= cutoff)
+            ]
             existing_ids = {a.get("id") for a in all_alerts_raw}
             new_alerts = [a for a in alerts if a.get("id") not in existing_ids]
             combined_alerts = all_alerts_raw + new_alerts
@@ -303,45 +313,34 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
 
                     # Reconciliation: auto-close tickets for alerts no longer open+genuine
                     try:
-                        open_genuine_ids = {
+                        open_genuine_ids = [
                             a.get("id") for a in deduped_alerts
                             if a.get("classification") == "genuine"
                             and a.get("status", "").lower() not in ("closed", "resolved")
-                        }
-
-                        result = await session.execute(
-                            text("""
-                                SELECT id, alert_id, status FROM incident_management.incidents
-                                WHERE status NOT IN ('RESOLVED', 'MANUAL')
-                            """)
-                        )
-                        open_tickets = result.fetchall()
+                        ]
 
                         auto_resolved_count = 0
                         resolved_externally_count = 0
 
-                        for ticket in open_tickets:
-                            if ticket.alert_id not in open_genuine_ids:
-                                if ticket.status == 'ESCALATED':
-                                    await session.execute(
-                                        text("""
-                                            UPDATE incident_management.incidents
-                                            SET status = 'RESOLVED', resolved_at = now(), updated_at = now()
-                                            WHERE id = :id
-                                        """),
-                                        {"id": ticket.id},
-                                    )
-                                    auto_resolved_count += 1
-                                else:
-                                    await session.execute(
-                                        text("""
-                                            UPDATE incident_management.incidents
-                                            SET resolved_externally = TRUE, updated_at = now()
-                                            WHERE id = :id
-                                        """),
-                                        {"id": ticket.id},
-                                    )
-                                    resolved_externally_count += 1
+                        result = await session.execute(
+                            text("""
+                                UPDATE incident_management.incidents
+                                SET status = 'RESOLVED', resolved_at = now(), updated_at = now()
+                                WHERE status = 'ESCALATED' AND NOT (alert_id = ANY(:open_ids))
+                            """),
+                            {"open_ids": open_genuine_ids},
+                        )
+                        auto_resolved_count = result.rowcount
+
+                        result = await session.execute(
+                            text("""
+                                UPDATE incident_management.incidents
+                                SET resolved_externally = TRUE, updated_at = now()
+                                WHERE status NOT IN ('RESOLVED','MANUAL','ESCALATED') AND NOT (alert_id = ANY(:open_ids))
+                            """),
+                            {"open_ids": open_genuine_ids},
+                        )
+                        resolved_externally_count = result.rowcount
 
                         await session.commit()
                         logger.info("Incident reconciliation: %d auto-resolved, %d marked resolved_externally", auto_resolved_count, resolved_externally_count)
