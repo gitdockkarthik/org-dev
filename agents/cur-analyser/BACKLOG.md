@@ -126,3 +126,24 @@ Update this table after each work chunk — status changes, new rows appended, e
 - **Urgency:** Low technically (`/data` at 37%, 39GB free, ~600MB growth per sync, few times/day —
   not a near-term disk risk) — but prioritizing for Monday anyway to close the gap before it compounds
   further and to avoid a repeat of the Aug 1 stuck-sync incident pattern.
+
+### RESOLVED — cleanup_old_report_files() restart-visibility bug (#11)
+- **Status:** Done
+- **Resolved:** 2026-08-02 (Sunday, ahead of Monday target)
+- **Fix applied:** `cleanup_old_report_files()` converted to async, now queries `CurReport` via
+  `SessionLocal` directly (filtered by `agent_slug`, ordered by `id.desc()`) instead of reading the
+  in-memory `_reports` list — same pattern as `delete_report()`. Returns 0 if `SessionLocal` is None
+  or on query failure (logged via `logger.exception`). 3 call sites in `main.py` updated to `await`
+  (`_process_upload_job()` line ~551, `_process_folder_upload_job()` line ~726, `_run_s3_sync()`
+  line ~1618).
+- **Validated:** Direct invocation of the fixed function against live DB/disk confirmed it now
+  correctly reads report state from the DB (found only report 13, the sole valid row) rather than an
+  empty in-memory list.
+- **One-time manual cleanup also performed:** 7 orphaned `parquet_dir` folders (IDs 6-12, ~4.5GB)
+  existed on disk with **no corresponding DB row at all** — these predate the fix and were never
+  going to be swept by `cleanup_old_report_files()` even when working correctly, since the function
+  only manages files for reports it can see in the DB beyond `keep_last`. Manually removed via `rm -rf`
+  after confirming via `/reports` and direct DB query that report 13 was the only valid report.
+  Disk now shows exactly 1 folder, matching the 1 DB row.
+- **Confirms going forward:** cleanup will now survive container restarts correctly, since it no
+  longer depends on in-memory state that resets on restart.
