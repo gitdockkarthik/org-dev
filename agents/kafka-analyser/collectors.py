@@ -1493,11 +1493,24 @@ async def rollup_topic_message_rates(retention_hours: int = 6) -> dict:
             """), {"cutoff": cutoff})
             await sess.commit()
 
+            # Step 3: separately, purge rollup rows beyond 30 days -- the real,
+            # verified retention need (matches the UI's own "Last 30 days" maximum
+            # time-filter option; nothing in the codebase queries this table beyond
+            # that range). Independent concern from the raw-data cutoff above, so it
+            # gets its own cutoff and its own commit.
+            rollup_cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+            rollup_del_result = await sess.execute(_t("""
+                DELETE FROM kafka_topic_message_rate_hourly_rollup
+                WHERE hour_bucket < :rollup_cutoff
+            """), {"rollup_cutoff": rollup_cutoff})
+            await sess.commit()
+
         rollup_topic_message_rates._last_result = (
             f"Rolled up rows older than {cutoff.isoformat()}, "
-            f"deleted {del_result.rowcount} raw rows"
+            f"deleted {del_result.rowcount} raw rows, "
+            f"purged {rollup_del_result.rowcount} rollup rows beyond 30 days"
         )
-        return {"deleted": del_result.rowcount}
+        return {"deleted": del_result.rowcount, "rollup_purged": rollup_del_result.rowcount}
     except Exception as e:
         logger.error("rollup_topic_message_rates failed: %s", e)
         rollup_topic_message_rates._last_result = f"Failed: {e}"
