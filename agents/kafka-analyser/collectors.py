@@ -838,7 +838,7 @@ async def collect_connector_snapshots(cluster_id: str = ""):
             return
         # Save snapshots to postgres
         cid = _cid(c)
-        from datetime import datetime, timezone
+        from datetime import datetime, timezone, timedelta
         now = datetime.now(timezone.utc)
         async with SessionLocal() as sess:
             values = ",".join(
@@ -854,6 +854,19 @@ async def collect_connector_snapshots(cluster_id: str = ""):
                 VALUES {values}
             """))
             await sess.commit()
+            # Retention: purge rows beyond 30 days -- the real, verified need (matches the
+            # SLO tab's own "Last 30 days" maximum time-filter option). This job runs every
+            # 2 minutes, far more often than a purge needs to happen, so only run it once
+            # per hour (guarded on the current minute) rather than adding delete overhead
+            # to every single cycle.
+            if now.minute < 2:
+                retention_cutoff = now - timedelta(days=30)
+                purge_result = await sess.execute(_ct("""
+                    DELETE FROM kafka_connector_snapshots WHERE collected_at < :cutoff
+                """), {"cutoff": retention_cutoff})
+                await sess.commit()
+                if purge_result.rowcount:
+                    logger.info("collect_connector_snapshots: purged %d rows beyond 30 days", purge_result.rowcount)
         collect_connector_snapshots._last_result = f"Saved {len(connectors)} connector snapshots"
     except Exception as e:
         logger.error("collect_connector_snapshots failed: %s", e)
