@@ -535,6 +535,23 @@ during this specific transient window, distinguishing "genuinely just restarted"
 "actually degraded." To be validated by the team in parallel.
 *Added: 2026-08-04*
 
+### Message-rate chart bug: totally empty for any cluster with no rollup data yet -- FIXED
+Found live (2026-08-04) while UI-testing cluster 8: message-rate chart (topic-level
+in/out) showed completely empty despite 707K real raw rows existing (2+ hours of data).
+Root cause: get_topic_message_rate() set cutoff=now whenever a cluster had zero rows in
+kafka_topic_message_rate_hourly_rollup (e.g. any brand-new cluster, before the hourly
+rollup job has processed it) -- backwards, since it caused recent-window queries to
+incorrectly route to the blended raw+rollup path (which then found nothing in either
+half: no rollup data by definition, and no raw data "after now" since nothing can be
+collected in the future) instead of the simple raw-only path. Fixed: cutoff set to
+range_start - 1 day when no rollup exists, correctly triggering the raw-only path for
+the full requested range. Validated live: cluster 8 now returns real data; cluster 4
+(already working, has rollup history) shows no regression. get_group_message_rate
+checked separately -- doesn't blend with rollup at all, unaffected by this bug. This
+would have recurred identically for every future newly-onboarded cluster if not fixed
+now.
+*Added: 2026-08-04*
+
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - **CSV Export for dashboard tables** (Topics, Consumer Groups, Connectors) — quick win,
   unblocked, no dependencies. User's team will use exported data to manually tag
