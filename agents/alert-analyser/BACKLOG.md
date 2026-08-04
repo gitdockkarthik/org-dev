@@ -32,6 +32,7 @@ Done | Open | Blocked | In Progress
 | 19 | LLM provider migration — Anthropic direct to AWS Bedrock | TBD | Env var + credential switch only, no code changes expected per existing design (shared/llm.py) | 19 | TBD | TBD | Open |
 | 20 | RCA Agent / Action Agent | TBD | Not yet built — incident_management schema already designed for their future consumption | 20 | TBD | TBD | Open |
 | 21 | Provisioned separate DB credentials for RCA Agent + App Support Agent | 15 min | Two new Postgres roles created (rca_agent, app_support_agent), scoped to incident_management schema only, full read-write, isolated from each other and from other schemas. Credentials shared with respective teams out-of-band — not stored in this file. | 21 | 03/08/26 | 0.25 | Done |
+| 22 | Postgres backup — pg_dump + systemd timer (cross-agent, see root INFRASTRUCTURE.md) | 30 min | Started from alert-analyser memory investigation session; covers entire operative_db, not alert-analyser-specific. Full details in /data/org-dev/INFRASTRUCTURE.md — backup stored on root disk (separate physical device from /data where pgdata lives), daily 02:00 UTC, 3-day retention. | 22 | 04/08/26 | 0.5 | Done |
 
 ---
 
