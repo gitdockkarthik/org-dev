@@ -521,6 +521,20 @@ Recommended ticket timing: low-traffic window; good timing since other teams' ag
 aren't live yet.
 *Added: 2026-08-04*
 
+### Minor UX: SLO tab briefly shows red "0/3 online" right after a container restart
+Found live (2026-08-04) while validating cluster 8 onboarding: SLO tab briefly showed
+"0/3 online" in red for brokers that were actually all healthy -- self-corrected without
+a manual refresh within a normal poll cycle. Root cause understood, not a defect: any
+container restart briefly empties the in-memory cache the Brokers/SLO tabs read from,
+until the first post-restart collector cycle completes and repopulates it. Confirmed via
+job history: broker-health-8 succeeded from its very first run (04:00), so this wasn't a
+missing-data issue -- just the normal brief empty-state window after one of today's many
+onboarding-related restarts. Low priority, cosmetic-only, only visible right after a
+restart. Possible improvement: show "collecting data..." instead of a red/alarming 0/3
+during this specific transient window, distinguishing "genuinely just restarted" from
+"actually degraded." To be validated by the team in parallel.
+*Added: 2026-08-04*
+
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - **CSV Export for dashboard tables** (Topics, Consumer Groups, Connectors) — quick win,
   unblocked, no dependencies. User's team will use exported data to manually tag
