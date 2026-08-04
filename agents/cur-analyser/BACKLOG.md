@@ -162,3 +162,32 @@ Update this table after each work chunk — status changes, new rows appended, e
   agent/session, do not act on them — flag them and let the respective session's owner decide
   (finish + commit, or discard) in that session, not from an unrelated one. This mirrors how this
   exact gap was caught safely today.
+
+### RESOLVED — delete_report() fails on directories + depends on stale in-memory state (#12)
+- **Status:** Done (code fix applied and committed); real-world validation pending next natural
+  S3 sync cycle
+- **Found:** 2026-08-04, during real-world validation of the #11 fix — the first genuine S3 sync
+  after deployment (replacing report 13 with report 14, following the S3-prefix billing-period fix
+  applied the same day) surfaced this immediately.
+- **Symptom:** `13.parquet_dir` remained on disk after its DB row was correctly deleted —
+  `IsADirectoryError: [Errno 21] Is a directory: '/app/data/cur/13.parquet_dir'` in logs, from
+  `delete_report()`'s use of `os.unlink()`.
+- **Root cause — two bugs, same function:**
+  1. `os.unlink()` only works on files, not directories — `.parquet_dir` reports are always
+     directories, so this always failed silently (caught, logged, swallowed).
+  2. The function determined the file path to delete, and its `removed` return value, from the
+     in-memory `_reports` list — same root problem class as #11. Post-restart, this list may not
+     reflect reality.
+- **Fix applied:** Convention-based file lookup via `report_file_path()` (same pattern as
+  `cleanup_old_report_files()`), `shutil.rmtree()` for directories / `os.remove()` for files,
+  wrapped in try/except. Return value now based on actual DB delete result
+  (`result.rowcount > 0`), not in-memory state.
+- **Manual cleanup performed:** Removed orphaned `13.parquet_dir` directly.
+- **Validation status:** Syntax-checked, rebuilt, confirmed no regression (report 14 still serving
+  correctly). Full end-to-end validation (confirming a *future* replace-in-place delete correctly
+  removes its directory) still pending the next natural S3 sync — expected within the normal
+  ~8-hour cadence once August data accumulates further.
+- **Relationship to #11:** Same underlying lesson — any code path that decides "does this file/report
+  exist" must query the DB or filesystem directly, never trust the in-memory `_reports` list, which
+  resets on every restart. Worth treating as a design principle for this file going forward, not just
+  two isolated bugs.
