@@ -440,29 +440,37 @@ Investigated shared t3.xlarge host (16GB RAM, 4 vCPU, 30GB root disk + separate 
    system/docker-housekeeping.service and .timer.
 *Added: 2026-08-02*
 
-### Missing retention/purge on 3 of 5 large Postgres tables (found via KPI Box governance session, verified here 2026-08-02)
-Cross-session finding: governance/infra session flagged 5 tables with no retention wired
-in, totaling ~3.35GB (~93% of Postgres's footprint). Verified directly here -- CORRECTION
-to their hypothesis: kafka_topic_message_rate_snapshots (1477MB) already has WORKING
-rollup+delete logic (built same day, collectors.py ~line 1488 -- rolls up then deletes
-raw rows older than cutoff, same session/transaction). The other 4 are genuinely
-unmanaged, and growing FASTER than the governance session's own "not urgent" framing
-suggested (that framing was based on host RAM/disk headroom, not these tables'
-individual trajectories):
-- kafka_connector_snapshots (286MB): 2.08M rows, ~190K rows/day
-- kafka_topic_message_rate_hourly_rollup (400MB): 1.45M rows, ~700K+ rows/day (fastest
-  growing, zero retention at all -- the rollup table itself has no cap)
-- kafka_consumer_group_rate_snapshots (105MB): 389K rows, ~194K rows/day
-- kafka_metrics_history (891MB): 12K rows, ~50 day span -- slow/mostly-inactive legacy
-  table, lowest priority of the four
-**Plan**: reuse the exact proven pattern already validated in production (age-based
-DELETE with a real timestamp cutoff, same session/transaction as any related write,
-tested against real data before trusting it) -- same approach as the
-kafka_topic_message_rate_snapshots rollup and the cur-analyser parquet cleanup (Aug 1).
-Scope as its own item, not a quick patch -- 3-4 tables each need their own retention
-window decided (how much history is actually needed for each), then implemented and
-validated one at a time.
-*Added: 2026-08-02, cross-referenced with KPI Box governance session*
+### Missing retention/purge on 4 large Postgres tables -- DONE (2026-08-04)
+Cross-session finding (governance session, 2026-08-02): 5 tables with no retention,
+~3.35GB. kafka_topic_message_rate_snapshots already had working rollup+delete logic;
+fixed the other 4, one at a time, with retention windows sized against REAL verified UI
+usage (not defaulted to a uniform "long" window) -- checked exactly what each table's
+consumers actually query before picking a number, per user's explicit ask ("we have our
+time filter max available for 30 days, so worth storing 90 days retention?").
+
+- **kafka_topic_message_rate_hourly_rollup**: matches UI's own "Last 30 days" max time
+  filter (was going to size for 90 days, corrected down after checking the real UI
+  ceiling). Added Step 3 to the existing hourly rollup job. ~4.8GB estimated
+  steady-state (2 clusters).
+- **kafka_connector_snapshots**: matches SLO tab's own 30-day max filter. Had zero
+  cleanup mechanism at all -- added to collect_connector_snapshots, guarded to run
+  ~once/hour (job runs every 2 min). ~822MB estimated steady-state.
+- **kafka_consumer_group_rate_snapshots**: only ever queried with minutes=60 (popup
+  chart) -- used 24h as a generous safety margin, not 30 days. Added to
+  collect_consumer_lag_active, guarded to ~once/hour. First run purged 450,127
+  genuinely old rows (652K->202K); VACUUM FULL reclaimed 177MB->43MB.
+- **kafka_metrics_history**: audited every query against this table -- ALL are
+  `ORDER BY collected_at DESC LIMIT 1`, meaning only the single latest row per
+  (cluster_id, scan_type) is ever read anywhere. Not a date-window case at all --
+  fixed to keep only the latest row, in the shared _insert_metric() write path (covers
+  every save_* caller). One-time backlog cleanup: deleted 11,239 stale rows, VACUUM
+  FULL reclaimed 891MB->400KB (only 15 rows were ever genuinely needed).
+
+**Total real steady-state across all 4 tables: ~5.7GB** (vs. the original ~3.35GB
+already-accumulated figure, which was climbing unbounded) -- properly bounded now, not
+just delayed. Every retention window was checked against actual UI/query usage before
+being chosen, not assumed.
+*Added: 2026-08-02, completed: 2026-08-04*
 
 ### Internal Staging Kafka onboarded, DevQA temporarily disabled for capacity relief (2026-08-04)
 Onboarded cluster 8 (Internal Staging Kafka, 17 Connect workers, 24,508 topics -- larger
