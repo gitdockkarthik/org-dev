@@ -301,11 +301,109 @@
       if (b >= 1e3)  return (b/1e3).toFixed(1)  + ' KB';
       return Math.round(b) + ' B';
     }
+
+    function _downloadCSV(rows, columns, filename) {
+      const escapeCSV = (val) => {
+        if (val === null || val === undefined) return '';
+        const s = String(val);
+        if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+          return '"' + s.replace(/"/g, '""') + '"';
+        }
+        return s;
+      };
+      const header = columns.map(c => escapeCSV(c.label)).join(',');
+      const lines = rows.map(row =>
+        columns.map(c => escapeCSV(row[c.key])).join(',')
+      );
+      const csv = [header, ...lines].join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
     function metricColor(pct) {
       if (pct >= 80) return 'var(--danger)';
       if (pct >= 60) return '#d97706';
       return 'var(--success)';
     }
+
+    window._exportTopicsCSV = async function() {
+      const btn = event?.target;
+      const originalText = btn ? btn.textContent : '';
+      if (btn) { btn.textContent = '⏳ Exporting...'; btn.disabled = true; }
+      try {
+        const params = new URLSearchParams();
+        params.set('limit', '100000');
+        params.set('offset', '0');
+        params.set('cluster_id', _currentClusterId || '');
+        const res = await fetch(`${PROXY}/dashboard/topics?${params.toString()}`, { headers: _authHeaders(), cache: 'no-store' });
+        const data = await res.json();
+        const rows = (data.topics || []).map(t => ({
+          name: t.name,
+          partition_count: t.partition_count || 0,
+          replication_factor: t.replication_factor || 0,
+          size_bytes: fmtBytes(t.size_bytes || 0),
+          status: t.status || '',
+        }));
+        _downloadCSV(rows, [
+          {key: 'name', label: 'Topic Name'},
+          {key: 'partition_count', label: 'Partitions'},
+          {key: 'replication_factor', label: 'Replication Factor'},
+          {key: 'size_bytes', label: 'Size'},
+          {key: 'status', label: 'Status'},
+        ], `topics_export_${new Date().toISOString().slice(0,10)}.csv`);
+      } catch (e) {
+        console.error('Topics CSV export failed:', e);
+        alert('Export failed. Please try again.');
+      } finally {
+        if (btn) { btn.textContent = originalText; btn.disabled = false; }
+      }
+    };
+
+    window._exportGroupsCSV = function() {
+      const rows = (window._cgGroups || []).map(g => ({
+        group_id: g.group_id || g.group_name || 'Unknown',
+        state: g.state || '',
+        total_lag: g.total_lag ?? '',
+        lag_trend: g.lag_trend || '',
+        topic_count: g.topic_count ?? '',
+      }));
+      _downloadCSV(rows, [
+        {key: 'group_id', label: 'Group ID'},
+        {key: 'state', label: 'State'},
+        {key: 'total_lag', label: 'Total Lag'},
+        {key: 'lag_trend', label: 'Lag Trend'},
+        {key: 'topic_count', label: 'Topic Count'},
+      ], `consumer_groups_export_${new Date().toISOString().slice(0,10)}.csv`);
+    };
+
+    window._exportConnectorsCSV = function() {
+      const rows = (window._connectData || []).map(c => ({
+        name: c.name,
+        state: c.state || '',
+        type: c.type || '',
+        connector_class: c.connector_class || '',
+        total_tasks: c.total_tasks ?? '',
+        running_tasks: c.running_tasks ?? '',
+        failed_tasks: c.failed_tasks ?? '',
+        paused_tasks: c.paused_tasks ?? '',
+      }));
+      _downloadCSV(rows, [
+        {key: 'name', label: 'Connector Name'},
+        {key: 'state', label: 'State'},
+        {key: 'type', label: 'Type'},
+        {key: 'connector_class', label: 'Connector Class'},
+        {key: 'total_tasks', label: 'Total Tasks'},
+        {key: 'running_tasks', label: 'Running Tasks'},
+        {key: 'failed_tasks', label: 'Failed Tasks'},
+        {key: 'paused_tasks', label: 'Paused Tasks'},
+      ], `connectors_export_${new Date().toISOString().slice(0,10)}.csv`);
+    };
     function sevBadge(sev) {
       return `<span class="sev sev--${sev}">${sev.toUpperCase()}</span>`;
     }
@@ -1039,6 +1137,7 @@
           <span class="filter-chip" onclick="window._cgSetFilter('critical',this)">Critical</span>
           <span class="filter-chip" onclick="window._cgSetFilter('warning',this)">Warning</span>
           <span class="filter-chip" onclick="window._cgSetFilter('healthy',this)">Healthy</span>
+          <button class="btn btn--ghost btn--sm" onclick="window._exportGroupsCSV()" style="margin-left:8px">⬇ Export All Consumer Groups to CSV</button>
         </div>
       `;
 
@@ -1249,10 +1348,12 @@
           <span class="filter-chip active" onclick="window._setTopicShow(false,this)">All</span>
           <span class="filter-chip" onclick="window._setTopicShow(true,this)">User Topics</span>
           <input class="filter-input" id="topic-search" placeholder="Search topic name…" oninput="window._topicSearch(this.value)" style="margin-left:8px" />
+          <button class="btn btn--ghost btn--sm" onclick="window._exportTopicsCSV()" style="margin-left:8px">⬇ Export All Topics to CSV</button>
         </div>
       `;
 
       const allTopics = data.topics || [];
+      window._allTopics = allTopics;
       // Merge top_topics_by_size into allTopics for accurate log size display
       if (window._clusterCounts && window._clusterCounts.top_topics_by_size && window._clusterCounts.top_topics_by_size.length > 0) {
           const topSizeMap = new Map(window._clusterCounts.top_topics_by_size.map(t => [t.name, t.size_bytes]));
@@ -2090,6 +2191,7 @@
         if (scoreA !== scoreB) return scoreA - scoreB;
         return (b.total_tasks || 0) - (a.total_tasks || 0);
       });
+      window._connectData = connectors;
 
       if (!connectors.length) {
         el.innerHTML = `
@@ -2236,6 +2338,7 @@
           <span class="filter-chip" onclick="window._connectSetStatus('PAUSED',this)">Paused</span>
           <span class="filter-chip" onclick="window._connectSetStatus('FAILED_TASKS',this)">Failed Tasks</span>
           <input class="filter-input" id="connector-search" placeholder="Search connector…" oninput="window._connectSearch(this.value)" />
+          <button class="btn btn--ghost btn--sm" onclick="window._exportConnectorsCSV()" style="margin-left:8px">⬇ Export All Connectors to CSV</button>
         </div>
         <div class="filter-bar">
           <span class="dash-label">Type:</span>
