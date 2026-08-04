@@ -624,11 +624,29 @@ estimate, but has a proven, already-validated template to follow from today's wo
 4. AI Insights full dedicated pass (~3-5 hrs, needs its own dedicated session)
 *Added: 2026-08-04*
 
+### CSV Export for Topics, Consumer Groups, Connectors -- DONE (2026-08-04)
+Client-side export, all three tabs (static + portal). Exports ALL rows regardless of
+active filter/search -- confirmed with user and buttons explicitly labeled "Export All
+..." to make this clear rather than surprising anyone. Columns per user's explicit
+scope: Topics includes partitions/replication factor/size (deliberately kept despite
+being "frequently changing", since someone may want to share current size) but excludes
+bytes/sec, under-replicated, last-seen, and all chart data; Consumer Groups and
+Connectors export their main table columns.
+
+**Real bug found and fixed during live testing**: Topics export initially pulled from
+the frontend's in-memory array, which only ever holds a capped subset for display
+performance (101 of 24,402 real topics exported -- would have been silently, badly
+wrong if not caught). Fixed by having Topics export fetch the complete dataset directly
+from the database-backed /dashboard/topics endpoint instead (same one the paginated
+table already uses, just with a high limit). Consumer Groups and Connectors were
+correct from the start (357/357 and 331/331 exact matches) since those tabs don't cap
+their in-memory arrays the same way.
+
+Validated live with real data: Topics 24402/24402, Consumer Groups 357/357, Connectors
+331/331 -- all exact matches, including the header row.
+*Added: 2026-08-01, completed: 2026-08-04*
+
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
-- **CSV Export for dashboard tables** (Topics, Consumer Groups, Connectors) — quick win,
-  unblocked, no dependencies. User's team will use exported data to manually tag
-  entries (product, service, etc.) before uploading a completed tag mapping to
-  SharePoint. Added 2026-08-01.
 - **Product/Service tag mapping display** — read the team's tag mapping (product,
   service, etc.) from a SharePoint location once the tag schema is finalized, and
   correlate it against our existing tables (topics, consumer groups, connectors) to
