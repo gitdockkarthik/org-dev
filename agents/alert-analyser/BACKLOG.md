@@ -31,6 +31,7 @@ Done | Open | Blocked | In Progress
 | 18 | Alert Analyser v1.2.0 Bitbucket standalone delivery | TBD | Package for SRE deployment — shared/llm.py bundled as llm.py with renamed imports (pattern from v1.1.0) | 18 | TBD | TBD | Open |
 | 19 | LLM provider migration — Anthropic direct to AWS Bedrock | TBD | Env var + credential switch only, no code changes expected per existing design (shared/llm.py) | 19 | TBD | TBD | Open |
 | 20 | RCA Agent / Action Agent | TBD | Not yet built — incident_management schema already designed for their future consumption | 20 | TBD | TBD | Open |
+| 21 | Provisioned separate DB credentials for RCA Agent + App Support Agent | 15 min | Two new Postgres roles created (rca_agent, app_support_agent), scoped to incident_management schema only, full read-write, isolated from each other and from other schemas. Credentials shared with respective teams out-of-band — not stored in this file. | 21 | 03/08/26 | 0.25 | Done |
 
 ---
 
