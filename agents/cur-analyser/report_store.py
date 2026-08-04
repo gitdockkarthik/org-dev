@@ -191,13 +191,34 @@ def add_report(
     return _public(report)
 
 
-def cleanup_old_report_files(keep_last: int = 3) -> int:
+async def cleanup_old_report_files(keep_last: int = 3) -> int:
     """Delete on-disk files for reports beyond the most recent `keep_last`.
     Returns count of report file sets removed. Safe to call after each new
     report is persisted — prevents unbounded parquet_dir/csv accumulation."""
     import shutil
-    with _lock:
-        report_ids = sorted((r["id"] for r in _reports), reverse=True)
+    from config import settings
+    from database import SessionLocal
+    from models import CurReport
+    from sqlalchemy import select
+
+    if SessionLocal is None:
+        return 0
+
+    try:
+        async with SessionLocal() as session:
+            rows = (
+                await session.execute(
+                    select(CurReport)
+                    .where(CurReport.agent_slug == settings.agent_slug)
+                    .order_by(CurReport.id.desc())
+                )
+            ).scalars().all()
+
+        report_ids = [r.id for r in rows]
+    except Exception:
+        logger.exception("cleanup_old_report_files: failed to query reports from DB")
+        return 0
+
     to_remove = report_ids[keep_last:]
     removed = 0
     for rid in to_remove:

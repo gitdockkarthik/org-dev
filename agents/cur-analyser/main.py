@@ -548,7 +548,7 @@ async def _process_upload_job(job: dict, tmp_path: str, filename: str, file_size
         await persist_report(report["id"])
         try:
             from report_store import cleanup_old_report_files
-            cleanup_old_report_files(keep_last=3)
+            await cleanup_old_report_files(keep_last=3)
         except Exception as _ce:
             logger.warning("cleanup_old_report_files failed: %s", _ce)
         invalidate_dashboard_cache(report["id"])
@@ -723,7 +723,7 @@ async def _process_folder_upload_job(job: dict, tmp_paths: list[str], filenames:
         await persist_report(report["id"])
         try:
             from report_store import cleanup_old_report_files
-            cleanup_old_report_files(keep_last=3)
+            await cleanup_old_report_files(keep_last=3)
         except Exception as _ce:
             logger.warning("cleanup_old_report_files failed: %s", _ce)
         invalidate_dashboard_cache(report["id"])
@@ -1615,7 +1615,7 @@ async def _run_s3_sync(job_id: str, bucket: str, prefix: str, region: str, folde
             await persist_report(report["id"])
             try:
                 from report_store import cleanup_old_report_files
-                cleanup_old_report_files(keep_last=3)
+                await cleanup_old_report_files(keep_last=3)
             except Exception as _ce:
                 logger.warning("cleanup_old_report_files failed: %s", _ce)
             # Update last synced info
