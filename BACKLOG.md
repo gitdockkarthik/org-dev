@@ -120,11 +120,35 @@ most PAUSED connectors and conflates two different meanings ("paused by someone"
 "not measurable by design").
 *Added: 2026-07-31 (original session, recovered from re-uploaded handoff.md)*
 
-### Source connector -> topic correlation
-Use the all-topics inflow data (once the message in-flow feature ships) to assess source
-connector health — i.e. is it actually producing. Explicitly agreed as its own separate
-future cycle, not bundled into the message-rate chart work.
-*Added: 2026-07-31 (original session, recovered from re-uploaded handoff.md)*
+### Source connector -> topic correlation -- SCOPED, deferred to own dedicated session (2026-08-04)
+Use the all-topics inflow data (now shipped) to assess source connector health -- i.e.
+is it actually producing. Investigated live before deferring; real findings to carry
+into the dedicated session:
+
+- **Kafka Connect's own /connectors endpoint does NOT return the cluster-wide view from
+  a single worker** -- confirmed via direct testing: querying just aos-stg-worker1
+  showed 37 connectors (all sink, 0 source), but the real cluster total is 331 (293
+  sink, 38 source). Must query ALL workers and merge/dedupe by connector name to get
+  the complete picture (same pattern the existing collect_connector_snapshots already
+  uses) -- a single-worker query silently misses connectors and would have produced a
+  badly wrong analysis if not caught.
+- **Target-topic config key varies by connector type, and coverage is partial**:
+  15 of 38 source connectors (39%, all Salesforce-plugin based) have a simple
+  `kafka.topic` config key (comma-separated for multi-topic connectors) -- directly
+  usable, low-risk, build this case first.
+  23 of 38 (61%) are Debezium CDC connectors (MongoDbConnector, MySqlConnector) that
+  derive topic names dynamically at runtime, typically `{topic.prefix}.{database}.
+  {table}` -- NOT resolvable from a single static config key, needs meaningfully more
+  logic (parsing prefix config + knowing which tables are actually captured). Scope as
+  its own follow-up phase within the same session, not solved in the same pass as the
+  simple case.
+- **Plan for the dedicated session**: (1) build + validate the simple kafka.topic-based
+  correlation first (15 connectors, real data available now on cluster 8), (2) tackle
+  Debezium topic resolution as its own phase, (3) validate both against real inflow data
+  before considering done. User's explicit preference: one focused session covering the
+  full sequence (build -> validate -> commit), not split across multiple partial passes.
+*Added: 2026-07-31 (original session, recovered from re-uploaded handoff.md),
+re-scoped with real findings: 2026-08-04*
 
 
 
