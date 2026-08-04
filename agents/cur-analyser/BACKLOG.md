@@ -147,3 +147,18 @@ Update this table after each work chunk — status changes, new rows appended, e
   Disk now shows exactly 1 folder, matching the 1 DB row.
 - **Confirms going forward:** cleanup will now survive container restarts correctly, since it no
   longer depends on in-memory state that resets on restart.
+
+### Process note — code fix deployed but not committed (caught via cross-session diff)
+- **Found:** 2026-08-03, while working in a Kafka-analyser session, via `git diff` scoped to
+  `agents/cur-analyser/main.py` and `report_store.py` before starting unrelated work.
+- **What happened:** The #11 fix (async `cleanup_old_report_files()`) was applied to the working
+  tree earlier and validated live, but the actual code change was never `git commit`ed — only a
+  follow-up docs commit (`f86e57b`) went through, updating BACKLOG.md but not the code itself.
+  The real fix sat live-but-uncommitted in the working tree until caught.
+- **Resolved:** Verified the diff was this thread's own known, validated work (not abandoned or
+  superseded), then committed properly (`d7c6546`).
+- **Practice going forward:** Before starting work in any session, check `git diff`/`git status`
+  scoped to the files that session is about to touch. If uncommitted changes belong to a different
+  agent/session, do not act on them — flag them and let the respective session's owner decide
+  (finish + commit, or discard) in that session, not from an unrelated one. This mirrors how this
+  exact gap was caught safely today.
