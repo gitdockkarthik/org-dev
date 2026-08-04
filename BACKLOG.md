@@ -607,6 +607,23 @@ would have recurred identically for every future newly-onboarded cluster if not 
 now.
 *Added: 2026-08-04*
 
+### Bytes In chart granular bucket data -- SCOPED, deferred to tomorrow (2026-08-04)
+Investigated before deferring: no raw, time-series history exists for bytes-in data
+anywhere today -- only kafka_topic_metrics.bytes_in_per_sec (latest value only,
+overwritten every 2 min) and kafka_topic_metrics_hourly (running average WITHIN each
+hour, not fine-grained snapshots). Real fix needs the same architecture as tonight's
+message-rate feature: new raw snapshot table, write path in collect_msg_rate (already
+runs every 2 min), retention (same guarded-hourly-purge pattern used today), and
+blended raw+hourly endpoint logic. Re-estimated: ~1.5-2 hrs (bigger than original 1hr
+estimate, but has a proven, already-validated template to follow from today's work).
+
+**Tomorrow's plan (2026-08-05), in priority order**:
+1. Bytes In chart granular bucket data (~1.5-2 hrs)
+2. Legacy _collection_loop decommission decision (~1-3 hrs, depends on scope)
+3. Data-layer documentation -- ERD + mappings (~4-6 hrs, own dedicated block)
+4. AI Insights full dedicated pass (~3-5 hrs, needs its own dedicated session)
+*Added: 2026-08-04*
+
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - **CSV Export for dashboard tables** (Topics, Consumer Groups, Connectors) — quick win,
   unblocked, no dependencies. User's team will use exported data to manually tag
