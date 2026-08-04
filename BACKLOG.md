@@ -464,6 +464,38 @@ window decided (how much history is actually needed for each), then implemented 
 validated one at a time.
 *Added: 2026-08-02, cross-referenced with KPI Box governance session*
 
+### Internal Staging Kafka onboarded, DevQA temporarily disabled for capacity relief (2026-08-04)
+Onboarded cluster 8 (Internal Staging Kafka, 17 Connect workers, 24,508 topics -- larger
+than DevQA). Cleanup: removed unused test clusters 1/2 (verified zero dependent rows
+across all tables first). Registered cluster 8, staggered its job schedules against
+clusters 3/4 (topic-structure, topic-inflow, consumer-lag offset to unique ticks),
+validated each job live. Found and raised broker-health-8/msg-rate-8 timeouts to 300s
+to match cluster 4's pattern (same real, measured Prometheus-scrape characteristic, not
+a bug). Found + fixed a real bug along the way: trigger_job()'s stale-run check used
+the hardcoded registration-time default timeout instead of the real DB-configured one
+(_execute_job, the scheduler's own path, was already correct) -- caused manual triggers
+to incorrectly clear legitimately-still-running jobs as "stale". Fixed, validated, committed.
+
+Host capacity: confirmed live that with 3 clusters active, host load average reached
+12.40-13.51 on 4 cores, and kafka-analyser's own CPU climbed to 70% during concurrent
+onboarding validation (previously ~0.1% at idle) -- genuine host-level contention,
+compounded by ClickHouse's persistent 226%+ CPU (separate service, Langfuse token/cost
+tracking, not ours to fix). Tried a hard Docker CPU limit (cpus: 1.5) as a containment
+measure -- caused real failures (topic-structure-8 timed out completely under concurrent
+load that succeeded cleanly minutes earlier without the limit) -- REVERTED, this specific
+number was too aggressive for our actual 12-worker-pool/3-cluster concurrent workload.
+
+**User's decision**: temporarily disable DevQA (cluster 3, id=3, enabled=false) --
+lower priority than External/Internal Staging (dev-only regression cluster, not
+production-facing), while a scaling/capacity request is raised with CloudOps separately.
+Validated immediately after: kafka-analyser CPU dropped from 70% to 4.6%, cluster 4's
+jobs returned to fast/consistent (1-17s), host load average improved (10.47-12.38, down
+from 12.40-13.51). Re-enable DevQA once capacity is confirmed available.
+Alternative considered but explicitly deferred by user: a dedicated Kafka-analyser box
+-- higher cost/maintenance, not preferred unless the shared-host approach proves
+insufficient even after scaling.
+*Added: 2026-08-04*
+
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - **CSV Export for dashboard tables** (Topics, Consumer Groups, Connectors) — quick win,
   unblocked, no dependencies. User's team will use exported data to manually tag
