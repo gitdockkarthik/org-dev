@@ -496,6 +496,31 @@ Alternative considered but explicitly deferred by user: a dedicated Kafka-analys
 insufficient even after scaling.
 *Added: 2026-08-04*
 
+### KPI Box scaling approved: t3.xlarge -> m5.2xlarge (2026-08-04)
+User got approval to scale the shared host. Recommendation given: m5.2xlarge (8 vCPU,
+32GB RAM, general-purpose, fixed performance) over staying in the T-series -- t3.xlarge
+is burstable (CPU credits), and measured load was SUSTAINED (10-13 load average on 4
+cores for extended periods, not occasional bursts), so a burstable family would either
+throttle hard on credit exhaustion or incur unlimited-mode surcharges. General-purpose
+(not compute-optimized) chosen because the box runs a genuinely mixed workload
+(Postgres, ClickHouse, multiple agent containers) where RAM-to-CPU ratio matters as
+much as raw cores.
+
+Confirmed for the user: this is a stop -> change instance type -> start operation, NOT a
+rebuild. EBS volumes (root + the separate /data volume Docker uses) persist untouched.
+Brief downtime during the type change (not live/zero-downtime). All Docker containers
+restart as part of this (same category of event as today's full-host restart for the
+log-rotation fix -- already validated that recovery works cleanly, including the 4
+containers needing a manual start due to missing restart policies). m5.2xlarge is
+x86_64, same architecture as t3.xlarge, so no image rebuilds or compatibility work
+needed (unlike Graviton/ARM64, which the user has separately in mind as a longer-term,
+cost-saving option but explicitly wants evaluated properly in the dedicated infra
+session later, not bundled into this urgent scaling fix).
+
+Recommended ticket timing: low-traffic window; good timing since other teams' agents
+aren't live yet.
+*Added: 2026-08-04*
+
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - **CSV Export for dashboard tables** (Topics, Consumer Groups, Connectors) — quick win,
   unblocked, no dependencies. User's team will use exported data to manually tag
