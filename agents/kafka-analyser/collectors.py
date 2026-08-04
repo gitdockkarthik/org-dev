@@ -474,6 +474,22 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
                                 VALUES {values}
                             """))
                         await sess_grp.commit()
+                        # Retention: purge rows beyond 24 hours -- the real, verified need
+                        # (the only query against this table, the group-level popup
+                        # chart, is hardcoded to minutes=60; 24h is a generous safety
+                        # margin). This code runs every ~3 minutes, so guard the purge
+                        # to roughly once per hour rather than adding delete overhead
+                        # to every cycle.
+                        from datetime import datetime as _dt5, timezone as _tz5, timedelta as _td5
+                        _now5 = _dt5.now(_tz5.utc)
+                        if _now5.minute < 3:
+                            _purge_cutoff = _now5 - _td5(hours=24)
+                            _purge_result = await sess_grp.execute(_t5(
+                                "DELETE FROM kafka_consumer_group_rate_snapshots WHERE collected_at < :cutoff"
+                            ), {"cutoff": _purge_cutoff})
+                            await sess_grp.commit()
+                            if _purge_result.rowcount:
+                                logger.info("consumer_group_rate_snapshots: purged %d rows beyond 24h", _purge_result.rowcount)
             except Exception as _grp_rate_exc:
                 logger.warning("consumer_group_rate_snapshots insert failed: %s", _grp_rate_exc)
             # Aggregate outflow (consumption) by topic, summed across all groups, for the
