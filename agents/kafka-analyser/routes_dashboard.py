@@ -1160,7 +1160,13 @@ async def get_topic_message_rate(
             if max_bucket_row and max_bucket_row.max_bucket:
                 cutoff = max_bucket_row.max_bucket + timedelta(hours=1)
             else:
-                cutoff = now
+                # No rollup data exists yet for this cluster (e.g. a brand-new cluster before
+                # the hourly rollup job has processed it). Setting cutoff to `now` here would
+                # be backwards -- it would incorrectly route recent-window queries to the
+                # blended raw+rollup path (which then finds nothing in either half). Set it
+                # well before range_start instead, so the raw-only path is used for the full
+                # requested range, correctly using all available raw data.
+                cutoff = range_start - timedelta(days=1)
 
             topic_filter_sql = "AND topic = :topic" if topic else ""
 
