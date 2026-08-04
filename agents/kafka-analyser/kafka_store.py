@@ -196,7 +196,11 @@ async def _ensure_table() -> bool:
 
 
 async def _insert_metric(cluster_id: str, scan_type: str, payload: Any) -> None:
-    """Append a new history row for one scan type (INSERT, never upsert)."""
+    """Append a new history row for one scan type (INSERT, never upsert), then
+    clean up older rows for the same (cluster_id, scan_type) -- only the single
+    most recent row is ever read anywhere in the codebase (every query is
+    `ORDER BY collected_at DESC LIMIT 1`), so keeping history beyond that is pure,
+    unbounded bloat with zero read benefit."""
     if not await _ensure_table():
         return
     try:
@@ -210,6 +214,17 @@ async def _insert_metric(cluster_id: str, scan_type: str, payload: Any) -> None:
                     f"VALUES (:cid, :st, :val)"
                 ),
                 {"cid": cluster_id, "st": scan_type, "val": value},
+            )
+            await session.commit()
+            # Keep only the latest row for this (cluster_id, scan_type) -- nothing
+            # else is ever read from this table.
+            await session.execute(
+                text(
+                    f"DELETE FROM {TABLE} WHERE cluster_id = :cid AND scan_type = :st "
+                    f"AND collected_at < (SELECT MAX(collected_at) FROM {TABLE} "
+                    f"WHERE cluster_id = :cid AND scan_type = :st)"
+                ),
+                {"cid": cluster_id, "st": scan_type},
             )
             await session.commit()
     except Exception as exc:
