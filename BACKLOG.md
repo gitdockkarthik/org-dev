@@ -250,11 +250,34 @@ trust in the whole dashboard, not a UX polish item.
 *Added: 2026-07-29, rescoped and elevated to critical: 2026-08-01, second live
 reproduction confirmed: 2026-08-01*
 
-### `describe_consumer_groups` — other dependent features to check
-Root cause fixed (2026-07-30, consumer-protocol filtering before the call). Worth
-checking whether anything else in the codebase depended on the old (broken) behavior in
-a way that needs re-validation now that the call succeeds where it previously failed.
-*Added: 2026-07-30*
+### `describe_consumer_groups` — dependent-feature check -- DONE, clean (2026-08-04)
+Root cause fixed (2026-07-30, consumer-protocol filtering before the call). Checked
+whether anything else depended on the old (broken) behavior -- traced every caller of
+_describe_group_states (the function wrapping this call) through real_kafka.py.
+Confirmed clean: the "Unknown" fallback on failure is intentional and safe
+(_INACTIVE_GROUP_STATES = {"Dead", "Empty"} deliberately excludes "Unknown", so a failed
+describe fails toward treating a group as active rather than silently hiding it -- not
+a leftover workaround tied to the old bug). No dependent-feature issues found.
+
+Separate, real finding surfaced during this check (tracked as its own item below, not
+folded in here per user's request): _build_consumer_groups (which calls this) is only
+reachable via the legacy full collect() path, used by the Settings "Test Connection"
+button -- the same endpoint that hung during cluster 8's onboarding and had to be
+bypassed with a direct test instead.
+*Added: 2026-07-30, completed: 2026-08-04*
+
+### Settings "Test Connection" button uses slow legacy collect() path
+Found live (2026-08-04) while closing out the describe_consumer_groups check:
+/clusters/{cluster_id}/test calls RealKafkaCollector.collect() -- the full legacy path
+(_build_consumer_groups fetches lag sequentially for up to 100 groups via its own
+fresh, non-shared KafkaConsumer, not the fast collect_summary()/job-scheduler collectors
+this session spent significant effort hardening). This is the same endpoint that hung
+during cluster 8's onboarding tonight and had to be bypassed with a direct connectivity
+test instead of the UI's own button. Same underlying legacy code as item #22 (legacy
+_collection_loop decommission decision), but tracked separately per user's explicit
+request -- needs its own focused session to assess criticality and fix (likely: point
+Test Connection at collect_summary() or an equivalent fast path instead).
+*Added: 2026-08-04*
 
 ---
 
