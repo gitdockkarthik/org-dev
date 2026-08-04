@@ -70,7 +70,25 @@ async def trigger_job(job_id: str, triggered_by: str = "manual") -> dict:
     active = await _get_active_run(job_id)
     if active:
         elapsed = (datetime.now(timezone.utc) - active.started_at).total_seconds()
+        # Use the real, DB-configured timeout for staleness detection -- NOT the
+        # hardcoded registration-time default, which can be badly out of date once
+        # a job's timeout has been tuned via the schedule (matches the same lookup
+        # pattern already used in _execute_job(), for consistency).
         timeout = job.get("default_timeout_secs", 60)
+        try:
+            if SessionLocal is not None:
+                async with SessionLocal() as session:
+                    result = await session.execute(
+                        select(KafkaJobSchedule).where(
+                            KafkaJobSchedule.job_id == job_id,
+                            KafkaJobSchedule.enabled == True,
+                        ).limit(1)
+                    )
+                    sched = result.scalar_one_or_none()
+                    if sched and sched.timeout_secs:
+                        timeout = sched.timeout_secs
+        except Exception:
+            pass
         if elapsed > timeout * 2:
             # Stale run — clear it and allow new run
             await _update_run(active.id, status="failed",
