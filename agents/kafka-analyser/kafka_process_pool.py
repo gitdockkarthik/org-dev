@@ -120,3 +120,148 @@ async def describe_log_dirs_isolated(bootstrap_servers: str, cluster_config: dic
     except Exception as exc:
         logger.warning("describe_log_dirs_isolated: unexpected error: %s", exc)
         return {"ok": False, "error": str(exc)}
+
+
+def _get_worker_consumer_client(bootstrap_servers: str, cluster_config: dict):
+    """Get or create this WORKER PROCESS's own persistent KafkaConsumer for
+    fetching end offsets. Separate from the AdminClient used for
+    list_consumer_groups/list_consumer_group_offsets."""
+    from kafka import KafkaConsumer
+    key = f"consumer:{bootstrap_servers}"
+    if key not in _worker_clients:
+        security = _build_security_kwargs(cluster_config)
+        _worker_clients[key] = KafkaConsumer(
+            bootstrap_servers=bootstrap_servers,
+            request_timeout_ms=10000,
+            **security,
+        )
+    return _worker_clients[key]
+
+
+def _fetch_consumer_lag_worker(bootstrap_servers: str, cluster_config: dict) -> dict:
+    """Runs inside a worker PROCESS -- the full consumer-lag workflow (list
+    groups, fetch committed offsets, fetch end offsets via a KafkaConsumer
+    session, compute lag), moved here as a single unit from collectors.py's
+    _fetch_all_lags() to avoid IPC overhead from splitting a workflow whose
+    intermediate data can be large. No admin_lock needed -- this worker process
+    has exclusive use of its own connection."""
+    admin = _get_worker_client(bootstrap_servers, cluster_config)
+    try:
+        all_groups = admin.list_consumer_groups()
+        consumer_gids = [g[0] for g in all_groups if g[1] == "consumer"]
+        connect_gids = [g[0] for g in all_groups if g[1] == "connect"]
+        sr_gids = [g[0] for g in all_groups if g[1] == "sr"]
+        empty_gids = [g[0] for g in all_groups if g[1] == ""]
+        lag_target_gids = consumer_gids + connect_gids
+        enriched = []
+        total_lag = 0
+        BATCH = 100
+        group_committed = {}
+        end_offsets = {}
+        for batch_start in range(0, len(lag_target_gids), BATCH):
+            batch_gids = lag_target_gids[batch_start:batch_start + BATCH]
+            for gid in batch_gids:
+                try:
+                    offsets = admin.list_consumer_group_offsets(gid)
+                    group_committed[gid] = {
+                        tp: (meta.offset if hasattr(meta, 'offset') else meta)
+                        for tp, meta in offsets.items()
+                        if (meta.offset if hasattr(meta, 'offset') else meta) > 0
+                    }
+                except Exception:
+                    group_committed[gid] = {}
+        all_tps = list(set(tp for committed in group_committed.values() for tp in committed.keys()))
+        if all_tps:
+            _SEEK_MAX_ATTEMPTS = 3
+            _seek_last_exc = None
+            for _attempt in range(1, _SEEK_MAX_ATTEMPTS + 1):
+                try:
+                    _consumer = _get_worker_consumer_client(bootstrap_servers, cluster_config)
+                    SEEK_BATCH = 500
+                    for i in range(0, len(all_tps), SEEK_BATCH):
+                        batch_tps = all_tps[i:i + SEEK_BATCH]
+                        _consumer.assign(batch_tps)
+                        _consumer.seek_to_end(*batch_tps)
+                        end_offsets.update({tp: _consumer.position(tp) for tp in batch_tps})
+                    _seek_last_exc = None
+                    break
+                except Exception as e:
+                    _seek_last_exc = e
+                    _worker_clients.pop(f"consumer:{bootstrap_servers}", None)
+                    end_offsets.clear()
+                    if _attempt < _SEEK_MAX_ATTEMPTS:
+                        import time as _time
+                        _time.sleep(2)
+            if _seek_last_exc is not None:
+                return {"ok": False, "error": f"end-offset fetch failed after {_SEEK_MAX_ATTEMPTS} attempts: {_seek_last_exc}"}
+        group_topic_lag: dict[str, dict[str, dict]] = {}
+        group_partition_lag: dict[str, list[dict]] = {}
+        for gid in lag_target_gids:
+            committed = group_committed.get(gid, {})
+            group_lag = sum(
+                max(0, end_offsets.get(tp, committed_off) - committed_off)
+                for tp, committed_off in committed.items()
+            )
+            enriched.append({
+                "group_id": gid,
+                "state": "connect" if gid in connect_gids else "consumer",
+                "topic_count": len(set(tp.topic for tp in committed.keys())),
+                "total_lag": group_lag,
+                "committed_offsets": len(committed),
+            })
+            total_lag += group_lag
+            topic_agg: dict[str, dict] = {}
+            for tp, committed_off in committed.items():
+                partition_lag = max(0, end_offsets.get(tp, committed_off) - committed_off)
+                entry = topic_agg.setdefault(tp.topic, {"lag": 0, "partitions": 0})
+                entry["lag"] += partition_lag
+                entry["partitions"] += 1
+                end_off = end_offsets.get(tp, committed_off)
+                group_partition_lag.setdefault(gid, []).append({
+                    "topic": tp.topic, "partition": tp.partition, "lag": partition_lag,
+                    "end_offset": end_off, "committed_offset": committed_off,
+                })
+            group_topic_lag[gid] = topic_agg
+        return {
+            "ok": True,
+            "groups": enriched,
+            "group_states": {
+                "consumer": len(consumer_gids),
+                "connect": len(connect_gids),
+                "schema_registry": len(sr_gids),
+                "empty": len(empty_gids),
+                "total": len(all_groups),
+            },
+            "total_lag": total_lag,
+            "group_topic_lag": group_topic_lag,
+            "group_partition_lag": group_partition_lag,
+        }
+    except Exception as exc:
+        _worker_clients.pop(bootstrap_servers, None)
+        return {"ok": False, "error": str(exc)}
+
+
+async def fetch_consumer_lag_isolated(bootstrap_servers: str, cluster_config: dict, timeout: float = 60.0) -> dict:
+    """Main-process-side entry point for the full consumer-lag workflow.
+    cluster_config must contain only plain, picklable fields, matching
+    describe_log_dirs_isolated(). Returns {"ok": True, "groups": [...],
+    "group_states": {...}, "total_lag": N, "group_topic_lag": {...},
+    "group_partition_lag": {...}} on success, or {"ok": False, "error": "..."}
+    on failure/timeout."""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    try:
+        future = _process_pool.submit(_fetch_consumer_lag_worker, bootstrap_servers, cluster_config)
+        result = await loop.run_in_executor(None, future.result, timeout)
+        return result
+    except FutureTimeoutError:
+        logger.warning(
+            "fetch_consumer_lag_isolated: worker process did not respond within "
+            "%ss for %s -- killing and replacing it",
+            timeout, bootstrap_servers,
+        )
+        future.cancel()
+        return {"ok": False, "error": f"Timed out after {timeout}s (worker process killed)"}
+    except Exception as exc:
+        logger.warning("fetch_consumer_lag_isolated: unexpected error: %s", exc)
+        return {"ok": False, "error": str(exc)}
