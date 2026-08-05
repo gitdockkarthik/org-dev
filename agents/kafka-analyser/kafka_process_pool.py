@@ -21,11 +21,37 @@ _process_pool = ProcessPoolExecutor(max_workers=4)
 _worker_clients: dict[str, "KafkaAdminClient"] = {}
 
 
-def _get_worker_client(bootstrap_servers: str, security: dict):
+def _build_security_kwargs(cluster_config: dict) -> dict:
+    """Build kafka-python security kwargs -- including the ssl.SSLContext object
+    -- ENTIRELY INSIDE the worker process. SSLContext objects cannot be pickled,
+    so cluster_config must only ever contain plain, picklable fields (strings/
+    booleans) when crossing the process boundary; this function builds the real,
+    non-picklable security dict locally, where it's only ever used."""
+    security = {}
+    if cluster_config.get("auth_type") not in (None, "none"):
+        import ssl
+        tls = cluster_config.get("tls_enabled", False)
+        security = {
+            "security_protocol": "SASL_SSL" if tls else "SASL_PLAINTEXT",
+            "sasl_mechanism": cluster_config.get("sasl_mechanism", "PLAIN"),
+            "sasl_plain_username": cluster_config.get("sasl_username"),
+            "sasl_plain_password": cluster_config.get("sasl_password"),
+        }
+        if tls:
+            ssl_ctx = ssl.create_default_context()
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = ssl.CERT_NONE
+            security["ssl_context"] = ssl_ctx
+    return security
+
+
+def _get_worker_client(bootstrap_servers: str, cluster_config: dict):
     """Get or create this WORKER PROCESS's own persistent AdminClient for a
-    cluster. Runs inside the worker process, not the main process."""
+    cluster. Runs inside the worker process, not the main process. Builds
+    security kwargs (including any ssl_context) locally -- never pickled."""
     from kafka import KafkaAdminClient
     if bootstrap_servers not in _worker_clients:
+        security = _build_security_kwargs(cluster_config)
         _worker_clients[bootstrap_servers] = KafkaAdminClient(
             bootstrap_servers=bootstrap_servers,
             request_timeout_ms=15000,
@@ -34,11 +60,14 @@ def _get_worker_client(bootstrap_servers: str, security: dict):
     return _worker_clients[bootstrap_servers]
 
 
-def _describe_log_dirs_worker(bootstrap_servers: str, security: dict) -> dict:
+def _describe_log_dirs_worker(bootstrap_servers: str, cluster_config: dict) -> dict:
     """Runs inside a worker PROCESS (not thread) -- can be forcibly killed on
-    timeout by the main process, unlike a thread. Returns a plain dict (picklable
-    across the process boundary; kafka-python's own response objects are not)."""
-    admin = _get_worker_client(bootstrap_servers, security)
+    timeout by the main process, unlike a thread. cluster_config contains only
+    plain, picklable fields (auth_type, tls_enabled, sasl_username,
+    sasl_password, sasl_mechanism); the real security kwargs (including
+    ssl_context) are built locally inside this worker. Returns a plain dict
+    (picklable; kafka-python's own response objects are not)."""
+    admin = _get_worker_client(bootstrap_servers, cluster_config)
     try:
         result = admin.describe_log_dirs()
         sizes: dict[str, int] = {}
@@ -61,8 +90,11 @@ def _describe_log_dirs_worker(bootstrap_servers: str, security: dict) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
-async def describe_log_dirs_isolated(bootstrap_servers: str, security: dict, timeout: float = 30.0) -> dict:
-    """Main-process-side entry point. Dispatches describe_log_dirs to the
+async def describe_log_dirs_isolated(bootstrap_servers: str, cluster_config: dict, timeout: float = 30.0) -> dict:
+    """Main-process-side entry point. cluster_config must contain only plain,
+    picklable fields (auth_type, tls_enabled, sasl_username, sasl_password,
+    sasl_mechanism) -- NOT a pre-built security dict, since that could contain
+    an unpicklable ssl.SSLContext object. Dispatches describe_log_dirs to the
     dedicated process pool with a hard timeout -- if the worker process doesn't
     respond in time, it is forcibly killed (not just abandoned like a thread
     would be), and the pool automatically spins up a replacement worker for
@@ -73,7 +105,7 @@ async def describe_log_dirs_isolated(bootstrap_servers: str, security: dict, tim
     import asyncio
     loop = asyncio.get_event_loop()
     try:
-        future = _process_pool.submit(_describe_log_dirs_worker, bootstrap_servers, security)
+        future = _process_pool.submit(_describe_log_dirs_worker, bootstrap_servers, cluster_config)
         result = await loop.run_in_executor(None, future.result, timeout)
         return result
     except FutureTimeoutError:
