@@ -1202,6 +1202,26 @@ async def collect_msg_rate(cluster_id: str = ""):
                         WHERE cluster_id = :cid AND topic = :topic
                     """), {"cid": int(cid), "rate": round(rate, 2), "topic": topic})
                 await sess.commit()
+        # Raw bytes-in snapshot for the Bytes In chart's 5-min granularity (1h view) --
+        # bulk insert, all active topics, mirrors the message-rate snapshot pattern.
+        if active_topics:
+            from database import SessionLocal as _SL_bytes
+            from sqlalchemy import text as _t_bytes
+            async with _SL_bytes() as sess_bytes:
+                items = list(active_topics.items())
+                BULK = 1000
+                for bi in range(0, len(items), BULK):
+                    batch = items[bi:bi + BULK]
+                    values = ", ".join(
+                        f"({int(cid)}, '{t.replace(chr(39), chr(39)*2)}', {round(r, 2)}, now())"
+                        for t, r in batch
+                    )
+                    await sess_bytes.execute(_t_bytes(f"""
+                        INSERT INTO kafka_topic_bytes_rate_snapshots
+                        (cluster_id, topic, bytes_in_per_sec, collected_at)
+                        VALUES {values}
+                    """))
+                await sess_bytes.commit()
         # Also write to kafka_topic_metrics_hourly for trend chart
         if active_topics:
             from database import SessionLocal as _SL2
