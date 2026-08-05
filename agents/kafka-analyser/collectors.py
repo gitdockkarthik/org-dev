@@ -1133,43 +1133,14 @@ async def collect_msg_rate(cluster_id: str = ""):
         return
     cid = _cid(c)
     try:
-        from kafka import KafkaAdminClient
-        security = {}
-        if c.get("auth_type") not in (None, "none"):
-            import ssl as _ssl
-            tls = c.get("tls_enabled", False)
-            security = {
-                "security_protocol": "SASL_SSL" if tls else "SASL_PLAINTEXT",
-                "sasl_mechanism": c.get("sasl_mechanism", "PLAIN"),
-                "sasl_plain_username": c.get("sasl_username"),
-                "sasl_plain_password": c.get("sasl_password"),
-            }
-            if tls:
-                ssl_ctx = _ssl.create_default_context()
-                ssl_ctx.check_hostname = False
-                ssl_ctx.verify_mode = _ssl.CERT_NONE
-                security["ssl_context"] = ssl_ctx
-        loop = asyncio.get_event_loop()
-        def _get_partition_sizes():
-            admin, admin_lock = get_shared_admin_client(c["bootstrap_servers"], c)
-            try:
-                with acquire_admin_lock(c["bootstrap_servers"], admin_lock):
-                    result = admin.describe_log_dirs()
-                sizes = {}
-                for log_dir in result.log_dirs:
-                    if log_dir[0] != 0: continue
-                    for topic_entry in log_dir[2]:
-                        topic = topic_entry[0]
-                        if topic.startswith('_'): continue
-                        for partition in topic_entry[1]:
-                            key = f"{topic}:{partition[0]}"
-                            sizes[key] = partition[1]
-                return sizes
-            except Exception:
-                invalidate_client(c["bootstrap_servers"])
-                raise
+        from kafka_process_pool import describe_log_dirs_isolated
         now = time.time()
-        current_sizes = await loop.run_in_executor(_kafka_io_executor, _get_partition_sizes)
+        _dl_result = await describe_log_dirs_isolated(c["bootstrap_servers"], c, timeout=30.0)
+        if not _dl_result.get("ok"):
+            logger.warning("collect_msg_rate: describe_log_dirs_isolated failed for %s: %s", c["name"], _dl_result.get("error"))
+            collect_msg_rate._last_result = f"Error: {_dl_result.get('error')}"
+            return
+        current_sizes = _dl_result["sizes"]
         prev_key = f"{cid}_sizes"
         prev_sizes = _prev_offsets.get(prev_key, {})
         prev_time = _prev_offset_time if _prev_offset_time else now
