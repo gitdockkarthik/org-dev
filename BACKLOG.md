@@ -656,6 +656,92 @@ other avoidable memory growth. Not yet investigated -- needs its own focused pas
 likely reusing whatever methodology worked for CUR/Alert.
 *Added: 2026-08-05*
 
+### CRITICAL, pre-production: thread-based Kafka calls cannot be truly cancelled -- process-based isolation needed (2026-08-05)
+Confirmed via a full, evidence-based investigation tonight (not speculation): a genuine,
+unclosed gap in job reliability that must be resolved before external/internal
+PRODUCTION clusters are onboarded. User's explicit priority: job/data reliability is
+the entire foundation this dashboard's credibility rests on -- 200+ hours of work
+across this whole project depends on the data being trustworthy, and this cannot be
+treated as "good enough" going into production.
+
+**Root cause (confirmed, not theoretical)**: asyncio.wait_for()'s timeout can cancel the
+AWAITING coroutine, but cannot stop the underlying THREAD once dispatched to
+run_in_executor() -- a genuine, documented Python limitation (not a bug in our code,
+not a capacity/hardware issue -- confirmed the box has real headroom post-upgrade).
+When a job's attempt times out, its thread can keep running in the background,
+indefinitely, still holding that cluster's shared admin_lock.
+
+**Live incident reproduced and traced end-to-end tonight**: kafka-topic-sizes-8 timed
+out (30s+30s=60.39s) at 04:00:00-04:01:01. A completely unrelated job,
+kafka-msg-rate-8, started at the exact same moment its lock would have still been held,
+and its own retry took ~166s of genuine execution time (the reported 466.7s duration
+metric was itself misleading -- it measures from the ORIGINAL start time, including the
+first attempt's full timeout wait, not the retry's own real duration -- this measurement
+issue is a separate, smaller finding also worth fixing, see below).
+
+**Tonight's mitigation (shipped, real improvement, NOT a full fix)**: added
+acquire_admin_lock() -- timeout-bounded lock acquisition (30s) instead of blocking
+indefinitely, migrated all 14 call sites across collectors.py and real_kafka.py.
+Validated live: a real recurrence of this exact pattern happened again during testing
+(kafka.client logged "Unable to send to wakeup socket!" -- a known kafka-python symptom
+of two threads touching the same client object simultaneously, confirming an orphaned
+thread WAS still active) -- but this time consumer-lag-8 completed in 326.4s instead of
+hanging indefinitely, and the stale client was correctly invalidated/recreated. This
+BOUNDS the blast radius (no more unbounded blocking of unrelated jobs) but does NOT
+eliminate the orphaned thread itself, which keeps running regardless.
+
+**Investigated whether kafka-python's own request_timeout_ms could close this gap
+directly (lower-risk than a full rewrite)**: confirmed request_timeout_ms is a real,
+recognized config key (KafkaAdminClient.DEFAULT_CONFIG, default 30000ms) and IS being
+correctly applied in our shared client (set to 15000ms) -- yet we directly observed
+hangs of 166s+, far beyond this configured value. This is real evidence the library's
+own timeout mechanism has a genuine gap for certain failure modes (very likely: it
+governs individual protocol-level request/response round-trips, but not a connection
+that silently never receives ANY response at the socket level -- a blocking socket read
+with no timeout actually enforced in that specific failure mode). This was not fully
+reverse-engineered against kafka-python's internals tonight given the depth required --
+worth deeper investigation, but the finding stands on its own: the library's own timeout
+cannot be fully trusted to bound every failure mode.
+
+**The only fix that FULLY closes this gap**: run these blocking Kafka calls in separate
+PROCESSES instead of threads (e.g. concurrent.futures.ProcessPoolExecutor, or a
+dedicated subprocess-per-call pattern). Unlike threads, processes CAN be forcibly
+killed (SIGKILL) on timeout, regardless of what they're internally stuck on -- this
+does not depend on trusting kafka-python's own timeout correctness at all.
+
+**Resource trade-off discussed and scoped down (2026-08-05)**: a full replacement of
+the existing 12-worker thread pool with processes was considered and explicitly
+REJECTED -- each process is a full separate interpreter (10-50MB+ vs <1MB per thread),
+plus real IPC serialization overhead for large results (e.g. cluster 8's 30,000+
+partition describe_log_dirs response). Replacing everything would trade a reliability
+problem for a real memory-regression problem, directly working against the memory
+optimization just completed on CUR/Alert (and the same exercise now planned for
+kafka-analyser). Right-sized plan instead: audit every collector job and classify each
+as CRITICAL (data-path jobs whose reliability directly drives dashboard freshness --
+first candidates: the ones already implicated in real incidents, describe_log_dirs
+callers like msg-rate/topic-sizes, and list_consumer_group_offsets in consumer-lag) vs.
+NORMAL (lower-stakes, can stay on the existing shared thread pool). Only CRITICAL jobs
+get a small, dedicated process pool (2-4 workers, not 12) for true cancellation
+guarantees; everything else keeps the current, lightweight thread-based approach.
+
+**Separate, smaller finding also worth fixing**: the job-run duration metric itself
+(_execute_job in jobs.py) measures from the ORIGINAL attempt's start time even on a
+successful retry, conflating "time spent waiting on a failed first attempt" with "the
+retry's own real execution time" -- misleading anyone reading job history (this
+directly misled this investigation's early analysis tonight, before being caught).
+Worth fixing as a quick, separate, low-risk item: track/report the retry's own duration
+distinctly from the total elapsed-since-original-start.
+
+**Recommended before production onboarding**:
+1. Audit and classify all collector jobs: CRITICAL (needs true process-based
+   cancellation) vs. NORMAL (existing thread pool is fine)
+2. Design and implement a small, dedicated process pool for CRITICAL jobs only --
+   right-sized, not a wholesale replacement
+3. Fix the misleading duration-metric issue (quick, separate)
+4. Full end-to-end validation of both under realistic concurrent load, matching the
+   rigor already applied to tonight's connection-storm and thread-pool fixes
+*Added: 2026-08-05, elevated to CRITICAL given production onboarding timeline*
+
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - **Product/Service tag mapping display** — read the team's tag mapping (product,
   service, etc.) from a SharePoint location once the tag schema is finalized, and
