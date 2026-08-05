@@ -623,11 +623,20 @@ unaffected. User confirmed in the actual UI: both Overview and Topics tab charts
 real 5-min movement for the 1-hour range.
 *Added: 2026-08-04, completed: 2026-08-05*
 
+**Legacy _collection_loop decommission -- DONE (2026-08-05)**: fully removed, not
+just disabled. Confirmed genuinely unreachable (never scheduled via create_task
+anywhere in main.py) before removal. Deleted the 359-line function, the
+collection_interval_secs setting (defaults + schema), the "Collection Interval" UI
+card and all related JS (both static and portal settings.html), and a stale DB row
+left over from a prior save. Real risk closed: this legacy path used the old
+thread-based Kafka calls, completely bypassing today's process-isolation hardening --
+a single accidental UI interaction could have reintroduced the exact incident class
+fixed earlier today. Validated clean on both served settings pages.
+
 **Remaining plan, in priority order**:
-1. Legacy _collection_loop decommission decision (~1-3 hrs, depends on scope)
-2. Data-layer documentation -- ERD + mappings (~4-6 hrs, own dedicated block)
-3. AI Insights full dedicated pass (~3-5 hrs, needs its own dedicated session)
-*Added: 2026-08-04*
+1. Data-layer documentation -- ERD + mappings (~4-6 hrs, own dedicated block)
+2. AI Insights full dedicated pass (~3-5 hrs, needs its own dedicated session)
+*Added: 2026-08-04, _collection_loop item completed: 2026-08-05*
 
 ### CSV Export for Topics, Consumer Groups, Connectors -- DONE (2026-08-04)
 Client-side export, all three tabs (static + portal). Exports ALL rows regardless of
@@ -807,6 +816,32 @@ chunking to fit the existing 4-worker pool without losing meaningful throughput.
 User's explicit call: proceed with the other two production clusters as planned, and
 come back to this if/when it actually causes a real problem in practice, rather than
 solve a hypothetical now.
+*Added: 2026-08-05*
+
+### Update Docs Hub with full Kafka Analyser capabilities (2026-08-05)
+User's explicit framing: this is both a selling point for the agent to other teams
+AND a hands-on reference for the user's own full visibility into what's been
+implemented technically, mapped to functional requirements. Broader/more user-facing
+than the already-scoped "Data-layer documentation (ERD + mappings)" item, which is
+narrower/more technical. Needs its own scoping pass before starting -- covers the full
+feature surface (dashboards, SLO tracking, job management, alerting, reports, etc.),
+not just the data layer.
+*Added: 2026-08-05*
+
+### RBAC layer for Jobs page (schedule view/edit restrictions) -- needs agent-level enforcement, not just portal-level
+Ask from the Kafka team: restrict which users can view/change job schedules, with
+elevated permissions for a select few. Real architectural constraint identified before
+scoping: kafka-analyser is a standalone, self-contained agent with its own directly
+reachable API (VPN-internal but independent of the portal, per the platform's
+"pluggable standalone agent" design). Restricting access only at the portal layer
+(e.g. hiding the Jobs tab in the UI for some users) would NOT actually protect
+anything -- anyone with direct network access to the agent's own port could call
+/jobs/{id}/trigger or the schedule endpoints directly, bypassing the portal entirely.
+Real enforcement needs to live INSIDE the agent itself (checking identity/role on each
+relevant request), not just control what the portal chooses to display. Needs its own
+design pass: how does the agent learn a caller's identity/role (portal-forwarded header?
+its own lightweight auth?), and how does that interact with kafka-analyser's existing
+AUTH_MODE=local pattern already used elsewhere in the platform.
 *Added: 2026-08-05*
 
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
