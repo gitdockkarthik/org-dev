@@ -737,15 +737,44 @@ directly misled this investigation's early analysis tonight, before being caught
 Worth fixing as a quick, separate, low-risk item: track/report the retry's own duration
 distinctly from the total elapsed-since-original-start.
 
-**Recommended before production onboarding**:
-1. Audit and classify all collector jobs: CRITICAL (needs true process-based
-   cancellation) vs. NORMAL (existing thread pool is fine)
-2. Design and implement a small, dedicated process pool for CRITICAL jobs only --
-   right-sized, not a wholesale replacement
-3. Fix the misleading duration-metric issue (quick, separate)
-4. Full end-to-end validation of both under realistic concurrent load, matching the
-   rigor already applied to tonight's connection-storm and thread-pool fixes
-*Added: 2026-08-05, elevated to CRITICAL given production onboarding timeline*
+**Progress (2026-08-05): 4 of 5 CRITICAL jobs migrated and validated.**
+Built kafka_process_pool.py -- small, dedicated 4-worker ProcessPoolExecutor (not a
+wholesale thread-pool replacement). Each worker maintains its own persistent
+connection(s), reused across tasks. Security kwargs (including ssl.SSLContext, which
+cannot be pickled) are built INSIDE each worker process, never passed across the
+process boundary -- a real bug caught and fixed during this work, would have silently
+broken every TLS-enabled cluster otherwise.
+
+Migrated, each validated end-to-end through the real job scheduler against both TLS
+(cluster 4) and plain (cluster 8) clusters, with real downstream data confirmed written:
+- **msg-rate** (describe_log_dirs_isolated) -- the job directly blocked in the
+  confirmed incident. 3.5s/7.7s.
+- **topic-sizes** (describe_log_dirs_isolated, reused) -- the job whose own timed-out
+  attempt was the incident's root cause. 1.2s/2.6s.
+- **consumer-lag** (fetch_consumer_lag_isolated) -- wraps the full
+  list_consumer_groups -> list_consumer_group_offsets -> KafkaConsumer seek_to_end ->
+  lag calculation workflow as one unit, avoiding IPC overhead from splitting large
+  intermediate data. Arguably the most important given lag data is core to the
+  dashboard's purpose. 6.2s/20.9s.
+- **broker-health** (describe_cluster_isolated, describe_broker_log_dirs_isolated) --
+  _build_brokers()'s Prometheus/JMX scraping deliberately kept in the main process
+  since it's not part of the risky, lock-holding Kafka call. 8.7s/12.3s.
+
+**topic-structure deliberately deferred** -- see its own dedicated backlog item below.
+Uses 10 parallel threads internally; naively fitting into the small 4-worker process
+pool risked a real 2-2.5x slowdown, and it hasn't been involved in a real incident
+(unlike the four above). User's explicit call: proceed with production onboarding as
+planned, revisit if it actually causes a problem in practice.
+
+**Still open**:
+1. Fix the misleading duration-metric issue (jobs.py's retry duration includes the
+   first attempt's full timeout wait -- quick, separate, low-risk)
+2. Full end-to-end validation under realistic CONCURRENT load (multiple CRITICAL jobs
+   firing at once, matching real production cadence) -- validated individually so far,
+   not yet stress-tested together
+3. topic-structure migration, if it becomes a real problem in practice
+*Added: 2026-08-05, elevated to CRITICAL given production onboarding timeline,
+4 of 5 CRITICAL jobs completed same day*
 
 ### topic-structure -- process-isolation migration deferred (2026-08-05)
 Part of the CRITICAL job-reliability effort (see the main process-isolation item
