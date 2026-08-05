@@ -49,3 +49,14 @@ AgentOwner-based ownership/API-key scoping is completely separate and untouched.
 Next step (not yet scheduled): decide whether to remove mock-agent from the
 catalogue entirely now that validation is complete, or leave it as a permanent
 test fixture for future access-control changes.
+
+Follow-up (2026-08-05, commit 6e1b0a2): Applied team-manager-confirmed curated
+access for 28 users via backend/scripts/apply_agent_access_assignments.py
+(one-off, not re-runnable safely without updating the ASSIGNMENTS dict first).
+Also onboarded new agent rca-agent (standalone, invoke_url
+http://kpi-internal.cloud.operative.com:8880, landing_page_url
+http://kpi-internal.cloud.operative.com:9990/, uses_uap_llm=false pending LLM
+Gateway integration) — registered and published via Admin UI, access granted
+to team-confirmed users only in the same script run. Remaining users not in the
+curated list retain their original backfilled access (all agents except
+mock-agent) unless changed here.
