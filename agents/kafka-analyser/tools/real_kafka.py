@@ -240,13 +240,12 @@ class RealKafkaCollector(KafkaCollector):
 
     async def collect_topic_sizes(self, top_n: int = 100) -> dict[str, Any]:
         """Collect topic sizes using describe_log_dirs — fast, no JMX/Prometheus needed.
-        Works on Kafka 2.3+ (Confluent 5.3+). Returns top N topics by size."""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(_kafka_io_executor, self._collect_topic_sizes_sync, top_n)
-
-    def _collect_topic_sizes_sync(self, top_n: int = 100) -> dict[str, Any]:
-        """Synchronous topic size collection via AdminClient.describe_log_dirs."""
+        Works on Kafka 2.3+ (Confluent 5.3+). Returns top N topics by size. Uses
+        process-based isolation (not the shared thread pool) -- this job's own
+        timed-out attempt was the confirmed root cause of a real incident where its
+        orphaned thread blocked an unrelated job sharing the same admin_lock."""
         import time
+        from kafka_process_pool import describe_log_dirs_isolated
         cluster_config = {
             "bootstrap_servers": self.bootstrap_servers,
             "auth_type": self.auth_type,
@@ -255,37 +254,28 @@ class RealKafkaCollector(KafkaCollector):
             "sasl_mechanism": self.sasl_mechanism,
             "tls_enabled": self.tls_enabled,
         }
-        admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
-        try:
-            with acquire_admin_lock(self.bootstrap_servers, admin_lock):
-                t = time.time()
-                result = admin.describe_log_dirs()
-                elapsed = time.time() - t
-                topic_sizes: dict[str, int] = {}
-                for log_dir in result.log_dirs:
-                    if log_dir[0] != 0:
-                        continue
-                    for topic_entry in log_dir[2]:
-                        topic = topic_entry[0]
-                        for partition in topic_entry[1]:
-                            size = partition[1]
-                            topic_sizes[topic] = topic_sizes.get(topic, 0) + size
-                total_size = sum(topic_sizes.values())
-                top_topics = sorted(topic_sizes.items(), key=lambda x: x[1], reverse=True)[:top_n]
-                return {
-                    "topic_sizes": [
-                        {"topic": t, "size_bytes": s, "size_mb": round(s / 1024 / 1024, 1)}
-                        for t, s in top_topics
-                    ],
-                    "total_topics": len(topic_sizes),
-                    "total_size_bytes": total_size,
-                    "total_size_gb": round(total_size / 1024**3, 2),
-                    "collection_time_secs": round(elapsed, 2),
-                    "error": None,
-                }
-        except Exception as exc:
-            invalidate_client(self.bootstrap_servers)
-            return {"error": str(exc), "topic_sizes": [], "total_size_bytes": 0}
+        t = time.time()
+        result = await describe_log_dirs_isolated(self.bootstrap_servers, cluster_config, timeout=30.0)
+        elapsed = time.time() - t
+        if not result.get("ok"):
+            return {"error": result.get("error"), "topic_sizes": [], "total_size_bytes": 0}
+        topic_sizes: dict[str, int] = {}
+        for key, size in result["sizes"].items():
+            topic = key.rsplit(':', 1)[0]
+            topic_sizes[topic] = topic_sizes.get(topic, 0) + size
+        total_size = sum(topic_sizes.values())
+        top_topics = sorted(topic_sizes.items(), key=lambda x: x[1], reverse=True)[:top_n]
+        return {
+            "topic_sizes": [
+                {"topic": t, "size_bytes": s, "size_mb": round(s / 1024 / 1024, 1)}
+                for t, s in top_topics
+            ],
+            "total_topics": len(topic_sizes),
+            "total_size_bytes": total_size,
+            "total_size_gb": round(total_size / 1024**3, 2),
+            "collection_time_secs": round(elapsed, 2),
+            "error": None,
+        }
 
     async def collect_brokers_only(self) -> list[dict]:
         """Fast broker list only — skips topic listing. ~1s vs 35s."""
