@@ -1,6 +1,7 @@
 """Shared, persistent Kafka client management -- one AdminClient per cluster,
 reused across all collectors instead of each creating its own fresh connection.
 Reduces connection load on both our application and the monitored brokers."""
+import contextlib
 import threading
 import logging
 from kafka import KafkaAdminClient
@@ -49,6 +50,36 @@ def get_shared_admin_client(cluster_id: str, cluster_config: dict) -> tuple[Kafk
             _locks[cluster_id] = threading.Lock()
             logger.info("Created persistent shared AdminClient for cluster %s", cluster_id)
         return _clients[cluster_id], _locks[cluster_id]
+
+
+@contextlib.contextmanager
+def acquire_admin_lock(cluster_id: str, lock: threading.Lock, timeout: float = 30.0):
+    """Acquire a cluster's admin lock with a bounded timeout, instead of blocking
+    indefinitely. Root-cause fix for a confirmed incident: asyncio.wait_for()
+    cannot actually stop a thread already dispatched to run_in_executor() when its
+    own timeout fires, so an orphaned thread from one job's timed-out attempt can
+    keep running and holding this lock -- silently blocking a completely different
+    job that shares the same cluster's AdminClient, for as long as the orphaned
+    thread takes to finish. This bounds that blocking window and, on failure,
+    invalidates the client so the next caller reconnects fresh rather than
+    potentially queuing behind the same stuck lock again.
+
+    Usage: replace `with admin_lock:` with
+    `with acquire_admin_lock(cluster_id_or_bootstrap_servers, admin_lock):`
+    """
+    acquired = lock.acquire(timeout=timeout)
+    if not acquired:
+        invalidate_client(cluster_id)
+        raise TimeoutError(
+            f"Could not acquire admin lock for cluster {cluster_id} within "
+            f"{timeout}s -- likely an orphaned thread from a previous timed-out "
+            f"operation still holding it. Client invalidated; will reconnect "
+            f"fresh on next use."
+        )
+    try:
+        yield
+    finally:
+        lock.release()
 
 
 def invalidate_client(cluster_id: str) -> None:
