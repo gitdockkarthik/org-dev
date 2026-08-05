@@ -24,22 +24,25 @@ interact with AgentOwner/developer ownership) to scope catalogue visibility per-
 Rollout plan: backfill ALL existing users with access to ALL published agents at
 migration time, so no one sees a blank catalogue on deploy — access will then be
 manually curated per-user by admin working with team managers.
-Status: IN PROGRESS — Chunks 1-4 DONE (36836b8, c1c119b, 54d8495, f737e89).
-Chunk 4: admin-only GET/POST/DELETE /agents/{slug}/access endpoints added
-(backend/registry/router.py, backend/registry/schemas.py), mirrors owners pattern
-structurally but simplified — admin-only, no developer self-service, no
-last-owner/self-removal guards (not applicable to catalogue visibility).
-Validated live: POST grant, GET list, DELETE revoke, GET confirm — all correct
-against test.user@operative.com / mock-agent.
-Chunk 5 (portal UI) starting next — no precedent UI screen exists for owners either
-(API-only today), so UI surface is a net-new decision, not a mirror-and-adapt task.
+Status: IN PROGRESS — Chunks 1-4 DONE, Chunk 5a DONE (9f2c7e7): per-user bulk
+access endpoints added — GET /api/registry/users/{email}/agent-access (returns
+current agent_slugs) and PUT (atomic replace: deletes all existing AgentAccess
+rows for that user, inserts new set). Admin-only. Validated live against
+test.user@operative.com (set to 2 agents, confirmed, restored to original 4).
+Design decision: per-user UI chosen over per-agent — admin picks one user, sees
+multi-select of all published agents, saves in one action. Scales better than
+per-agent as user count grows (33 users today).
+UI location identified: portal/admin/index.html — existing Users admin table
+(Name/Email/Role/Created/Actions columns, action buttons: Roles, Reset PW, Delete).
+Chunk 5b: add new "Access" action button per row, opens modal with checkbox list
+of all published agents, pre-populated via GET, saved via PUT. Starting next.
 Plan:
   - [DONE] Chunk 1: AgentAccess model, alembic migration (schema only), commit.
   - [DONE] Chunk 2: backfill script (all users x all published agents), run once, commit.
   - [DONE] Chunk 3: filter list_agents() for plain `user` role only (admin/developer untouched).
   - [DONE] Chunk 4: admin-only endpoints GET/POST/DELETE /agents/{slug}/access (mirrors owners).
-  - Chunk 5: portal UI (no precedent screen exists yet — owners has no UI either,
-    API-only today; UI surface TBD, decide at that chunk).
+  - [DONE] Chunk 5a: per-user bulk access endpoints GET/PUT /users/{email}/agent-access.
+  - Chunk 5b: portal UI — add "Access" action button to Users admin table, modal with checkbox list.
 Each chunk: implement, validate (portal is primary validation surface per this file's
 rule), commit, THEN move to next chunk.
 
