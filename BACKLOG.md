@@ -747,6 +747,29 @@ distinctly from the total elapsed-since-original-start.
    rigor already applied to tonight's connection-storm and thread-pool fixes
 *Added: 2026-08-05, elevated to CRITICAL given production onboarding timeline*
 
+### topic-structure -- process-isolation migration deferred (2026-08-05)
+Part of the CRITICAL job-reliability effort (see the main process-isolation item
+above). msg-rate, topic-sizes, and consumer-lag are done and validated. topic-structure
+is genuinely different: describe_all_topics() uses 10 PARALLEL threads internally
+(_fetch_topic_details_sync via run_in_executor across chunked topic batches), not a
+single sequential call. Our process pool is deliberately small (4 workers, sized to
+protect memory headroom) -- naively submitting all 10 chunks would queue behind only 4
+running at once, an estimated 2-2.5x slowdown. Real measured baseline: cluster 4 avg
+9.55s/max 37.2s across 71 runs (safely within its 120s timeout even slowed down);
+cluster 8's one observed run was 55.4s (closer to its 90s timeout, more topics to grow
+into -- a slowdown here is the real risk).
+
+**Decision**: defer rather than rush a fix that could introduce a NEW performance
+regression while fixing a reliability gap that hasn't caused a real incident yet
+(unlike msg-rate/topic-sizes/consumer-lag, all directly implicated in confirmed
+incidents). Two real options when this is revisited: (1) increase the process pool
+specifically to preserve 10-way parallelism (more memory cost), or (2) redesign the
+chunking to fit the existing 4-worker pool without losing meaningful throughput.
+User's explicit call: proceed with the other two production clusters as planned, and
+come back to this if/when it actually causes a real problem in practice, rather than
+solve a hypothetical now.
+*Added: 2026-08-05*
+
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - **Product/Service tag mapping display** — read the team's tag mapping (product,
   service, etc.) from a SharePoint location once the tag schema is finalized, and
