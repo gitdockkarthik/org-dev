@@ -766,13 +766,23 @@ pool risked a real 2-2.5x slowdown, and it hasn't been involved in a real incide
 (unlike the four above). User's explicit call: proceed with production onboarding as
 planned, revisit if it actually causes a problem in practice.
 
-**Still open**:
-1. Fix the misleading duration-metric issue (jobs.py's retry duration includes the
-   first attempt's full timeout wait -- quick, separate, low-risk)
-2. Full end-to-end validation under realistic CONCURRENT load (multiple CRITICAL jobs
-   firing at once, matching real production cadence) -- validated individually so far,
-   not yet stress-tested together
-3. topic-structure migration, if it becomes a real problem in practice
+**All originally-planned work items DONE (2026-08-05)**:
+1. DONE -- fixed the misleading duration-metric issue (jobs.py now tracks retry-only
+   duration separately from total elapsed time since the original attempt).
+2. DONE -- concurrent-load stress test: triggered all 4 migrated CRITICAL jobs
+   (msg-rate, topic-sizes, consumer-lag, broker-health) for both clusters
+   simultaneously (8 total instances). All 8 succeeded correctly, reasonable timing
+   throughout (2.8s-10.9s), no deadlocks, no cross-contamination -- confirms the small
+   4-worker process pool handles genuine concurrent load gracefully via queueing,
+   matching real production job-scheduler cadence rather than one-at-a-time testing.
+3. topic-structure migration remains deferred by explicit user decision, tracked as
+   its own separate item -- revisit only if it becomes a real problem in practice
+   during production onboarding.
+
+Item complete for today's scope. This whole effort started from a single confirmed
+incident, traced to root cause, and resulted in true process-based cancellation for
+4 of 5 CRITICAL jobs, validated individually and under concurrent load, before
+production clusters are onboarded.
 *Added: 2026-08-05, elevated to CRITICAL given production onboarding timeline,
 4 of 5 CRITICAL jobs completed same day*
 
