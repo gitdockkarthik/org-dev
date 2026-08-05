@@ -278,11 +278,11 @@ class RealKafkaCollector(KafkaCollector):
         }
 
     async def collect_brokers_only(self) -> list[dict]:
-        """Fast broker list only — skips topic listing. ~1s vs 35s."""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(_kafka_io_executor, self._collect_brokers_only_sync)
-
-    def _collect_brokers_only_sync(self) -> list[dict]:
+        """Fast broker list only — skips topic listing. ~1s vs 35s. Uses process-based
+        isolation for the describe_cluster() call itself; _build_brokers() (Prometheus/
+        JMX scraping, a separate non-Kafka-protocol operation) runs normally here in
+        the main process."""
+        from kafka_process_pool import describe_cluster_isolated
         cluster_config = {
             "bootstrap_servers": self.bootstrap_servers,
             "auth_type": self.auth_type,
@@ -291,27 +291,19 @@ class RealKafkaCollector(KafkaCollector):
             "sasl_mechanism": self.sasl_mechanism,
             "tls_enabled": self.tls_enabled,
         }
-        admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
-        try:
-            with acquire_admin_lock(self.bootstrap_servers, admin_lock):
-                cluster_info = admin.describe_cluster()
-                return self._build_brokers(cluster_info)
-        except Exception as exc:
-            invalidate_client(self.bootstrap_servers)
-            logger.warning("collect_brokers_only failed: %s", exc)
+        result = await describe_cluster_isolated(self.bootstrap_servers, cluster_config, timeout=30.0)
+        if not result.get("ok"):
+            logger.warning("collect_brokers_only failed: %s", result.get("error"))
             return []
+        return self._build_brokers(result["cluster_info"])
 
     async def collect_broker_log_dir_sizes(self) -> dict[str, Any]:
         """True per-broker on-disk log size via DescribeLogDirsRequest sent explicitly
         to each broker node. Unlike collect_topic_sizes(), this queries every broker by
         node_id rather than relying on least_loaded_node(), so it returns a genuine
         per-broker breakdown including all replicas (not leader-only) and all topics
-        (including internal/system topics)."""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(_kafka_io_executor, self._collect_broker_log_dir_sizes_sync)
-
-    def _collect_broker_log_dir_sizes_sync(self) -> dict[str, Any]:
-        from kafka.protocol.admin import DescribeLogDirsRequest
+        (including internal/system topics). Uses process-based isolation."""
+        from kafka_process_pool import describe_broker_log_dirs_isolated
         cluster_config = {
             "bootstrap_servers": self.bootstrap_servers,
             "auth_type": self.auth_type,
@@ -320,40 +312,13 @@ class RealKafkaCollector(KafkaCollector):
             "sasl_mechanism": self.sasl_mechanism,
             "tls_enabled": self.tls_enabled,
         }
-        admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
-        try:
-            with acquire_admin_lock(self.bootstrap_servers, admin_lock):
-                cluster_info = admin.describe_cluster()
-                node_ids = [node.get("node_id") for node in cluster_info.get("brokers", []) or []]
-                broker_sizes: dict[int, int | None] = {}
-                version = admin._matching_api_version(DescribeLogDirsRequest)
-                for node_id in node_ids:
-                    try:
-                        request = DescribeLogDirsRequest[version]()
-                        future = admin._send_request_to_node(node_id, request)
-                        admin._wait_for_futures([future])
-                        result = future.value
-                        total = 0
-                        for log_dir in result.log_dirs:
-                            if log_dir[0] != 0:
-                                continue
-                            for topic_entry in log_dir[2]:
-                                for partition in topic_entry[1]:
-                                    total += partition[1]
-                        broker_sizes[node_id] = total
-                    except Exception as exc:
-                        logger.warning("collect_broker_log_dir_sizes: node %s failed: %s", node_id, exc)
-                        broker_sizes[node_id] = None
-                return {
-                    "broker_sizes": broker_sizes,
-                    "broker_sizes_gb": {
-                        k: (round(v / 1024**3, 2) if v is not None else None)
-                        for k, v in broker_sizes.items()
-                    },
-                }
-        except Exception as exc:
-            invalidate_client(self.bootstrap_servers)
-            return {"error": str(exc), "broker_sizes": {}}
+        result = await describe_broker_log_dirs_isolated(self.bootstrap_servers, cluster_config, timeout=30.0)
+        if not result.get("ok"):
+            return {"error": result.get("error"), "broker_sizes": {}}
+        return {
+            "broker_sizes": result["broker_sizes"],
+            "broker_sizes_gb": result["broker_sizes_gb"],
+        }
 
     async def collect_group_states(self) -> list[dict]:
         """Fast group states only — no lag fetch, no topic listing. ~2s."""

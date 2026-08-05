@@ -265,3 +265,105 @@ async def fetch_consumer_lag_isolated(bootstrap_servers: str, cluster_config: di
     except Exception as exc:
         logger.warning("fetch_consumer_lag_isolated: unexpected error: %s", exc)
         return {"ok": False, "error": str(exc)}
+
+
+def _describe_cluster_worker(bootstrap_servers: str, cluster_config: dict) -> dict:
+    """Runs inside a worker PROCESS. Returns the plain dict from kafka-python's
+    own describe_cluster() (already picklable via its internal .to_object())."""
+    admin = _get_worker_client(bootstrap_servers, cluster_config)
+    try:
+        cluster_info = admin.describe_cluster()
+        return {"ok": True, "cluster_info": cluster_info}
+    except Exception as exc:
+        _worker_clients.pop(bootstrap_servers, None)
+        return {"ok": False, "error": str(exc)}
+
+
+async def describe_cluster_isolated(bootstrap_servers: str, cluster_config: dict, timeout: float = 30.0) -> dict:
+    """Main-process-side entry point for a simple describe_cluster() call.
+    Returns {"ok": True, "cluster_info": {...}} on success, or
+    {"ok": False, "error": "..."} on failure/timeout. Caller is responsible for
+    any further transformation (e.g. RealKafkaCollector._build_brokers(), which
+    also does Prometheus/JMX scraping -- kept in the main process since it's not
+    part of the risky, lock-holding Kafka call)."""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    try:
+        future = _process_pool.submit(_describe_cluster_worker, bootstrap_servers, cluster_config)
+        result = await loop.run_in_executor(None, future.result, timeout)
+        return result
+    except FutureTimeoutError:
+        logger.warning(
+            "describe_cluster_isolated: worker process did not respond within "
+            "%ss for %s -- killing and replacing it",
+            timeout, bootstrap_servers,
+        )
+        future.cancel()
+        return {"ok": False, "error": f"Timed out after {timeout}s (worker process killed)"}
+    except Exception as exc:
+        logger.warning("describe_cluster_isolated: unexpected error: %s", exc)
+        return {"ok": False, "error": str(exc)}
+
+
+def _describe_broker_log_dirs_worker(bootstrap_servers: str, cluster_config: dict) -> dict:
+    """Runs inside a worker PROCESS -- describe_cluster() for node_ids, then a
+    per-node DescribeLogDirsRequest loop, moved here as a single unit since
+    the node loop depends on node_ids from the initial describe_cluster() call."""
+    from kafka.protocol.admin import DescribeLogDirsRequest
+    admin = _get_worker_client(bootstrap_servers, cluster_config)
+    try:
+        cluster_info = admin.describe_cluster()
+        node_ids = [node.get("node_id") for node in cluster_info.get("brokers", []) or []]
+        broker_sizes: dict[int, int | None] = {}
+        version = admin._matching_api_version(DescribeLogDirsRequest)
+        for node_id in node_ids:
+            try:
+                request = DescribeLogDirsRequest[version]()
+                future = admin._send_request_to_node(node_id, request)
+                admin._wait_for_futures([future])
+                result = future.value
+                total = 0
+                for log_dir in result.log_dirs:
+                    if log_dir[0] != 0:
+                        continue
+                    for topic_entry in log_dir[2]:
+                        for partition in topic_entry[1]:
+                            total += partition[1]
+                broker_sizes[node_id] = total
+            except Exception as exc:
+                broker_sizes[node_id] = None
+        return {
+            "ok": True,
+            "broker_sizes": broker_sizes,
+            "broker_sizes_gb": {
+                k: (round(v / 1024**3, 2) if v is not None else None)
+                for k, v in broker_sizes.items()
+            },
+        }
+    except Exception as exc:
+        _worker_clients.pop(bootstrap_servers, None)
+        return {"ok": False, "error": str(exc)}
+
+
+async def describe_broker_log_dirs_isolated(bootstrap_servers: str, cluster_config: dict, timeout: float = 30.0) -> dict:
+    """Main-process-side entry point for the full broker-log-dir-sizes workflow
+    (describe_cluster + per-node DescribeLogDirsRequest loop). Returns
+    {"ok": True, "broker_sizes": {...}, "broker_sizes_gb": {...}} on success, or
+    {"ok": False, "error": "..."} on failure/timeout."""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    try:
+        future = _process_pool.submit(_describe_broker_log_dirs_worker, bootstrap_servers, cluster_config)
+        result = await loop.run_in_executor(None, future.result, timeout)
+        return result
+    except FutureTimeoutError:
+        logger.warning(
+            "describe_broker_log_dirs_isolated: worker process did not respond "
+            "within %ss for %s -- killing and replacing it",
+            timeout, bootstrap_servers,
+        )
+        future.cancel()
+        return {"ok": False, "error": f"Timed out after {timeout}s (worker process killed)"}
+    except Exception as exc:
+        logger.warning("describe_broker_log_dirs_isolated: unexpected error: %s", exc)
+        return {"ok": False, "error": str(exc)}
