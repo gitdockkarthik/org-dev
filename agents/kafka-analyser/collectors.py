@@ -1222,6 +1222,21 @@ async def collect_msg_rate(cluster_id: str = ""):
                         VALUES {values}
                     """))
                 await sess_bytes.commit()
+                # Retention: purge rows beyond 1 hour -- this table only supports the
+                # Bytes In chart's 1h view; kafka_topic_metrics_hourly already covers
+                # longer ranges. Guarded to roughly once per hour (this code runs every
+                # 2 min) rather than adding delete overhead to every cycle.
+                from datetime import datetime as _dt_bytes, timezone as _tz_bytes, timedelta as _td_bytes
+                _now_bytes = _dt_bytes.now(_tz_bytes.utc)
+                if _now_bytes.minute < 2:
+                    _bytes_cutoff = _now_bytes - _td_bytes(hours=1)
+                    async with _SL_bytes() as sess_bytes_purge:
+                        _purge_result = await sess_bytes_purge.execute(_t_bytes(
+                            "DELETE FROM kafka_topic_bytes_rate_snapshots WHERE collected_at < :cutoff"
+                        ), {"cutoff": _bytes_cutoff})
+                        await sess_bytes_purge.commit()
+                        if _purge_result.rowcount:
+                            logger.info("kafka_topic_bytes_rate_snapshots: purged %d rows beyond 1h", _purge_result.rowcount)
         # Also write to kafka_topic_metrics_hourly for trend chart
         if active_topics:
             from database import SessionLocal as _SL2
