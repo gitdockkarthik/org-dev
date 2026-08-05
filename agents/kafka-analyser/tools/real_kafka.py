@@ -20,7 +20,7 @@ from kafka import KafkaAdminClient, KafkaConsumer
 
 from tools.base import KafkaCollector
 from collectors import _kafka_io_executor
-from shared_kafka_clients import get_shared_admin_client, invalidate_client
+from shared_kafka_clients import get_shared_admin_client, invalidate_client, acquire_admin_lock
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +126,7 @@ class RealKafkaCollector(KafkaCollector):
         }
         admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
         try:
-            with admin_lock:
+            with acquire_admin_lock(self.bootstrap_servers, admin_lock):
                 cluster_info = admin.describe_cluster()
                 brokers = self._build_brokers(cluster_info)
                 cluster_id = cluster_info.get('cluster_id', '') if isinstance(cluster_info, dict) else (getattr(cluster_info, 'cluster_id', '') or '')
@@ -162,7 +162,7 @@ class RealKafkaCollector(KafkaCollector):
         }
         admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
         try:
-            with admin_lock:
+            with acquire_admin_lock(self.bootstrap_servers, admin_lock):
                 try:
                     cluster_info = admin.describe_cluster()
                     brokers = self._build_brokers(cluster_info)
@@ -257,7 +257,7 @@ class RealKafkaCollector(KafkaCollector):
         }
         admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
         try:
-            with admin_lock:
+            with acquire_admin_lock(self.bootstrap_servers, admin_lock):
                 t = time.time()
                 result = admin.describe_log_dirs()
                 elapsed = time.time() - t
@@ -303,7 +303,7 @@ class RealKafkaCollector(KafkaCollector):
         }
         admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
         try:
-            with admin_lock:
+            with acquire_admin_lock(self.bootstrap_servers, admin_lock):
                 cluster_info = admin.describe_cluster()
                 return self._build_brokers(cluster_info)
         except Exception as exc:
@@ -332,7 +332,7 @@ class RealKafkaCollector(KafkaCollector):
         }
         admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
         try:
-            with admin_lock:
+            with acquire_admin_lock(self.bootstrap_servers, admin_lock):
                 cluster_info = admin.describe_cluster()
                 node_ids = [node.get("node_id") for node in cluster_info.get("brokers", []) or []]
                 broker_sizes: dict[int, int | None] = {}
@@ -381,7 +381,7 @@ class RealKafkaCollector(KafkaCollector):
         }
         admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
         try:
-            with admin_lock:
+            with acquire_admin_lock(self.bootstrap_servers, admin_lock):
                 groups = admin.list_consumer_groups()
                 return [{"group_id": g[0], "state": g[1] if len(g) > 1 else "Unknown"} for g in groups]
         except Exception as exc:
@@ -407,7 +407,7 @@ class RealKafkaCollector(KafkaCollector):
         }
         admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
         try:
-            with admin_lock:
+            with acquire_admin_lock(self.bootstrap_servers, admin_lock):
                 # Batch describe in chunks of 500
                 described = []
                 _BATCH = 500
@@ -535,7 +535,7 @@ class RealKafkaCollector(KafkaCollector):
         consumer = None
         try:
             groups = []
-            with admin_lock:
+            with acquire_admin_lock(self.bootstrap_servers, admin_lock):
                 for gid in group_ids:
                     try:
                         offsets = admin.list_consumer_group_offsets(gid)
@@ -597,7 +597,7 @@ class RealKafkaCollector(KafkaCollector):
         }
         admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
         try:
-            with admin_lock:
+            with acquire_admin_lock(self.bootstrap_servers, admin_lock):
                 names = admin.list_topics()
                 q = query.lower()
                 matched = [n for n in names if q in n.lower() and not _is_internal_topic(n)]
@@ -622,7 +622,7 @@ class RealKafkaCollector(KafkaCollector):
         }
         admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
         try:
-            with admin_lock:
+            with acquire_admin_lock(self.bootstrap_servers, admin_lock):
                 return [n for n in admin.list_topics() if not _is_internal_topic(n)]
         except Exception as exc:
             invalidate_client(self.bootstrap_servers)
@@ -642,7 +642,7 @@ class RealKafkaCollector(KafkaCollector):
         admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
 
         try:
-            with admin_lock:
+            with acquire_admin_lock(self.bootstrap_servers, admin_lock):
                 try:
                     cluster_info = admin.describe_cluster()
                     brokers = self._build_brokers(cluster_info)
