@@ -10,6 +10,7 @@ from core.security import require_api_key
 from core.auth import get_current_user, require_admin, require_admin_or_developer
 from models.agent import Agent, AgentStatus
 from models.agent_version import AgentVersion
+from models.agent_access import AgentAccess
 from models.agent_owner import AgentOwner
 from models.user import User
 from pydantic import BaseModel
@@ -142,6 +143,14 @@ async def list_agents(
         )
         owned_slugs = [r[0] for r in owned.fetchall()]
         q = q.where(Agent.slug.in_(owned_slugs))
+
+    # Catalogue visibility filtering: plain user sees only agents they have access to
+    elif current_user and "admin" not in (current_user.roles or "").split(",") and "developer" not in (current_user.roles or "").split(","):
+        access = await db.execute(
+            select(AgentAccess.agent_slug).where(AgentAccess.user_email == current_user.email)
+        )
+        allowed_slugs = [r[0] for r in access.fetchall()]
+        q = q.where(Agent.slug.in_(allowed_slugs))
 
     result = await db.execute(q)
     return list(result.scalars().all())

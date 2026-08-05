@@ -227,9 +227,9 @@ async function submitChangePassword() {
 
 // ── Public API ──────────────────────────────────────────────────────────────────
 
-/** Fetch published agents (no auth required). */
+/** Fetch published agents accessible to current user. */
 async function fetchAgents() {
-  return _json(await fetch(`${BACKEND_URL}/api/agents`));
+  return _json(await fetch(`${BACKEND_URL}/api/agents`, { credentials: 'include' }));
 }
 
 /** Fetch all agents including drafts (requires X-API-Key). */

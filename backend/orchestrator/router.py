@@ -20,9 +20,11 @@ from orchestrator.mcp_client import route_via_mcp
 from core.platform_cache import get_anthropic_key
 from core.security import require_api_key
 from models.agent import Agent, AgentStatus
+from models.agent_access import AgentAccess
 from models.chat_message import ChatMessage
 from models.chat_session import ChatSession
 from models.developer_key import DeveloperKey
+from models.user import User
 from orchestrator.schemas import (
     ChatMessageResponse,
     InvokeRequest,
@@ -271,12 +273,41 @@ async def invoke_agent(
 
 
 @router.get("/agents", response_model=list[dict])
-async def list_published_agents(db: AsyncSession = Depends(get_db)):
+async def list_published_agents(db: AsyncSession = Depends(get_db), request: Request = None):
+    # Resolve current_user from operative_token cookie
+    current_user = None
+    try:
+        from core.auth import decode_token
+        from core.database import AsyncSessionLocal
+        token = request.cookies.get("operative_token") if request else None
+        if token:
+            payload = decode_token(token)
+            user_id = payload.get("sub")
+            if user_id:
+                async with AsyncSessionLocal() as s:
+                    current_user = await s.get(User, int(user_id))
+    except Exception:
+        pass
+
+    # Require authentication
+    if current_user is None:
+        raise HTTPException(status_code=403, detail="Not authenticated")
+
     result = await db.execute(
         select(Agent)
         .where(Agent.status == AgentStatus.published)
         .order_by(Agent.name)
     )
+
+    # Filter for plain users based on agent_access
+    agents = result.scalars().all()
+    if current_user and "admin" not in (current_user.roles or "").split(",") and "developer" not in (current_user.roles or "").split(","):
+        access = await db.execute(
+            select(AgentAccess.agent_slug).where(AgentAccess.user_email == current_user.email)
+        )
+        allowed_slugs = [r[0] for r in access.fetchall()]
+        agents = [a for a in agents if a.slug in allowed_slugs]
+
     return [
         {
             "id": str(a.id),
@@ -288,7 +319,7 @@ async def list_published_agents(db: AsyncSession = Depends(get_db)):
             "landing_page_url": a.landing_page_url,
             "capabilities": [],
         }
-        for a in result.scalars().all()
+        for a in agents
     ]
 
 
