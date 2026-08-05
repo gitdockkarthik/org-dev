@@ -607,21 +607,26 @@ would have recurred identically for every future newly-onboarded cluster if not 
 now.
 *Added: 2026-08-04*
 
-### Bytes In chart granular bucket data -- SCOPED, deferred to tomorrow (2026-08-04)
-Investigated before deferring: no raw, time-series history exists for bytes-in data
-anywhere today -- only kafka_topic_metrics.bytes_in_per_sec (latest value only,
-overwritten every 2 min) and kafka_topic_metrics_hourly (running average WITHIN each
-hour, not fine-grained snapshots). Real fix needs the same architecture as tonight's
-message-rate feature: new raw snapshot table, write path in collect_msg_rate (already
-runs every 2 min), retention (same guarded-hourly-purge pattern used today), and
-blended raw+hourly endpoint logic. Re-estimated: ~1.5-2 hrs (bigger than original 1hr
-estimate, but has a proven, already-validated template to follow from today's work).
+### Bytes In chart granular bucket data -- DONE (2026-08-05)
+Real fix needed the same architecture as the message-rate feature: new raw snapshot
+table (migration 0037, kafka_topic_bytes_rate_snapshots), write path in collect_msg_rate
+(bulk insert, all active topics), 1-hour retention (guarded to ~once/hour, matching the
+pattern used across today's other retention work; kafka_topic_metrics_hourly already
+covers longer ranges so 1h is all this table needs), and a new isolated 1-hour code
+path in get_topics_history() (early return, existing hourly-table logic for longer
+ranges left completely untouched -- lower risk than modifying shared logic). Matched
+the existing KB/s unit for visual consistency across time ranges.
 
-**Tomorrow's plan (2026-08-05), in priority order**:
-1. Bytes In chart granular bucket data (~1.5-2 hrs)
-2. Legacy _collection_loop decommission decision (~1-3 hrs, depends on scope)
-3. Data-layer documentation -- ERD + mappings (~4-6 hrs, own dedicated block)
-4. AI Insights full dedicated pass (~3-5 hrs, needs its own dedicated session)
+Validated live end-to-end: 1h view showed 11 real, distinct 5-min buckets with
+genuinely varying values (was 2 flat data points before); 24h view confirmed
+unaffected. User confirmed in the actual UI: both Overview and Topics tab charts show
+real 5-min movement for the 1-hour range.
+*Added: 2026-08-04, completed: 2026-08-05*
+
+**Remaining plan, in priority order**:
+1. Legacy _collection_loop decommission decision (~1-3 hrs, depends on scope)
+2. Data-layer documentation -- ERD + mappings (~4-6 hrs, own dedicated block)
+3. AI Insights full dedicated pass (~3-5 hrs, needs its own dedicated session)
 *Added: 2026-08-04*
 
 ### CSV Export for Topics, Consumer Groups, Connectors -- DONE (2026-08-04)
