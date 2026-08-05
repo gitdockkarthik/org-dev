@@ -828,20 +828,44 @@ feature surface (dashboards, SLO tracking, job management, alerting, reports, et
 not just the data layer.
 *Added: 2026-08-05*
 
-### RBAC layer for Jobs page (schedule view/edit restrictions) -- needs agent-level enforcement, not just portal-level
-Ask from the Kafka team: restrict which users can view/change job schedules, with
-elevated permissions for a select few. Real architectural constraint identified before
-scoping: kafka-analyser is a standalone, self-contained agent with its own directly
-reachable API (VPN-internal but independent of the portal, per the platform's
-"pluggable standalone agent" design). Restricting access only at the portal layer
-(e.g. hiding the Jobs tab in the UI for some users) would NOT actually protect
-anything -- anyone with direct network access to the agent's own port could call
-/jobs/{id}/trigger or the schedule endpoints directly, bypassing the portal entirely.
-Real enforcement needs to live INSIDE the agent itself (checking identity/role on each
-relevant request), not just control what the portal chooses to display. Needs its own
-design pass: how does the agent learn a caller's identity/role (portal-forwarded header?
-its own lightweight auth?), and how does that interact with kafka-analyser's existing
-AUTH_MODE=local pattern already used elsewhere in the platform.
+### Agent-native RBAC for Job Management -- foundational, applies beyond kafka-analyser (2026-08-05, refined)
+Ask from the Kafka team: restrict who can view/change job schedules, with elevated
+permissions for a select few. Scope has grown beyond a single-agent feature during
+discussion -- context worth preserving: the portal has grown from a single user to
+30+ real, active users across colleagues and teams, with 4 agents onboarded and 2 more
+by end of this week, genuinely outperforming a separate production-grade EKS-based
+platform on ease of onboarding/use and being first to successfully ship Langfuse
+internally. Given that trajectory, each agent is now being treated as its own
+production-grade product, not a disposable piece of automation -- access control needs
+to match that bar.
+
+**Hard requirement, explicitly set by user**: must NOT depend on portal-level
+authorization. kafka-analyser (and every agent) may eventually be extracted and
+shipped as its own fully standalone deployment on a different platform entirely (the
+project's own stated production model) -- if access control only exists because the
+portal happens to be sitting in front of it today, it evaporates the moment the agent
+runs anywhere else. Enforcement must be genuinely self-contained INSIDE the agent
+itself (its own identity/role check on each relevant request), not a signed claim
+forwarded by a portal that might not exist in some deployments.
+
+**Immediate, pragmatic starting point discussed**: a simple shared password gate in
+front of the Jobs page, as an honest stopgap -- better than nothing today, but
+explicitly understood to be limited (no per-user accountability, can't tell who
+changed what, can't revoke one person without rotating for everyone, no granular
+view-vs-edit split). Not the destination, just a first step while the real design is
+built out properly.
+
+**Real design work still needed** (own dedicated sessions -- planning,
+implementation, testing, per user's explicit preference, not squeezed into other work):
+1. Design a genuinely agent-native identity/role model (its own lightweight user
+   store and auth, independent of any portal) that could be reused as a common
+   pattern across ALL agents (present and future), not reinvented per-agent.
+2. Decide the concrete mechanism: agent-local login/session? API keys with scoped
+   roles? Something else -- needs real design, not a quick pick.
+3. Apply it first to Job Management (view vs. edit split, elevated-permission users),
+   as the concrete, requested use case, but architect it to generalize.
+4. Full testing pass before considering it production-ready given this is genuinely
+   security-sensitive, not just a UX feature.
 *Added: 2026-08-05*
 
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
