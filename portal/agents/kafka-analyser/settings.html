@@ -458,21 +458,6 @@
       </div>
 
       <div class="card">
-        <div class="card-title">Collection Interval</div>
-        <div class="sync-row" style="margin-top:0.75rem">
-          <div class="field">
-            <select id="collection-interval">
-              <option value="0">Disabled</option>
-              <option value="30">Every 30 seconds</option>
-              <option value="60">Every 1 minute</option>
-              <option value="300">Every 5 minutes</option>
-            </select>
-          </div>
-          <span class="last-synced" id="last-synced-label">Loading…</span>
-        </div>
-      </div>
-
-      <div class="card">
         <div class="actions">
           <button class="btn btn-primary" id="btn-save-sync">Save &amp; Sync</button>
           <button class="btn btn-secondary" id="btn-save-only">Save Only</button>
@@ -786,7 +771,6 @@
       const radio = document.querySelector('input[name="source"]:not([disabled]):checked');
       return {
         source_type: radio ? radio.value : 'synthetic',
-        collection_interval_secs: parseInt($('collection-interval').value, 10),
       };
     }
 
@@ -974,13 +958,6 @@
           if (reg) reg.classList.remove('hidden');
           await loadClusters();
         }
-
-        const intEl = $('collection-interval');
-        const intVal = String(cfg.collection_interval_secs ?? 0);
-        if (intEl.querySelector('option[value="' + intVal + '"]')) intEl.value = intVal;
-
-        $('last-synced-label').textContent =
-          cfg.last_synced ? 'Last synced: ' + fmtDatetime(cfg.last_synced) : 'Never synced';
 
         if (cfg.lag_threshold           != null) $('lag-threshold').value        = cfg.lag_threshold;
         if (cfg.heap_threshold_pct       != null) $('heap-threshold').value       = cfg.heap_threshold_pct;

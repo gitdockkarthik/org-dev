@@ -23,7 +23,6 @@ _DEFAULTS: dict = {
     "sasl_username": "",
     "sasl_password": "",
     "tls_enabled": False,
-    "collection_interval_secs": 0,
     "last_synced": None,
     "broker_count": None,
     "consumer_group_count": None,
@@ -114,7 +113,6 @@ class SettingsPayload(BaseModel):
     sasl_username: str = ""
     sasl_password: str = ""
     tls_enabled: bool = False
-    collection_interval_secs: int = 0
     lag_threshold: int = 10000
     heap_threshold_pct: int = 80
     urp_threshold: int = 0
