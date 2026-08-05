@@ -63,3 +63,7 @@ class AgentVersionResponse(BaseModel):
     version: str
     config_snapshot: dict[str, Any]
     created_at: datetime
+
+
+class AccessAssign(BaseModel):
+    user_email: str

@@ -14,7 +14,7 @@ from models.agent_access import AgentAccess
 from models.agent_owner import AgentOwner
 from models.user import User
 from pydantic import BaseModel
-from registry.schemas import AgentCreate, AgentResponse, AgentUpdate, AgentVersionResponse
+from registry.schemas import AgentCreate, AgentResponse, AgentUpdate, AgentVersionResponse, AccessAssign
 
 router = APIRouter(prefix="/api/registry", tags=["registry"])
 
@@ -336,6 +336,66 @@ async def remove_owner(
         if len(all_owners) <= 1:
             raise HTTPException(status_code=409, detail="Cannot remove last owner")
     await db.delete(owner)
+    await db.commit()
+
+
+# ── Agent Access Control ────────────────────────────────────────────────────
+
+@router.get("/agents/{slug}/access")
+async def list_access(
+    slug: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[dict]:
+    require_admin(current_user)
+    result = await db.execute(
+        select(AgentAccess).where(AgentAccess.agent_slug == slug)
+    )
+    rows = result.scalars().all()
+    return [
+        {
+            "agent_slug": r.agent_slug,
+            "user_email": r.user_email,
+            "assigned_by": r.assigned_by,
+            "assigned_at": str(r.assigned_at),
+        }
+        for r in rows
+    ]
+
+
+@router.post("/agents/{slug}/access", status_code=201)
+async def add_access(
+    slug: str,
+    body: AccessAssign,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    require_admin(current_user)
+    existing = await db.get(AgentAccess, (slug, body.user_email))
+    if existing:
+        raise HTTPException(status_code=409, detail="User already has access")
+    row = AgentAccess(
+        agent_slug=slug,
+        user_email=body.user_email,
+        assigned_by=current_user.email,
+    )
+    db.add(row)
+    await db.commit()
+    return {"agent_slug": slug, "user_email": body.user_email, "assigned_by": current_user.email}
+
+
+@router.delete("/agents/{slug}/access/{user_email}", status_code=204)
+async def remove_access(
+    slug: str,
+    user_email: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    require_admin(current_user)
+    row = await db.get(AgentAccess, (slug, user_email))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Access not found")
+    await db.delete(row)
     await db.commit()
 
 
