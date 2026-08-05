@@ -646,6 +646,16 @@ Validated live with real data: Topics 24402/24402, Consumer Groups 357/357, Conn
 331/331 -- all exact matches, including the header row.
 *Added: 2026-08-01, completed: 2026-08-04*
 
+### Memory optimization audit for kafka-analyser (cross-session, 2026-08-05)
+User audited CUR-analyser and alert-analyser memory usage in their dedicated sessions
+and achieved drastic, real reductions: CUR ~700MiB -> below 200-300MiB, Alert
+~900-1000MiB -> below 150MiB. Extend the same audit exercise to kafka-analyser --
+check for memory leaks, unbounded in-memory caches/dicts (e.g. _prev_offsets and
+similar module-level state used by collectors), connection/object accumulation, or
+other avoidable memory growth. Not yet investigated -- needs its own focused pass,
+likely reusing whatever methodology worked for CUR/Alert.
+*Added: 2026-08-05*
+
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - **Product/Service tag mapping display** — read the team's tag mapping (product,
   service, etc.) from a SharePoint location once the tag schema is finalized, and
