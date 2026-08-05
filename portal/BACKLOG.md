@@ -24,16 +24,29 @@ interact with AgentOwner/developer ownership) to scope catalogue visibility per-
 Rollout plan: backfill ALL existing users with access to ALL published agents at
 migration time, so no one sees a blank catalogue on deploy — access will then be
 manually curated per-user by admin working with team managers.
-Status: IN PROGRESS — Chunk 1 DONE (36836b8), Chunk 2 DONE (c1c119b): backfilled
-agent_access for 33 users x 5 published agents (133 rows). mock-agent deliberately
-excluded for all users except karthikeyan.gopalan@operative.com — intentional, used
-as a live validation case for Chunk 3's filter (mock-agent's docker service is already
-stopped/removed but the DB row remains 'published' for this purpose). Chunk 3
-(filter list_agents() for plain `user` role) starting next.
+Status: IN PROGRESS — Chunk 1 DONE (36836b8), Chunk 2 DONE (c1c119b),
+Chunk 3 DONE (54d8495): catalogue filtering enforced and validated live
+(test.user@operative.com confirmed sees 4/5 agents, mock-agent correctly hidden).
+Key discovery during Chunk 3: the portal catalogue does NOT call
+/api/registry/agents (backend/registry/router.py) as originally assumed — it calls
+/api/agents (list_published_agents() in backend/orchestrator/router.py), a
+previously PUBLIC, unauthenticated endpoint with no current_user resolution at all.
+Applied the AgentAccess filter to BOTH endpoints for consistency:
+  - /api/agents (orchestrator/router.py) — the one the portal actually uses.
+    Now REQUIRES authentication (403 if no valid session) — this closes a prior
+    public/unauthenticated bypass, since portal.js's fetchAgents() previously sent
+    no credentials at all. Confirmed frontend already redirects to login on 403,
+    so this is a safe tightening, not a breaking change.
+  - /api/registry/agents (registry/router.py) — filtered too, for consistency,
+    though not the portal's actual call path; used elsewhere (admin tooling).
+Also fixed: portal/js/portal.js fetchAgents() now sends credentials: 'include'
+(previously sent no cookie at all).
+Chunk 4 (admin endpoints: GET/POST/DELETE /agents/{slug}/access, mirrors owners)
+starting next.
 Plan:
   - [DONE] Chunk 1: AgentAccess model, alembic migration (schema only), commit.
   - [DONE] Chunk 2: backfill script (all users x all published agents), run once, commit.
-  - Chunk 3: filter list_agents() for plain `user` role only (admin/developer untouched).
+  - [DONE] Chunk 3: filter list_agents() for plain `user` role only (admin/developer untouched).
   - Chunk 4: admin-only endpoints GET/POST/DELETE /agents/{slug}/access (mirrors owners).
   - Chunk 5: portal UI (no precedent screen exists yet — owners has no UI either,
     API-only today; UI surface TBD, decide at that chunk).
