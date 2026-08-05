@@ -24,9 +24,16 @@ interact with AgentOwner/developer ownership) to scope catalogue visibility per-
 Rollout plan: backfill ALL existing users with access to ALL published agents at
 migration time, so no one sees a blank catalogue on deploy — access will then be
 manually curated per-user by admin working with team managers.
-Status: IN PROGRESS — Chunk 1 (model + migration) starting now.
+Status: IN PROGRESS — Chunk 1 DONE (commit 36836b8): agent_access table + model created
+and migrated (alembic head 0038). Note: table was actually auto-created by SQLAlchemy
+Base.metadata.create_all() on backend startup (since AgentAccess is registered in
+models/__init__.py) BEFORE the alembic migration ran — migration failed on
+DuplicateTableError, required manual index creation + `alembic stamp 0038` to
+reconcile. Watch for this same race on any future new-model addition; consider
+whether create_all() should be disabled/scoped in this app going forward.
+Chunk 2 (backfill script) starting next.
 Plan:
-  - Chunk 1: AgentAccess model, alembic migration (schema only), commit.
+  - [DONE] Chunk 1: AgentAccess model, alembic migration (schema only), commit.
   - Chunk 2: backfill script (all users x all published agents), run once, commit.
   - Chunk 3: filter list_agents() for plain `user` role only (admin/developer untouched).
   - Chunk 4: admin-only endpoints GET/POST/DELETE /agents/{slug}/access (mirrors owners).
