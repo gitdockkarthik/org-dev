@@ -1386,6 +1386,59 @@ async def get_topics_history(
     if topics:
         topic_filter = [t.strip() for t in topics.split(",") if t.strip()][:5]
 
+    # 1-hour view: use raw 5-min-granularity snapshots instead of the hourly-average
+    # table, which only has 2 data points for this range (flat-line appearance).
+    if minutes <= 60:
+        from database import DashboardSessionLocal as _BytesSessionLocal
+        from sqlalchemy import text as _bytes_text
+        if _BytesSessionLocal is None:
+            return {"empty": True, "series": []}
+        try:
+            async with _BytesSessionLocal() as _bsess:
+                _topic_clause = ""
+                _params: dict = {"cid": int(cluster_id), "minutes": minutes}
+                if topic_filter:
+                    _topic_clause = "AND topic = ANY(:topics)"
+                    _params["topics"] = topic_filter
+                _sql = f"""
+                    SELECT
+                        date_bin('5 minutes'::interval, collected_at, TIMESTAMP '2001-01-01') AS bucket_time,
+                        topic,
+                        AVG(bytes_in_per_sec) AS avg_rate
+                    FROM kafka_topic_bytes_rate_snapshots
+                    WHERE cluster_id = :cid
+                    AND collected_at >= NOW() - (:minutes * INTERVAL '1 minute')
+                    AND topic NOT LIKE '\\_%'
+                    {_topic_clause}
+                    GROUP BY bucket_time, topic
+                    ORDER BY bucket_time ASC
+                """
+                _rows = (await _bsess.execute(_bytes_text(_sql), _params)).fetchall()
+        except Exception:
+            return {"empty": True, "series": []}
+
+        if not _rows:
+            if topic_filter:
+                return {"labels": [], "series": [{"name": t, "values": []} for t in topic_filter], "snapshot_count": 0}
+            return {"empty": True, "series": []}
+
+        _bucket_set = sorted({r.bucket_time for r in _rows})
+        _labels = [b.isoformat() for b in _bucket_set]
+        _bucket_idx = {b: i for i, b in enumerate(_bucket_set)}
+        _topic_values: dict[str, list[float]] = {}
+        for r in _rows:
+            arr = _topic_values.setdefault(r.topic, [0.0] * len(_bucket_set))
+            arr[_bucket_idx[r.bucket_time]] = round((r.avg_rate or 0.0) / 1024, 4)
+
+        if topic_filter:
+            _series = [{"name": t, "values": _topic_values.get(t, [0.0] * len(_bucket_set))} for t in topic_filter]
+        else:
+            _topic_maxes = {t: max(v) for t, v in _topic_values.items()}
+            _top_topics = sorted(_topic_maxes, key=lambda n: _topic_maxes[n], reverse=True)[:10]
+            _series = [{"name": t, "values": _topic_values[t]} for t in _top_topics]
+
+        return {"labels": _labels, "series": _series, "snapshot_count": len(_bucket_set)}
+
     # Determine hour buckets for selected window
     now = datetime.now(timezone.utc)
     if minutes <= 60:
