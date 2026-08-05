@@ -2,7 +2,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
@@ -14,7 +14,7 @@ from models.agent_access import AgentAccess
 from models.agent_owner import AgentOwner
 from models.user import User
 from pydantic import BaseModel
-from registry.schemas import AgentCreate, AgentResponse, AgentUpdate, AgentVersionResponse, AccessAssign
+from registry.schemas import AgentCreate, AgentResponse, AgentUpdate, AgentVersionResponse, AccessAssign, UserAgentAccessUpdate
 
 router = APIRouter(prefix="/api/registry", tags=["registry"])
 
@@ -397,6 +397,34 @@ async def remove_access(
         raise HTTPException(status_code=404, detail="Access not found")
     await db.delete(row)
     await db.commit()
+
+
+@router.get("/users/{user_email}/agent-access")
+async def get_user_agent_access(
+    user_email: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    require_admin(current_user)
+    result = await db.execute(
+        select(AgentAccess.agent_slug).where(AgentAccess.user_email == user_email)
+    )
+    return {"user_email": user_email, "agent_slugs": [r[0] for r in result.fetchall()]}
+
+
+@router.put("/users/{user_email}/agent-access")
+async def set_user_agent_access(
+    user_email: str,
+    body: UserAgentAccessUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    require_admin(current_user)
+    await db.execute(delete(AgentAccess).where(AgentAccess.user_email == user_email))
+    for slug in body.agent_slugs:
+        db.add(AgentAccess(agent_slug=slug, user_email=user_email, assigned_by=current_user.email))
+    await db.commit()
+    return {"user_email": user_email, "agent_slugs": body.agent_slugs}
 
 
 @router.get("/assignable-users")

@@ -67,3 +67,7 @@ class AgentVersionResponse(BaseModel):
 
 class AccessAssign(BaseModel):
     user_email: str
+
+
+class UserAgentAccessUpdate(BaseModel):
+    agent_slugs: list[str]
