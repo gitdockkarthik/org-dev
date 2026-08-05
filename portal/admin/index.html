@@ -572,6 +572,7 @@
             <td class="text-muted">${created}</td>
             <td class="actions-cell">
               <button class="btn btn--ghost btn--sm" onclick="promptEditRoles(${u.id}, '${safeName}', '${u.roles||'user'}')">Roles</button>
+              <button class="btn btn--ghost btn--sm" onclick="promptEditAccess(${u.id}, '${safeName}', '${u.email}')">Access</button>
               <button class="btn btn--ghost btn--sm" onclick="promptResetPassword(${u.id}, '${safeName}')">Reset PW</button>
               <button class="btn btn--danger btn--sm" onclick="deleteUser(${u.id}, '${safeName}')">Delete</button>
             </td>
@@ -694,6 +695,61 @@
         closeEditRoles();
         await loadUsers();
         showToast('Roles updated', 'success');
+      } catch (err) {
+        statusEl.textContent = err.message;
+        statusEl.style.color = 'var(--danger)';
+      }
+    }
+
+    let _editAccessUserEmail = null;
+
+    async function promptEditAccess(userId, userName, userEmail) {
+      _editAccessUserEmail = userEmail;
+      document.getElementById('edit-access-username').textContent = userName;
+      document.getElementById('edit-access-status').textContent = '';
+      const checklist = document.getElementById('edit-access-checklist');
+      checklist.innerHTML = 'Loading…';
+      try {
+        const [agentsRes, accessRes] = await Promise.all([
+          fetch(`${BACKEND_URL}/api/registry/agents?status=published`, { headers: _authHeaders(), credentials: 'include' }),
+          fetch(`${BACKEND_URL}/api/registry/users/${encodeURIComponent(userEmail)}/agent-access`, { headers: _authHeaders(), credentials: 'include' }),
+        ]);
+        if (!agentsRes.ok) throw new Error(`HTTP ${agentsRes.status}`);
+        if (!accessRes.ok) throw new Error(`HTTP ${accessRes.status}`);
+        const agents = await agentsRes.json();
+        const access = await accessRes.json();
+        const allowed = new Set(access.agent_slugs || []);
+        checklist.innerHTML = agents.map(a => `
+          <label style="display:flex;align-items:center;gap:8px;font-size:.9rem;cursor:pointer;">
+            <input type="checkbox" class="ea-agent-checkbox" value="${a.slug}" ${allowed.has(a.slug) ? 'checked' : ''}> ${a.name}
+          </label>
+        `).join('');
+      } catch (err) {
+        checklist.innerHTML = `<span style="color:var(--danger);font-size:.85rem;">${err.message}</span>`;
+      }
+      document.getElementById('edit-access-overlay').style.display = 'flex';
+    }
+
+    function closeEditAccess() {
+      document.getElementById('edit-access-overlay').style.display = 'none';
+      _editAccessUserEmail = null;
+    }
+
+    async function saveEditAccess() {
+      const slugs = Array.from(document.querySelectorAll('.ea-agent-checkbox:checked')).map(cb => cb.value);
+      const statusEl = document.getElementById('edit-access-status');
+      statusEl.textContent = 'Saving…';
+      statusEl.style.color = 'var(--text-muted)';
+      try {
+        const r = await fetch(`${BACKEND_URL}/api/registry/users/${encodeURIComponent(_editAccessUserEmail)}/agent-access`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+          credentials: 'include',
+          body: JSON.stringify({ agent_slugs: slugs }),
+        });
+        if (!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || `HTTP ${r.status}`);
+        closeEditAccess();
+        showToast('Agent access updated', 'success');
       } catch (err) {
         statusEl.textContent = err.message;
         statusEl.style.color = 'var(--danger)';
@@ -1012,6 +1068,21 @@
         <button onclick="saveEditRoles()" style="padding:9px 20px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:.88rem;font-weight:600;cursor:pointer;">Save</button>
         <button onclick="closeEditRoles()" style="padding:9px 16px;background:transparent;color:var(--text-muted);border:1.5px solid var(--border-hi);border-radius:6px;font-size:.88rem;cursor:pointer;">Cancel</button>
         <span id="edit-roles-status" style="font-size:.83rem;align-self:center;"></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="edit-access-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1100;align-items:center;justify-content:center;">
+    <div style="background:var(--navy-1,#fff);border-radius:8px;padding:28px;width:360px;">
+      <h3 style="margin:0 0 18px 0;font-size:1.1rem;">Agent Access</h3>
+      <p id="edit-access-username" style="font-size:.88rem;color:var(--text-muted);margin:0 0 16px 0;"></p>
+      <div id="edit-access-checklist" style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px;">
+        <!-- populated dynamically with one checkbox per published agent -->
+      </div>
+      <div style="display:flex;gap:10px;">
+        <button onclick="saveEditAccess()" style="padding:9px 20px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:.88rem;font-weight:600;cursor:pointer;">Save</button>
+        <button onclick="closeEditAccess()" style="padding:9px 16px;background:transparent;color:var(--text-muted);border:1.5px solid var(--border-hi);border-radius:6px;font-size:.88rem;cursor:pointer;">Cancel</button>
+        <span id="edit-access-status" style="font-size:.83rem;align-self:center;"></span>
       </div>
     </div>
   </div>
