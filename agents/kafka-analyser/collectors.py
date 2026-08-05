@@ -10,7 +10,7 @@ from typing import Any
 from concurrent.futures import ThreadPoolExecutor
 
 import kafka_store as _ks
-from shared_kafka_clients import get_shared_admin_client, invalidate_client
+from shared_kafka_clients import get_shared_admin_client, invalidate_client, acquire_admin_lock
 
 logger = logging.getLogger(__name__)
 
@@ -191,7 +191,7 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
                 admin, admin_lock = get_shared_admin_client(c["bootstrap_servers"], c)
                 try:
                     # Get all groups with protocol types
-                    with admin_lock:
+                    with acquire_admin_lock(c["bootstrap_servers"], admin_lock):
                         all_groups = admin.list_consumer_groups()
                     consumer_gids = [g[0] for g in all_groups if g[1] == "consumer"]
                     connect_gids = [g[0] for g in all_groups if g[1] == "connect"]
@@ -211,7 +211,7 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
                         batch_gids = lag_target_gids[batch_start:batch_start + BATCH]
                         for gid in batch_gids:
                             try:
-                                with admin_lock:
+                                with acquire_admin_lock(c["bootstrap_servers"], admin_lock):
                                     offsets = admin.list_consumer_group_offsets(gid)
                                 group_committed[gid] = {
                                     tp: (meta.offset if hasattr(meta, 'offset') else meta)
@@ -1153,7 +1153,7 @@ async def collect_msg_rate(cluster_id: str = ""):
         def _get_partition_sizes():
             admin, admin_lock = get_shared_admin_client(c["bootstrap_servers"], c)
             try:
-                with admin_lock:
+                with acquire_admin_lock(c["bootstrap_servers"], admin_lock):
                     result = admin.describe_log_dirs()
                 sizes = {}
                 for log_dir in result.log_dirs:
