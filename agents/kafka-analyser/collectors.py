@@ -582,7 +582,8 @@ async def collect_topic_structure(cluster_id: str = ""):
                 _admin, _admin_lock = get_shared_admin_client(c["bootstrap_servers"], c)
                 try:
                     with _admin_lock:
-                        _all_topics = [t for t in _admin.list_topics() if not t.startswith('_')]
+                        from tools.real_kafka import _is_internal_topic as _iit
+                        _all_topics = [t for t in _admin.list_topics() if not _iit(t)]
                     leader_counts = _col.defaultdict(int)
                     replica_counts = _col.defaultdict(int)
                     # topic -> leader_broker_id mapping for partition leaders table
@@ -631,6 +632,17 @@ async def collect_topic_structure(cluster_id: str = ""):
                                 leader_broker_id = EXCLUDED.leader_broker_id,
                                 updated_at = now()
                         """))
+                    # Cleanup: remove rows this run didn't touch (topic deleted from
+                    # Kafka, or excluded by a filter change) -- safe only because every
+                    # describe_topics batch above already succeeded (a partial/failed
+                    # sweep exits via the except/raise before ever reaching here).
+                    _cleanup_result = await _sess.execute(_st("""
+                        DELETE FROM kafka_partition_leaders
+                        WHERE cluster_id = :cid AND updated_at < :now_ts
+                    """), {"cid": int(cid), "now_ts": now_ts})
+                    if _cleanup_result.rowcount:
+                        logger.info("collect_topic_structure: removed %d stale partition_leaders row(s) for %s",
+                                    _cleanup_result.rowcount, c["name"])
                     # Aggregate data_gb per broker from kafka_topic_metrics
                     for broker_id, lcount in leader_counts.items():
                         data_gb_row = await _sess.execute(_st("""
