@@ -17,7 +17,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 _lag_trend_cache: dict = {}
-_LAG_TREND_CACHE_TTL_SECS = 300  # 5 minutes — matches collection interval
+_LAG_TREND_CACHE_TTL_SECS = 180  # 3 minutes — matches consumer-lag's collection cadence
 
 
 def _get_lag_trend_cached(key: str):
