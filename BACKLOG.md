@@ -795,28 +795,82 @@ production clusters are onboarded.
 *Added: 2026-08-05, elevated to CRITICAL given production onboarding timeline,
 4 of 5 CRITICAL jobs completed same day*
 
-### topic-structure -- process-isolation migration deferred (2026-08-05)
-Part of the CRITICAL job-reliability effort (see the main process-isolation item
-above). msg-rate, topic-sizes, and consumer-lag are done and validated. topic-structure
-is genuinely different: describe_all_topics() uses 10 PARALLEL threads internally
-(_fetch_topic_details_sync via run_in_executor across chunked topic batches), not a
-single sequential call. Our process pool is deliberately small (4 workers, sized to
-protect memory headroom) -- naively submitting all 10 chunks would queue behind only 4
-running at once, an estimated 2-2.5x slowdown. Real measured baseline: cluster 4 avg
-9.55s/max 37.2s across 71 runs (safely within its 120s timeout even slowed down);
-cluster 8's one observed run was 55.4s (closer to its 90s timeout, more topics to grow
-into -- a slowdown here is the real risk).
+### topic-structure -- process-isolation migration -- DONE (2026-08-06)
+Originally deferred 2026-08-05 over concern that its 10-way internal thread
+parallelism (_fetch_topic_details_sync via run_in_executor across chunked topic
+batches) would conflict with the small, 4-worker process pool -- estimated 2-2.5x
+slowdown risk, not yet involved in a real incident at the time.
 
-**Decision**: defer rather than rush a fix that could introduce a NEW performance
-regression while fixing a reliability gap that hasn't caused a real incident yet
-(unlike msg-rate/topic-sizes/consumer-lag, all directly implicated in confirmed
-incidents). Two real options when this is revisited: (1) increase the process pool
-specifically to preserve 10-way parallelism (more memory cost), or (2) redesign the
-chunking to fit the existing 4-worker pool without losing meaningful throughput.
-User's explicit call: proceed with the other two production clusters as planned, and
-come back to this if/when it actually causes a real problem in practice, rather than
-solve a hypothetical now.
-*Added: 2026-08-05*
+**Real trigger, next morning (2026-08-06)**: a live incident forced revisiting this
+immediately. User noticed a genuine CPU/memory spike (81-98% CPU sustained) via
+`docker stats`. Investigation (py-spy thread dump) found a thread stuck in an
+infinite maybe_connect()/wakeup() retry loop -- the exact same failure pattern
+already fixed for the other 4 jobs, but this time in _fetch_topic_details_sync's
+shared thread pool, spinning continuously and consuming significant CPU with log
+spam exceeding 180,000 lines in 10 minutes. Only resolvable via full container
+restart, since the underlying thread could not be forcibly stopped.
+
+**Re-examined the "10-way parallelism" concern while fixing it -- turned out to be
+based on a false premise**: _fetch_topic_details_sync held admin_lock for its ENTIRE
+describe_topics loop (all batches for its chunk), so all 10 threads were actually
+SERIALIZED through that one shared lock the whole time -- true parallelism was
+already far more limited than assumed. Process-pool workers each get their own
+independent connection with no shared lock at all between them, so dispatching
+chunks to the pool was not just "acceptable" but genuinely FASTER: cluster 8 (the
+higher-risk case) completed in 23.8s vs. the prior 55.4s lock-serialized baseline.
+
+**Real bug caught and fixed during migration**: a separate public method,
+fetch_topic_details() (used by a live SSE streaming endpoint in routes_dashboard.py,
+not caught by the original scoping since it wasn't part of the 5 scheduled jobs),
+still called the sync helper being removed -- would have been a genuine runtime
+AttributeError if triggered. Found and fixed in the same pass via a full-codebase
+grep for any other caller before finalizing.
+
+Validated end-to-end through the real job scheduler for both clusters after a clean
+restart: cluster 4 succeeded in 18.4s, cluster 8 in 23.8s, real data confirmed
+written for 24,306 topics at expected scale. All 5 originally-identified CRITICAL
+jobs are now on true process-based cancellation.
+
+**New, separate, real risk surfaced during this investigation (not yet fixed)**: the
+app's own startup/warm-up path (lifespan() in main.py, not the deleted
+_collection_loop -- a different, still-active function) calls
+fetch_all_group_lags(), which is STILL on the old, un-migrated, thread-based path.
+This is very likely what actually caused this morning's stuck thread (traced to a
+GroupCoordinatorRequest for a specific connect group against a broker that was
+genuinely unresponsive) -- the startup sync runs fresh on every container restart,
+meaning any restart could reintroduce this exact incident class again until this
+path is also migrated. Logged as its own, separate, high-priority item below.
+*Added: 2026-08-05, completed: 2026-08-06*
+
+### fetch_group_lags / fetch_all_group_lags -- un-migrated, caused this morning's incident (2026-08-06)
+Discovered while root-causing the topic-structure incident above: this is a SIXTH,
+previously-unidentified admin_lock-using code path, separate from the 5 scheduled
+CRITICAL jobs already migrated. Two real callers: (1) the app's own startup/warm-up
+sequence (lifespan() in main.py -- runs on EVERY container restart, not just
+periodically), and (2) on-demand UI queries (routes_dashboard.py, popup-style lag
+lookups) and the "Consumer Lag Full" governance job (collect_consumer_lag_full in
+collectors.py, a different function from the already-migrated
+collect_consumer_lag_active).
+
+**Confirmed as the likely root cause of this morning's live incident**: py-spy thread
+dump traced the stuck thread through _find_coordinator_id_send_request for group
+"connect-aosstg_amobee_mapper_connector" against node_id=5 -- this thread's
+lock-holding almost certainly blocked topic-structure-8's own list_all_topics() call
+(both share cluster 8's admin_lock), explaining why that job hung for 4+ minutes past
+its 90s timeout with no retry ever completing.
+
+**Real, standing risk**: because this runs on every startup/restart (not just on a
+schedule), EVERY restart of the agent is a fresh opportunity to reintroduce this exact
+incident class -- including restarts done specifically to deploy fixes for other
+issues, as happened this morning.
+
+**Plan**: migrate _fetch_group_lags_sync to process-based isolation, likely reusing
+fetch_consumer_lag_isolated's pattern (or a lighter variant, since this fetches lag
+for a specific, smaller set of group_ids rather than the full active-group sweep).
+High priority given it's a confirmed, repeatable trigger for the same incident class
+already fixed elsewhere -- should not be treated as lower-priority just because it's
+not one of the originally-scoped 5 scheduled jobs.
+*Added: 2026-08-06*
 
 ### Update Docs Hub with full Kafka Analyser capabilities (2026-08-05)
 User's explicit framing: this is both a selling point for the agent to other teams
