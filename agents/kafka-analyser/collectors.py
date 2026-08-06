@@ -578,7 +578,11 @@ async def collect_topic_structure(cluster_id: str = ""):
                             topic_name = _tm.get('topic', '')
                             for _p in _tm.get('partitions', []):
                                 leader_id = str(_p['leader'])
-                                leader_counts[leader_id] += 1
+                                # -1 is Kafka's own "no leader" marker (partition
+                                # temporarily leaderless during an election), not a
+                                # real broker -- skip it from the leader count.
+                                if leader_id != "-1":
+                                    leader_counts[leader_id] += 1
                                 partition_leaders.append({
                                     'topic': topic_name,
                                     'partition': _p['partition'],
