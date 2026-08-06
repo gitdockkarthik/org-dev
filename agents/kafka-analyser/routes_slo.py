@@ -139,9 +139,15 @@ async def get_slo_dashboard(cluster_id: str, hours: int = 24) -> dict:
             ln = lag_now.fetchone()
             current_lag = int(ln.total_lag) if ln else 0
 
-            # Current broker + URP
+            # Current broker + URP -- broker_count only counts brokers with a
+            # genuinely successful data_gb_true connection attempt in the freshness
+            # window, not just any row update (the main row is also updated via
+            # Prometheus/JMX, a separate data source, so it can look "fresh" even
+            # when that broker's own connection attempt failed). Live-validated
+            # against a real broker outage on 2026-08-06.
             broker_now = await sess.execute(_t("""
-                SELECT COUNT(*) as total, SUM(urp_count) as total_urp
+                SELECT COUNT(*) FILTER (WHERE data_gb_true IS NOT NULL) as total,
+                       SUM(urp_count) as total_urp
                 FROM kafka_broker_metrics
                 WHERE cluster_id=:cid AND time >= NOW() - INTERVAL '10 minutes'
             """), {"cid": int(cluster_id)})

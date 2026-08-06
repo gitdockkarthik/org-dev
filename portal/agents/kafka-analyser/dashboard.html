@@ -747,6 +747,7 @@
 
       // ── KPI metrics ─────────────────────────────────────────────────────────
       const brokerCount      = cluster.broker_count || brokers.length;
+      const reachableBrokerCount = brokers.filter(b => b.reachable !== false).length;
       const allBrokersHealthy = brokers.length > 0 && brokers.every(b => b.status === 'healthy');
       const topicCount       = (window._clusterCounts || {}).total_topics || topics.length || cluster.topic_count || 0;
       const partitionCount   = (window._clusterCounts || {}).total_partitions || topics.reduce((s, t) => s + (t.partition_count || 0), 0);
@@ -761,7 +762,7 @@
         <div class="kpi-grid">
           <div class="kpi ${allBrokersHealthy ? 'kpi--success' : 'kpi--danger'}">
             <div class="kpi__label">Brokers Online</div>
-            <div class="kpi__value">${brokers.length}/${brokerCount}</div>
+            <div class="kpi__value">${reachableBrokerCount}/${brokerCount}</div>
             <div class="kpi__sub">${cluster.name || 'cluster'}</div>
           </div>
           <div class="kpi kpi--orange">

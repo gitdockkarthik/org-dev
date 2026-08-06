@@ -109,19 +109,36 @@ async def get_overview(cluster_id: str | None = None, hours: int | None = None) 
                 async with SessionLocal() as _bs:
                     _br = await _bs.execute(_bt(
                         "SELECT broker_id, heap_pct, cpu_pct, gc_pause_ms, "
-                        "request_handler_idle_pct, urp_count, messages_in_per_sec, disk_pct "
+                        "request_handler_idle_pct, urp_count, messages_in_per_sec, disk_pct, "
+                        "time, data_gb_true "
                         "FROM kafka_broker_metrics WHERE cluster_id=:cid AND time=(SELECT MAX(time) FROM kafka_broker_metrics bm2 WHERE bm2.cluster_id=:cid AND bm2.broker_id = kafka_broker_metrics.broker_id) ORDER BY broker_id"
                     ), {"cid": int(cluster_id)})
                     _rows = _br.fetchall()
                     if _rows:
-                        brokers = [{"broker_id": r.broker_id, "id": r.broker_id,
+                        from datetime import datetime as _dt_ov, timezone as _tz_ov, timedelta as _td_ov
+                        _now_ov = _dt_ov.now(_tz_ov.utc)
+                        def _broker_status_ov(r):
+                            _row_time = r.time
+                            if _row_time is not None and _row_time.tzinfo is None:
+                                _row_time = _row_time.replace(tzinfo=_tz_ov.utc)
+                            _stale = _row_time is None or (_now_ov - _row_time) > _td_ov(minutes=6)
+                            _unreachable = r.data_gb_true is None or _stale
+                            if _unreachable:
+                                return "unreachable", False
+                            if r.urp_count and r.urp_count > 0:
+                                return "degraded", True
+                            return "healthy", True
+                        brokers = []
+                        for r in _rows:
+                            _status_ov, _reachable_ov = _broker_status_ov(r)
+                            brokers.append({"broker_id": r.broker_id, "id": r.broker_id,
                                     "heap_pct": r.heap_pct, "cpu_pct": r.cpu_pct,
                                     "gc_pause_ms": r.gc_pause_ms, "urp_count": r.urp_count,
                                     "request_handler_idle_pct": r.request_handler_idle_pct,
                                     "messages_in_per_sec": r.messages_in_per_sec,
-                                    "status": "healthy" if r.urp_count == 0 else "degraded",
-                                    "cpu_cores_configured": True}
-                                   for r in _rows]
+                                    "status": _status_ov,
+                                    "reachable": _reachable_ov,
+                                    "cpu_cores_configured": True})
         except Exception:
             pass
     # Compute health score from real metrics
@@ -530,6 +547,19 @@ async def get_brokers(cluster_id: str | None = None, hours: int | None = None) -
             brokers = []
             for r in _broker_rows:
                 bid = str(r.broker_id)
+                from datetime import datetime, timezone, timedelta as _td_reach
+                _now_reach = datetime.now(timezone.utc)
+                _row_time = r.time
+                if _row_time is not None and _row_time.tzinfo is None:
+                    _row_time = _row_time.replace(tzinfo=timezone.utc)
+                _is_stale = _row_time is None or (_now_reach - _row_time) > _td_reach(minutes=6)
+                _is_unreachable = r.data_gb_true is None or _is_stale
+                if _is_unreachable:
+                    _status = "unreachable"
+                elif r.urp_count and r.urp_count > 0:
+                    _status = "degraded"
+                else:
+                    _status = "healthy"
                 brokers.append({
                     "broker_id": r.broker_id,
                     "id": r.broker_id,
@@ -542,7 +572,8 @@ async def get_brokers(cluster_id: str | None = None, hours: int | None = None) -
                     "urp_count": r.urp_count,
                     "messages_in_per_sec": r.messages_in_per_sec,
                     "disk_pct": r.disk_pct,
-                    "status": "healthy" if r.urp_count == 0 else "degraded",
+                    "status": _status,
+                    "reachable": not _is_unreachable,
                     "cpu_cores_configured": True,
                     "bytes_out_per_sec": r.bytes_out_per_sec or 0.0,
                     "isr_shrinks_per_sec": r.isr_shrinks_per_sec or 0.0,
