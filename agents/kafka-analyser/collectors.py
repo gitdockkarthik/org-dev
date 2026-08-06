@@ -640,6 +640,49 @@ async def collect_topic_structure(cluster_id: str = ""):
     collect_topic_structure._last_result = results[0] if results else "No data collected"
 
 
+# ── Job 4b: URP Status (lightweight, frequent) ────────────────────────────────────
+async def collect_urp_status(cluster_id: str = ""):
+    """Lightweight, frequent URP-only collection -- reuses describe_all_topics
+    (already process-isolated) but skips partition_count/replication_factor
+    updates and the broker-distribution step that topic-structure also does,
+    so this can run much more often than that slower, full sweep."""
+    c = await _get_cluster(cluster_id)
+    if not c:
+        collect_urp_status._last_result = f"Cluster {cluster_id} not found or disabled"
+        return
+    cid = _cid(c)
+    try:
+        collector = await _get_collector(c)
+        all_topic_names = await collector.list_all_topics()
+        if not all_topic_names:
+            collect_urp_status._last_result = "No topics found"
+            return
+        described_topics, total_urp = await collector.describe_all_topics(all_topic_names, workers=10)
+        if described_topics:
+            from database import SessionLocal
+            from sqlalchemy import text as _urpt
+            async with SessionLocal() as sess:
+                values = ",".join(
+                    f"('{t['name'].replace(chr(39), chr(39)*2)}', {t.get('under_replicated',0)})"
+                    for t in described_topics
+                )
+                if values:
+                    await sess.execute(_urpt(f"""
+                        UPDATE kafka_topic_metrics SET
+                            urp_count = v.urp
+                        FROM (VALUES {values}) AS v(topic, urp)
+                        WHERE kafka_topic_metrics.cluster_id = {int(cid)}
+                        AND kafka_topic_metrics.topic = v.topic
+                    """))
+                    await sess.commit()
+            collect_urp_status._last_result = f"{c['name']}: {len(described_topics)} topics, {total_urp} URP"
+        else:
+            collect_urp_status._last_result = "No topics described"
+    except Exception as e:
+        logger.warning("urp_status failed for %s: %s", c["name"], e)
+        collect_urp_status._last_result = f"Error: {e}"
+
+
 # ── Job 5: Consumer Lag Full (Governance) ─────────────────────────────────────
 async def collect_consumer_lag_full():
     """Full consumer group audit including EMPTY and DEAD groups for governance."""
