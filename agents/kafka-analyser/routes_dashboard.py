@@ -143,8 +143,27 @@ async def get_overview(cluster_id: str | None = None, hours: int | None = None) 
             pass
     # Compute health score from real metrics
     score = 100
-    # URP deduction
-    total_urp = data.get("counts", {}).get("total_urp", 0)
+    # URP and RF=1 deductions -- sourced directly from kafka_topic_metrics (the
+    # accurate, database-backed source also used by /dashboard/counts), not the
+    # in-memory kafka_store cache, which is reset on every restart and can go stale.
+    total_urp = 0
+    rf1 = 0
+    if cluster_id:
+        try:
+            from database import DashboardSessionLocal as _hsSL
+            from sqlalchemy import text as _hst
+            if _hsSL:
+                async with _hsSL() as _hss:
+                    _hsr = await _hss.execute(_hst(
+                        "SELECT COALESCE(SUM(urp_count), 0) as urp, "
+                        "COUNT(*) FILTER (WHERE replication_factor = 1 AND partition_count > 0) as rf1 "
+                        "FROM kafka_topic_metrics WHERE cluster_id=:cid"
+                    ), {"cid": int(cluster_id)})
+                    _hsrow = _hsr.fetchone()
+                    total_urp = int(_hsrow.urp or 0) if _hsrow else 0
+                    rf1 = int(_hsrow.rf1 or 0) if _hsrow else 0
+        except Exception as _hse:
+            logger.warning("health_score URP/RF1 query failed: %s", _hse)
     score -= total_urp * 5
     # High heap deduction
     for b in brokers:
@@ -157,7 +176,6 @@ async def get_overview(cluster_id: str | None = None, hours: int | None = None) 
     critical_groups = [g for g in consumer_groups if g.get("total_lag", 0) > 10000]
     score -= len(critical_groups) * 2
     # RF=1 topics deduction
-    rf1 = data.get("counts", {}).get("total_rf1", 0)
     if rf1 > 100:
         score -= 10
     elif rf1 > 0:
