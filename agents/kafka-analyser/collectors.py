@@ -1025,7 +1025,7 @@ collect_sr_subjects._last_result = "Not yet run"
 
 # ── Job 9: Message Rate ───────────────────────────────────────────────────────
 _prev_offsets: dict = {}
-_prev_offset_time: float = 0.0
+_prev_offset_time: dict = {}
 
 async def collect_msg_rate(cluster_id: str = ""):
     """Calculate bytes/sec ingestion rate using describe_log_dirs delta between cycles.
@@ -1036,6 +1036,7 @@ async def collect_msg_rate(cluster_id: str = ""):
         collect_msg_rate._last_result = f"Cluster {cluster_id} not found or disabled"
         return
     cid = _cid(c)
+    _pot_key = f"{cid}_time"
     try:
         from kafka_process_pool import describe_log_dirs_isolated
         now = time.time()
@@ -1047,10 +1048,10 @@ async def collect_msg_rate(cluster_id: str = ""):
         current_sizes = _dl_result["sizes"]
         prev_key = f"{cid}_sizes"
         prev_sizes = _prev_offsets.get(prev_key, {})
-        prev_time = _prev_offset_time if _prev_offset_time else now
+        prev_time = _prev_offset_time.get(_pot_key) or now
         elapsed = max(1, now - prev_time)
         _prev_offsets[prev_key] = current_sizes
-        _prev_offset_time = now
+        _prev_offset_time[_pot_key] = now
         if not prev_sizes:
             collect_msg_rate._last_result = "Baseline stored — rates available next cycle"
             return
@@ -1184,6 +1185,7 @@ async def collect_msg_rate(cluster_id: str = ""):
     except Exception as e:
         logger.warning("msg_rate failed for %s: %s", c["name"], e)
         collect_msg_rate._last_result = f"Failed: {e}"
+        raise
 
 
 # ── Job 10: Topic Message Inflow (all topics, no consumer-group dependency) ────
