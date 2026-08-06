@@ -958,16 +958,31 @@ re-enabled. **This 5-min cadence should be the default going forward for any new
 onboarded cluster**, not the old 30min-2hr defaults.
 *Added: 2026-08-06, completed: 2026-08-06*
 
-### collect_urp_status -- reconsider, may be redundant now that topic-structure runs every 5 min
-Added earlier today as a lightweight, URP-only job (skipping partition_count/
-replication_factor and the broker-distribution step) specifically because
-topic-structure ran too infrequently. Now that topic-structure itself runs every 5 min
-on all clusters (see item above), this dedicated job may be redundant -- both now
-update urp_count at essentially the same cadence. Worth a deliberate decision next
-session: keep both (URP status still runs faster/lighter, a small safety margin) or
-retire collect_urp_status now that the root cause (infrequent topic-structure) is
-fixed directly. Not urgent, no known problem either way.
-*Added: 2026-08-06*
+### collect_urp_status -- DONE, retired (2026-08-06)
+Decision made and executed: retired entirely (function, scheduler registration, DB
+schedule rows all removed), not just disabled -- redundant now that topic-structure
+runs every 5 min on all clusters, the same cadence. Validated: topic-structure alone
+correctly keeps urp_count fresh with no dedicated job needed.
+
+**Real, separate bug caught during this validation, also fixed**: while confirming
+topic-structure's own 5-min schedule actually fires automatically (not just via manual
+triggers), discovered cluster 8's topic-structure schedule had `enabled=False` in the
+database -- inherited from this job type's own hardcoded default (which predates this
+session's process-isolation work, from when the job was too slow/risky to enable by
+default). This meant topic-structure-8 had NEVER run automatically since onboarding --
+every single run seen throughout this entire session was a manual trigger, not a real
+scheduled one. The earlier cron/timeout schedule fix (see item above) never actually
+took effect for real, automatic collection until this was caught and fixed. Confirmed
+via a genuine, unmanned test: restarted the container, sent zero manual triggers,
+waited 4 minutes, and observed a real automatic firing (run 67818) on the correct
+cadence. Also fixed topic-structure's hardcoded default_enabled (main.py) from False
+to True, so no future newly-onboarded cluster silently inherits this same gap.
+
+**Process note**: this was caught only because the user explicitly double-checked a
+timestamp that "didn't look right" rather than accepting the first validation as
+sufficient -- a useful reminder that automatic/scheduled behavior needs to be verified
+directly (an unmanned, natural firing), not inferred from manual-trigger tests alone.
+*Added: 2026-08-06, completed: 2026-08-06*
 
 ### Job status `_last_result` shared across concurrent cluster runs of the same job type (race condition)
 Found while debugging topic-structure and broker-health incidents today: `_last_result`
