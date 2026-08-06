@@ -940,6 +940,59 @@ implementation, testing, per user's explicit preference, not squeezed into other
    security-sensitive, not just a UX feature.
 *Added: 2026-08-05*
 
+### topic-structure schedule too slow, caused real staleness incidents (2026-08-06) -- DONE
+Confirmed twice, live: cluster 8's topic-structure ran only every 2hrs, letting both
+URP data AND leader/replica partition distribution go stale for that entire window --
+directly visible during real incidents (URP showed 0 while the Kafka team's own CLI
+check showed 19,912 real URPs; separately, distribution charts still showed the old,
+imbalanced state 34+ minutes after the Kafka team's own leader-election rebalance was
+already visible in their own Grafana). Considered adding dedicated, lighter-weight jobs
+(as already done for URP -- see collect_urp_status), but given process-isolation now
+makes a full topic-structure sweep fast (17-55s for 24,502 topics on cluster 8, down
+from being unsafely slow before this session's work), the simpler, lower-risk fix was
+to just increase topic-structure's own frequency directly, rather than keep adding new
+job types. Standardized all three clusters (3, 4, 8) to the same 5-min, staggered cron
+cadence (offsets 1/2/3 to avoid collision), including cluster 3 even though currently
+disabled, specifically so no surprise stale-schedule issue appears if/when it's
+re-enabled. **This 5-min cadence should be the default going forward for any newly
+onboarded cluster**, not the old 30min-2hr defaults.
+*Added: 2026-08-06, completed: 2026-08-06*
+
+### collect_urp_status -- reconsider, may be redundant now that topic-structure runs every 5 min
+Added earlier today as a lightweight, URP-only job (skipping partition_count/
+replication_factor and the broker-distribution step) specifically because
+topic-structure ran too infrequently. Now that topic-structure itself runs every 5 min
+on all clusters (see item above), this dedicated job may be redundant -- both now
+update urp_count at essentially the same cadence. Worth a deliberate decision next
+session: keep both (URP status still runs faster/lighter, a small safety margin) or
+retire collect_urp_status now that the root cause (infrequent topic-structure) is
+fixed directly. Not urgent, no known problem either way.
+*Added: 2026-08-06*
+
+### Job status `_last_result` shared across concurrent cluster runs of the same job type (race condition)
+Found while debugging topic-structure and broker-health incidents today: `_last_result`
+is a single, MODULE-LEVEL attribute on each collector function, not scoped per-cluster.
+When two clusters' jobs of the SAME type run in the same window (e.g.
+broker-health-4 and broker-health-8 both firing within the same second, which happens
+routinely given they're on the same cadence), they overwrite each other's status
+message -- confirmed live: a job's `logs` column showed a generic "Completed in Xs"
+with no useful detail, because the other cluster's run had already overwritten
+_last_result by the time jobs.py read it.
+
+**Important distinction, already confirmed**: this ONLY affects the diagnostic log
+message text (_last_result / the `logs` column) -- job `status` (success/failed) and
+`duration_seconds` are tracked correctly and independently per run in the database, so
+this is a real diagnostic-accuracy gap, not a data-integrity issue. Given the session's
+already very high stakes today, deliberately deferred rather than expanding scope
+further -- logged here instead of rushed.
+
+**Real fix needed**: `_last_result` needs to become per-(job_id, cluster_id) rather
+than a single, shared value per function -- likely a dict keyed by cluster_id instead
+of a bare function attribute, with jobs.py's read updated to match. Touches jobs.py's
+core status-reading mechanism, not just individual collectors, so worth its own
+properly scoped session rather than a quick patch.
+*Added: 2026-08-06*
+
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - **Product/Service tag mapping display** — read the team's tag mapping (product,
   service, etc.) from a SharePoint location once the tag schema is finalized, and
