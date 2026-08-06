@@ -842,34 +842,52 @@ meaning any restart could reintroduce this exact incident class again until this
 path is also migrated. Logged as its own, separate, high-priority item below.
 *Added: 2026-08-05, completed: 2026-08-06*
 
-### fetch_group_lags / fetch_all_group_lags -- un-migrated, caused this morning's incident (2026-08-06)
-Discovered while root-causing the topic-structure incident above: this is a SIXTH,
+### fetch_group_lags / fetch_all_group_lags -- DONE (2026-08-06)
+Discovered while root-causing the topic-structure incident: a SIXTH,
 previously-unidentified admin_lock-using code path, separate from the 5 scheduled
-CRITICAL jobs already migrated. Two real callers: (1) the app's own startup/warm-up
-sequence (lifespan() in main.py -- runs on EVERY container restart, not just
-periodically), and (2) on-demand UI queries (routes_dashboard.py, popup-style lag
-lookups) and the "Consumer Lag Full" governance job (collect_consumer_lag_full in
-collectors.py, a different function from the already-migrated
-collect_consumer_lag_active).
+CRITICAL jobs. Two real callers: (1) the app's own startup/warm-up sequence
+(lifespan() in main.py -- runs on EVERY container restart, not just periodically),
+and (2) on-demand UI queries and the "Consumer Lag Full" governance job.
 
-**Confirmed as the likely root cause of this morning's live incident**: py-spy thread
-dump traced the stuck thread through _find_coordinator_id_send_request for group
-"connect-aosstg_amobee_mapper_connector" against node_id=5 -- this thread's
-lock-holding almost certainly blocked topic-structure-8's own list_all_topics() call
-(both share cluster 8's admin_lock), explaining why that job hung for 4+ minutes past
-its 90s timeout with no retry ever completing.
+Confirmed via py-spy thread dump as the very likely root cause of the morning's
+incident (stuck in _find_coordinator_id_send_request for a specific connect group).
+Added fetch_group_lags_isolated() to kafka_process_pool.py, migrated both
+fetch_group_lags and fetch_all_group_lags, removed _fetch_group_lags_sync entirely.
 
-**Real, standing risk**: because this runs on every startup/restart (not just on a
-schedule), EVERY restart of the agent is a fresh opportunity to reintroduce this exact
-incident class -- including restarts done specifically to deploy fixes for other
-issues, as happened this morning.
+Validated by restarting the container (the exact scenario that triggered this
+morning's incident, since this path runs fresh on every startup) and confirming
+clean startup: near-idle CPU (0.11%) and zero wakeup-socket spam through the full
+startup-sync window -- confirms the root cause is genuinely fixed, not just masked.
+All 5 originally-scoped CRITICAL jobs plus this 6th, separately-discovered path are
+now on true process-based cancellation.
+*Added: 2026-08-06, completed: 2026-08-06*
 
-**Plan**: migrate _fetch_group_lags_sync to process-based isolation, likely reusing
-fetch_consumer_lag_isolated's pattern (or a lighter variant, since this fetches lag
-for a specific, smaller set of group_ids rather than the full active-group sweep).
-High priority given it's a confirmed, repeatable trigger for the same incident class
-already fixed elsewhere -- should not be treated as lower-priority just because it's
-not one of the originally-scoped 5 scheduled jobs.
+### Broker health/availability status doesn't reflect real per-broker reachability (2026-08-06)
+Raised as a live, valid question by the Kafka team during a genuine maintenance
+window: dashboard showed "3/3 online", all brokers "HEALTHY", Broker Availability
+"3/3 GREEN" across Overview, Brokers, and SLO tabs -- while one broker (Internal
+Staging Kafka) was confirmed under active maintenance and directly unreachable
+(verified via a raw socket connection test: 2 of 3 brokers reachable, 1 timed out).
+
+**Root cause investigated**: "Brokers Online" (`brokers.length/brokerCount` in
+dashboard.html) and the "healthy" status per broker both derive entirely from
+describe_cluster()'s own broker list -- which reflects the cluster's own metadata
+(which brokers the controller/KRaft still considers cluster MEMBERS), not actual,
+live reachability of each individual broker right now. A broker under maintenance
+is not removed from cluster membership, so it keeps appearing in this list and
+being counted as "online" regardless of whether it can currently be reached.
+allBrokersHealthy only checks .status for brokers actually present in the returned
+list -- it has no signal at all for "a broker that's a known member but currently
+unreachable."
+
+**Needs its own proper design pass** (not a quick patch): what's the right signal
+for genuine reachability? Options to evaluate: a direct per-broker connectivity
+check (extra cost per cycle), broker presence/absence in ISR lists for its own
+partitions (a broker under maintenance typically drops out of ISR reasonably
+quickly, though not instantly), or JMX/Prometheus metric staleness as a proxy.
+Affects three separate UI surfaces (Cluster Overview KPI, Brokers tab detail cards,
+SLO tab's Broker Availability row) that would all need to agree on the same
+underlying signal.
 *Added: 2026-08-06*
 
 ### Update Docs Hub with full Kafka Analyser capabilities (2026-08-05)
