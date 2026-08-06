@@ -1008,6 +1008,25 @@ core status-reading mechanism, not just individual collectors, so worth its own
 properly scoped session rather than a quick patch.
 *Added: 2026-08-06*
 
+### Portal is the primary, actively-used surface -- NOT the static/standalone version
+Important clarification surfaced during the Brokers tab audit: portal
+(portal/agents/kafka-analyser/dashboard.html) is what users actually access today,
+not agents/kafka-analyser/static/dashboard.html. The static version exists for a
+future standalone-shipping goal that isn't happening soon. This session had been
+diligently syncing every fix to both files, but a UI fix was validated only in
+static earlier tonight and appeared not to take effect from the user's perspective
+-- turned out portal (the file they actually test against) hadn't been updated yet.
+No harm done (caught immediately, portal fix applied same session), but confirms two
+real things: (1) static and portal already have pre-existing drift from before
+tonight's session, not just from tonight's own edits, (2) going forward, portal
+should be treated as the priority/primary target for any UI validation, with static
+kept in sync as a secondary step, not the reverse.
+
+**Action needed**: a dedicated audit session to diff static vs. portal
+dashboard.html (and any other duplicated files between the two locations) and
+reconcile all pre-existing discrepancies before any real standalone-shipping push.
+*Added: 2026-08-06*
+
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - **Product/Service tag mapping display** — read the team's tag mapping (product,
   service, etc.) from a SharePoint location once the tag schema is finalized, and
