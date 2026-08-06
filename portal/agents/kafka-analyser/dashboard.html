@@ -768,7 +768,7 @@
           <div class="kpi kpi--orange">
             <div class="kpi__label">Topics</div>
             <div class="kpi__value">${topicCount.toLocaleString()}</div>
-            <div class="kpi__sub">topics</div>
+            <div class="kpi__sub">excl. system topics</div>
           </div>
           <div class="kpi kpi--orange">
             <div class="kpi__label">Partitions</div>
@@ -2114,12 +2114,15 @@
             <div class="kpi__value">${avgHeap}%</div>
             <div class="kpi__sub">across brokers</div>
           </div>
-          <div class="kpi ${totalISRShrinks > 0 ? 'kpi--danger' : 'kpi--success'}">
+          <!-- ISR Shrinks/sec and Avg Request Handler Idle % hidden -- known JMX
+               exporter metric-name/cardinality limitation (see BACKLOG.md), not real
+               measured data. Re-enable once the exporter-side issue is fixed. -->
+          <div class="kpi ${totalISRShrinks > 0 ? 'kpi--danger' : 'kpi--success'}" style="display:none">
             <div class="kpi__label">ISR Shrinks/sec</div>
             <div class="kpi__value">${totalISRShrinks.toFixed(2)}</div>
             <div class="kpi__sub">across brokers</div>
           </div>
-          <div class="kpi ${reqIdleClass}">
+          <div class="kpi ${reqIdleClass}" style="display:none">
             <div class="kpi__label">Avg Request Handler Idle %</div>
             <div class="kpi__value">${avgReqIdle}%</div>
             <div class="kpi__sub">across brokers</div>
@@ -2160,7 +2163,9 @@
               datasets: [
                 { label: 'CPU',  data: brokers.map(b => b.cpu_pct || 0),  backgroundColor: '#FF6B35', borderWidth: 0 },
                 { label: 'Heap %', data: brokers.map(b => b.heap_pct || 0), backgroundColor: '#4FC3F7', borderWidth: 0 },
-                { label: 'Req Idle %', data: brokers.map(b => b.request_handler_idle_pct || 0), backgroundColor: '#4CAF50', borderWidth: 0 },
+                // Req Idle % dataset hidden -- same known JMX exporter limitation as
+                // above KPI cards, not real measured data. Re-enable alongside them.
+                // { label: 'Req Idle %', data: brokers.map(b => b.request_handler_idle_pct || 0), backgroundColor: '#4CAF50', borderWidth: 0 },
               ],
             },
             options: {
