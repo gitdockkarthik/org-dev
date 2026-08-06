@@ -146,14 +146,24 @@ async def get_slo_dashboard(cluster_id: str, hours: int = 24) -> dict:
             # when that broker's own connection attempt failed). Live-validated
             # against a real broker outage on 2026-08-06.
             broker_now = await sess.execute(_t("""
-                SELECT COUNT(*) FILTER (WHERE data_gb_true IS NOT NULL) as total,
-                       SUM(urp_count) as total_urp
+                SELECT COUNT(*) FILTER (WHERE data_gb_true IS NOT NULL) as total
                 FROM kafka_broker_metrics
                 WHERE cluster_id=:cid AND time >= NOW() - INTERVAL '10 minutes'
             """), {"cid": int(cluster_id)})
             bn = broker_now.fetchone()
             broker_count = int(bn.total) if bn else 0
-            current_urp = int(bn.total_urp or 0) if bn else 0
+            # URP now sourced from kafka_topic_metrics.urp_count -- real, per-topic
+            # data from describe_topics (collect_topic_structure), not the unreliable
+            # Prometheus/JMX-derived broker metric. Confirmed as a real data-accuracy
+            # fix during a live incident on 2026-08-06 (dashboard showed 0 while the
+            # Kafka team's own CLI check showed 19,912 genuine URPs).
+            urp_now = await sess.execute(_t("""
+                SELECT COALESCE(SUM(urp_count), 0) as total_urp
+                FROM kafka_topic_metrics
+                WHERE cluster_id=:cid
+            """), {"cid": int(cluster_id)})
+            urp_row = urp_now.fetchone()
+            current_urp = int(urp_row.total_urp or 0) if urp_row else 0
             # Dynamic expected broker count
             max_br = await sess.execute(_t(
                 "SELECT COUNT(DISTINCT broker_id) FROM kafka_broker_metrics WHERE cluster_id=:cid"
