@@ -437,6 +437,20 @@ async def collect_topic_sizes(cluster_id: str = ""):
         all_topics = sizes_result["topic_sizes"]
         total_size_gb = sizes_result["total_size_gb"]
         total_topics = sizes_result["total_topics"]
+        # Fill in any topics describe_log_dirs doesn't report (no written log segment
+        # yet -- genuinely real, valid, empty topics) with size_bytes=0, so
+        # kafka_topic_metrics stays a complete, accurate source for topic_count and
+        # the Topics tab's own listing, not just the topics that happen to have data.
+        zero_size_added = 0
+        try:
+            live_topic_names = set(await collector.list_all_topics())
+            sized_topic_names = set(t["topic"] for t in all_topics)
+            missing_topic_names = live_topic_names - sized_topic_names
+            for _mt in missing_topic_names:
+                all_topics.append({"topic": _mt, "size_bytes": 0, "size_mb": 0.0})
+            zero_size_added = len(missing_topic_names)
+        except Exception as _lte:
+            logger.warning("list_all_topics fill-in failed for %s: %s", c["name"], _lte)
         # Bulk upsert all topics in single SQL statement — fast (~0.65s for 16k rows)
         from database import SessionLocal
         from sqlalchemy import text
