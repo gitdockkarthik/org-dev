@@ -365,43 +365,74 @@ class RealKafkaCollector(KafkaCollector):
         return result["topics"]
 
     async def fetch_group_lags(self, group_ids: list[str]) -> list[dict[str, Any]]:
-        """On-demand: fetch lag for specific consumer groups."""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(_kafka_io_executor, self._fetch_group_lags_sync, group_ids)
-
-    async def fetch_all_group_lags(self, group_ids: list[str], workers: int = 15) -> list[dict[str, Any]]:
-        """Parallel lag fetch using multiple threads — 10x faster than sequential."""
+        """On-demand: fetch lag for specific consumer groups. Uses process-based
+        isolation -- this was the sixth, previously-unidentified path (separate from
+        the 5 scheduled jobs) confirmed as the likely root cause of a real incident:
+        its own thread pool's stuck thread blocked an unrelated scheduled job sharing
+        the same admin_lock."""
+        from kafka_process_pool import fetch_group_lags_isolated
         if not group_ids:
             return []
-        import concurrent.futures
-        # Split group_ids into chunks, one per worker
-        chunks = []
-        chunk_size = max(1, len(group_ids) // workers + 1)
-        for i in range(0, len(group_ids), chunk_size):
-            chunks.append(group_ids[i:i + chunk_size])
+        cluster_config = {
+            "bootstrap_servers": self.bootstrap_servers,
+            "auth_type": self.auth_type,
+            "sasl_username": self.sasl_username,
+            "sasl_password": self.sasl_password,
+            "sasl_mechanism": self.sasl_mechanism,
+            "tls_enabled": self.tls_enabled,
+        }
+        result = await fetch_group_lags_isolated(self.bootstrap_servers, cluster_config, group_ids, timeout=30.0)
+        if not result.get("ok"):
+            raise RuntimeError(f"Failed to fetch group lags: {result.get('error')}")
+        return result["groups"]
 
-        loop = asyncio.get_event_loop()
+    async def fetch_all_group_lags(self, group_ids: list[str], workers: int = 15) -> list[dict[str, Any]]:
+        """Parallel lag fetch — dispatches chunks to the dedicated process pool
+        (genuinely killable on timeout, unlike the prior dedicated ThreadPoolExecutor
+        whose `with` block would itself hang waiting for a stuck thread to finish)."""
+        from kafka_process_pool import fetch_group_lags_isolated
+        if not group_ids:
+            return []
+        cluster_config = {
+            "bootstrap_servers": self.bootstrap_servers,
+            "auth_type": self.auth_type,
+            "sasl_username": self.sasl_username,
+            "sasl_password": self.sasl_password,
+            "sasl_mechanism": self.sasl_mechanism,
+            "tls_enabled": self.tls_enabled,
+        }
+        chunk_size = max(1, len(group_ids) // workers + 1)
+        chunks = [group_ids[i:i + chunk_size] for i in range(0, len(group_ids), chunk_size)]
+
         results = []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(workers, len(chunks))) as executor:
-            futures = [
-                loop.run_in_executor(executor, self._fetch_group_lags_sync, chunk)
-                for chunk in chunks
-            ]
-            completed = await asyncio.gather(*futures, return_exceptions=True)
-            for i, result in enumerate(completed):
-                if isinstance(result, Exception):
-                    logger.warning("Parallel lag fetch worker %d failed: %s", i, result)
-                    # Mark all groups in this chunk as failed
-                    for gid in chunks[i]:
-                        results.append({
-                            "group_id": gid,
-                            "total_lag": -1,
-                            "topic_count": 0,
-                            "partitions": [],
-                            "error": str(result),
-                        })
-                else:
-                    results.extend(result)
+        tasks = [
+            fetch_group_lags_isolated(self.bootstrap_servers, cluster_config, chunk, timeout=30.0)
+            for chunk in chunks
+        ]
+        completed = await asyncio.gather(*tasks, return_exceptions=True)
+        for i, result in enumerate(completed):
+            if isinstance(result, Exception):
+                logger.warning("Group lag chunk %d failed: %s", i, result)
+                for gid in chunks[i]:
+                    results.append({
+                        "group_id": gid,
+                        "total_lag": -1,
+                        "topic_count": 0,
+                        "partitions": [],
+                        "error": str(result),
+                    })
+            elif not result.get("ok"):
+                logger.warning("Group lag chunk %d failed: %s", i, result.get("error"))
+                for gid in chunks[i]:
+                    results.append({
+                        "group_id": gid,
+                        "total_lag": -1,
+                        "topic_count": 0,
+                        "partitions": [],
+                        "error": result.get("error"),
+                    })
+            else:
+                results.extend(result["groups"])
         return results
 
     async def describe_all_topics(self, topic_names: list[str], workers: int = 5) -> tuple[list[dict[str, Any]], int]:
@@ -452,67 +483,6 @@ class RealKafkaCollector(KafkaCollector):
             -(t.get("partition_count", 0))
         ))
         return all_topics, total_urp
-
-    def _fetch_group_lags_sync(self, group_ids: list[str]) -> list[dict[str, Any]]:
-        if not group_ids:
-            return []
-        cluster_config = {
-            "bootstrap_servers": self.bootstrap_servers,
-            "auth_type": self.auth_type,
-            "sasl_username": self.sasl_username,
-            "sasl_password": self.sasl_password,
-            "sasl_mechanism": self.sasl_mechanism,
-            "tls_enabled": self.tls_enabled,
-        }
-        admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
-        consumer = None
-        try:
-            groups = []
-            with acquire_admin_lock(self.bootstrap_servers, admin_lock):
-                for gid in group_ids:
-                    try:
-                        offsets = admin.list_consumer_group_offsets(gid)
-                        if not offsets:
-                            groups.append({
-                                "group_id": gid,
-                                "total_lag": 0,
-                                "topic_count": 0,
-                                "partitions": [],
-                            })
-                            continue
-                        if consumer is None:
-                            security = self._security_kwargs()
-                            consumer = KafkaConsumer(
-                                bootstrap_servers=self._bootstrap_list,
-                                enable_auto_commit=False,
-                                group_id=None,
-                                **security,
-                            )
-                        partitions, total_lag, topics = self._group_lag(consumer, offsets)
-                        groups.append({
-                            "group_id": gid,
-                            "total_lag": total_lag,
-                            "topic_count": len(topics),
-                            "partitions": partitions,
-                        })
-                    except Exception as exc:
-                        groups.append({
-                            "group_id": gid,
-                            "total_lag": -1,
-                            "topic_count": 0,
-                            "partitions": [],
-                            "error": str(exc),
-                        })
-            return groups
-        except Exception as exc:
-            invalidate_client(self.bootstrap_servers)
-            raise RuntimeError(f"Failed to connect: {exc}") from exc
-        finally:
-            if consumer:
-                try:
-                    consumer.close()
-                except Exception:
-                    pass
 
     async def search_topics(self, query: str) -> list[str]:
         """On-demand: search topic names matching query (case-insensitive)."""

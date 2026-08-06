@@ -439,3 +439,90 @@ async def describe_topics_chunk_isolated(bootstrap_servers: str, cluster_config:
     except Exception as exc:
         logger.warning("describe_topics_chunk_isolated: unexpected error: %s", exc)
         return {"ok": False, "error": str(exc)}
+
+
+def _fetch_group_lags_worker(bootstrap_servers: str, cluster_config: dict, group_ids: list[str]) -> dict:
+    """Runs inside a worker PROCESS -- fetches lag for a specific set of
+    consumer/connect group_ids (on-demand lookups, startup warm-up, governance
+    audit -- NOT the scheduled consumer-lag sweep, which has its own isolated
+    function). No admin_lock needed -- this worker process has exclusive use of
+    its own connection."""
+    admin = _get_worker_client(bootstrap_servers, cluster_config)
+    consumer = None
+    try:
+        groups = []
+        for gid in group_ids:
+            try:
+                offsets = admin.list_consumer_group_offsets(gid)
+                if not offsets:
+                    groups.append({
+                        "group_id": gid,
+                        "total_lag": 0,
+                        "topic_count": 0,
+                        "partitions": [],
+                    })
+                    continue
+                if consumer is None:
+                    consumer = _get_worker_consumer_client(bootstrap_servers, cluster_config)
+                tps = list(offsets.keys())
+                end_offsets = consumer.end_offsets(tps)
+                partitions = []
+                total_lag = 0
+                topics = set()
+                for tp in tps:
+                    consumer_offset = offsets[tp].offset
+                    log_end_offset = end_offsets.get(tp, consumer_offset)
+                    lag = max(0, log_end_offset - consumer_offset) if consumer_offset >= 0 else 0
+                    total_lag += lag
+                    topics.add(tp.topic)
+                    partitions.append({
+                        "topic": tp.topic,
+                        "partition": tp.partition,
+                        "lag": lag,
+                        "log_end_offset": log_end_offset,
+                        "consumer_offset": consumer_offset,
+                    })
+                groups.append({
+                    "group_id": gid,
+                    "total_lag": total_lag,
+                    "topic_count": len(topics),
+                    "partitions": partitions,
+                })
+            except Exception as exc:
+                groups.append({
+                    "group_id": gid,
+                    "total_lag": -1,
+                    "topic_count": 0,
+                    "partitions": [],
+                    "error": str(exc),
+                })
+        return {"ok": True, "groups": groups}
+    except Exception as exc:
+        _worker_clients.pop(bootstrap_servers, None)
+        _worker_clients.pop(f"consumer:{bootstrap_servers}", None)
+        return {"ok": False, "error": str(exc)}
+
+
+async def fetch_group_lags_isolated(bootstrap_servers: str, cluster_config: dict, group_ids: list[str], timeout: float = 30.0) -> dict:
+    """Main-process-side entry point for fetching lag on a specific set of
+    group_ids. Returns {"ok": True, "groups": [...]} on success, or
+    {"ok": False, "error": "..."} on failure/timeout. Caller can dispatch
+    multiple chunks of group_ids as separate calls, letting the pool queue them
+    naturally, matching the pattern already used for describe_topics_chunk_isolated."""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    try:
+        future = _process_pool.submit(_fetch_group_lags_worker, bootstrap_servers, cluster_config, group_ids)
+        result = await loop.run_in_executor(None, future.result, timeout)
+        return result
+    except FutureTimeoutError:
+        logger.warning(
+            "fetch_group_lags_isolated: worker process did not respond within "
+            "%ss for %s (%d groups) -- killing and replacing it",
+            timeout, bootstrap_servers, len(group_ids),
+        )
+        future.cancel()
+        return {"ok": False, "error": f"Timed out after {timeout}s (worker process killed)"}
+    except Exception as exc:
+        logger.warning("fetch_group_lags_isolated: unexpected error: %s", exc)
+        return {"ok": False, "error": str(exc)}
