@@ -191,3 +191,13 @@ Update this table after each work chunk — status changes, new rows appended, e
   exist" must query the DB or filesystem directly, never trust the in-memory `_reports` list, which
   resets on every restart. Worth treating as a design principle for this file going forward, not just
   two isolated bugs.
+
+### #12 — Real-world validation CONFIRMED (2026-08-05)
+- **Status:** Done — fully validated, no caveats remaining
+- Observed 7 successful `delete_report: removed /app/data/cur/{id}.parquet_dir` log lines across
+  multiple natural sync cycles today (reports 19-25 each correctly cleaned up on replacement).
+  Zero `IsADirectoryError` or `delete_report: failed` occurrences since the fix was deployed.
+- Disk confirmed clean: exactly 1 folder (currently 26.parquet_dir) matching the 1 active DB report,
+  no orphans accumulated across ~12 replace-in-place cycles (14 through 26).
+- Both #11 and #12 are now considered fully closed — the "in-memory state is not source of truth"
+  lesson has held up under real, repeated production cycles.
