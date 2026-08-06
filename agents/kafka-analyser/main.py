@@ -614,7 +614,7 @@ async def lifespan(app: FastAPI):
         collect_broker_health, collect_consumer_lag_active, collect_topic_sizes,
         collect_topic_structure, collect_msg_rate, collect_topic_message_inflow,
         collect_connector_snapshots, collect_sr_subjects, compute_slo_compliance,
-        run_snapshot_rollups,
+        run_snapshot_rollups, collect_urp_status,
     )
     from storage import get_backend as _gb
     _clusters = await _gb().get_clusters(settings.agent_slug)
@@ -626,6 +626,7 @@ async def lifespan(app: FastAPI):
         ("consumer-lag",         "Consumer Lag",         collect_consumer_lag_active,   120, "1 */2 * * *",  True,  None),
         ("topic-sizes",          "Topic Sizes",          collect_topic_sizes,           30,  "*/15 * * * *", True,  None),
         ("topic-structure",      "Topic Structure",      collect_topic_structure,       90,  "2 */30 * * *", False, None),
+        ("urp-status",           "URP Status",           collect_urp_status,            90,  "*/5 * * * *",  True,  None),
         ("msg-rate",             "Message Rate",         collect_msg_rate,              60,  "*/2 * * * *",  True,  None),
         ("topic-inflow",         "Topic Message Inflow", collect_topic_message_inflow,  300, "*/10 * * * *", True,  None),
         ("connector-snapshots",  "Connector Snapshots",  collect_connector_snapshots,   30,  "*/2 * * * *",  True,  None),
