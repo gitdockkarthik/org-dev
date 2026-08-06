@@ -367,3 +367,75 @@ async def describe_broker_log_dirs_isolated(bootstrap_servers: str, cluster_conf
     except Exception as exc:
         logger.warning("describe_broker_log_dirs_isolated: unexpected error: %s", exc)
         return {"ok": False, "error": str(exc)}
+
+
+def _describe_topics_chunk_worker(bootstrap_servers: str, cluster_config: dict, topic_names: list[str]) -> dict:
+    """Runs inside a worker PROCESS -- describes one chunk of topics (internally
+    batched at 500 per describe_topics() call, matching the existing behavior).
+    No admin_lock needed -- this worker process has exclusive use of its own
+    connection, unlike the original thread-based version where all chunks shared
+    one lock and were effectively serialized through it anyway."""
+    admin = _get_worker_client(bootstrap_servers, cluster_config)
+    try:
+        described = []
+        _BATCH = 500
+        for i in range(0, len(topic_names), _BATCH):
+            described.extend(admin.describe_topics(topic_names[i:i + _BATCH]))
+        topics = []
+        for meta in described:
+            name = meta.get("topic", "")
+            if not name:
+                continue
+            partitions = meta.get("partitions", []) or []
+            partition_count = len(partitions)
+            replication_factor = len(partitions[0].get("replicas", [])) if partitions else 0
+            urp = 0
+            for part in partitions:
+                replicas = part.get("replicas", []) or []
+                isr = part.get("isr", []) or []
+                if len(isr) < len(replicas):
+                    urp += 1
+            topics.append({
+                "name": name,
+                "partition_count": partition_count,
+                "replication_factor": replication_factor,
+                "messages_in_per_sec": 0.0,
+                "bytes_in_per_sec": 0.0,
+                "bytes_out_per_sec": 0.0,
+                "total_messages": 0,
+                "size_bytes": 0,
+                "retention_bytes": -1,
+                "retention_pct": 0.0,
+                "under_replicated": urp,
+                "status": "degraded" if urp else "healthy",
+            })
+        return {"ok": True, "topics": topics}
+    except Exception as exc:
+        _worker_clients.pop(bootstrap_servers, None)
+        return {"ok": False, "error": str(exc)}
+
+
+async def describe_topics_chunk_isolated(bootstrap_servers: str, cluster_config: dict, topic_names: list[str], timeout: float = 30.0) -> dict:
+    """Main-process-side entry point for describing one chunk of topics.
+    Returns {"ok": True, "topics": [...]} on success, or
+    {"ok": False, "error": "..."} on failure/timeout. Caller dispatches multiple
+    chunks as separate calls -- the shared 4-worker process pool queues them
+    naturally, each with its own independent connection (no lock contention
+    between chunks, unlike the original thread-based design)."""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    try:
+        future = _process_pool.submit(_describe_topics_chunk_worker, bootstrap_servers, cluster_config, topic_names)
+        result = await loop.run_in_executor(None, future.result, timeout)
+        return result
+    except FutureTimeoutError:
+        logger.warning(
+            "describe_topics_chunk_isolated: worker process did not respond "
+            "within %ss for %s (%d topics) -- killing and replacing it",
+            timeout, bootstrap_servers, len(topic_names),
+        )
+        future.cancel()
+        return {"ok": False, "error": f"Timed out after {timeout}s (worker process killed)"}
+    except Exception as exc:
+        logger.warning("describe_topics_chunk_isolated: unexpected error: %s", exc)
+        return {"ok": False, "error": str(exc)}

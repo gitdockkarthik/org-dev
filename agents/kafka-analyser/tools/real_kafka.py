@@ -345,11 +345,10 @@ class RealKafkaCollector(KafkaCollector):
             return []
 
     async def fetch_topic_details(self, topic_names: list[str]) -> list[dict[str, Any]]:
-        """On-demand: describe specific topics with full partition/URP detail."""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(_kafka_io_executor, self._fetch_topic_details_sync, topic_names)
-
-    def _fetch_topic_details_sync(self, topic_names: list[str]) -> list[dict[str, Any]]:
+        """On-demand: describe specific topics with full partition/URP detail. Uses
+        process-based isolation (same as describe_all_topics), genuinely killable on
+        timeout unlike the previous thread-based path."""
+        from kafka_process_pool import describe_topics_chunk_isolated
         if not topic_names:
             return []
         cluster_config = {
@@ -360,47 +359,10 @@ class RealKafkaCollector(KafkaCollector):
             "sasl_mechanism": self.sasl_mechanism,
             "tls_enabled": self.tls_enabled,
         }
-        admin, admin_lock = get_shared_admin_client(self.bootstrap_servers, cluster_config)
-        try:
-            with acquire_admin_lock(self.bootstrap_servers, admin_lock):
-                # Batch describe in chunks of 500
-                described = []
-                _BATCH = 500
-                for i in range(0, len(topic_names), _BATCH):
-                    described.extend(admin.describe_topics(topic_names[i:i + _BATCH]))
-        except Exception as exc:
-            invalidate_client(self.bootstrap_servers)
-            raise RuntimeError(f"Failed to connect: {exc}") from exc
-
-        topics = []
-        for meta in described:
-            name = meta.get("topic", "")
-            if not name:
-                continue
-            partitions = meta.get("partitions", []) or []
-            partition_count = len(partitions)
-            replication_factor = len(partitions[0].get("replicas", [])) if partitions else 0
-            urp = 0
-            for part in partitions:
-                replicas = part.get("replicas", []) or []
-                isr = part.get("isr", []) or []
-                if len(isr) < len(replicas):
-                    urp += 1
-            topics.append({
-                "name": name,
-                "partition_count": partition_count,
-                "replication_factor": replication_factor,
-                "messages_in_per_sec": 0.0,
-                "bytes_in_per_sec": 0.0,
-                "bytes_out_per_sec": 0.0,
-                "total_messages": 0,
-                "size_bytes": 0,
-                "retention_bytes": -1,
-                "retention_pct": 0.0,
-                "under_replicated": urp,
-                "status": "degraded" if urp else "healthy",
-            })
-        return topics
+        result = await describe_topics_chunk_isolated(self.bootstrap_servers, cluster_config, topic_names, timeout=30.0)
+        if not result.get("ok"):
+            raise RuntimeError(f"Failed to describe topics: {result.get('error')}")
+        return result["topics"]
 
     async def fetch_group_lags(self, group_ids: list[str]) -> list[dict[str, Any]]:
         """On-demand: fetch lag for specific consumer groups."""
@@ -443,30 +405,46 @@ class RealKafkaCollector(KafkaCollector):
         return results
 
     async def describe_all_topics(self, topic_names: list[str], workers: int = 5) -> tuple[list[dict[str, Any]], int]:
-        """Parallel topic describe — returns (topics, total_urp).
-        Uses multiple threads to describe topics in parallel batches."""
+        """Parallel topic describe — returns (topics, total_urp). Dispatches chunks
+        to the dedicated process pool (genuinely killable on timeout, unlike the
+        prior thread-based design where all chunks shared one admin_lock and were
+        effectively serialized through it anyway -- a stuck thread there caused a
+        real, confirmed incident: continuous ~90%+ CPU, only resolvable by a full
+        container restart)."""
+        from kafka_process_pool import describe_topics_chunk_isolated
         if not topic_names:
             return [], 0
 
-        # Split into chunks for parallel workers
+        cluster_config = {
+            "bootstrap_servers": self.bootstrap_servers,
+            "auth_type": self.auth_type,
+            "sasl_username": self.sasl_username,
+            "sasl_password": self.sasl_password,
+            "sasl_mechanism": self.sasl_mechanism,
+            "tls_enabled": self.tls_enabled,
+        }
+
+        # Split into chunks -- the 4-worker process pool queues them naturally
         chunk_size = max(1, len(topic_names) // workers + 1)
         chunks = [topic_names[i:i + chunk_size] for i in range(0, len(topic_names), chunk_size)]
 
-        loop = asyncio.get_event_loop()
         all_topics = []
         total_urp = 0
 
-        futures = [
-            loop.run_in_executor(_kafka_io_executor, self._fetch_topic_details_sync, chunk)
+        tasks = [
+            describe_topics_chunk_isolated(self.bootstrap_servers, cluster_config, chunk, timeout=30.0)
             for chunk in chunks
         ]
-        completed = await asyncio.gather(*futures, return_exceptions=True)
-        for i, result in enumerate(completed):
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for i, result in enumerate(results):
             if isinstance(result, Exception):
-                logger.warning("Parallel topic describe worker %d failed: %s", i, result)
+                logger.warning("Topic describe chunk %d failed: %s", i, result)
+            elif not result.get("ok"):
+                logger.warning("Topic describe chunk %d failed: %s", i, result.get("error"))
             else:
-                all_topics.extend(result)
-                total_urp += sum(1 for t in result if t.get("under_replicated", 0) > 0)
+                chunk_topics = result["topics"]
+                all_topics.extend(chunk_topics)
+                total_urp += sum(1 for t in chunk_topics if t.get("under_replicated", 0) > 0)
 
         # Sort by anomaly severity: degraded first, then RF=1, then healthy
         all_topics.sort(key=lambda t: (
