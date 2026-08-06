@@ -525,15 +525,16 @@ async def collect_topic_structure(cluster_id: str = ""):
                 from sqlalchemy import text as _pct
                 async with SessionLocal() as sess:
                     values = ",".join(
-                        f"('{t['name'].replace(chr(39), chr(39)*2)}', {t.get('partition_count',0)}, {t.get('replication_factor',0)})"
+                        f"('{t['name'].replace(chr(39), chr(39)*2)}', {t.get('partition_count',0)}, {t.get('replication_factor',0)}, {t.get('under_replicated',0)})"
                         for t in described_topics
                     )
                     if values:
                         await sess.execute(_pct(f"""
                             UPDATE kafka_topic_metrics SET
                                 partition_count = v.pc,
-                                replication_factor = v.rf
-                            FROM (VALUES {values}) AS v(topic, pc, rf)
+                                replication_factor = v.rf,
+                                urp_count = v.urp
+                            FROM (VALUES {values}) AS v(topic, pc, rf, urp)
                             WHERE kafka_topic_metrics.cluster_id = {int(cid)}
                             AND kafka_topic_metrics.topic = v.topic
                         """))
