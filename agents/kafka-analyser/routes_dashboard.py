@@ -1223,23 +1223,38 @@ async def get_topic_message_rate(
             # (covers 1h, 6h views with zero added cost)
             if range_start >= cutoff:
                 sql = f"""
-                    SELECT
-                        date_bin(
+                    WITH bucketed AS (
+                        SELECT
+                            date_bin(
+                                '{bucket_interval}'::INTERVAL,
+                                collected_at,
+                                TIMESTAMP '2001-01-01'
+                            ) AS bucket_time,
+                            SUM(inflow) AS raw_inflow,
+                            COUNT(inflow) AS inflow_cnt,
+                            SUM(outflow) AS raw_outflow,
+                            COUNT(outflow) AS outflow_cnt
+                        FROM kafka_topic_message_rate_snapshots
+                        WHERE cluster_id = :cluster_id
+                        AND collected_at >= NOW() - ((:minutes) * INTERVAL '1 minute')
+                        {topic_filter_sql}
+                        GROUP BY date_bin(
                             '{bucket_interval}'::INTERVAL,
                             collected_at,
                             TIMESTAMP '2001-01-01'
-                        ) AS bucket_time,
-                        COALESCE(SUM(inflow), 0)::bigint AS total_inflow,
-                        COALESCE(SUM(outflow), 0)::bigint AS total_outflow
-                    FROM kafka_topic_message_rate_snapshots
-                    WHERE cluster_id = :cluster_id
-                    AND collected_at >= NOW() - ((:minutes) * INTERVAL '1 minute')
-                    {topic_filter_sql}
-                    GROUP BY date_bin(
-                        '{bucket_interval}'::INTERVAL,
-                        collected_at,
-                        TIMESTAMP '2001-01-01'
+                        )
+                    ),
+                    grouped AS (
+                        SELECT *,
+                            COUNT(*) FILTER (WHERE inflow_cnt > 0) OVER (ORDER BY bucket_time ROWS UNBOUNDED PRECEDING) AS inflow_grp,
+                            COUNT(*) FILTER (WHERE outflow_cnt > 0) OVER (ORDER BY bucket_time ROWS UNBOUNDED PRECEDING) AS outflow_grp
+                        FROM bucketed
                     )
+                    SELECT
+                        bucket_time,
+                        COALESCE(FIRST_VALUE(raw_inflow) OVER (PARTITION BY inflow_grp ORDER BY bucket_time), 0)::bigint AS total_inflow,
+                        COALESCE(FIRST_VALUE(raw_outflow) OVER (PARTITION BY outflow_grp ORDER BY bucket_time), 0)::bigint AS total_outflow
+                    FROM grouped
                     ORDER BY bucket_time ASC
                 """
                 params = {"cluster_id": int(cluster_id), "minutes": minutes}
