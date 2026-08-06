@@ -173,9 +173,10 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
         from kafka_process_pool import fetch_consumer_lag_isolated
         result = await fetch_consumer_lag_isolated(c["bootstrap_servers"], c, timeout=60.0)
         if not result.get("ok"):
-            logger.error("collect_consumer_lag_active: cycle aborted, no data will be persisted: %s", result.get("error"))
-            collect_consumer_lag_active._last_result = f"Aborted (unreliable data): {result.get('error')}"
-            return
+            # Raise (not just log+return) so jobs.py correctly marks this run as
+            # failed, not success -- a monitoring tool must report a genuine failure
+            # honestly, not silently look fine while writing nothing.
+            raise RuntimeError(f"cycle aborted, no data persisted: {result.get('error')}")
         data = _ks.get_cluster_data(cid) or {}
         data["consumer_groups"] = result["groups"]
         data["group_states"] = result["group_states"]
@@ -411,6 +412,8 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
         total_groups += result["group_states"]["consumer"]
     except Exception as e:
         logger.warning("consumer_lag_active failed for %s: %s", c["name"], e)
+        collect_consumer_lag_active._last_result = f"Failed: {e}"
+        raise
     collect_consumer_lag_active._last_result = f"Consumer groups collected: {total_groups} groups"
 
 
