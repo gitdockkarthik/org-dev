@@ -623,7 +623,7 @@ async def lifespan(app: FastAPI):
     # Job type definitions: (suffix, name, handler, default_timeout, default_cron, default_enabled, requires_config_key)
     _job_types = [
         ("broker-health",        "Broker Health",        collect_broker_health,         60,  "*/2 * * * *",  True,  None),
-        ("consumer-lag",         "Consumer Lag",         collect_consumer_lag_active,   120, "1 */2 * * *",  True,  None),
+        ("consumer-lag",         "Consumer Lag",         collect_consumer_lag_active,   90,  "*/3 * * * *",  True,  None),
         ("topic-sizes",          "Topic Sizes",          collect_topic_sizes,           90,  "4-59/5 * * * *", True,  None),
         ("topic-structure",      "Topic Structure",      collect_topic_structure,       120, "2-59/5 * * * *", True,  None),
         ("msg-rate",             "Message Rate",         collect_msg_rate,              60,  "*/2 * * * *",  True,  None),
