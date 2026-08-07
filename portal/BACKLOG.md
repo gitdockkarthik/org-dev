@@ -60,3 +60,17 @@ Gateway integration) — registered and published via Admin UI, access granted
 to team-confirmed users only in the same script run. Remaining users not in the
 curated list retain their original backfilled access (all agents except
 mock-agent) unless changed here.
+
+### Fix: DeveloperKey.key_id AttributeError on API key create/rotate (2026-08-07, commit 284ee09)
+POST /api/developer/keys (and rotate) threw 500 Internal Server Error —
+AttributeError: 'DeveloperKey' object has no attribute 'key_id'. Root cause:
+audit-log calls in backend/routes_developer_keys.py referenced a non-existent
+key.key_id attribute (model's actual PK field is `id`); key_name in audit details
+also incorrectly referenced key.key_id instead of key.label.
+Surfaced when two newly-onboarded developers (vignesh.c@operative.com,
+balasubramanian.p@operative.com — added as owners of newly-onboarded rca-agent)
+tried generating their first API keys — first real use of the developer/owner
+API-key flow since rca-agent onboarding.
+Fixed: resource_id=str(key.id) (both create and rotate handlers),
+details key_name=key.label. Validated via curl (create + delete) before rollout,
+then confirmed working live by both affected developers.
