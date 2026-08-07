@@ -1027,6 +1027,21 @@ dashboard.html (and any other duplicated files between the two locations) and
 reconcile all pre-existing discrepancies before any real standalone-shipping push.
 *Added: 2026-08-06*
 
+### KPI card drill-down popups -- click RF=1/Hot/Large/Stale Topics to see the actual affected topic list
+Value-add idea raised during the Topics tab audit: currently these four KPI cards
+only show a count, giving admins/support teams a number but no way to act on it
+without a separate query. Clicking the card (RF=1 At Risk, Hot Topics, Large Topics,
+Stale Topics) should open a popup listing the actual topics behind that count, so the
+person looking at the dashboard can immediately see *which* topics need attention and
+plan the right action (e.g., increase replication factor, review retention, plan
+scaling). User's own framing: "this level of drill-down adding more values" -- likely
+a pattern worth extending to other summary KPIs across tabs once proven out here, not
+just these four. Not urgent, explicitly not rushed -- captured for a future, dedicated
+session. Backend queries for all four are already correct and validated (as of
+2026-08-06/07 Topics tab audit); this is purely a new frontend feature (popup +
+underlying list endpoint per KPI), not a bug fix.
+*Added: 2026-08-07*
+
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - **Product/Service tag mapping display** — read the team's tag mapping (product,
   service, etc.) from a SharePoint location once the tag schema is finalized, and
