@@ -149,3 +149,31 @@ directly (informal/early testing) to switch to :3000 before their agent goes
 to production, and confirm :8010/8001/8002/8003 are firewalled from external
 access at the infra level (not yet verified — flagged for follow-up with
 Amrithanshu/CloudOps).
+
+---
+
+## Established Patterns
+
+### Firewall/port exposure policy for standalone agent onboarding
+Original design: only port 3000 (portal) open for inbound external access —
+all internal service-to-service traffic (backend, native agents) stays on the
+Docker Compose internal network, never exposed externally.
+As standalone agents were onboarded (app-support-v2, mock-agent, rca-agent),
+additional ports appear to have been opened externally over time on an
+ad-hoc basis — this is a drift from the original model and a security
+concern, not an intended pattern.
+Correct model going forward: standalone agents call UAP exclusively through
+port 3000 (portal's nginx, which already proxies all /api/* to backend
+internally — confirmed working, see LLM Gateway fix entry above). The ONLY
+ports that should be open for inbound external access are:
+  - 3000 (portal, always)
+  - Each standalone agent's OWN base + landing-page ports (e.g. rca-agent's
+    8880/9990), since those are the agent's own service being reached
+    directly by its users/UAP for health checks and its own UI — this is
+    unavoidable and by design, not a gap.
+Backend (8010) and native agents (8001/8002/8003) should NOT be externally
+reachable — only reachable from other containers on the internal Docker
+network, or from the KPI box's own localhost for admin/debugging.
+Action: audit currently-open external ports against this list with
+Amrithanshu/CloudOps and close anything that doesn't belong (tracked
+separately, not in this session).
