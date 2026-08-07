@@ -842,11 +842,26 @@ async def get_kafka_connect(cluster_id: str | None = None) -> dict:
     reachable = [r for r in worker_results if r.get("status") not in ("unreachable", "empty", "error") and r.get("connector_count", 0) > 0]
     unreachable = [r for r in worker_results if r.get("status") == "unreachable"]
 
+    # Assign each worker a cluster_group label based on its connector-set fingerprint --
+    # workers sharing the same fingerprint genuinely belong to the same distributed
+    # Kafka Connect cluster (confirmed: several configured worker URLs are actually
+    # separate clusters, not multiple nodes of one). Labeled A, B, C... in order of
+    # first appearance for a stable, human-readable grouping in the UI.
+    fp_to_label: dict[int, str] = {}
+    _group_letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    for wr in worker_results:
+        fp = hash(frozenset(c.get("name","") for c in wr.get("connectors", [])))
+        wr["_fp"] = fp
+        if fp not in fp_to_label:
+            _idx = len(fp_to_label)
+            fp_to_label[fp] = f"Cluster {_group_letters[_idx]}" if _idx < len(_group_letters) else f"Cluster {_idx+1}"
+        wr["cluster_group"] = fp_to_label[fp]
+
     # Deduplicate workers by connector fingerprint
     seen_fps = set()
     unique_clusters = []
     for wr in reachable:
-        fp = hash(frozenset(c.get("name","") for c in wr.get("connectors", [])))
+        fp = wr.get("_fp", hash(frozenset(c.get("name","") for c in wr.get("connectors", []))))
         if fp not in seen_fps:
             seen_fps.add(fp)
             unique_clusters.append(wr)
@@ -926,6 +941,7 @@ async def get_kafka_connect(cluster_id: str | None = None) -> dict:
         "status": "up" if wr.get("status") not in ("unreachable","error","empty") else "down",
         "connector_count": wr.get("connector_count", 0),
         "error": wr.get("error","") if wr.get("status") == "unreachable" else "",
+        "cluster_group": wr.get("cluster_group", ""),
     } for wr in worker_results]
 
     return {

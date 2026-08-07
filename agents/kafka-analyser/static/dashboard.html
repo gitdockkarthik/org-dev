@@ -2267,17 +2267,28 @@
 
       // ── Worker nodes ──────────────────────────────────────────────────────────
       const workerNodes = data.worker_nodes || [];
-      const connectWorkers = `
-        <div class="chart-card" style="margin-bottom:18px">
-          <div class="chart-card__title">Worker Nodes (${workerNodes.length})</div>
-          <div style="display:flex;flex-wrap:wrap;gap:8px;padding:8px 0">
-            ${workerNodes.map(w => `
+      const workerBadge = w => `
               <div style="display:flex;align-items:center;gap:6px;padding:6px 12px;background:var(--navy-1);border-radius:6px;border:1px solid ${w.status==='up'?'var(--success)':'var(--danger)'}">
                 <span style="width:8px;height:8px;border-radius:50%;background:${w.status==='up'?'var(--success)':'var(--danger)'}"></span>
                 <span style="font-size:.82rem;font-weight:600">${w.hostname.split('.')[0].replace('awaos-qa-','')}</span>
                 <span style="font-size:.75rem;color:var(--text-muted)">${w.connector_count > 0 ? w.connector_count+' connectors' : w.status==='down'?'down':''}</span>
-              </div>`).join('')}
-          </div>
+              </div>`;
+      const workerGroups = {};
+      workerNodes.forEach(w => {
+        const g = w.cluster_group || 'Ungrouped';
+        (workerGroups[g] = workerGroups[g] || []).push(w);
+      });
+      const groupNames = Object.keys(workerGroups).sort();
+      const connectWorkers = `
+        <div class="chart-card" style="margin-bottom:18px">
+          <div class="chart-card__title">Worker Nodes (${workerNodes.length}) — ${groupNames.length} distributed clusters</div>
+          ${groupNames.map(g => `
+            <div style="margin-top:10px">
+              <div style="font-size:.72rem;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px">${g} (${workerGroups[g].length} node${workerGroups[g].length > 1 ? 's' : ''})</div>
+              <div style="display:flex;flex-wrap:wrap;gap:8px;padding-bottom:4px">
+                ${workerGroups[g].map(workerBadge).join('')}
+              </div>
+            </div>`).join('')}
         </div>`;
 
       // ── Charts ────────────────────────────────────────────────────────────────
