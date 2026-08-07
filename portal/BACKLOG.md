@@ -129,3 +129,23 @@ correct token/cost figures. Cross-agent key rejection (403) reconfirmed post-fix
 Docs Hub (portal/docs-hub/agent-registration-demo.html) Option 2 section updated
 with working curl examples and scoped-key recommendation for the RCA team and
 future standalone agent onboarding.
+
+### Fix: Docs Hub UAP_URL guidance exposed wrong port for external agent teams (2026-08-07, commit a15a459)
+Discovered while helping rca-agent team debug a 404 on their first LLM Gateway
+call. Docs Hub's Option 2 example showed a generic placeholder
+(https://<uap-platform-url>) with no port, leading naturally to guessing the
+backend's own port (8010) — which works for internal/VPN testing but is the
+WRONG production pattern: exposing 8010 externally would bypass the intended
+single-entry-point security model (only portal's nginx on port 3000 should be
+externally reachable, matching CLAUDE.md's architecture).
+Verified portal/nginx.conf already proxies all /api/* (including /api/llm/token,
+/api/llm/invoke) to backend:8000 internally — confirmed via curl from both
+inside the KPI box and externally over VPN using port 3000. No new proxy
+config needed; the capability already existed, just undocumented correctly.
+Fixed: Docs Hub now shows UAP_URL=http://kpi-internal.cloud.operative.com:3000
+with an inline comment warning against using :8010 externally.
+Action item: communicate to any team that may have already configured :8010
+directly (informal/early testing) to switch to :3000 before their agent goes
+to production, and confirm :8010/8001/8002/8003 are firewalled from external
+access at the infra level (not yet verified — flagged for follow-up with
+Amrithanshu/CloudOps).
