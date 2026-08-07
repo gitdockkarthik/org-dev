@@ -344,7 +344,8 @@ async def get_topic_detail(name: str, cluster_id: str | None = None) -> dict:
         async with SessionLocal() as sess:
             row = await sess.execute(_t("""
                 SELECT topic, size_bytes, partition_count, replication_factor,
-                       bytes_in_per_sec, messages_in_per_sec, total_messages, last_seen
+                       bytes_in_per_sec, messages_in_per_sec, total_messages, last_seen,
+                       urp_count
                 FROM kafka_topic_metrics
                 WHERE cluster_id=:cid AND topic=:topic
                 LIMIT 1
@@ -356,9 +357,9 @@ async def get_topic_detail(name: str, cluster_id: str | None = None) -> dict:
             "name": r.topic,
             "partition_count": r.partition_count or 0,
             "replication_factor": r.replication_factor or 0,
-            "under_replicated_partitions": 0,
+            "under_replicated_partitions": r.urp_count or 0,
             "bytes_in_per_sec": r.bytes_in_per_sec or 0.0,
-            "messages_in_per_sec": r.bytes_in_per_sec or 0.0,
+            "messages_in_per_sec": r.messages_in_per_sec or 0.0,
             "size_bytes": r.size_bytes or 0,
             "total_messages": r.total_messages or 0,
             "last_seen": r.last_seen.isoformat() if r.last_seen else None,

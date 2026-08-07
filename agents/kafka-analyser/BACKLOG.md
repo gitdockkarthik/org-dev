@@ -1042,6 +1042,28 @@ session. Backend queries for all four are already correct and validated (as of
 underlying list endpoint per KPI), not a bug fix.
 *Added: 2026-08-07*
 
+### Topic detail popup -- kafka_topic_metrics.messages_in_per_sec column never populated
+Found and fixed during Topics tab popup audit: get_topic_detail's messages_in_per_sec
+had a copy-paste bug (was returning bytes_in_per_sec). That copy-paste bug is now
+fixed, but this revealed a separate, deeper gap -- the underlying
+kafka_topic_metrics.messages_in_per_sec column itself is never actually populated by
+any collector (all of today's msg-rate/throughput work targeted bytes_in_per_sec, a
+genuinely different metric). The field now correctly shows 0.0 (its real, current
+value) instead of silently duplicating bytes_in_per_sec. Not currently visible to
+users -- this field isn't rendered anywhere in the popup's own HTML -- so no active
+harm, but worth fixing properly if/when a genuine message-count-per-second metric is
+needed. Confirmed unrelated to and not impacting the separate, already-correct Message
+Volume charts (main Overview/Topics tab charts and this same popup's own inner
+"Message Volume (last hour)" chart) -- those all read from a different table
+(kafka_topic_message_rate_snapshots) via /dashboard/topics/message-rate, not this
+column.
+
+Also logged from the same audit: the popup's `partitions` field is always an empty
+array -- not a bug (nothing currently reads it), but genuinely unimplemented. Would
+need a new, dedicated per-partition query to populate if this level of detail is ever
+wanted in the popup.
+*Added: 2026-08-07*
+
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - **Product/Service tag mapping display** — read the team's tag mapping (product,
   service, etc.) from a SharePoint location once the tag schema is finalized, and
