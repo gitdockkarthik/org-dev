@@ -883,13 +883,38 @@ async def get_kafka_connect(cluster_id: str | None = None) -> dict:
                         for c in all_connectors if c.get("name")
                     ]
                     _lag_rows = await _csess.execute(_cct("""
-                        SELECT group_id, total_lag FROM kafka_consumer_group_lag
+                        SELECT group_id, total_lag, topic_count FROM kafka_consumer_group_lag
                         WHERE cluster_id = :cid AND group_id = ANY(:gids) AND updated_at >= NOW() - INTERVAL '20 minutes'
                     """), {"cid": int(cluster_id), "gids": group_ids})
-                    lag_by_group = {r.group_id: r.total_lag for r in _lag_rows.fetchall()}
+                    lag_by_group = {r.group_id: {"lag": r.total_lag, "topic_count": r.topic_count} for r in _lag_rows.fetchall()}
+                    # Trend/rate -- same aggregation already built and validated for the
+                    # Consumer Groups tab, reused here to power the new bubble chart's
+                    # y-axis (lag rate) without duplicating the underlying data source.
+                    trend_by_group: dict[str, dict] = {}
+                    try:
+                        _ctr = await _csess.execute(_cct("""
+                            SELECT group_id,
+                                   COALESCE(SUM(inflow_since_last), 0) as total_inflow,
+                                   COALESCE(SUM(consumed_since_last), 0) as total_consumed,
+                                   AVG(interval_seconds) as avg_interval
+                            FROM kafka_consumer_group_partition_lag
+                            WHERE cluster_id = :cid AND group_id = ANY(:gids) AND updated_at >= NOW() - INTERVAL '20 minutes'
+                            AND inflow_since_last IS NOT NULL AND consumed_since_last IS NOT NULL
+                            GROUP BY group_id
+                        """), {"cid": int(cluster_id), "gids": group_ids})
+                        for tr in _ctr.fetchall():
+                            _net = int(tr.total_inflow) - int(tr.total_consumed)
+                            _interval = float(tr.avg_interval) if tr.avg_interval else 0.0
+                            _rate = round(_net / (_interval / 60), 1) if _interval > 0 else 0.0
+                            trend_by_group[tr.group_id] = _rate
+                    except Exception as _ctre:
+                        logger.warning("connector trend lookup failed: %s", _ctre)
                     for c in all_connectors:
                         gid = c.get("group_id_override") or f"connect-{c.get('name', '')}"
-                        c["lag"] = lag_by_group.get(gid)
+                        _lg = lag_by_group.get(gid, {})
+                        c["lag"] = _lg.get("lag")
+                        c["topic_count"] = _lg.get("topic_count")
+                        c["lag_rate_per_min"] = trend_by_group.get(gid, 0.0)
     except Exception as _lag_exc:
         logger.warning("connector lag lookup failed: %s", _lag_exc)
         for c in all_connectors:

@@ -2338,14 +2338,14 @@
 
       // ── Charts ────────────────────────────────────────────────────────────────
       const connectCharts = `
-        <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:22px">
-          <div class="chart-card" style="flex:1;min-width:300px;margin-bottom:0">
-            <div class="chart-card__title">Connector Status Distribution</div>
-            <div class="chart-wrap" style="height:240px"><canvas id="connect-status-chart"></canvas></div>
-          </div>
-          <div class="chart-card" style="flex:1;min-width:300px;margin-bottom:0">
-            <div class="chart-card__title">Connectors by Type</div>
-            <div class="chart-wrap" style="height:240px"><canvas id="connect-type-chart"></canvas></div>
+        <div class="chart-card" style="margin-bottom:22px">
+          <div class="chart-card__title">Connector Anomalies — Lag vs. Rate vs. Topics Affected</div>
+          <div style="font-size:.75rem;color:var(--text-muted);margin-bottom:8px">Bubble size = topics affected · color = state · only connectors with active lag shown</div>
+          <div class="chart-wrap" style="height:340px"><canvas id="connect-anomaly-chart"></canvas></div>
+          <div id="connect-anomaly-legend" style="display:flex;flex-wrap:wrap;gap:16px;margin-top:8px;font-size:.75rem;color:var(--text-muted)">
+            <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:50%;background:#F44336"></span>Failed</span>
+            <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:50%;background:#FF9800"></span>Paused</span>
+            <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:50%;background:#4FC3F7"></span>Running (lagging)</span>
           </div>
         </div>`;
 
@@ -2525,50 +2525,62 @@
 
       window._connectApplyView();
 
-      // ── Doughnut charts ───────────────────────────────────────────────────────
+      // ── Connector anomaly bubble chart ──────────────────────────────────────────
       setTimeout(() => {
-        if (window._connectStatusChart) { window._connectStatusChart.destroy(); window._connectStatusChart = null; }
-        const statusCtx = document.getElementById('connect-status-chart')?.getContext('2d');
-        if (statusCtx) {
-          const statusDefs = [
-            { label: 'Running',    color: '#4CAF50', count: connectors.filter(c => c.state === 'RUNNING').length },
-            { label: 'Failed',     color: '#F44336', count: connectors.filter(c => c.state === 'FAILED').length },
-            { label: 'Paused',     color: '#FF9800', count: connectors.filter(c => c.state === 'PAUSED').length },
-            { label: 'Unassigned', color: '#666',    count: connectors.filter(c => c.state === 'UNASSIGNED').length },
-          ].filter(d => d.count > 0);
-          window._connectStatusChart = new Chart(statusCtx, {
-            type: 'doughnut',
-            data: {
-              labels: statusDefs.map(d => d.label),
-              datasets: [{ data: statusDefs.map(d => d.count), backgroundColor: statusDefs.map(d => d.color), borderWidth: 0 }],
-            },
-            options: {
-              responsive: true,
-              maintainAspectRatio: false,
-              plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } },
-            },
-          });
-        }
-
-        if (window._connectTypeChart) { window._connectTypeChart.destroy(); window._connectTypeChart = null; }
-        const typeCtx = document.getElementById('connect-type-chart')?.getContext('2d');
-        if (typeCtx) {
-          const typeDefs = [
-            { label: 'Source', color: '#4FC3F7', count: connectors.filter(c => (c.type || '').toLowerCase() === 'source').length },
-            { label: 'Sink',   color: '#FF6B35', count: connectors.filter(c => (c.type || '').toLowerCase() === 'sink').length },
-          ].filter(d => d.count > 0);
-          window._connectTypeChart = new Chart(typeCtx, {
-            type: 'doughnut',
-            data: {
-              labels: typeDefs.map(d => d.label),
-              datasets: [{ data: typeDefs.map(d => d.count), backgroundColor: typeDefs.map(d => d.color), borderWidth: 0 }],
-            },
-            options: {
-              responsive: true,
-              maintainAspectRatio: false,
-              plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } },
-            },
-          });
+        if (window._connectAnomalyChart) { window._connectAnomalyChart.destroy(); window._connectAnomalyChart = null; }
+        const anomCtx = document.getElementById('connect-anomaly-chart')?.getContext('2d');
+        if (anomCtx) {
+          const stateColor = { FAILED: '#F44336', PAUSED: '#FF9800', RUNNING: '#4FC3F7', UNASSIGNED: '#666' };
+          const anomConnectors = connectors.filter(c => (c.lag || 0) > 0);
+          const points = anomConnectors.map(c => ({
+            x: c.lag || 0,
+            y: c.lag_rate_per_min || 0,
+            r: Math.max(6, Math.sqrt(c.topic_count || 1) * 2.2),
+            name: c.name,
+            topic_count: c.topic_count || 0,
+            state: c.state,
+          }));
+          if (points.length) {
+            window._connectAnomalyChart = new Chart(anomCtx, {
+              type: 'bubble',
+              data: {
+                datasets: [{
+                  data: points,
+                  backgroundColor: points.map(p => (stateColor[p.state] || '#666') + 'b0'),
+                  borderColor: points.map(p => stateColor[p.state] || '#666'),
+                  borderWidth: 1.5,
+                }],
+              },
+              options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                layout: { padding: 20 },
+                onClick: (evt, elements) => {
+                  if (!elements.length) return;
+                  const p = points[elements[0].index];
+                  window._showGroupTopicsPopup(`connect-${p.name}`, p.name);
+                },
+                plugins: {
+                  legend: { display: false },
+                  tooltip: {
+                    callbacks: {
+                      label: (ctx) => {
+                        const p = ctx.raw;
+                        return [p.name, 'Lag: ' + p.x.toLocaleString(), 'Rate: ' + (p.y > 0 ? '+' : '') + p.y + '/min', 'Topics affected: ' + p.topic_count];
+                      },
+                    },
+                  },
+                },
+                scales: {
+                  x: { title: { display: true, text: 'Total lag', font: { size: 10 } }, ticks: { font: { size: 9 }, callback: v => fmtNum(v) } },
+                  y: { title: { display: true, text: 'Lag rate/min', font: { size: 10 } }, ticks: { font: { size: 9 } } },
+                },
+              },
+            });
+          } else {
+            const wrap = anomCtx.canvas.parentElement;
+            if (wrap) wrap.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:.85rem">No connectors with active lag — all caught up</div>';
+          }
         }
       }, 0);
       window._renderTabAI('kafka-connect', document.getElementById('tab-kafka-connect'));
