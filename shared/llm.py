@@ -26,14 +26,14 @@ def _lf():
         _langfuse = _get_langfuse()
     return _langfuse
 
-def _lf_trace(response: Any, model: str, provider: str, messages: list, user_id: str | None = None, session_id: str | None = None) -> None:
+def _lf_trace(response: Any, model: str, provider: str, messages: list, user_id: str | None = None, session_id: str | None = None, agent_slug_override: str | None = None) -> None:
     """Send LLM call trace to Langfuse via direct SDK ingestion."""
     logger.debug("_lf_trace called: model=%s session=%s", model, session_id)
     try:
         lf = _lf()
         if not lf:
             return
-        agent_slug = os.environ.get("AGENT_SLUG", "unknown")
+        agent_slug = agent_slug_override or os.environ.get("AGENT_SLUG", "unknown")
         output_text = ""
         for block in (response.content or []):
             if hasattr(block, 'text'):
@@ -81,6 +81,7 @@ async def create_message(
     provider: str | None = None,
     user_id: str | None = None,
     session_id: str | None = None,
+    agent_slug_override: str | None = None,
 ) -> Any:
     """Provider-agnostic wrapper around the Anthropic messages API.
 
@@ -122,7 +123,7 @@ async def create_message(
         client = anthropic.AsyncAnthropic(api_key=resolved_key)
         try:
             response = await client.messages.create(**kwargs)
-            _lf_trace(response, resolved_model, resolved_provider, messages, user_id=user_id, session_id=session_id)
+            _lf_trace(response, resolved_model, resolved_provider, messages, user_id=user_id, session_id=session_id, agent_slug_override=agent_slug_override)
             return response
         finally:
             await client.close()
@@ -140,7 +141,7 @@ async def create_message(
         client = anthropic.AsyncAnthropicBedrock()
         try:
             response = await client.messages.create(**kwargs)
-            _lf_trace(response, resolved_model, resolved_provider, messages, user_id=user_id, session_id=session_id)
+            _lf_trace(response, resolved_model, resolved_provider, messages, user_id=user_id, session_id=session_id, agent_slug_override=agent_slug_override)
             return response
         finally:
             await client.close()
@@ -172,6 +173,7 @@ async def stream_message(
     api_key: str | None = None,
     provider: str | None = None,
     session_id: str | None = None,
+    agent_slug_override: str | None = None,
 ):
     """Stream messages with optional tool_use support.
 
@@ -231,7 +233,7 @@ async def stream_message(
             else:
                 try:
                     _lf_trace(final, model_id, resolved_provider, msg_list,
-                              session_id=session_id)
+                              session_id=session_id, agent_slug_override=agent_slug_override)
                 except Exception:
                     pass
                 yield f"[STOP_REASON] {final.stop_reason}"

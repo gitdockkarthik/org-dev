@@ -472,12 +472,20 @@ async def llm_invoke(
     max_tokens = body.get("max_tokens", 4096)
 
     api_key = get_anthropic_key()
+    from models.agent import Agent
+    agent_result = await db.execute(select(Agent).where(Agent.slug == slug))
+    agent_obj = agent_result.scalar_one_or_none()
+    app_label = f"Application: {agent_obj.name}" if agent_obj else f"Application: {slug}"
+
     response = await llm_create_message(
         model=model,
         max_tokens=max_tokens,
         system=system,
         messages=messages,
         api_key=api_key,
+        session_id=slug,
+        agent_slug_override=slug,
+        user_id=app_label,
     )
 
     text = next((b.text for b in response.content if hasattr(b, "text")), "")

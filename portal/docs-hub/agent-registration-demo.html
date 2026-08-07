@@ -319,29 +319,53 @@ AWS_ACCESS_KEY_ID=AKIAW*****
 AWS_SECRET_ACCESS_KEY=F9***</pre></div>
 
   <h3>Option 2 — UAP-managed LLM <span style="background:#dcfce7;color:#16a34a;font-size:11px;padding:2px 6px;border-radius:4px;font-weight:600">Available</span></h3>
-  <p>Agent calls UAP's token vending endpoint using the platform's <code>BACKEND_API_KEY</code>. The raw LLM key never leaves UAP. Requires code changes in the agent backend to call the gateway instead of the LLM SDK directly.</p>
+  <p>Agent calls UAP's token vending endpoint using <strong>either</strong> the platform's shared <code>BACKEND_API_KEY</code> <strong>or</strong> a scoped Option 3 developer key (<code>opk_...</code>) generated for your specific agent. The raw LLM/Bedrock credentials never leave UAP. Requires code changes in the agent backend to call the gateway instead of the LLM SDK directly.</p>
+  <p><strong>Recommended: use your own scoped key (Option 3) rather than the shared BACKEND_API_KEY</strong> — it is per-agent, revocable, and a mismatch (using a key scoped to a different agent_slug) is rejected with a 403, so credentials cannot be misused across agents.</p>
   <div class="code-block"><pre>
 UAP_URL=https://&lt;uap-platform-url&gt;
-BACKEND_API_KEY=&lt;provided by platform team&gt;</pre></div>
+UAP_AGENT_KEY=opk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx   # generated via Admin → API Keys (Option 3)</pre></div>
+  <p><strong>Step 1 — Fetch a short-lived token (5 min TTL):</strong></p>
   <div class="code-block"><pre>
-# Step 1 — Fetch short-lived token (5 min TTL)
-POST /api/llm/token
-Headers: X-API-Key: &lt;BACKEND_API_KEY&gt;
-Body:    {"agent_slug": "your-agent-slug"}
-
-# Step 2 — Proxy LLM call
-POST /api/llm/invoke
-Headers: X-API-Key: &lt;BACKEND_API_KEY&gt;
-Body:    {"token": "&lt;token&gt;", "messages": [...], "system": "..."}</pre></div>
-  <p><strong>Agent-side implementation:</strong></p>
+curl -sS -X POST "${UAP_URL}/api/llm/token" \
+  -H "X-API-Key: ${UAP_AGENT_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{"agent_slug":"your-agent-slug"}'</pre></div>
+  <p>Expected response:</p>
+  <div class="code-block"><pre>
+{
+  "token": "your-agent-slug:1786093444:1786093744:7be5c901...",
+  "provider": "bedrock",
+  "model": "us.anthropic.claude-sonnet-5",
+  "expires_in": 300,
+  "issued_at": 1786093444
+}</pre></div>
+  <p><strong>Step 2 — Proxy the LLM call using that token:</strong></p>
+  <div class="code-block"><pre>
+curl -sS -X POST "${UAP_URL}/api/llm/invoke" \
+  -H "X-API-Key: ${UAP_AGENT_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "token": "&lt;token from step 1&gt;",
+    "messages": [{"role":"user","content":"Say hello in one word."}],
+    "system": ""
+  }'</pre></div>
+  <p>Expected response:</p>
+  <div class="code-block"><pre>
+{
+  "response": "Hello!",
+  "model": "us.anthropic.claude-sonnet-5",
+  "usage": {"input_tokens": 14, "output_tokens": 6}
+}</pre></div>
+  <p><strong>Agent-side implementation notes:</strong></p>
   <ul>
-    <li><strong>Step 1</strong> — At runtime, fetch a short-lived token (5 min TTL) using your <code>BACKEND_API_KEY</code> (or Option 3 agent key): <code>POST /api/llm/token</code> with <code>X-API-Key: &lt;key&gt;</code> and body <code>{"agent_slug": "your-agent-slug"}</code></li>
-    <li><strong>Step 2</strong> — Proxy the LLM call via UAP: <code>POST /api/llm/invoke</code> with the same <code>X-API-Key</code> header and body <code>{"token": "&lt;token&gt;", "messages": [...], "system": "..."}</code></li>
-    <li>The raw platform LLM key never leaves UAP — the agent owner only holds their own access key, not the platform's credentials</li>
-    <li>Fetch a fresh token per request or cache for up to 5 minutes</li>
+    <li>Fetch a fresh token per request, or cache it for up to 5 minutes (token TTL)</li>
+    <li><code>messages</code> follows standard Anthropic message format (role/content array); <code>system</code> is an optional top-level string</li>
+    <li><code>model</code> and <code>max_tokens</code> are optional in the invoke body — omit to use platform defaults</li>
+    <li>The raw platform LLM/Bedrock key never leaves UAP — your service only ever holds its own scoped <code>opk_...</code> key</li>
+    <li><strong>403 "Invalid API key"</strong> means the key is wrong or inactive. <strong>403 "API key is not authorised for agent '&lt;slug&gt;'"</strong> means the key is scoped to a different agent than the one requested</li>
   </ul>
-  <p><strong>Fallback (UAP unavailable):</strong> If UAP is unreachable, the agent falls back to Option 1 using its own independently obtained Bedrock Bearer token (<code>BEDROCK_API_KEY</code>). This is the agent owner's own key — separate from and not related to the platform's LLM credentials. See <code>agents/mock-agent/llm_gateway.py</code> for a reference implementation pattern.</p>
-  <p><strong>⚠ Note:</strong> Fallback will not work unless the agent owner has independently obtained and configured their own <code>BEDROCK_API_KEY</code>. Without it, the agent will fail if UAP becomes unavailable. Agent owners who require resilience should request a Bedrock Bearer token from their AWS administrator and configure it as a fallback credential.</p>
+  <p><strong>Fallback (UAP unavailable):</strong> If UAP is unreachable, the agent can fall back to Option 1 using its own independently obtained Bedrock Bearer token (<code>BEDROCK_API_KEY</code>) — a credential separate from and unrelated to the platform's LLM credentials. This fallback is the agent team's own responsibility to implement; it is not automatic.</p>
+  <p><strong>⚠ Note:</strong> Fallback will not work unless the agent owner has independently obtained and configured their own <code>BEDROCK_API_KEY</code>. Without it, the agent will fail if UAP becomes unavailable. Agent owners who require resilience should request a Bedrock Bearer token from their AWS administrator and configure it as a fallback credential. The reference file <code>agents/mock-agent/llm_gateway.py</code> currently demonstrates the shared-key pattern only — it has not yet been updated to prefer a scoped agent key, so treat it as a partial reference, not a complete template.</p>
 
   <h3>Option 3 — Self-service Agent Keys <span style="background:#dcfce7;color:#16a34a;font-size:11px;padding:2px 6px;border-radius:4px;font-weight:600">Available</span></h3>
   <p>Agent owners generate their own scoped API key from the UAP Admin portal (API Keys tab) — no platform team involvement. Key is per-agent, revocable, and decoupled from registration.</p>
