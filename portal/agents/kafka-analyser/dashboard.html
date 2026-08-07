@@ -1133,14 +1133,30 @@
       window._cgGroups = groups;
       const cgRowHtml = g => {
         const lagColor = g.lag_trend === 'growing' && g.total_lag > 10000 ? 'style="color:var(--danger);font-weight:700"' : '';
+        // Combine trend direction with lag severity into one label -- "stable" alone
+        // misleadingly reads as reassuring even for a critically-high-lag group;
+        // pairing it with the same severity thresholds already used for the Status
+        // badge in this table makes the real picture clear at a glance.
         let trendHtml;
+        const _lagSeverity = g.total_lag > 10000 ? 'critical' : g.total_lag > 1000 ? 'warning' : 'healthy';
         if (g.lag_trend === 'growing') {
-          const color = g.total_lag > 1000 ? 'var(--danger)' : '#d97706';
-          trendHtml = `<span style="color:${color};font-weight:600">↑ growing</span>`;
+          const _label = _lagSeverity === 'critical' ? 'Critical, worsening'
+                        : _lagSeverity === 'warning' ? 'Warning, worsening'
+                        : 'Healthy, growing';
+          const _color = _lagSeverity === 'healthy' ? 'var(--success)' : 'var(--danger)';
+          trendHtml = `<span style="color:${_color};font-weight:600">↑ ${_label}</span>`;
         } else if (g.lag_trend === 'shrinking') {
-          trendHtml = `<span style="color:var(--success);font-weight:600">↓ shrinking</span>`;
+          const _label = _lagSeverity === 'critical' ? 'Critical, recovering'
+                        : _lagSeverity === 'warning' ? 'Warning, recovering'
+                        : 'Healthy, improving';
+          const _color = _lagSeverity === 'healthy' ? 'var(--success)' : '#d97706';
+          trendHtml = `<span style="color:${_color};font-weight:600">↓ ${_label}</span>`;
         } else {
-          trendHtml = `<span style="color:var(--text-muted)">→ stable</span>`;
+          const _label = _lagSeverity === 'critical' ? 'Critical, not improving'
+                        : _lagSeverity === 'warning' ? 'Warning, steady'
+                        : 'Healthy, stable';
+          const _color = _lagSeverity === 'critical' ? 'var(--danger)' : _lagSeverity === 'warning' ? '#d97706' : 'var(--text-muted)';
+          trendHtml = `<span style="color:${_color};font-weight:600">→ ${_label}</span>`;
         }
         const groupId = g.group_id || g.group_name || 'Unknown';
         const copyBtn = `<span class="copy-icon" onclick="event.stopPropagation();var t=this.closest('td').getAttribute('data-copy');var el=document.createElement('textarea');el.value=t;document.body.appendChild(el);el.select();document.execCommand('copy');document.body.removeChild(el);this.textContent='✓';setTimeout(()=>this.textContent='📋',1000)" style="cursor:pointer;font-size:12px;opacity:0.3;transition:opacity 0.2s" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='0.3'">📋</span>`;
