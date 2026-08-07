@@ -1049,10 +1049,63 @@ async def collect_msg_rate(cluster_id: str = ""):
         prev_key = f"{cid}_sizes"
         prev_sizes = _prev_offsets.get(prev_key, {})
         prev_time = _prev_offset_time.get(_pot_key) or now
-        elapsed = max(1, now - prev_time)
+        cold_start = not prev_sizes
+        # Cold start (e.g. right after a restart) -- try the persisted baseline
+        # before falling back to "no data yet", so a restart doesn't force this
+        # cycle to skip writing throughput data entirely.
+        persisted_baseline_time = None
+        if cold_start:
+            try:
+                from database import SessionLocal as _SL_pb
+                from sqlalchemy import text as _t_pb
+                async with _SL_pb() as _sess_pb:
+                    _pb_rows = await _sess_pb.execute(_t_pb(
+                        "SELECT topic, partition, size_bytes, updated_at FROM kafka_topic_partition_size_baseline WHERE cluster_id = :cid"
+                    ), {"cid": int(cid)})
+                    _pb_list = _pb_rows.fetchall()
+                    if _pb_list:
+                        prev_sizes = {f"{r.topic}:{r.partition}": r.size_bytes for r in _pb_list}
+                        persisted_baseline_time = max(r.updated_at for r in _pb_list)
+                        cold_start = False
+            except Exception as _pbe:
+                logger.warning("collect_msg_rate: persisted baseline read failed: %s", _pbe)
+        if persisted_baseline_time is not None:
+            from datetime import datetime as _dt_pb, timezone as _tz_pb
+            _now_dt_pb = _dt_pb.now(_tz_pb.utc)
+            _pbt = persisted_baseline_time
+            if _pbt.tzinfo is None:
+                _pbt = _pbt.replace(tzinfo=_tz_pb.utc)
+            elapsed = max(1.0, (_now_dt_pb - _pbt).total_seconds())
+        else:
+            elapsed = max(1, now - prev_time)
         _prev_offsets[prev_key] = current_sizes
         _prev_offset_time[_pot_key] = now
-        if not prev_sizes:
+        # Persist the new baseline (bulk upsert) so the NEXT restart also has
+        # continuity, not just this one.
+        try:
+            from database import SessionLocal as _SL_pbw
+            from sqlalchemy import text as _t_pbw
+            async with _SL_pbw() as _sess_pbw:
+                _pb_items = list(current_sizes.items())
+                _BULK_PB = 1000
+                for _bi in range(0, len(_pb_items), _BULK_PB):
+                    _batch = _pb_items[_bi:_bi + _BULK_PB]
+                    _values = ", ".join(
+                        f"({int(cid)}, '{k.rsplit(':', 1)[0].replace(chr(39), chr(39)*2)}', {k.rsplit(':', 1)[1]}, {v}, now())"
+                        for k, v in _batch
+                    )
+                    await _sess_pbw.execute(_t_pbw(f"""
+                        INSERT INTO kafka_topic_partition_size_baseline
+                        (cluster_id, topic, partition, size_bytes, updated_at)
+                        VALUES {_values}
+                        ON CONFLICT (cluster_id, topic, partition) DO UPDATE SET
+                            size_bytes = EXCLUDED.size_bytes,
+                            updated_at = EXCLUDED.updated_at
+                    """))
+                await _sess_pbw.commit()
+        except Exception as _pbwe:
+            logger.warning("collect_msg_rate: persisted baseline write failed: %s", _pbwe)
+        if cold_start:
             collect_msg_rate._last_result = "Baseline stored — rates available next cycle"
             return
         # Calculate bytes/sec per topic and per partition
