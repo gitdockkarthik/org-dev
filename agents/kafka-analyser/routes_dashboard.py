@@ -292,7 +292,7 @@ async def get_counts(cluster_id: str | None = None) -> dict:
                 ), {"cid": int(cluster_id)})
                 total_partitions_count = _parts.scalar() or 0
                 _urp = await _sess3.execute(_text(
-                    "SELECT COALESCE(SUM(urp_count),0) FROM kafka_broker_metrics WHERE cluster_id=:cid"
+                    "SELECT COALESCE(SUM(urp_count),0) FROM kafka_topic_metrics WHERE cluster_id=:cid"
                 ), {"cid": int(cluster_id)})
                 total_urp_count = _urp.scalar() or 0
                 _large = await _sess3.execute(_text(
