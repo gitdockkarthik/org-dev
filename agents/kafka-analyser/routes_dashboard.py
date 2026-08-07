@@ -386,6 +386,37 @@ async def get_consumer_groups(cluster_id: str | None = None, hours: int | None =
                 WHERE cluster_id = :cid AND updated_at >= NOW() - INTERVAL '20 minutes'
                 ORDER BY total_lag DESC
             """), {"cid": int(cluster_id)})
+            _rows = rows.fetchall()
+            # Trend/rate -- aggregate the already-tracked per-partition inflow/consumed
+            # deltas (from the same cycle that also powers the topic-lag popup) to
+            # compute a genuine net lag change per group, rather than leaving
+            # lag_trend/lag_rate_per_min entirely unset (a real, previously-silent gap:
+            # every group fell through to "stable" with an undefined rate).
+            _trend_by_group: dict[str, dict] = {}
+            try:
+                _tr = await sess.execute(_t("""
+                    SELECT group_id,
+                           COALESCE(SUM(inflow_since_last), 0) as total_inflow,
+                           COALESCE(SUM(consumed_since_last), 0) as total_consumed,
+                           AVG(interval_seconds) as avg_interval
+                    FROM kafka_consumer_group_partition_lag
+                    WHERE cluster_id = :cid AND updated_at >= NOW() - INTERVAL '20 minutes'
+                    AND inflow_since_last IS NOT NULL AND consumed_since_last IS NOT NULL
+                    GROUP BY group_id
+                """), {"cid": int(cluster_id)})
+                for tr in _tr.fetchall():
+                    net_change = int(tr.total_inflow) - int(tr.total_consumed)
+                    interval = float(tr.avg_interval) if tr.avg_interval else 0.0
+                    rate_per_min = round(net_change / (interval / 60), 1) if interval > 0 else 0.0
+                    if net_change > 1000:
+                        trend = "growing"
+                    elif net_change < -1000:
+                        trend = "shrinking"
+                    else:
+                        trend = "stable"
+                    _trend_by_group[tr.group_id] = {"lag_trend": trend, "lag_rate_per_min": rate_per_min}
+            except Exception as _tre:
+                logger.warning("consumer-groups trend aggregation failed: %s", _tre)
             groups = [
                 {
                     "group_id": r.group_id,
@@ -394,8 +425,10 @@ async def get_consumer_groups(cluster_id: str | None = None, hours: int | None =
                     "topic_count": r.topic_count,
                     "committed_offsets": r.committed_offsets,
                     "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+                    "lag_trend": _trend_by_group.get(r.group_id, {}).get("lag_trend", "stable"),
+                    "lag_rate_per_min": _trend_by_group.get(r.group_id, {}).get("lag_rate_per_min", 0.0),
                 }
-                for r in rows.fetchall()
+                for r in _rows
             ]
         if not groups:
             return {"empty": True}
