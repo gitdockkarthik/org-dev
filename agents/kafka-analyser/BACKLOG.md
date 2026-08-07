@@ -1091,6 +1091,32 @@ popup (validated with exact math reconciliation against the raw partition-level
 data), CSV export.
 *Added: 2026-08-07*
 
+### Kafka Connect tab -- full audit complete, two new features shipped (2026-08-07)
+Full, item-by-item audit of the Kafka Connect tab (KPIs, worker nodes, table columns,
+filters). No bugs found -- all data (KPI cards, task pills, lag column cross-validated
+twice against Consumer Groups, worker resolution, status badges, all filter chips)
+verified accurate against real, live data.
+
+Two new features shipped during this session, both user-requested:
+
+1. **Connector Anomalies bubble chart** -- replaced the two simple 2-category doughnut
+   charts (Status, Type breakdown) with a single, genuinely 3-dimensional chart: total
+   lag (x-axis), lag rate/min (y-axis), topics affected (bubble size), state (color).
+   Clicking a bubble opens the existing per-connector lag popup. Backend extended the
+   existing connector-lag correlation to also provide topic_count and lag_rate_per_min
+   (reusing the same trend aggregation already built for Consumer Groups).
+
+2. **Worker Nodes clustered grouping** -- discovered and confirmed during this audit
+   that the 17 configured worker URLs are actually 6 separate, distinct Kafka Connect
+   clusters (workers sharing a cluster report an identical connector set), previously
+   shown as one flat, undifferentiated list of 17 badges. Now grouped into labeled
+   sub-sections (Cluster A-F) based on each worker's connector-set fingerprint (same
+   mechanism already used for connector dedup, extended to cover all workers).
+
+Both applied to static and portal dashboard.html, validated against real data and
+confirmed live in the portal UI.
+*Added: 2026-08-07*
+
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - **Product/Service tag mapping display** — read the team's tag mapping (product,
   service, etc.) from a SharePoint location once the tag schema is finalized, and
