@@ -1064,6 +1064,33 @@ need a new, dedicated per-partition query to populate if this level of detail is
 wanted in the popup.
 *Added: 2026-08-07*
 
+### Consumer Groups tab -- full audit complete, two real bugs found and fixed (2026-08-07)
+Full, item-by-item audit of the Consumer Groups tab (KPIs, Top 10 by Lag chart, table
+columns, per-group topics popup, CSV export). Two significant, real bugs found and
+fixed:
+
+1. **Trend/Lag Rate/min columns were completely non-functional.** The
+   /dashboard/consumer-groups endpoint never selected lag_trend or lag_rate_per_min at
+   all -- every single group silently fell through to "stable" with an
+   undefined/NaN rate, regardless of a group's real, active trend. Fixed by
+   aggregating the already-tracked per-partition inflow_since_last/consumed_since_last
+   (same data that powers the topic-lag popup) into a genuine per-group net change and
+   rate, classified growing/shrinking/stable using the same >1000 threshold already
+   used for the Status badge.
+
+2. **"Stable" alone misleadingly reads as reassuring for a critically-high-lag
+   group** -- caught live by the user: a 500K+ lag group correctly showed "stable"
+   (its lag genuinely wasn't growing) but this could be misread as healthy. Fixed by
+   combining trend direction with lag severity into one label (e.g. "Critical, not
+   improving" / "Warning, worsening" / "Healthy, stable"), applied to both static and
+   portal dashboard.html.
+
+Everything else validated accurate with no changes needed: KPI cards, Top 10 chart
+(inherits correctness from the same fixed data), Status badge, per-group topics
+popup (validated with exact math reconciliation against the raw partition-level
+data), CSV export.
+*Added: 2026-08-07*
+
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - **Product/Service tag mapping display** — read the team's tag mapping (product,
   service, etc.) from a SharePoint location once the tag schema is finalized, and
