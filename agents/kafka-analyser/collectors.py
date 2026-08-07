@@ -1120,6 +1120,29 @@ async def collect_msg_rate(cluster_id: str = ""):
             partition_rates.setdefault(topic, {})[int(part_str)] = rate
         # Upsert bytes_in_per_sec to postgres for active topics
         active_topics = {t: r for t, r in topic_rates.items() if r > 0}
+        # Topics with a genuine zero delta this cycle -- explicitly reset to 0 rather
+        # than silently leaving their last non-zero value in place forever, which
+        # would otherwise permanently defeat the Stale Topics KPI's purpose.
+        zero_rate_topics = [t for t, r in topic_rates.items() if r == 0]
+        if zero_rate_topics:
+            from database import SessionLocal as _SL_zr
+            from sqlalchemy import text as _t_zr
+            async with _SL_zr() as _sess_zr:
+                _ZR_BULK = 1000
+                for _zi in range(0, len(zero_rate_topics), _ZR_BULK):
+                    _zbatch = zero_rate_topics[_zi:_zi + _ZR_BULK]
+                    _zvalues = ", ".join(
+                        f"({int(cid)}, '{t.replace(chr(39), chr(39)*2)}')"
+                        for t in _zbatch
+                    )
+                    await _sess_zr.execute(_t_zr(f"""
+                        UPDATE kafka_topic_metrics SET bytes_in_per_sec = 0, time = now()
+                        FROM (VALUES {_zvalues}) AS v(cid, topic)
+                        WHERE kafka_topic_metrics.cluster_id = v.cid
+                        AND kafka_topic_metrics.topic = v.topic
+                        AND kafka_topic_metrics.bytes_in_per_sec != 0
+                    """))
+                await _sess_zr.commit()
         if active_topics:
             from database import SessionLocal
             from sqlalchemy import text
