@@ -78,8 +78,8 @@ async def create_key(
     await db.refresh(key)
     await log_audit_event("apikey.created", user_email=getattr(current_user, "email", None),
         user_role=getattr(current_user, "role", None), resource_type="api_key",
-        resource_id=key.key_id, agent_slug=key.agent_slug, action="create",
-        details={"key_name": key.key_id, "agent_slug": key.agent_slug})
+        resource_id=str(key.id), agent_slug=key.agent_slug, action="create",
+        details={"key_name": key.label, "agent_slug": key.agent_slug})
     return KeyCreated(
         id=key.id,
         agent_slug=key.agent_slug,
@@ -168,7 +168,7 @@ async def rotate_key(
     await db.refresh(key)
     await log_audit_event("apikey.rotated", user_email=getattr(current_user, "email", None),
         user_role=getattr(current_user, "role", None), resource_type="api_key",
-        resource_id=key.key_id, agent_slug=key.agent_slug, action="rotate",
+        resource_id=str(key.id), agent_slug=key.agent_slug, action="rotate",
         details={"agent_slug": key.agent_slug})
     return KeyCreated(
         id=key.id,
