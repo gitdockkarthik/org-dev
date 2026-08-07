@@ -74,3 +74,58 @@ API-key flow since rca-agent onboarding.
 Fixed: resource_id=str(key.id) (both create and rotate handlers),
 details key_name=key.label. Validated via curl (create + delete) before rollout,
 then confirmed working live by both affected developers.
+
+### Fix: Langfuse tracing broken for LLM Gateway calls + developer-key scoping gap (2026-08-07, commits ef05e48, 535b24f)
+Discovered while onboarding rca-agent's first LLM Gateway call:
+
+1. Gap 1 (ef05e48): /api/llm/token and /api/llm/invoke only accepted the shared
+   BACKEND_API_KEY (via require_api_key), despite documentation stating scoped
+   Option 3 developer keys (opk_...) should also work. _check_developer_key()
+   existed and worked correctly for /api/invoke/{slug}, but was never wired into
+   the LLM Gateway endpoints. Fixed by calling _check_developer_key() first in
+   both endpoints, falling through to shared key only if no valid developer key
+   present. Validated: same-agent key succeeds, cross-agent key correctly 403s.
+
+2. Gap 2 (535b24f): langfuse Python package was present in all agent
+   requirements.txt (alert/cur/kafka/template) but MISSING from
+   backend/requirements.txt — meaning ALL LLM Gateway calls (the actual call
+   path for standalone agents like rca-agent, app-support-v2, mock-agent) were
+   silently untraced since Langfuse client init failed at import time, caught
+   by a broad except Exception. Added langfuse>=2.0.0 to backend/requirements.txt,
+   rebuilt image.
+
+3. Gap 3 (535b24f): even after tracing worked, _lf_trace() named traces using
+   os.environ.get("AGENT_SLUG", "unknown") — the BACKEND container's own env
+   var (unset), not the calling agent's actual slug. All Gateway-path traces
+   showed as "unknown.llm_call". Added agent_slug_override parameter threaded
+   through create_message()/stream_message()/_lf_trace(), passed explicitly
+   as the token's parsed slug in /llm/invoke.
+
+4. Gap 4 (535b24f): traces showed blank "User" for service-to-service Gateway
+   calls (no logged-in human in this context, unlike portal-driven
+   /invoke/{slug} chat which correctly shows the real user's email). Added a
+   friendly "Application: <Agent Name>" label as user_id specifically for
+   /llm/invoke calls, leaving native agents' portal-driven user attribution
+   unchanged.
+
+Architecture decision confirmed: tracing/cost-attribution responsibility is
+centralized in the backend for all STANDALONE agents (app-support-v2,
+mock-agent, rca-agent, and future onboards) — they never need their own
+langfuse dependency or credentials. Native agents (alert/cur/kafka) still
+trace client-side today; migrating them onto the same Gateway + centralized
+tracing pattern (removing their local langfuse dependency) is flagged as
+future scope, not yet started.
+
+Process note: multiple edits in this session were shown as diffs by Claude Code
+but not actually written to disk, discovered only via git diff / inspect.signature
+verification after rebuilds silently failed to reflect the change. Reinforces
+existing discipline: always verify with git diff on host before rebuilding,
+not just trust a displayed diff summary.
+
+Validated end-to-end via curl against mock-agent's key: token vend → invoke →
+Langfuse trace showing Agent: mock-agent.llm_call, User: Application: Mock Agent,
+correct token/cost figures. Cross-agent key rejection (403) reconfirmed post-fix.
+
+Docs Hub (portal/docs-hub/agent-registration-demo.html) Option 2 section updated
+with working curl examples and scoped-key recommendation for the RCA team and
+future standalone agent onboarding.
