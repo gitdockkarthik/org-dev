@@ -382,9 +382,10 @@ async def health():
     return {"status": "ok"}
 
 
-@router.post("/llm/token", dependencies=[Depends(require_api_key)])
+@router.post("/llm/token")
 async def vend_llm_token(
     body: dict,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     from core.platform_cache import get_anthropic_key
@@ -394,6 +395,13 @@ async def vend_llm_token(
     slug = body.get("agent_slug", "")
     if not slug:
         raise HTTPException(status_code=400, detail="agent_slug is required")
+
+    from core.platform_cache import get_backend_api_key
+    dev_key_ok = await _check_developer_key(request, slug, db)
+    if not dev_key_ok:
+        api_key = request.headers.get("X-API-Key", "")
+        if api_key != get_backend_api_key():
+            raise HTTPException(status_code=403, detail="Invalid API key")
 
     result = await db.execute(select(Agent).where(Agent.slug == slug))
     agent = result.scalar_one_or_none()
@@ -422,9 +430,10 @@ async def vend_llm_token(
     }
 
 
-@router.post("/llm/invoke", dependencies=[Depends(require_api_key)])
+@router.post("/llm/invoke")
 async def llm_invoke(
     body: dict,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     from core.platform_cache import get_anthropic_key
@@ -449,6 +458,13 @@ async def llm_invoke(
     ).hexdigest()
     if not hmac.compare_digest(expected, signature):
         raise HTTPException(status_code=401, detail="Invalid token signature")
+
+    from core.platform_cache import get_backend_api_key
+    dev_key_ok = await _check_developer_key(request, slug, db)
+    if not dev_key_ok:
+        api_key = request.headers.get("X-API-Key", "")
+        if api_key != get_backend_api_key():
+            raise HTTPException(status_code=403, detail="Invalid API key")
 
     messages = body.get("messages", [])
     system = body.get("system", "")
