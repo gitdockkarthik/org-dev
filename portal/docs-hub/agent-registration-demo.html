@@ -322,7 +322,7 @@ AWS_SECRET_ACCESS_KEY=F9***</pre></div>
   <p>Agent calls UAP's token vending endpoint using <strong>either</strong> the platform's shared <code>BACKEND_API_KEY</code> <strong>or</strong> a scoped Option 3 developer key (<code>opk_...</code>) generated for your specific agent. The raw LLM/Bedrock credentials never leave UAP. Requires code changes in the agent backend to call the gateway instead of the LLM SDK directly.</p>
   <p><strong>Recommended: use your own scoped key (Option 3) rather than the shared BACKEND_API_KEY</strong> — it is per-agent, revocable, and a mismatch (using a key scoped to a different agent_slug) is rejected with a 403, so credentials cannot be misused across agents.</p>
   <div class="code-block"><pre>
-UAP_URL=https://&lt;uap-platform-url&gt;
+UAP_URL=http://kpi-internal.cloud.operative.com:3000   # Portal's port only — do NOT use :8010 (backend), which should stay internal-only for security
 UAP_AGENT_KEY=opk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx   # generated via Admin → API Keys (Option 3)</pre></div>
   <p><strong>Step 1 — Fetch a short-lived token (5 min TTL):</strong></p>
   <div class="code-block"><pre>
