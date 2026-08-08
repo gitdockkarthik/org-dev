@@ -150,28 +150,6 @@
           "unit": "percent"
         }
       }
-    },
-    {
-      "id": 6,
-      "title": "Container Restart Count (last 24h)",
-      "type": "timeseries",
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 36
-      },
-      "targets": [
-        {
-          "expr": "count by (name) (count by (name, id) (container_last_seen{name!=\"\"})) - 1",
-          "legendFormat": "{{name}}",
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          }
-        }
-      ]
     }
   ]
 }
