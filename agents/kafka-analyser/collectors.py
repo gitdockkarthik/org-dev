@@ -171,7 +171,7 @@ async def collect_consumer_lag_active(cluster_id: str = ""):
     cid = _cid(c)
     try:
         from kafka_process_pool import fetch_consumer_lag_isolated
-        result = await fetch_consumer_lag_isolated(c["bootstrap_servers"], c, timeout=60.0)
+        result = await fetch_consumer_lag_isolated(c["bootstrap_servers"], c, timeout=90.0)
         if not result.get("ok"):
             # Raise (not just log+return) so jobs.py correctly marks this run as
             # failed, not success -- a monitoring tool must report a genuine failure

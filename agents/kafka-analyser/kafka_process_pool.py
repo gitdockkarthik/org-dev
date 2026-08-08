@@ -13,13 +13,15 @@ from concurrent.futures import ProcessPoolExecutor, TimeoutError as FutureTimeou
 logger = logging.getLogger(__name__)
 
 # Small, dedicated pool for CRITICAL, lock-blocking-prone operations only.
-# Increased from 4 -> 6 (2026-08-08): confirmed real contention when several
-# scheduled jobs fired at the same minute mark, each needing a pool slot -- the
-# primary fix was staggering job schedules across different minute offsets
-# (kafka_job_schedules), this increase is a complementary safety margin given
-# confirmed real headroom (8 CPU cores available, container using well under its
-# 2GB memory limit even under load).
-_process_pool = ProcessPoolExecutor(max_workers=6)
+# Reverted to 4 (2026-08-08): initially increased to 6 based on apparent pool
+# contention, but further investigation found the real root cause of the same
+# symptom (consumer-lag-8 intermittent timeouts) was host-wide CPU starvation
+# from an unrelated ClickHouse internal-log accumulation issue (see
+# SESSION_RECONCILIATION.md, 2026-08-08), not this pool's size. Reverted per the
+# principle of minimal, evidence-justified changes -- job-schedule staggering
+# (kafka_job_schedules) plus the ClickHouse fix fully resolved the observed
+# failures; this pool size increase was not actually needed.
+_process_pool = ProcessPoolExecutor(max_workers=4)
 
 # Per-worker-process persistent connections. Each worker process has its own
 # separate memory space, so this dict is naturally process-local -- no locking

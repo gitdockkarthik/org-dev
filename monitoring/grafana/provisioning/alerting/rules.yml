@@ -1,0 +1,108 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: uap-platform-alerts
+    folder: Operative Intelligence
+    interval: 1m
+    rules:
+      - uid: uap-host-memory-high
+        title: Host Memory Usage High
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: "100 * (1 - ((node_memory_MemAvailable_bytes) / (node_memory_MemTotal_bytes)))"
+              refId: A
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [80] }
+              refId: C
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Host memory usage above 80% for 5+ minutes"
+
+      - uid: uap-host-cpu-high
+        title: Host CPU Usage High
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)"
+              refId: A
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [85] }
+              refId: C
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Host CPU usage above 85% for 5+ minutes"
+
+      - uid: uap-container-memory-high
+        title: Container Memory Usage High
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: "container_memory_usage_bytes{name!=\"\"} > 1.6e9"
+              refId: A
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+              refId: C
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "A container's memory usage exceeded 1.6GB for 5+ minutes"
+
+      - uid: uap-kafka-job-missed-schedule
+        title: Kafka Job Missed Schedule
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 60, to: 0 }
+            datasourceUid: PE30C9C23A9F8678B
+            model:
+              rawSql: "SELECT job_id, ROUND(EXTRACT(EPOCH FROM (NOW() - MAX(started_at)))/60) as minutes_since_last_run FROM kafka_job_runs WHERE job_id LIKE 'kafka-%-4' OR job_id LIKE 'kafka-%-8' GROUP BY job_id HAVING ROUND(EXTRACT(EPOCH FROM (NOW() - MAX(started_at)))/60) > 15"
+              format: table
+              refId: A
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+              refId: C
+        noDataState: OK
+        execErrState: Error
+        for: 0m
+        labels: { severity: critical }
+        annotations:
+          summary: "One or more active-cluster jobs have not run in over 15 minutes -- possible stuck scheduler or job failure"

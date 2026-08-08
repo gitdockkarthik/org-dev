@@ -5,41 +5,96 @@
   "schemaVersion": 39,
   "version": 1,
   "refresh": "30s",
-  "time": { "from": "now-6h", "to": "now" },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
   "panels": [
     {
       "id": 1,
       "title": "Minutes Since Last Run (per job)",
       "type": "table",
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
-      "datasource": { "type": "grafana-postgresql-datasource", "uid": "PE30C9C23A9F8678B" },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "PE30C9C23A9F8678B"
+      },
       "targets": [
         {
           "rawSql": "SELECT job_id, MAX(started_at) as last_run, ROUND(EXTRACT(EPOCH FROM (NOW() - MAX(started_at)))/60) as minutes_since_last_run FROM kafka_job_runs GROUP BY job_id ORDER BY minutes_since_last_run DESC",
           "format": "table",
-          "refId": "A"
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "PE30C9C23A9F8678B"
+          }
         }
       ],
       "fieldConfig": {
         "defaults": {
           "custom": {
-            "cellOptions": { "type": "color-background" },
-            "thresholds": { "mode": "absolute", "steps": [
-              { "color": "green", "value": null },
-              { "color": "orange", "value": 15 },
-              { "color": "red", "value": 30 }
-            ] }
+            "cellOptions": {
+              "type": "color-background"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "orange",
+                  "value": 15
+                },
+                {
+                  "color": "red",
+                  "value": 30
+                }
+              ]
+            }
           }
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "minutes_since_last_run" }, "properties": [
-            { "id": "custom.cellOptions", "value": { "type": "color-background" } },
-            { "id": "thresholds", "value": { "mode": "absolute", "steps": [
-              { "color": "green", "value": null },
-              { "color": "orange", "value": 15 },
-              { "color": "red", "value": 30 }
-            ] } }
-          ] }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "minutes_since_last_run"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 15
+                    },
+                    {
+                      "color": "red",
+                      "value": 30
+                    }
+                  ]
+                }
+              }
+            ]
+          }
         ]
       }
     },
@@ -47,13 +102,25 @@
       "id": 2,
       "title": "Success/Fail Count by Job (last 24h)",
       "type": "barchart",
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 10 },
-      "datasource": { "type": "grafana-postgresql-datasource", "uid": "PE30C9C23A9F8678B" },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 10
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "PE30C9C23A9F8678B"
+      },
       "targets": [
         {
           "rawSql": "SELECT job_id, status, COUNT(*) as count FROM kafka_job_runs WHERE started_at > NOW() - INTERVAL '24 hours' GROUP BY job_id, status ORDER BY job_id",
           "format": "table",
-          "refId": "A"
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "PE30C9C23A9F8678B"
+          }
         }
       ]
     },
@@ -61,13 +128,25 @@
       "id": 3,
       "title": "Recent Failures (last 20)",
       "type": "table",
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 20 },
-      "datasource": { "type": "grafana-postgresql-datasource", "uid": "PE30C9C23A9F8678B" },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "PE30C9C23A9F8678B"
+      },
       "targets": [
         {
           "rawSql": "SELECT job_id, status, started_at, duration_seconds, error_message FROM kafka_job_runs WHERE status = 'failed' ORDER BY started_at DESC LIMIT 20",
           "format": "table",
-          "refId": "A"
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "PE30C9C23A9F8678B"
+          }
         }
       ]
     },
@@ -75,16 +154,32 @@
       "id": 4,
       "title": "Avg Duration Trend by Job (last 6h)",
       "type": "timeseries",
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 30 },
-      "datasource": { "type": "grafana-postgresql-datasource", "uid": "PE30C9C23A9F8678B" },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "PE30C9C23A9F8678B"
+      },
       "targets": [
         {
           "rawSql": "SELECT started_at as time, job_id, duration_seconds FROM kafka_job_runs WHERE started_at > NOW() - INTERVAL '6 hours' AND duration_seconds IS NOT NULL ORDER BY started_at",
           "format": "time_series",
-          "refId": "A"
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "PE30C9C23A9F8678B"
+          }
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "s" } }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      }
     }
   ]
 }
