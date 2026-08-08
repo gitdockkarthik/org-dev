@@ -1116,12 +1116,20 @@ async def collect_msg_rate(cluster_id: str = ""):
             from database import SessionLocal
             from sqlalchemy import text
             async with SessionLocal() as sess:
-                for topic, rate in active_topics.items():
-                    await sess.execute(text("""
-                        UPDATE kafka_topic_metrics
-                        SET bytes_in_per_sec = :rate, time = now()
-                        WHERE cluster_id = :cid AND topic = :topic
-                    """), {"cid": int(cid), "rate": round(rate, 2), "topic": topic})
+                _AT_BULK = 1000
+                _at_items = list(active_topics.items())
+                for _ai in range(0, len(_at_items), _AT_BULK):
+                    _abatch = _at_items[_ai:_ai + _AT_BULK]
+                    _avalues = ", ".join(
+                        f"({int(cid)}, '{t.replace(chr(39), chr(39)*2)}', {round(r, 2)})"
+                        for t, r in _abatch
+                    )
+                    await sess.execute(text(f"""
+                        UPDATE kafka_topic_metrics SET bytes_in_per_sec = v.rate, time = now()
+                        FROM (VALUES {_avalues}) AS v(cid, topic, rate)
+                        WHERE kafka_topic_metrics.cluster_id = v.cid
+                        AND kafka_topic_metrics.topic = v.topic
+                    """))
                 await sess.commit()
         # Raw bytes-in snapshot for the Bytes In chart's 5-min granularity (1h view) --
         # bulk insert, all active topics, mirrors the message-rate snapshot pattern.
@@ -1380,7 +1388,7 @@ async def collect_schema_registry():
 
 
 # ── Maintenance: Rollup & Retention ───────────────────────────────────────────
-async def rollup_topic_message_rates(retention_hours: int = 6) -> dict:
+async def rollup_topic_message_rates(retention_hours: int = 2) -> dict:
     """Roll up kafka_topic_message_rate_snapshots rows older than retention_hours
     into kafka_topic_message_rate_hourly_rollup (hourly granularity), then delete
     those raw rows. Aggregate-then-delete, idempotent upsert, safe to retry on

@@ -109,7 +109,7 @@
       },
       "targets": [
         {
-          "expr": "container_memory_usage_bytes{name!=\"\"}",
+          "expr": "sum by (name) (container_memory_usage_bytes{name!=\"\"})",
           "legendFormat": "{{name}}",
           "refId": "A",
           "datasource": {
@@ -136,7 +136,7 @@
       },
       "targets": [
         {
-          "expr": "rate(container_cpu_usage_seconds_total{name!=\"\"}[5m]) * 100",
+          "expr": "sum by (name) (rate(container_cpu_usage_seconds_total{name!=\"\"}[5m]) * 100)",
           "legendFormat": "{{name}}",
           "refId": "A",
           "datasource": {
@@ -163,7 +163,7 @@
       },
       "targets": [
         {
-          "expr": "changes(container_last_seen{name!=\"\"}[24h])",
+          "expr": "count by (name) (count by (name, id) (container_last_seen{name!=\"\"})) - 1",
           "legendFormat": "{{name}}",
           "refId": "A",
           "datasource": {
