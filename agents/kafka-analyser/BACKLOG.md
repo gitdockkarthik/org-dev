@@ -1117,6 +1117,36 @@ Both applied to static and portal dashboard.html, validated against real data an
 confirmed live in the portal UI.
 *Added: 2026-08-07*
 
+### Connector Anomalies chart redesigned -- bubble chart replaced with Top-5 row chart (2026-08-08)
+The bubble chart shipped 2026-08-07 was found genuinely unhelpful in real use: a
+single outlier (1M+ lag) compressed every other connector into visual
+invisibility on both axes, and it never showed which specific topics were
+driving a connector's lag -- exactly the correlation the user actually wanted.
+
+Design was frozen via a live sample-data design session with the user before
+implementation (several iterations tried and rejected: bubble chart with
+log-scale axis, treemap with inline metrics, treemap with sqrt-transformed
+area -- all still had a "one outlier dominates" problem to some degree).
+
+Final design: 5 fixed-width rows, one per top-5 connector by total lag,
+guaranteeing each connector equal visual space regardless of relative
+magnitude -- the only approach tried that fully solved the domination problem.
+Each row's bar is segmented by that connector's own contributing topics (color
+intensity = topic's share of that connector's lag, exact value via tooltip),
+border color = connector state. No numbers rendered inline in the chart itself
+-- user's explicit direction: "chart is just a highlighter of issues and not
+the place to read everything," precise numbers live in the table/popup only.
+Clicking a row opens the existing per-connector lag popup.
+
+New backend endpoint (GET /dashboard/connectors/topic-breakdown) reuses the
+existing connector-lag correlation and kafka_consumer_group_topic_lag table --
+no new data source. Also fixed alongside: Connector Inventory table now
+defaults to sorting by Lag descending (was unsorted on load).
+
+Validated live in the portal UI: table and chart show matching top connector;
+click-through to the popup shows accurate partition-level detail.
+*Added: 2026-08-08*
+
 ## Value-Add Ideas (not scoped as concrete backlog items yet — discuss before building)
 - **Product/Service tag mapping display** — read the team's tag mapping (product,
   service, etc.) from a SharePoint location once the tag schema is finalized, and
