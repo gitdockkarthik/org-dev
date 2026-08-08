@@ -177,3 +177,30 @@ network, or from the KPI box's own localhost for admin/debugging.
 Action: audit currently-open external ports against this list with
 Amrithanshu/CloudOps and close anything that doesn't belong (tracked
 separately, not in this session).
+
+---
+
+## Value-Add Ideas
+
+### Migrate native agents (alert/cur/kafka) onto LLM Gateway + relabel Langfuse "User" as "Initiator"
+Follow-up to this session's LLM Gateway fixes for standalone agents (rca-agent
+onboarding, developer-key scoping, Langfuse tracing). Two related changes to
+plan for next week, for consistency across ALL agents (native + standalone):
+
+1. Migrate alert-analyser, cur-analyser, kafka-analyser off their current
+   direct in-process create_message() calls (using local langfuse dependency)
+   onto the same /api/llm/token + /api/llm/invoke Gateway pattern already
+   working for standalone agents. This removes their local langfuse
+   dependency entirely, fully centralizing tracing/cost tracking in backend
+   (matching the "Application: <name>" labeling already built for standalone
+   calls) and removes drift risk between two different tracing code paths.
+
+2. Once (1) is done, all Gateway calls are either a real logged-in portal
+   user (human) OR a service/application call (agent backend) — the Langfuse
+   dashboard's "User" column becomes misleading. Rename dashboard column
+   "User" -> "Initiator", displaying either the real user's email (portal
+   chat) or "Application: <Agent Name>" (Gateway/service calls) consistently.
+   Need to find the Langfuse dashboard's frontend source (likely in portal or
+   a dedicated observability page) to make this label change.
+
+Not started — scoping only, planned for next week's session.
