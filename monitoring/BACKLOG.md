@@ -2,6 +2,23 @@
 
 ## Pending
 
+### Custom tabbed page wiring all dashboards into a single, in-place view
+User's actual expectation, clarified after building the current home dashboard: not
+page-navigation links (Grafana's own dashboard-links feature, which reloads the page
+for each switch), but a true tabbed experience where switching between dashboards
+happens in-place, no reload -- similar to how the Kafka agent's own dashboard
+(portal/agents/kafka-analyser/dashboard.html) has custom-built tabs.
+
+Grafana has no native feature for this (dashboard links are page-navigation only).
+Would require a custom, standalone HTML/JS page (not a Grafana dashboard itself)
+embedding each Grafana dashboard via iframe, with real tab-switching logic --
+similar effort/pattern to the Kafka agent's own dashboard, but for Grafana content
+instead of our own API. Deliberately scoped as separate, future work rather than
+attempted as a quick addition to the current Grafana-native home dashboard, which
+is kept as the interim navigation solution.
+
+*Added: 2026-08-08*
+
 ### Container Restart Count panel -- removed, needs a dedicated exporter to do properly
 Removed from UAP Platform - Resource Overview (2026-08-08) after live investigation
 found no reliable way to build this with currently-deployed tools.

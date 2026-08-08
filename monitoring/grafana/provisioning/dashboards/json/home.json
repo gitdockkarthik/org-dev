@@ -1,0 +1,72 @@
+{
+  "title": "UAP Platform - Home",
+  "uid": "uap-home",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "",
+  "links": [
+    {
+      "type": "link",
+      "title": "Platform Resource Overview",
+      "tags": [],
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false,
+      "url": "/d/uap-platform-resources"
+    },
+    {
+      "type": "link",
+      "title": "Shared Infrastructure",
+      "tags": [],
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false,
+      "url": "/d/uap-shared-infra"
+    },
+    {
+      "type": "link",
+      "title": "Kafka Job Health",
+      "tags": [],
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false,
+      "url": "/d/kafka-job-health"
+    }
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Operative Intelligence -- UAP Platform Dashboards",
+      "type": "text",
+      "gridPos": { "h": 3, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "Use the links at the top of this page, or click a dashboard below, to navigate. This page is intended as the Grafana home page."
+      }
+    },
+    {
+      "id": 2,
+      "title": "All Dashboards",
+      "type": "dashlist",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 3 },
+      "options": {
+        "includeVars": false,
+        "keepTime": false,
+        "showFolderNames": true,
+        "showHeadings": true,
+        "showRecentlyViewed": false,
+        "showSearch": true,
+        "showStarred": false,
+        "tags": [],
+        "folderId": null
+      }
+    }
+  ]
+}

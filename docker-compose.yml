@@ -491,9 +491,11 @@ services:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/rootfs:ro
+      - /data:/host/data:ro
     command:
       - "--path.procfs=/host/proc"
       - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
       - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
 
   # ── Monitoring: cadvisor (per-container CPU, memory, restarts) ─────────────────

@@ -70,7 +70,7 @@
     },
     {
       "id": 3,
-      "title": "Host Disk Usage % (root filesystem)",
+      "title": "Host Disk Usage % (all volumes)",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
@@ -80,8 +80,8 @@
       },
       "targets": [
         {
-          "expr": "100 * (1 - (node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"}))",
-          "legendFormat": "Disk %",
+          "expr": "100 * (1 - (node_filesystem_avail_bytes{mountpoint=~\"/|/data\"} / node_filesystem_size_bytes{mountpoint=~\"/|/data\"}))",
+          "legendFormat": "{{mountpoint}}",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
