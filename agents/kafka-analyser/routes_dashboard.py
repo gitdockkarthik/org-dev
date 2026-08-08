@@ -961,6 +961,53 @@ async def get_kafka_connect(cluster_id: str | None = None) -> dict:
     }
 
 
+@router.get("/dashboard/connectors/topic-breakdown")
+async def get_connector_topic_breakdown(cluster_id: str | None = None, top_n: int = 5) -> dict:
+    """Top-N connectors by total lag, each with its own per-topic lag breakdown.
+    Powers the Connector Anomalies row chart (replaces the bubble chart) -- each
+    connector gets a fixed-width row, segmented by the topics contributing to its
+    lag, so no single outlier can visually dominate or hide the others."""
+    if not cluster_id:
+        return {"connectors": []}
+    try:
+        kc_data = await get_kafka_connect(cluster_id)
+        all_connectors = kc_data.get("connectors", [])
+        with_lag = [c for c in all_connectors if (c.get("lag") or 0) > 0]
+        top = sorted(with_lag, key=lambda c: -(c.get("lag") or 0))[:top_n]
+        if not top:
+            return {"connectors": []}
+
+        from database import DashboardSessionLocal as SessionLocal
+        from sqlalchemy import text as _t
+        if SessionLocal is None:
+            return {"connectors": []}
+
+        group_ids = [c.get("group_id_override") or f"connect-{c.get('name', '')}" for c in top]
+        async with SessionLocal() as sess:
+            rows = await sess.execute(_t("""
+                SELECT group_id, topic, lag FROM kafka_consumer_group_topic_lag
+                WHERE cluster_id = :cid AND group_id = ANY(:gids) AND updated_at >= NOW() - INTERVAL '20 minutes'
+                ORDER BY group_id, lag DESC
+            """), {"cid": int(cluster_id), "gids": group_ids})
+            topics_by_group: dict[str, list] = {}
+            for r in rows.fetchall():
+                topics_by_group.setdefault(r.group_id, []).append({"topic": r.topic, "lag": r.lag})
+
+        result = []
+        for c in top:
+            gid = c.get("group_id_override") or f"connect-{c.get('name', '')}"
+            result.append({
+                "name": c.get("name"),
+                "state": c.get("state"),
+                "total_lag": c.get("lag") or 0,
+                "topics": topics_by_group.get(gid, []),
+            })
+        return {"connectors": result}
+    except Exception as exc:
+        logger.warning("get_connector_topic_breakdown failed: %s", exc)
+        return {"connectors": [], "error": str(exc)}
+
+
 @router.get("/dashboard/mirrormaker")
 async def get_mirrormaker(cluster_id: str | None = None, hours: int | None = None) -> dict:
     """Detect MirrorMaker replication and compare source/target lag."""

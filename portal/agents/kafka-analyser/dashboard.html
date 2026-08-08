@@ -2350,13 +2350,13 @@
       // ── Charts ────────────────────────────────────────────────────────────────
       const connectCharts = `
         <div class="chart-card" style="margin-bottom:22px">
-          <div class="chart-card__title">Connector Anomalies — Lag vs. Rate vs. Topics Affected</div>
-          <div style="font-size:.75rem;color:var(--text-muted);margin-bottom:8px">Bubble size = topics affected · color = state · only connectors with active lag shown</div>
-          <div class="chart-wrap" style="height:340px"><canvas id="connect-anomaly-chart"></canvas></div>
-          <div id="connect-anomaly-legend" style="display:flex;flex-wrap:wrap;gap:16px;margin-top:8px;font-size:.75rem;color:var(--text-muted)">
-            <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:50%;background:#F44336"></span>Failed</span>
-            <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:50%;background:#FF9800"></span>Paused</span>
-            <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:50%;background:#4FC3F7"></span>Running (lagging)</span>
+          <div class="chart-card__title">Connector Anomalies — Top 5 by Lag</div>
+          <div style="font-size:.75rem;color:var(--text-muted);margin-bottom:12px">Each row = one connector, segmented by its contributing topics (darker = bigger contributor) · border = state · hover a segment for exact topic lag</div>
+          <div id="connect-anomaly-rows"><div style="color:var(--text-muted);font-size:.82rem;padding:8px">Loading...</div></div>
+          <div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:10px;font-size:.75rem;color:var(--text-muted)">
+            <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border:2px solid #F44336"></span>Failed</span>
+            <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border:2px solid #FF9800"></span>Paused</span>
+            <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border:2px solid var(--border)"></span>Running</span>
           </div>
         </div>`;
 
@@ -2466,7 +2466,7 @@
 
       // ── Self-contained table view: pagination + filters + search (AND) ────────
       const CONNECT_PAGE = 20;
-      window._connectView = { status: 'all', type: 'all', search: '', visible: CONNECT_PAGE, lagFilter: 'all', sortLag: null };
+      window._connectView = { status: 'all', type: 'all', search: '', visible: CONNECT_PAGE, lagFilter: 'all', sortLag: 'desc' };
 
       const connectMatches = (c, st) => {
         if (st.status === 'FAILED_TASKS') {
@@ -2536,64 +2536,47 @@
 
       window._connectApplyView();
 
-      // ── Connector anomaly bubble chart ──────────────────────────────────────────
-      setTimeout(() => {
-        if (window._connectAnomalyChart) { window._connectAnomalyChart.destroy(); window._connectAnomalyChart = null; }
-        const anomCtx = document.getElementById('connect-anomaly-chart')?.getContext('2d');
-        if (anomCtx) {
-          const stateColor = { FAILED: '#F44336', PAUSED: '#FF9800', RUNNING: '#4FC3F7', UNASSIGNED: '#666' };
-          const anomConnectors = connectors.filter(c => (c.lag || 0) > 0);
-          const points = anomConnectors.map(c => ({
-            x: c.lag || 0,
-            y: c.lag_rate_per_min || 0,
-            r: Math.max(6, Math.sqrt(c.topic_count || 1) * 2.2),
-            name: c.name,
-            topic_count: c.topic_count || 0,
-            state: c.state,
-          }));
-          if (points.length) {
-            window._connectAnomalyChart = new Chart(anomCtx, {
-              type: 'bubble',
-              data: {
-                datasets: [{
-                  data: points,
-                  backgroundColor: points.map(p => (stateColor[p.state] || '#666') + 'b0'),
-                  borderColor: points.map(p => stateColor[p.state] || '#666'),
-                  borderWidth: 1.5,
-                }],
-              },
-              options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                layout: { padding: 20 },
-                onClick: (evt, elements) => {
-                  if (!elements.length) return;
-                  const p = points[elements[0].index];
-                  window._showGroupTopicsPopup(`connect-${p.name}`, p.name);
-                },
-                plugins: {
-                  legend: { display: false },
-                  tooltip: {
-                    callbacks: {
-                      label: (ctx) => {
-                        const p = ctx.raw;
-                        return [p.name, 'Lag: ' + p.x.toLocaleString(), 'Rate: ' + (p.y > 0 ? '+' : '') + p.y + '/min', 'Topics affected: ' + p.topic_count];
-                      },
-                    },
-                  },
-                },
-                scales: {
-                  x: { title: { display: true, text: 'Total lag', font: { size: 10 } }, ticks: { font: { size: 9 }, callback: v => fmtNum(v) } },
-                  y: { title: { display: true, text: 'Lag rate/min', font: { size: 10 } }, ticks: { font: { size: 9 } } },
-                },
-              },
-            });
-          } else {
-            const wrap = anomCtx.canvas.parentElement;
-            if (wrap) wrap.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:.85rem">No connectors with active lag — all caught up</div>';
+      // ── Connector anomaly row chart (Top 5 by lag, segmented by topic) ─────────
+      (async () => {
+        const rowsEl = document.getElementById('connect-anomaly-rows');
+        if (!rowsEl) return;
+        try {
+          const cid = _currentClusterId || document.getElementById('ctrl-cluster')?.value || '';
+          const res = await fetch(`${PROXY}/dashboard/connectors/topic-breakdown?cluster_id=${cid}&top_n=5`, { headers: _authHeaders(), cache: 'no-store' });
+          const d = await res.json();
+          const rowConnectors = d.connectors || [];
+          if (!rowConnectors.length) {
+            rowsEl.innerHTML = '<div style="color:var(--text-muted);font-size:.85rem;padding:8px">No connectors with active lag — all caught up</div>';
+            return;
           }
+          const stateBorder = { FAILED: '#F44336', PAUSED: '#FF9800', RUNNING: 'var(--border)', UNASSIGNED: 'var(--border)' };
+          rowsEl.innerHTML = rowConnectors.map(c => {
+            const topics = (c.topics || []).filter(t => t.lag > 0);
+            const total = c.total_lag || 0;
+            const maxTopicLag = Math.max(1, ...topics.map(t => t.lag));
+            const segs = topics.length ? topics.map(t => {
+              const pct = total > 0 ? (t.lag / total * 100) : 0;
+              const shade = Math.round(30 + (t.lag / maxTopicLag) * 55);
+              const title = `${t.topic}: ${fmtNum(t.lag)} lag`.replace(/"/g, '&quot;');
+              return `<div style="width:${pct}%;background:rgba(33,150,243,${shade/100});height:100%" title="${title}"></div>`;
+            }).join('') : `<div style="width:100%;background:var(--navy-1);height:100%"></div>`;
+            return `
+              <div style="margin-bottom:10px">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;font-size:.78rem">
+                  <span style="font-weight:600;color:var(--text)"><code style="font-size:.76rem">${c.name}</code></span>
+                  <span style="color:var(--text-muted)">${fmtNum(total)} total lag</span>
+                </div>
+                <div style="display:flex;height:30px;border:2px solid ${stateBorder[c.state] || 'var(--border)'};border-radius:6px;overflow:hidden;cursor:pointer"
+                     onclick="window._showGroupTopicsPopup('connect-${c.name.replace(/'/g,"\'")}', '${c.name.replace(/'/g,"\'")}')">
+                  ${segs}
+                </div>
+              </div>`;
+          }).join('');
+        } catch (e) {
+          rowsEl.innerHTML = '<div style="color:var(--text-muted);font-size:.85rem;padding:8px">Failed to load connector breakdown</div>';
+          console.warn('Connector anomaly rows failed:', e);
         }
-      }, 0);
+      })();
       window._renderTabAI('kafka-connect', document.getElementById('tab-kafka-connect'));
     }
 
