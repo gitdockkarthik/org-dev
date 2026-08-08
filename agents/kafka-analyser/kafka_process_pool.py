@@ -526,3 +526,156 @@ async def fetch_group_lags_isolated(bootstrap_servers: str, cluster_config: dict
     except Exception as exc:
         logger.warning("fetch_group_lags_isolated: unexpected error: %s", exc)
         return {"ok": False, "error": str(exc)}
+
+
+def _seek_to_end_worker(bootstrap_servers: str, cluster_config: dict, partitions: list[tuple[str, int]]) -> dict:
+    """Runs inside a worker PROCESS -- seeks to end offset for the given
+    topic-partitions, batched to avoid oversized single assign() calls. Used by
+    collect_topic_message_inflow. No admin_lock needed -- this worker process
+    has exclusive use of its own connection."""
+    from kafka import TopicPartition
+    consumer = _get_worker_consumer_client(bootstrap_servers, cluster_config)
+    try:
+        tps = [TopicPartition(t, p) for t, p in partitions]
+        end_offsets: dict = {}
+        SEEK_BATCH = 500
+        for i in range(0, len(tps), SEEK_BATCH):
+            batch_tps = tps[i:i + SEEK_BATCH]
+            consumer.assign(batch_tps)
+            consumer.seek_to_end(*batch_tps)
+            for tp in batch_tps:
+                end_offsets[(tp.topic, tp.partition)] = consumer.position(tp)
+        return {"ok": True, "end_offsets": end_offsets}
+    except Exception as exc:
+        _worker_clients.pop(f"consumer:{bootstrap_servers}", None)
+        return {"ok": False, "error": str(exc)}
+
+
+async def seek_to_end_isolated(bootstrap_servers: str, cluster_config: dict, partitions: list[tuple[str, int]], timeout: float = 120.0) -> dict:
+    """Main-process-side entry point for seeking to end offset on a full
+    partition list. Returns {"ok": True, "end_offsets": {(topic, partition): offset}}
+    on success, or {"ok": False, "error": "..."} on failure/timeout. A timeout here
+    kills and replaces the stuck worker PROCESS -- unlike the previous
+    run_in_executor(None, ...) pattern, where a stuck thread could not be
+    cancelled and kept running well past its own timeout, consuming memory/CPU
+    indefinitely (confirmed live incident, 2026-08-08)."""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    try:
+        future = _process_pool.submit(_seek_to_end_worker, bootstrap_servers, cluster_config, partitions)
+        result = await loop.run_in_executor(None, future.result, timeout)
+        return result
+    except FutureTimeoutError:
+        logger.warning(
+            "seek_to_end_isolated: worker process did not respond within "
+            "%ss for %s (%d partitions) -- killing and replacing it",
+            timeout, bootstrap_servers, len(partitions),
+        )
+        future.cancel()
+        return {"ok": False, "error": f"Timed out after {timeout}s (worker process killed)"}
+    except Exception as exc:
+        logger.warning("seek_to_end_isolated: unexpected error: %s", exc)
+        return {"ok": False, "error": str(exc)}
+
+
+def _list_topics_worker(bootstrap_servers: str, cluster_config: dict) -> dict:
+    """Runs inside a worker PROCESS -- lists all non-internal topic names."""
+    from tools.real_kafka import _is_internal_topic
+    admin = _get_worker_client(bootstrap_servers, cluster_config)
+    try:
+        names = [t for t in admin.list_topics() if not _is_internal_topic(t)]
+        return {"ok": True, "topics": names}
+    except Exception as exc:
+        _worker_clients.pop(bootstrap_servers, None)
+        return {"ok": False, "error": str(exc)}
+
+
+async def list_topics_isolated(bootstrap_servers: str, cluster_config: dict, timeout: float = 30.0) -> dict:
+    """Main-process-side entry point for listing all non-internal topics.
+    Returns {"ok": True, "topics": [...]} on success, or
+    {"ok": False, "error": "..."} on failure/timeout."""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    try:
+        future = _process_pool.submit(_list_topics_worker, bootstrap_servers, cluster_config)
+        result = await loop.run_in_executor(None, future.result, timeout)
+        return result
+    except FutureTimeoutError:
+        logger.warning(
+            "list_topics_isolated: worker process did not respond within %ss for %s "
+            "-- killing and replacing it",
+            timeout, bootstrap_servers,
+        )
+        future.cancel()
+        return {"ok": False, "error": f"Timed out after {timeout}s (worker process killed)"}
+    except Exception as exc:
+        logger.warning("list_topics_isolated: unexpected error: %s", exc)
+        return {"ok": False, "error": str(exc)}
+
+
+def _describe_broker_distribution_worker(bootstrap_servers: str, cluster_config: dict) -> dict:
+    """Runs inside a worker PROCESS -- lists non-internal topics, then batched
+    describe_topics() for leader/replica info, aggregating leader_counts,
+    replica_counts, and partition_leaders entirely within the worker to
+    minimize IPC (only the aggregated result crosses the process boundary, not
+    raw per-topic metadata for potentially tens of thousands of partitions)."""
+    from tools.real_kafka import _is_internal_topic
+    import collections
+    admin = _get_worker_client(bootstrap_servers, cluster_config)
+    try:
+        all_topics = [t for t in admin.list_topics() if not _is_internal_topic(t)]
+        leader_counts: dict = collections.defaultdict(int)
+        replica_counts: dict = collections.defaultdict(int)
+        partition_leaders = []
+        BATCH = 500
+        for i in range(0, len(all_topics), BATCH):
+            meta = admin.describe_topics(all_topics[i:i + BATCH])
+            for tm in meta:
+                topic_name = tm.get("topic", "")
+                for p in tm.get("partitions", []):
+                    leader_id = str(p["leader"])
+                    if leader_id != "-1":
+                        leader_counts[leader_id] += 1
+                    partition_leaders.append({
+                        "topic": topic_name,
+                        "partition": p["partition"],
+                        "leader": leader_id,
+                    })
+                    for r in p.get("replicas", []):
+                        replica_counts[str(r)] += 1
+        return {
+            "ok": True,
+            "leader_counts": dict(leader_counts),
+            "replica_counts": dict(replica_counts),
+            "partition_leaders": partition_leaders,
+        }
+    except Exception as exc:
+        _worker_clients.pop(bootstrap_servers, None)
+        return {"ok": False, "error": str(exc)}
+
+
+async def describe_broker_distribution_isolated(bootstrap_servers: str, cluster_config: dict, timeout: float = 90.0) -> dict:
+    """Main-process-side entry point for the broker leader/replica distribution
+    sweep. Returns {"ok": True, "leader_counts": {...}, "replica_counts": {...},
+    "partition_leaders": [...]} on success, or {"ok": False, "error": "..."} on
+    failure/timeout. A timeout here kills and replaces the stuck worker
+    PROCESS -- replacing the previous shared-admin-client/admin_lock pattern,
+    which a prior confirmed incident showed can let one job's stuck thread
+    silently block an unrelated job sharing the same lock."""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    try:
+        future = _process_pool.submit(_describe_broker_distribution_worker, bootstrap_servers, cluster_config)
+        result = await loop.run_in_executor(None, future.result, timeout)
+        return result
+    except FutureTimeoutError:
+        logger.warning(
+            "describe_broker_distribution_isolated: worker process did not respond "
+            "within %ss for %s -- killing and replacing it",
+            timeout, bootstrap_servers,
+        )
+        future.cancel()
+        return {"ok": False, "error": f"Timed out after {timeout}s (worker process killed)"}
+    except Exception as exc:
+        logger.warning("describe_broker_distribution_isolated: unexpected error: %s", exc)
+        return {"ok": False, "error": str(exc)}

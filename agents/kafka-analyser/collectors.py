@@ -522,7 +522,13 @@ async def collect_topic_structure(cluster_id: str = ""):
     cid = _cid(c)
     try:
         collector = await _get_collector(c)
-        all_topic_names = await collector.list_all_topics()
+        from kafka_process_pool import list_topics_isolated
+        _lt_result = await list_topics_isolated(c["bootstrap_servers"], c, timeout=30.0)
+        if not _lt_result.get("ok"):
+            logger.warning("collect_topic_structure: list_topics_isolated failed for %s: %s", c["name"], _lt_result.get("error"))
+            collect_topic_structure._last_result = f"Error: {_lt_result.get('error')}"
+            return
+        all_topic_names = _lt_result["topics"]
         if not all_topic_names:
             collect_topic_structure._last_result = "No topics found"
             return
@@ -560,57 +566,18 @@ async def collect_topic_structure(cluster_id: str = ""):
             except Exception as _pe:
                 logger.warning("partition count update failed: %s", _pe)
             results.append(f"{c['name']}: {len(described_topics)} topics, {total_rf1} RF=1, {total_urp} URP")
-            # Collect broker leader distribution
+            # Collect broker leader distribution -- process-isolated (replaces the
+            # prior direct admin_lock-protected calls, the same pattern a confirmed
+            # prior incident showed can let a stuck thread silently block an
+            # unrelated job sharing the same lock).
             try:
-                from kafka import KafkaAdminClient
-                import collections as _col
-                security = {}
-                if c.get("auth_type") not in (None, "none"):
-                    import ssl as _ssl2
-                    _tls2 = c.get("tls_enabled", False)
-                    security = {
-                        "security_protocol": "SASL_SSL" if _tls2 else "SASL_PLAINTEXT",
-                        "sasl_mechanism": c.get("sasl_mechanism", "PLAIN"),
-                        "sasl_plain_username": c.get("sasl_username"),
-                        "sasl_plain_password": c.get("sasl_password"),
-                    }
-                    if _tls2:
-                        _ssl_ctx2 = _ssl2.create_default_context()
-                        _ssl_ctx2.check_hostname = False
-                        _ssl_ctx2.verify_mode = _ssl2.CERT_NONE
-                        security["ssl_context"] = _ssl_ctx2
-                _admin, _admin_lock = get_shared_admin_client(c["bootstrap_servers"], c)
-                try:
-                    with _admin_lock:
-                        from tools.real_kafka import _is_internal_topic as _iit
-                        _all_topics = [t for t in _admin.list_topics() if not _iit(t)]
-                    leader_counts = _col.defaultdict(int)
-                    replica_counts = _col.defaultdict(int)
-                    # topic -> leader_broker_id mapping for partition leaders table
-                    partition_leaders = []
-                    BATCH = 500
-                    for _i in range(0, len(_all_topics), BATCH):
-                        with _admin_lock:
-                            _meta = _admin.describe_topics(_all_topics[_i:_i+BATCH])
-                        for _tm in _meta:
-                            topic_name = _tm.get('topic', '')
-                            for _p in _tm.get('partitions', []):
-                                leader_id = str(_p['leader'])
-                                # -1 is Kafka's own "no leader" marker (partition
-                                # temporarily leaderless during an election), not a
-                                # real broker -- skip it from the leader count.
-                                if leader_id != "-1":
-                                    leader_counts[leader_id] += 1
-                                partition_leaders.append({
-                                    'topic': topic_name,
-                                    'partition': _p['partition'],
-                                    'leader': leader_id,
-                                })
-                                for _r in _p.get('replicas', []):
-                                    replica_counts[str(_r)] += 1
-                except Exception as _bld_exc:
-                    invalidate_client(c["bootstrap_servers"])
-                    raise
+                from kafka_process_pool import describe_broker_distribution_isolated
+                _bd_result = await describe_broker_distribution_isolated(c["bootstrap_servers"], c, timeout=90.0)
+                if not _bd_result.get("ok"):
+                    raise RuntimeError(_bd_result.get("error", "unknown error"))
+                leader_counts = _bd_result["leader_counts"]
+                replica_counts = _bd_result["replica_counts"]
+                partition_leaders = _bd_result["partition_leaders"]
                 from database import SessionLocal
                 from sqlalchemy import text as _st
                 async with SessionLocal() as _sess:
@@ -1026,6 +993,8 @@ collect_sr_subjects._last_result = "Not yet run"
 # ── Job 9: Message Rate ───────────────────────────────────────────────────────
 _prev_offsets: dict = {}
 _prev_offset_time: dict = {}
+_prev_end_offsets: dict = {}
+_prev_end_offset_time: dict = {}
 
 async def collect_msg_rate(cluster_id: str = ""):
     """Calculate bytes/sec ingestion rate using describe_log_dirs delta between cycles.
@@ -1268,9 +1237,15 @@ async def collect_msg_rate(cluster_id: str = ""):
 async def collect_topic_message_inflow(cluster_id: str = ""):
     """True message-count inflow per topic, ALL topics regardless of consumer group
     presence — uses Kafka offsets (seek_to_end) directly, not byte-size estimates.
-    Sharded collection: partition sweep is split across 10-min cycles per cluster's
-    max_inflow_partitions_per_cycle tunable (default 5000), with persistent baseline
-    stored in kafka_topic_partition_inflow_baseline."""
+    REVERTED 2026-08-08 to this simple, in-memory-baseline implementation: the
+    sharded/persisted-baseline redesign (kafka_topic_partition_inflow_baseline) was
+    found actively broken in production -- every run since 01:55 today failed at
+    ~600s (double its own 300s timeout), the same run_in_executor-cannot-be-cancelled
+    issue documented in handoff.md, which had explicitly warned against retrying this
+    same pattern. Confirmed via live py-spy inspection as the source of a real
+    memory/CPU spike. This is the last version proven stable (bcf60ca, 226-233s runs).
+    Upserts raw snapshots to kafka_topic_message_rate_snapshots."""
+    global _prev_end_offsets, _prev_end_offset_time
     c = await _get_cluster(cluster_id)
     if not c:
         collect_topic_message_inflow._last_result = f"Cluster {cluster_id} not found or disabled"
@@ -1310,119 +1285,57 @@ async def collect_topic_message_inflow(cluster_id: str = ""):
             collect_topic_message_inflow._last_result = "No partitions found"
             return
 
-        # Determine shard count: partition the sweep using per-cluster tunable
-        cap = c.get("max_inflow_partitions_per_cycle") or 5000
-        total = len(all_partitions)
-        num_shards = max(1, -(-total // cap))  # ceiling division
+        from kafka_process_pool import seek_to_end_isolated
+        now = time.time()
+        _seek_result = await seek_to_end_isolated(c["bootstrap_servers"], c, all_partitions, timeout=120.0)
+        if not _seek_result.get("ok"):
+            logger.warning("collect_topic_message_inflow: seek_to_end_isolated failed for %s: %s", c["name"], _seek_result.get("error"))
+            collect_topic_message_inflow._last_result = f"Error: {_seek_result.get('error')}"
+            return
+        current_offsets = _seek_result["end_offsets"]
 
-        # Assign each partition to a shard deterministically via crc32
-        import zlib
-        def _shard_for(topic: str, partition: int) -> int:
-            key = f"{topic}::{partition}".encode("utf-8")
-            return zlib.crc32(key) % num_shards
+        prev_offsets = _prev_end_offsets.get(cid, {})
+        prev_time = _prev_end_offset_time.get(cid, now)
+        interval = max(1, now - prev_time)
+        _prev_end_offsets[cid] = current_offsets
+        _prev_end_offset_time[cid] = now
 
-        # Build all shards upfront
-        shards: dict[int, list[tuple[str, int]]] = {i: [] for i in range(num_shards)}
-        for t, p in all_partitions:
-            shards[_shard_for(t, p)].append((t, p))
+        if not prev_offsets:
+            collect_topic_message_inflow._last_result = "Baseline stored — inflow available next cycle"
+            return
 
-        # Read existing baseline for the WHOLE cluster (simple full-table-scan, proven fast)
-        async with SessionLocal() as sess:
-            rows = await sess.execute(_t(
-                "SELECT topic, partition, end_offset, updated_at FROM kafka_topic_partition_inflow_baseline WHERE cluster_id = :cid"
-            ), {"cid": int(cid)})
-            baseline = {(r.topic, r.partition): (r.end_offset, r.updated_at) for r in rows.fetchall()}
-
-        # Seek to end for all shards concurrently (dedicated pool bounds blast radius)
-        loop = asyncio.get_event_loop()
-        def _seek_to_end_for(partitions: list[tuple[str, int]]) -> dict:
-            consumer = KafkaConsumer(
-                bootstrap_servers=c["bootstrap_servers"],
-                request_timeout_ms=20000,
-                **security,
-            )
-            try:
-                tps = [TopicPartition(t, p) for t, p in partitions]
-                end_offsets: dict = {}
-                SEEK_BATCH = 500
-                for i in range(0, len(tps), SEEK_BATCH):
-                    batch_tps = tps[i:i + SEEK_BATCH]
-                    consumer.assign(batch_tps)
-                    consumer.seek_to_end(*batch_tps)
-                    for tp in batch_tps:
-                        end_offsets[(tp.topic, tp.partition)] = consumer.position(tp)
-                return end_offsets
-            finally:
-                consumer.close()
-
-        tasks = [
-            loop.run_in_executor(_kafka_io_executor, _seek_to_end_for, parts)
-            for parts in shards.values() if parts
-        ]
-        shard_results = await asyncio.gather(*tasks)
-        current_offsets: dict = {}
-        for r in shard_results:
-            current_offsets.update(r)
-
-        # Compute deltas using per-partition baseline updated_at
-        from datetime import datetime, timezone
-        now_dt = datetime.now(timezone.utc)
+        # Aggregate per-partition deltas up to per-topic totals
         topic_inflow: dict[str, int] = {}
-        topic_interval_sum: dict[str, float] = {}
-        partition_count_per_topic: dict[str, int] = {}
-
         for (topic, partition), curr_off in current_offsets.items():
-            prev = baseline.get((topic, partition))
-            if prev is not None:
-                prev_off, prev_updated = prev
-                interval = max(1.0, (now_dt - prev_updated).total_seconds())
+            prev_off = prev_offsets.get((topic, partition))
+            if prev_off is not None:
                 delta = max(0, curr_off - prev_off)
                 topic_inflow[topic] = topic_inflow.get(topic, 0) + delta
-                topic_interval_sum[topic] = topic_interval_sum.get(topic, 0.0) + interval
-                partition_count_per_topic[topic] = partition_count_per_topic.get(topic, 0) + 1
 
-        # Upsert new baseline values for all collected partitions
-        async with SessionLocal() as sess:
+        if not topic_inflow:
+            collect_topic_message_inflow._last_result = "No topic inflow data"
+            return
+
+        async with SessionLocal() as sess6:
             BULK = 1000
-            items = [(int(cid), t, p, curr_off) for (t, p), curr_off in current_offsets.items()]
+            items = list(topic_inflow.items())
             for bi in range(0, len(items), BULK):
                 batch = items[bi:bi+BULK]
                 values = ", ".join(
-                    f"({cluster_id}, '{t.replace(chr(39), chr(39)*2)}', {p}, {off}, now())"
-                    for cluster_id, t, p, off in batch
+                    f"({int(cid)}, '{t.replace(chr(39), chr(39)*2)}', {inflow}, {round(interval, 2)}, now())"
+                    for t, inflow in batch
                 )
-                await sess.execute(_t(f"""
-                    INSERT INTO kafka_topic_partition_inflow_baseline
-                    (cluster_id, topic, partition, end_offset, updated_at)
+                await sess6.execute(_t(f"""
+                    INSERT INTO kafka_topic_message_rate_snapshots
+                    (cluster_id, topic, inflow, interval_seconds, collected_at)
                     VALUES {values}
-                    ON CONFLICT (cluster_id, topic, partition) DO UPDATE SET
-                        end_offset = EXCLUDED.end_offset,
-                        updated_at = EXCLUDED.updated_at
                 """))
-            await sess.commit()
+            await sess6.commit()
 
-        # Write inflow snapshots using per-topic average interval
-        if topic_inflow:
-            async with SessionLocal() as sess:
-                BULK = 1000
-                items = list(topic_inflow.items())
-                for bi in range(0, len(items), BULK):
-                    batch = items[bi:bi+BULK]
-                    values = ", ".join(
-                        f"({int(cid)}, '{t.replace(chr(39), chr(39)*2)}', {inflow}, {round(topic_interval_sum[t] / partition_count_per_topic[t], 2)}, now())"
-                        for t, inflow in batch
-                    )
-                    await sess.execute(_t(f"""
-                        INSERT INTO kafka_topic_message_rate_snapshots
-                        (cluster_id, topic, inflow, interval_seconds, collected_at)
-                        VALUES {values}
-                    """))
-                await sess.commit()
-
-        collect_topic_message_inflow._last_result = f"{num_shards} shards processed in parallel, {len(current_offsets)} partitions, inflow tracked for {len(topic_inflow)} topics"
+        collect_topic_message_inflow._last_result = f"Inflow tracked for {len(topic_inflow)} topics"
     except Exception as e:
         logger.warning("collect_topic_message_inflow failed for %s: %s", c["name"], e)
-        collect_topic_message_inflow._last_result = f"Failed: {e}"
+        raise
 
 
 # ── Job 9: Schema Registry ────────────────────────────────────────────────────
