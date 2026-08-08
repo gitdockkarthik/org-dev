@@ -7,7 +7,7 @@ services:
     mem_limit: 4g
     mem_reservation: 1g
     shm_size: 1g
-    command: ["postgres", "-c", "shared_buffers=1GB", "-c", "effective_cache_size=3GB", "-c", "maintenance_work_mem=256MB"]
+    command: ["postgres", "-c", "shared_buffers=256MB", "-c", "effective_cache_size=3GB", "-c", "maintenance_work_mem=128MB"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -252,7 +252,7 @@ services:
     ports:
       - "3001:3000"
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/langfuse_db
+      DATABASE_URL: postgresql://${LANGFUSE_DB_USER}:${LANGFUSE_DB_PASSWORD}@postgres:5432/langfuse_db
       NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET}
       SALT: ${LANGFUSE_SALT}
       LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "true"
@@ -302,7 +302,7 @@ services:
       minio:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/langfuse_db
+      DATABASE_URL: postgresql://${LANGFUSE_DB_USER}:${LANGFUSE_DB_PASSWORD}@postgres:5432/langfuse_db
       CLICKHOUSE_URL: http://clickhouse:8123
       CLICKHOUSE_USER: langfuse
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-langfuse}
