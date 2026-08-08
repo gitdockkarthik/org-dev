@@ -410,9 +410,81 @@ services:
     depends_on:
       - backend
 
+  # ── Monitoring: Prometheus ────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    mem_limit: 512m
+    mem_reservation: 128m
+    ports:
+      - "${PROMETHEUS_PORT:-8006}:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=15d"
+    depends_on:
+      - node-exporter
+      - cadvisor
+
+  # ── Monitoring: Grafana ────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    mem_limit: 512m
+    mem_reservation: 128m
+    ports:
+      - "${GRAFANA_PORT:-8007}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+      - postgres
+
+  # ── Monitoring: node_exporter (KPI box host metrics -- CPU, memory, disk) ──────
+  node-exporter:
+    image: prom/node-exporter:latest
+    restart: unless-stopped
+    mem_limit: 128m
+    mem_reservation: 32m
+    ports:
+      - "${NODE_EXPORTER_PORT:-9100}:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+
+  # ── Monitoring: cadvisor (per-container CPU, memory, restarts) ─────────────────
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    restart: unless-stopped
+    mem_limit: 256m
+    mem_reservation: 64m
+    ports:
+      - "${CADVISOR_PORT:-9101}:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    privileged: true
+
 volumes:
   pgdata:
   cur_analyser_data:
   redis_data:
   clickhouse_data:
   minio_data:
+  prometheus_data:
+  grafana_data:
