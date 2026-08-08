@@ -13,7 +13,13 @@ from concurrent.futures import ProcessPoolExecutor, TimeoutError as FutureTimeou
 logger = logging.getLogger(__name__)
 
 # Small, dedicated pool for CRITICAL, lock-blocking-prone operations only.
-_process_pool = ProcessPoolExecutor(max_workers=4)
+# Increased from 4 -> 6 (2026-08-08): confirmed real contention when several
+# scheduled jobs fired at the same minute mark, each needing a pool slot -- the
+# primary fix was staggering job schedules across different minute offsets
+# (kafka_job_schedules), this increase is a complementary safety margin given
+# confirmed real headroom (8 CPU cores available, container using well under its
+# 2GB memory limit even under load).
+_process_pool = ProcessPoolExecutor(max_workers=6)
 
 # Per-worker-process persistent connections. Each worker process has its own
 # separate memory space, so this dict is naturally process-local -- no locking
