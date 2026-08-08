@@ -2,6 +2,20 @@
 
 ## Pending
 
+### Postgres memory -- further optimization pass
+Session close (2026-08-08): after tonight's fixes (kafka_topic_metrics VACUUM FULL
+185MB->15MB, kafka_topic_message_rate_snapshots retention 6h->2h + VACUUM FULL,
+per-role resource governance for all roles sharing this instance -- see git log
+for full detail), Postgres container memory settled at 2.5-3GB, down from 85%+ of
+its 4GB limit. Confirmed stable, not still climbing.
+
+Tomorrow, after completing the Kafka audit: revisit whether further optimization
+is worthwhile at current data volume (e.g., reviewing kafka_connector_snapshots'
+3.36M rows for its own bounded retention, currently unbounded) -- not urgent
+given tonight's fixes hold, but worth a proper look while already in this area.
+
+*Added: 2026-08-08*
+
 ### Custom tabbed page wiring all dashboards into a single, in-place view
 User's actual expectation, clarified after building the current home dashboard: not
 page-navigation links (Grafana's own dashboard-links feature, which reloads the page
