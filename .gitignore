@@ -1,5 +1,6 @@
 # Environment
 .env
+monitoring/secrets/
 *.env.local
 
 # Python

@@ -208,6 +208,8 @@ services:
     restart: unless-stopped
     mem_limit: 2g
     mem_reservation: 512m
+    ports:
+      - "${CLICKHOUSE_METRICS_PORT:-9363}:9363"
     environment:
       CLICKHOUSE_DB: langfuse
       CLICKHOUSE_USER: langfuse
@@ -215,6 +217,7 @@ services:
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
     volumes:
       - clickhouse_data:/var/lib/clickhouse
+      - ./monitoring/clickhouse/prometheus.xml:/etc/clickhouse-server/config.d/prometheus.xml:ro
     cap_add:
       - SYS_NICE
       - IPC_LOCK
@@ -420,6 +423,7 @@ services:
       - "${PROMETHEUS_PORT:-8006}:9090"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/secrets:/etc/prometheus/secrets:ro
       - prometheus_data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -447,6 +451,33 @@ services:
     depends_on:
       - prometheus
       - postgres
+
+  # ── Monitoring: postgres_exporter ───────────────────────────────────────────────
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    restart: unless-stopped
+    mem_limit: 64m
+    mem_reservation: 16m
+    ports:
+      - "${POSTGRES_EXPORTER_PORT:-9187}:9187"
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-operative}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-operative_db}?sslmode=disable"
+    depends_on:
+      - postgres
+
+  # ── Monitoring: redis_exporter ──────────────────────────────────────────────────
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    restart: unless-stopped
+    mem_limit: 64m
+    mem_reservation: 16m
+    ports:
+      - "${REDIS_EXPORTER_PORT:-9121}:9121"
+    environment:
+      REDIS_ADDR: redis://redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-langfuse123}
+    depends_on:
+      - redis
 
   # ── Monitoring: node_exporter (KPI box host metrics -- CPU, memory, disk) ──────
   node-exporter:
