@@ -1,0 +1,96 @@
+{
+  "title": "UAP Platform - Shared Infrastructure",
+  "uid": "uap-shared-infra",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-3h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Postgres - Active Connections",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "pg_stat_activity_count", "legendFormat": "{{datname}}", "refId": "A", "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" } }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Postgres - Lock Count",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
+      "targets": [
+        { "expr": "pg_locks_count", "legendFormat": "locks", "refId": "A", "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" } }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Postgres - Database Size",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "targets": [
+        { "expr": "pg_database_size_bytes", "legendFormat": "{{datname}}", "refId": "A", "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" } }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Redis - Memory Used",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "targets": [
+        { "expr": "redis_memory_used_bytes", "legendFormat": "used", "refId": "A", "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" } }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Redis - Connected Clients",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "targets": [
+        { "expr": "redis_connected_clients", "legendFormat": "clients", "refId": "A", "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" } }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Redis - Hit Rate %",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "percent", "max": 100, "min": 0 } },
+      "targets": [
+        { "expr": "100 * rate(redis_keyspace_hits_total[5m]) / (rate(redis_keyspace_hits_total[5m]) + rate(redis_keyspace_misses_total[5m]) > 0)", "legendFormat": "hit rate", "refId": "A", "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" } }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "ClickHouse - Actual Container Memory",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "targets": [
+        { "expr": "sum by (name) (container_memory_usage_bytes{name=\"org-dev-clickhouse-1\"})", "legendFormat": "memory", "refId": "A", "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" } }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "ClickHouse - Active Merges",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
+      "targets": [
+        { "expr": "ClickHouseMetrics_Merge", "legendFormat": "merges", "refId": "A", "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" } }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "ClickHouse - Active Queries",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
+      "targets": [
+        { "expr": "ClickHouseMetrics_Query", "legendFormat": "queries", "refId": "A", "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" } }
+      ]
+    }
+  ]
+}
