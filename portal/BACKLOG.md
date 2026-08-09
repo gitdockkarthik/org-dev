@@ -18,6 +18,38 @@ Each item: short description, why it matters, status, date added.
 
 ## Resolved
 
+### Fix: uses_uap_llm flag was cosmetic only, never enforced (2026-08-10, commit 8441223)
+Discovered while discussing what "checking Uses UAP LLM at registration" should
+actually mean. The flag existed on the Agent model and was shown in the
+catalogue/registry API, but /api/llm/token, /api/llm/invoke, and
+/api/llm/invoke/stream never checked it — any agent with a valid, correctly-
+scoped developer key could use the Gateway regardless of this flag's value.
+This meant rca-agent and radar successfully used the Gateway earlier the same
+day while their uses_uap_llm was still false — proving the flag was purely
+cosmetic.
+
+Fixed: all three endpoints now look up the Agent record and reject with 403
+("Agent '<slug>' is not registered to use the UAP LLM Gateway...") if
+uses_uap_llm is false, even with a valid key. This is the intended contract:
+the flag tells the platform whether to serve LLM calls for that agent; if
+false, the agent must fall back to its own direct LLM credentials.
+
+As part of this fix, deduplicated a redundant Agent lookup that existed in
+both llm_invoke() and llm_invoke_stream() (each previously queried Agent
+twice — once implicitly needed for this new check, once later for the
+app_label/Langfuse attribution lookup); now queried once and reused.
+
+Flipped uses_uap_llm=true (via Admin UI) for rca-agent, radar, and
+app-support-v2 — all three already validated using the Gateway before this
+enforcement went live, so their access continues uninterrupted. Native agents
+(alert-analyser, cur-analyser, kafka-analyser) remain false, correctly, since
+they don't yet call the Gateway at all (in-process create_message() only) —
+each will be flipped individually as part of its own migration chunk.
+
+Validated: mock-agent (uses_uap_llm=true) unaffected; rca-agent blocked with
+new 403 while flag was false, then confirmed working again immediately after
+flipping to true.
+
 ### Agent-level access control for Agents Catalogue page (2026-08-05)
 Currently RBAC only restricts agent OWNERSHIP (AgentOwner — API key generation scope,
 developer role). There is no restriction on which agents a plain `user` role can VIEW/USE
