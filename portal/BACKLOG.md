@@ -183,24 +183,33 @@ separately, not in this session).
 ## Value-Add Ideas
 
 ### Migrate native agents (alert/cur/kafka) onto LLM Gateway + relabel Langfuse "User" as "Initiator"
-Follow-up to this session's LLM Gateway fixes for standalone agents (rca-agent
-onboarding, developer-key scoping, Langfuse tracing). Two related changes to
-plan for next week, for consistency across ALL agents (native + standalone):
+Architecture decision (2026-08-07): ALL agents — native and standalone — become
+self-contained Gateway clients with automatic fallback to direct Anthropic/Bedrock
+credentials if Gateway is unreachable or agent is shipped to a platform without
+developer-key support. Full tool-use and streaming parity required — this is not
+a reduced-functionality migration.
 
-1. Migrate alert-analyser, cur-analyser, kafka-analyser off their current
-   direct in-process create_message() calls (using local langfuse dependency)
-   onto the same /api/llm/token + /api/llm/invoke Gateway pattern already
-   working for standalone agents. This removes their local langfuse
-   dependency entirely, fully centralizing tracing/cost tracking in backend
-   (matching the "Application: <name>" labeling already built for standalone
-   calls) and removes drift risk between two different tracing code paths.
+Broader goal: Migrate alert-analyser, cur-analyser, kafka-analyser off their
+current direct in-process create_message() calls (using local langfuse dependency)
+onto the same /api/llm/token + /api/llm/invoke Gateway pattern already working for
+standalone agents. This removes their local langfuse dependency entirely, fully
+centralizing tracing/cost tracking in backend (matching the "Application: <name>"
+labeling already built for standalone calls) and removes drift risk between two
+different tracing code paths. Once complete, relabel Langfuse dashboard "User"
+column to "Initiator" (displays either real user email or "Application: <Agent Name>").
 
-2. Once (1) is done, all Gateway calls are either a real logged-in portal
-   user (human) OR a service/application call (agent backend) — the Langfuse
-   dashboard's "User" column becomes misleading. Rename dashboard column
-   "User" -> "Initiator", displaying either the real user's email (portal
-   chat) or "Application: <Agent Name>" (Gateway/service calls) consistently.
-   Need to find the Langfuse dashboard's frontend source (likely in portal or
-   a dedicated observability page) to make this label change.
+Status: IN PROGRESS
 
-Not started — scoping only, planned for next week's session.
+Chunk 1 DONE (commit a7f172d): /api/llm/invoke now accepts an optional "tools"
+array, passes it through to create_message(), and returns full response shape
+("content" blocks + "stop_reason") alongside the existing "response" text field
+for backward compatibility. Validated: no-tools call unchanged (mock-agent),
+tool_use call returns correct content blocks with id/name/input (mock-agent +
+synthetic get_weather tool test), cross-agent key scoping still enforced (403
+unchanged).
+
+Next: Chunk 2 — new /api/llm/invoke/stream endpoint for streaming support
+(mirrors shared/llm.py's stream_message(), needed before any native agent
+with chat/AI-Insights/tab-chat streaming UX can migrate). Then: shared Gateway
+client library with direct-Anthropic fallback. Then: migrate alert-analyser
+as first native agent proof case.
