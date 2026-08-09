@@ -246,6 +246,94 @@ async def create_message(
     )
 
 
+async def _gateway_stream_message(
+    *, uap_url: str, uap_key: str, agent_slug: str,
+    model: str, max_tokens: int, system: str | None,
+    messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None,
+    tool_executor: Any = None,
+):
+    """Stream from the UAP LLM Gateway (/api/llm/token then
+    /api/llm/invoke/stream), yielding text chunks and a final
+    [STOP_REASON] marker — matching stream_message()'s existing wire
+    contract. If the Gateway stream ends in tool_use and a tool_executor
+    is provided, executes tools locally and continues the conversation
+    with the Gateway, mirroring _stream_with_tools()'s loop structure."""
+    import httpx
+    import json as _json
+
+    msg_list = list(messages)
+
+    while True:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            token_resp = await client.post(
+                f"{uap_url}/api/llm/token",
+                headers={"X-API-Key": uap_key},
+                json={"agent_slug": agent_slug},
+            )
+            token_resp.raise_for_status()
+            token = token_resp.json()["token"]
+
+            body: dict[str, Any] = {
+                "token": token,
+                "messages": msg_list,
+                "system": system or "",
+                "model": model,
+                "max_tokens": max_tokens,
+            }
+            if tools:
+                body["tools"] = tools
+
+            collected_text = ""
+            stop_reason = None
+            async with client.stream(
+                "POST", f"{uap_url}/api/llm/invoke/stream",
+                headers={"X-API-Key": uap_key}, json=body,
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    chunk = line[len("data: "):]
+                    if chunk == "[DONE]":
+                        break
+                    if chunk.startswith("[ERROR]"):
+                        raise RuntimeError(chunk)
+                    if chunk.startswith("[STOP_REASON]"):
+                        stop_reason = chunk[len("[STOP_REASON] "):].strip()
+                        continue
+                    text_piece = chunk.replace("\\n", "\n")
+                    collected_text += text_piece
+                    yield text_piece
+
+        if stop_reason == "tool_use" and tool_executor is not None:
+            # Non-streaming call to get the actual tool_use blocks with
+            # id/name/input (the SSE stream only carries text deltas +
+            # the final stop_reason, not structured tool_use blocks).
+            invoke_resp = await _gateway_create_message(
+                uap_url=uap_url, uap_key=uap_key, agent_slug=agent_slug,
+                model=model, max_tokens=max_tokens, system=system or "",
+                messages=msg_list, tools=tools,
+            )
+            msg_list.append({"role": "assistant", "content": [
+                {"type": b.type, **({"text": b.text} if b.text else {}),
+                 **({"id": b.id, "name": b.name, "input": b.input} if b.type == "tool_use" else {})}
+                for b in invoke_resp.content
+            ]})
+            tool_results = []
+            for block in invoke_resp.content:
+                if block.type == "tool_use":
+                    try:
+                        result = await tool_executor(block.name, block.input)
+                        tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": result})
+                    except Exception as e:
+                        tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": f"Error: {str(e)}", "is_error": True})
+            if tool_results:
+                msg_list.append({"role": "user", "content": tool_results})
+            continue
+        else:
+            yield f"[STOP_REASON] {stop_reason or 'end_turn'}"
+            return
+
 async def stream_message(
     *,
     model: str | None = None,
@@ -272,6 +360,20 @@ async def stream_message(
     resolved_model = env_model if env_model else (model or DEFAULT_MODEL)
     if not env_model and not model:
         logger.warning("LLM_MODEL not set; falling back to DEFAULT_MODEL=%s", DEFAULT_MODEL)
+
+    gw = _gateway_config()
+    if gw:
+        uap_url, uap_key, agent_slug = gw
+        try:
+            async for chunk in _gateway_stream_message(
+                uap_url=uap_url, uap_key=uap_key, agent_slug=agent_slug,
+                model=resolved_model, max_tokens=max_tokens, system=system,
+                messages=messages, tools=tools, tool_executor=tool_executor,
+            ):
+                yield chunk
+            return
+        except Exception as e:
+            logger.warning("UAP Gateway stream failed (%s) — falling back to direct provider stream", e)
 
     async def _stream_with_tools(client: Any, model_id: str, msg_list: list[dict[str, Any]]):
         """Shared streaming loop with tool_use support across all providers."""
