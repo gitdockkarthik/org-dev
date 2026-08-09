@@ -407,6 +407,8 @@ async def vend_llm_token(
     agent = result.scalar_one_or_none()
     if not agent or agent.status != AgentStatus.published:
         raise HTTPException(status_code=403, detail=f"Agent '{slug}' is not registered or not published")
+    if not agent.uses_uap_llm:
+        raise HTTPException(status_code=403, detail=f"Agent '{slug}' is not registered to use the UAP LLM Gateway. Enable 'Uses UAP LLM' for this agent, or configure the agent to use its own direct LLM credentials.")
 
     if not get_anthropic_key():
         raise HTTPException(status_code=503, detail="LLM credentials not configured on this platform")
@@ -466,6 +468,14 @@ async def llm_invoke(
         if api_key != get_backend_api_key():
             raise HTTPException(status_code=403, detail="Invalid API key")
 
+    from models.agent import Agent, AgentStatus
+    agent_result = await db.execute(select(Agent).where(Agent.slug == slug))
+    agent_obj = agent_result.scalar_one_or_none()
+    if not agent_obj or agent_obj.status != AgentStatus.published:
+        raise HTTPException(status_code=403, detail=f"Agent '{slug}' is not registered or not published")
+    if not agent_obj.uses_uap_llm:
+        raise HTTPException(status_code=403, detail=f"Agent '{slug}' is not registered to use the UAP LLM Gateway.")
+
     messages = body.get("messages", [])
     system = body.get("system", "")
     model = body.get("model") or os.environ.get("LLM_MODEL", "claude-sonnet-4-6")
@@ -473,9 +483,6 @@ async def llm_invoke(
     tools = body.get("tools")
 
     api_key = get_anthropic_key()
-    from models.agent import Agent
-    agent_result = await db.execute(select(Agent).where(Agent.slug == slug))
-    agent_obj = agent_result.scalar_one_or_none()
     app_label = f"Application: {agent_obj.name}" if agent_obj else f"Application: {slug}"
 
     response = await llm_create_message(
@@ -538,15 +545,20 @@ async def llm_invoke_stream(
         if api_key != get_backend_api_key():
             raise HTTPException(status_code=403, detail="Invalid API key")
 
+    from models.agent import Agent, AgentStatus
+    agent_result = await db.execute(select(Agent).where(Agent.slug == slug))
+    agent_obj = agent_result.scalar_one_or_none()
+    if not agent_obj or agent_obj.status != AgentStatus.published:
+        raise HTTPException(status_code=403, detail=f"Agent '{slug}' is not registered or not published")
+    if not agent_obj.uses_uap_llm:
+        raise HTTPException(status_code=403, detail=f"Agent '{slug}' is not registered to use the UAP LLM Gateway.")
+
     messages = body.get("messages", [])
     system = body.get("system", "")
     model = body.get("model") or os.environ.get("LLM_MODEL", "claude-sonnet-4-6")
     max_tokens = body.get("max_tokens", 8192)
     tools = body.get("tools")
 
-    from models.agent import Agent
-    agent_result = await db.execute(select(Agent).where(Agent.slug == slug))
-    agent_obj = agent_result.scalar_one_or_none()
     app_label = f"Application: {agent_obj.name}" if agent_obj else f"Application: {slug}"
 
     api_key = get_anthropic_key()
