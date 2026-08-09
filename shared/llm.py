@@ -5,6 +5,76 @@ from typing import Any
 
 DEFAULT_MODEL = os.environ.get("LLM_MODEL", "us.anthropic.claude-sonnet-5")
 
+class _GatewayContentBlock:
+    def __init__(self, d: dict):
+        self.type = d.get("type")
+        self.text = d.get("text")
+        self.id = d.get("id")
+        self.name = d.get("name")
+        self.input = d.get("input")
+
+
+class _GatewayUsage:
+    def __init__(self, d: dict):
+        self.input_tokens = d.get("input_tokens", 0)
+        self.output_tokens = d.get("output_tokens", 0)
+
+
+class _GatewayResponse:
+    """Shim exposing the same attribute interface as an Anthropic SDK
+    Message object, so callers of create_message() don't need to know
+    whether the response came from the Gateway or a direct provider call."""
+    def __init__(self, data: dict):
+        self.content = [_GatewayContentBlock(b) for b in data.get("content", [])]
+        self.stop_reason = data.get("stop_reason")
+        self.usage = _GatewayUsage(data.get("usage", {}))
+
+
+def _gateway_config() -> tuple[str, str, str] | None:
+    """Returns (uap_url, uap_key, agent_slug) if all three are configured,
+    else None."""
+    uap_url = os.environ.get("UAP_URL", "").rstrip("/")
+    uap_key = os.environ.get("UAP_AGENT_KEY", "")
+    agent_slug = os.environ.get("AGENT_SLUG", "")
+    if uap_url and uap_key and agent_slug:
+        return uap_url, uap_key, agent_slug
+    return None
+
+async def _gateway_create_message(
+    *, uap_url: str, uap_key: str, agent_slug: str,
+    model: str, max_tokens: int, system: str,
+    messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None,
+) -> _GatewayResponse:
+    """Call the UAP LLM Gateway (/api/llm/token then /api/llm/invoke)
+    and wrap the response to match the Anthropic SDK's Message interface."""
+    import httpx
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        token_resp = await client.post(
+            f"{uap_url}/api/llm/token",
+            headers={"X-API-Key": uap_key},
+            json={"agent_slug": agent_slug},
+        )
+        token_resp.raise_for_status()
+        token = token_resp.json()["token"]
+
+        body: dict[str, Any] = {
+            "token": token,
+            "messages": messages,
+            "system": system,
+            "model": model,
+            "max_tokens": max_tokens,
+        }
+        if tools:
+            body["tools"] = tools
+
+        invoke_resp = await client.post(
+            f"{uap_url}/api/llm/invoke",
+            headers={"X-API-Key": uap_key},
+            json=body,
+        )
+        invoke_resp.raise_for_status()
+        return _GatewayResponse(invoke_resp.json())
+
 # ── Langfuse tracing (optional — disabled if not configured) ─────────────────
 def _get_langfuse():
     pk = os.environ.get("LANGFUSE_PUBLIC_KEY", "")
@@ -102,6 +172,20 @@ async def create_message(
     resolved_model = env_model if env_model else (model or DEFAULT_MODEL)
     if not env_model and not model:
         logger.warning("LLM_MODEL not set; falling back to DEFAULT_MODEL=%s", DEFAULT_MODEL)
+
+    gw = _gateway_config()
+    if gw:
+        uap_url, uap_key, agent_slug = gw
+        try:
+            response = await _gateway_create_message(
+                uap_url=uap_url, uap_key=uap_key, agent_slug=agent_slug,
+                model=resolved_model, max_tokens=max_tokens, system=system,
+                messages=messages, tools=tools,
+            )
+            _lf_trace(response, resolved_model, "gateway", messages, user_id=user_id, session_id=session_id, agent_slug_override=agent_slug_override or agent_slug)
+            return response
+        except Exception as e:
+            logger.warning("UAP Gateway call failed (%s) — falling back to direct provider call", e)
 
     kwargs: dict[str, Any] = {
         "model": resolved_model,
