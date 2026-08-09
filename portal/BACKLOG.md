@@ -208,8 +208,29 @@ tool_use call returns correct content blocks with id/name/input (mock-agent +
 synthetic get_weather tool test), cross-agent key scoping still enforced (403
 unchanged).
 
-Next: Chunk 2 — new /api/llm/invoke/stream endpoint for streaming support
-(mirrors shared/llm.py's stream_message(), needed before any native agent
-with chat/AI-Insights/tab-chat streaming UX can migrate). Then: shared Gateway
-client library with direct-Anthropic fallback. Then: migrate alert-analyser
-as first native agent proof case.
+Chunk 2 DONE (commit f85f91e): Added /api/llm/invoke/stream — SSE streaming
+endpoint mirroring alert-analyser's existing stream_insights() wire format
+exactly (data: <chunk>\n\n frames, [STOP_REASON] marker, [DONE] terminator) —
+so once alert-analyser migrates, its existing SSE parsing logic needs zero
+changes, only the call site swaps from in-process stream_message() to this
+HTTP endpoint.
+
+Bug found and fixed during Chunk 2 validation: hasattr(b, "text") incorrectly
+matched Claude's "thinking" content blocks (which have a text attribute equal
+to None), causing the "response" field in /api/llm/invoke to return null
+instead of the actual answer whenever a thinking block preceded the text
+block. Fixed in 3 places (llm_invoke(), llm_invoke_stream(), and
+_lf_trace()) using getattr(b, "text", None) instead. This was a pre-existing
+bug, not introduced by this session's changes — caught only because Chunk 2's
+validation exercised a model response that included a thinking block.
+
+Added user_id parameter to stream_message()'s signature (was missing,
+unlike create_message()) so streaming calls get correct "Application: <name>"
+attribution in Langfuse, matching non-streaming calls.
+
+Validated: SSE streaming output correct end-to-end, non-streaming response
+field fix confirmed, cross-agent scoping (403) re-confirmed on both endpoints
+after rebuild, tools passthrough unaffected by these fixes.
+
+Next: shared Gateway client library (Gateway-first with direct-Anthropic
+fallback), then migrate alert-analyser as first native agent proof case.
