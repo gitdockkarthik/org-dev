@@ -214,21 +214,21 @@ separately, not in this session).
 
 ## Value-Add Ideas
 
-### Migrate native agents (alert/cur/kafka) onto LLM Gateway + relabel Langfuse "User" as "Initiator"
-Architecture decision (2026-08-07): ALL agents — native and standalone — become
-self-contained Gateway clients with automatic fallback to direct Anthropic/Bedrock
-credentials if Gateway is unreachable or agent is shipped to a platform without
-developer-key support. Full tool-use and streaming parity required — this is not
-a reduced-functionality migration.
+### Migrate agents onto LLM Gateway + relabel Langfuse "User" as "Initiator"
+Architecture decision (2026-08-07): ALL agents become self-contained Gateway
+clients with automatic fallback to direct Anthropic/Bedrock credentials if
+Gateway is unreachable. Full tool-use and streaming parity required — this is
+not a reduced-functionality migration.
 
 Broader goal: Migrate alert-analyser, cur-analyser, kafka-analyser off their
 current direct in-process create_message() calls (using local langfuse dependency)
 onto the same /api/llm/token + /api/llm/invoke Gateway pattern already working for
-standalone agents. This removes their local langfuse dependency entirely, fully
-centralizing tracing/cost tracking in backend (matching the "Application: <name>"
-labeling already built for standalone calls) and removes drift risk between two
-different tracing code paths. Once complete, relabel Langfuse dashboard "User"
-column to "Initiator" (displays either real user email or "Application: <Agent Name>").
+standalone agents (rca-agent, etc.). This removes their local langfuse dependency
+entirely, fully centralizing tracing/cost tracking in backend (matching the
+"Application: <name>" labeling already built for standalone calls) and removes
+drift risk between two different tracing code paths. Once complete, relabel
+Langfuse dashboard "User" column to "Initiator" (displays either real user email
+or "Application: <Agent Name>").
 
 Status: IN PROGRESS
 
@@ -264,5 +264,56 @@ Validated: SSE streaming output correct end-to-end, non-streaming response
 field fix confirmed, cross-agent scoping (403) re-confirmed on both endpoints
 after rebuild, tools passthrough unaffected by these fixes.
 
-Next: shared Gateway client library (Gateway-first with direct-Anthropic
-fallback), then migrate alert-analyser as first native agent proof case.
+Chunk 3 DONE (commits b5fce4e, c58a0e1): shared/llm.py now implements true
+Gateway-first-with-fallback for BOTH create_message() and stream_message() —
+zero code changes required in any agent. Resolution is entirely env-driven:
+UAP_URL + UAP_AGENT_KEY + AGENT_SLUG (all already set per-agent in
+docker-compose.yml today) determine whether the Gateway path is attempted;
+any failure (network, auth, timeout, malformed response) logs a warning and
+falls through transparently to the existing direct-provider logic, completely
+unchanged.
+
+Response-shape parity solved via shim classes (_GatewayResponse,
+_GatewayContentBlock, _GatewayUsage) exposing the identical attribute
+interface as the Anthropic SDK's Message object (.content, .stop_reason,
+.usage.input_tokens/.output_tokens, and per-block .type/.text/.id/.name/.input)
+— calling code (agent.py's tool-use loop) cannot tell which path served the
+request.
+
+Streaming's tool-use case (the hardest part): the Gateway's SSE stream only
+carries text deltas + a final stop_reason, not structured tool_use blocks —
+so when a stream ends in tool_use, _gateway_stream_message() makes one
+non-streaming follow-up call to retrieve the actual blocks, executes tools
+locally via the existing tool_executor callback (same contract as
+_stream_with_tools()), and continues the Gateway conversation. This mirrors
+the existing direct-provider streaming loop's structure exactly.
+
+Token handling: no caching — every create_message()/stream_message() call is
+fully self-contained (mint token, use it, discard). This is a deliberate
+architectural choice, not an oversight: the 5-minute token is a
+platform-enforced authorization window, not a credential the calling code
+should manage or extend the lifetime of. Confirmed this doesn't conflict with
+the separate guidance already given to standalone-agent teams who build their
+own direct Gateway clients (e.g. RCA) — those teams still choose their own
+caching strategy for their own bespoke client code; this only governs the
+shared/llm.py helper path.
+
+Validated live (inside alert-analyser's own container, using rca-agent's
+credentials as a safe test harness — no changes made to alert-analyser's
+actual runtime config): non-streaming Gateway success, non-streaming
+fallback (invalid key), streaming Gateway success, streaming fallback,
+and streaming WITH tool-use (tool executed correctly mid-conversation,
+correct final answer, proper termination) — all 5 cases pass.
+
+Architecture note (2026-08-10): dropped "native vs. standalone" framing per
+correction — there is no such distinction in the intended design. Every
+agent is a standalone unit in the agent runtime layer; alert-analyser,
+cur-analyser, and kafka-analyser are simply out of conformance with that
+one contract today (using an older in-process/backend-injected-key pattern),
+not a different category of agent. This migration brings them into
+conformance, it does not create a new pattern for them.
+
+Next: migrate alert-analyser's actual runtime config (set UAP_URL,
+UAP_AGENT_KEY in its compose block, generate its own scoped developer key,
+flip uses_uap_llm=true) and validate its real chat/AI-Insights/tab-chat
+flows end-to-end through the Gateway — zero code changes expected, config-only.
