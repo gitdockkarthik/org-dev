@@ -470,6 +470,7 @@ async def llm_invoke(
     system = body.get("system", "")
     model = body.get("model") or os.environ.get("LLM_MODEL", "claude-sonnet-4-6")
     max_tokens = body.get("max_tokens", 4096)
+    tools = body.get("tools")
 
     api_key = get_anthropic_key()
     from models.agent import Agent
@@ -482,6 +483,7 @@ async def llm_invoke(
         max_tokens=max_tokens,
         system=system,
         messages=messages,
+        tools=tools,
         api_key=api_key,
         session_id=slug,
         agent_slug_override=slug,
@@ -491,6 +493,12 @@ async def llm_invoke(
     text = next((b.text for b in response.content if hasattr(b, "text")), "")
     return {
         "response": text,
+        "content": [
+            {"type": b.type, **({"text": b.text} if hasattr(b, "text") else {}),
+             **({"id": b.id, "name": b.name, "input": b.input} if b.type == "tool_use" else {})}
+            for b in response.content
+        ],
+        "stop_reason": response.stop_reason,
         "model": model,
         "usage": {
             "input_tokens": response.usage.input_tokens,
