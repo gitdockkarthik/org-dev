@@ -9,7 +9,7 @@ from typing import Any
 
 import anthropic
 import httpx
-from shared.llm import create_message as llm_create_message
+from shared.llm import create_message as llm_create_message, stream_message as llm_stream_message
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
@@ -490,11 +490,11 @@ async def llm_invoke(
         user_id=app_label,
     )
 
-    text = next((b.text for b in response.content if hasattr(b, "text")), "")
+    text = next((b.text for b in response.content if getattr(b, "text", None)), "")
     return {
         "response": text,
         "content": [
-            {"type": b.type, **({"text": b.text} if hasattr(b, "text") else {}),
+            {"type": b.type, **({"text": b.text} if getattr(b, "text", None) else {}),
              **({"id": b.id, "name": b.name, "input": b.input} if b.type == "tool_use" else {})}
             for b in response.content
         ],
@@ -505,6 +505,78 @@ async def llm_invoke(
             "output_tokens": response.usage.output_tokens,
         }
     }
+
+
+@router.post("/llm/invoke/stream")
+async def llm_invoke_stream(
+    body: dict,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    from core.platform_cache import get_anthropic_key, get_backend_api_key
+    from core.config import settings as _settings
+
+    token = body.get("token", "")
+    try:
+        slug, issued_at_str, expires_at_str, signature = token.rsplit(":", 3)
+        issued_at = int(issued_at_str)
+        expires_at = int(expires_at_str)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token format")
+
+    if int(time.time()) > expires_at:
+        raise HTTPException(status_code=401, detail="Token expired")
+
+    payload = f"{slug}:{issued_at_str}:{expires_at_str}"
+    expected = hmac.new(_settings.secret_key.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, signature):
+        raise HTTPException(status_code=401, detail="Invalid token signature")
+
+    dev_key_ok = await _check_developer_key(request, slug, db)
+    if not dev_key_ok:
+        api_key = request.headers.get("X-API-Key", "")
+        if api_key != get_backend_api_key():
+            raise HTTPException(status_code=403, detail="Invalid API key")
+
+    messages = body.get("messages", [])
+    system = body.get("system", "")
+    model = body.get("model") or os.environ.get("LLM_MODEL", "claude-sonnet-4-6")
+    max_tokens = body.get("max_tokens", 8192)
+    tools = body.get("tools")
+
+    from models.agent import Agent
+    agent_result = await db.execute(select(Agent).where(Agent.slug == slug))
+    agent_obj = agent_result.scalar_one_or_none()
+    app_label = f"Application: {agent_obj.name}" if agent_obj else f"Application: {slug}"
+
+    api_key = get_anthropic_key()
+
+    async def event_stream():
+        try:
+            async for chunk in llm_stream_message(
+                model=model,
+                max_tokens=max_tokens,
+                system=system,
+                messages=messages,
+                tools=tools,
+                api_key=api_key,
+                session_id=slug,
+                agent_slug_override=slug,
+                user_id=app_label,
+            ):
+                if chunk.startswith("[STOP_REASON]"):
+                    yield f"data: {chunk}\n\n"
+                else:
+                    yield f"data: {chunk.replace(chr(10), chr(92)+'n')}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            yield f"data: [ERROR] {str(e)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.api_route(

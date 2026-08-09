@@ -36,7 +36,7 @@ def _lf_trace(response: Any, model: str, provider: str, messages: list, user_id:
         agent_slug = agent_slug_override or os.environ.get("AGENT_SLUG", "unknown")
         output_text = ""
         for block in (response.content or []):
-            if hasattr(block, 'text'):
+            if getattr(block, 'text', None):
                 output_text = block.text
                 break
         input_tokens = response.usage.input_tokens
@@ -174,6 +174,7 @@ async def stream_message(
     provider: str | None = None,
     session_id: str | None = None,
     agent_slug_override: str | None = None,
+    user_id: str | None = None,
 ):
     """Stream messages with optional tool_use support.
 
@@ -233,7 +234,7 @@ async def stream_message(
             else:
                 try:
                     _lf_trace(final, model_id, resolved_provider, msg_list,
-                              session_id=session_id, agent_slug_override=agent_slug_override)
+                              user_id=user_id, session_id=session_id, agent_slug_override=agent_slug_override)
                 except Exception:
                     pass
                 yield f"[STOP_REASON] {final.stop_reason}"
