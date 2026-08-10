@@ -1542,6 +1542,58 @@ async def get_topic_message_rate(
         return {"empty": True, "points": [], "error": str(exc)}
 
 
+@router.get("/dashboard/topics/message-rate/archive")
+async def list_message_rate_archive(cluster_id: str | None = None) -> dict:
+    """List available cold-archive CSV files (hourly message-rate detail, aged out
+    of Postgres beyond 7 days) for a cluster -- lets the dashboard offer browse/
+    download without giving anyone direct MinIO access/credentials."""
+    if not cluster_id:
+        return {"files": []}
+    try:
+        from collectors import _get_minio_client, _KAFKA_ARCHIVE_BUCKET
+        s3 = _get_minio_client()
+        prefix = f"cluster-{cluster_id}/"
+        try:
+            resp = s3.list_objects_v2(Bucket=_KAFKA_ARCHIVE_BUCKET, Prefix=prefix)
+        except Exception as e:
+            logger.warning("list_message_rate_archive: bucket/list failed: %s", e)
+            return {"files": []}
+        files = [
+            {
+                "filename": obj["Key"].removeprefix(prefix),
+                "size_bytes": obj["Size"],
+                "last_modified": obj["LastModified"].isoformat(),
+            }
+            for obj in resp.get("Contents", [])
+        ]
+        files.sort(key=lambda f: f["filename"], reverse=True)
+        return {"files": files}
+    except Exception as exc:
+        return {"files": [], "error": str(exc)}
+
+
+@router.get("/dashboard/topics/message-rate/archive/download")
+async def download_message_rate_archive(cluster_id: str, filename: str):
+    """Stream a single archived CSV file back to the browser. filename is
+    validated against a strict pattern (no path traversal) before use."""
+    import re
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}\.csv", filename):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    try:
+        from collectors import _get_minio_client, _KAFKA_ARCHIVE_BUCKET
+        s3 = _get_minio_client()
+        key = f"cluster-{cluster_id}/{filename}"
+        obj = s3.get_object(Bucket=_KAFKA_ARCHIVE_BUCKET, Key=key)
+        body = obj["Body"].read()
+        return StreamingResponse(
+            iter([body]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="cluster-{cluster_id}-{filename}"'},
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=f"File not found: {exc}")
+
+
 @router.get("/dashboard/consumer-groups/{group_id}/message-rate")
 async def get_group_message_rate(
     group_id: str, cluster_id: str | None = None, minutes: float = 1440.0
