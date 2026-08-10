@@ -614,7 +614,7 @@ async def lifespan(app: FastAPI):
         collect_broker_health, collect_consumer_lag_active, collect_topic_sizes,
         collect_topic_structure, collect_msg_rate, collect_topic_message_inflow,
         collect_connector_snapshots, collect_sr_subjects, compute_slo_compliance,
-        run_snapshot_rollups,
+        run_snapshot_rollups, vacuum_kafka_tables,
     )
     from storage import get_backend as _gb
     _clusters = await _gb().get_clusters(settings.agent_slug)
@@ -684,6 +684,27 @@ async def lifespan(app: FastAPI):
                 _rollup_job_id, "0 * * * *", enabled=True, timeout_secs=300
             )
             logger.info("Created schedule for %s: hourly", _rollup_job_id)
+
+    # Register the VACUUM FULL maintenance job -- standalone, cluster-agnostic
+    # (processes all known bloat-prone tables in one pass). Weekly, Sunday 03:00 UTC
+    # -- a low-traffic window, since VACUUM FULL takes a brief exclusive lock per table.
+    _vacuum_job_id = "kafka-vacuum-full"
+    _jobs_module.register_job(
+        _vacuum_job_id,
+        "Scheduled VACUUM FULL",
+        "Reclaims physical disk space on known bloat-prone Kafka tables (autovacuum reclaims for reuse but never shrinks the file)",
+        vacuum_kafka_tables,
+        default_timeout_secs=600,
+    )
+    async with SessionLocal() as _sess:
+        existing = await _sess.execute(
+            _sel(KafkaJobSchedule).where(KafkaJobSchedule.job_id == _vacuum_job_id)
+        )
+        if not existing.scalar_one_or_none():
+            await _jobs_module.create_schedule(
+                _vacuum_job_id, "0 3 * * 0", enabled=True, timeout_secs=600
+            )
+            logger.info("Created schedule for %s: weekly (Sunday 03:00 UTC)", _vacuum_job_id)
 
     count = await _jobs_module.load_schedules()
     logger.info("Job scheduler: loaded %d schedule(s)", count)

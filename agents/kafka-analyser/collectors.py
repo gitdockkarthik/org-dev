@@ -1576,3 +1576,39 @@ async def run_snapshot_rollups() -> dict:
     results["hourly_to_daily"] = await rollup_hourly_to_daily(retention_days=7)
     run_snapshot_rollups._last_result = f"Rollup pass: {results}"
     return results
+
+
+# ── Maintenance: Scheduled VACUUM FULL ────────────────────────────────────────
+_VACUUM_FULL_TABLES = [
+    "kafka_topic_metrics",
+    "kafka_topic_message_rate_snapshots",
+    "kafka_topic_message_rate_hourly_rollup",
+    "kafka_connector_snapshots",
+    "kafka_topic_metrics_hourly",
+]
+
+
+async def vacuum_kafka_tables() -> dict:
+    """Weekly VACUUM FULL on the known bloat-prone tables -- automates what manual
+    cleanup did on 2026-08-10 (e.g. kafka_topic_metrics 185MB -> 15MB). autovacuum
+    (confirmed running continuously) reclaims dead space for reuse but never
+    shrinks the physical file; only VACUUM FULL does that, which needs a brief
+    exclusive lock -- hence scheduled during a low-traffic window rather than run
+    continuously. Each table vacuumed independently so one failure doesn't block
+    the rest. Requires AUTOCOMMIT since VACUUM cannot run inside a transaction."""
+    from database import SessionLocal
+    from sqlalchemy import text
+    if SessionLocal is None:
+        return {"error": "DB unavailable"}
+    results = {}
+    for table in _VACUUM_FULL_TABLES:
+        try:
+            async with SessionLocal() as sess:
+                autocommit_sess = await sess.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
+                await autocommit_sess.execute(text(f"VACUUM (FULL, ANALYZE) {table}"))
+            results[table] = "ok"
+        except Exception as e:
+            logger.warning("vacuum_kafka_tables: %s failed: %s", table, e)
+            results[table] = f"failed: {e}"
+    vacuum_kafka_tables._last_result = f"Vacuum pass: {results}"
+    return results
