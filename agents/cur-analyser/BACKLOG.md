@@ -201,3 +201,19 @@ Update this table after each work chunk — status changes, new rows appended, e
   no orphans accumulated across ~12 replace-in-place cycles (14 through 26).
 - Both #11 and #12 are now considered fully closed — the "in-memory state is not source of truth"
   lesson has held up under real, repeated production cycles.
+
+### Context — CUR Analyser migrated onto platform LLM Gateway (2026-08-10)
+- **Status:** Done (per Portal session)
+- **Change:** Config-only migration — `UAP_URL`/`UAP_AGENT_KEY` in `docker-compose.yml`,
+  developer key id=16, `uses_uap_llm=true`. Zero changes to `agent.py`'s LLM call sites.
+- **Bug found & fixed at line 78 (this agent):** same `hasattr`→`getattr` text-extraction bug
+  pattern seen elsewhere.
+- **Two structural bugs found during THIS agent's validation, fixed at the shared/llm.py level
+  (benefits every agent, not just CUR):**
+  1. Gateway response shim wasn't JSON-serializable — broke tool-use conversation continuation.
+  2. Extended-thinking blocks were missing `thinking`/`signature` fields on replay — caused a 400
+     from Anthropic on the next turn.
+- **Validated end-to-end** against real CUR cost data ($623K total, correct service/tax breakdown),
+  correct single-trace Langfuse attribution.
+- **Full detail:** `portal/BACKLOG.md`. Cross-reference only — this agent's file logs the fact of
+  migration + its role in surfacing the two shared-layer bugs; authoritative detail lives in Portal's log.
