@@ -545,6 +545,7 @@
             </div>
             <button onclick="document.getElementById('group-topics-popup').remove();document.getElementById('group-topics-overlay').remove()" style="background:none;border:none;cursor:pointer;font-size:1.4rem;color:var(--text-muted);margin-left:8px;flex-shrink:0">×</button>
           </div>
+          ${d.is_stale ? `<div style="background:rgba(217,119,6,.12);border:1px solid #d97706;border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:.78rem;color:#d97706">⚠ Stale data — no update since ${d.updated_at ? new Date(d.updated_at).toLocaleString() : 'unknown'} (likely paused/inactive)</div>` : ''}
           <div style="font-size:.8rem;color:var(--text-muted);margin-bottom:12px">Total lag: <strong style="color:var(--text)">${fmtNum(d.total_lag)}</strong></div>
           <div style="margin-bottom:16px">
             <div style="height:100px" id="group-popup-chart-wrap"><canvas id="group-popup-chart"></canvas></div>

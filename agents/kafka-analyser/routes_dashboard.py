@@ -456,6 +456,19 @@ async def get_consumer_group_topics(group_id: str, cluster_id: str | None = None
                 ORDER BY lag DESC
             """), {"cid": int(cluster_id), "gid": group_id})
             results = rows.fetchall()
+            is_stale = False
+            if not results:
+                # Nothing fresh -- fall back to the most recent available snapshot
+                # regardless of age (e.g. a paused connector whose group hasn't been
+                # updated in days), rather than showing a blank "no data" state.
+                rows = await sess.execute(_t("""
+                    SELECT topic, partition_count, lag, updated_at
+                    FROM kafka_consumer_group_topic_lag
+                    WHERE cluster_id = :cid AND group_id = :gid
+                    ORDER BY lag DESC
+                """), {"cid": int(cluster_id), "gid": group_id})
+                results = rows.fetchall()
+                is_stale = bool(results)
             partition_rows = await sess.execute(_t("""
                 SELECT topic, partition, lag, inflow_since_last, consumed_since_last, interval_seconds
                 FROM kafka_consumer_group_partition_lag
@@ -463,6 +476,14 @@ async def get_consumer_group_topics(group_id: str, cluster_id: str | None = None
                 ORDER BY topic, lag DESC
             """), {"cid": int(cluster_id), "gid": group_id})
             partition_results = partition_rows.fetchall()
+            if not partition_results and is_stale:
+                partition_rows = await sess.execute(_t("""
+                    SELECT topic, partition, lag, inflow_since_last, consumed_since_last, interval_seconds
+                    FROM kafka_consumer_group_partition_lag
+                    WHERE cluster_id = :cid AND group_id = :gid
+                    ORDER BY topic, lag DESC
+                """), {"cid": int(cluster_id), "gid": group_id})
+                partition_results = partition_rows.fetchall()
         partitions_by_topic: dict[str, list[dict]] = {}
         for pr in partition_results:
             partitions_by_topic.setdefault(pr.topic, []).append({
@@ -487,6 +508,7 @@ async def get_consumer_group_topics(group_id: str, cluster_id: str | None = None
             "topics": topics,
             "total_lag": sum(t["lag"] for t in topics),
             "updated_at": results[0].updated_at.isoformat() if results[0].updated_at else None,
+            "is_stale": is_stale,
         }
     except Exception as exc:
         return {"error": str(exc)}
