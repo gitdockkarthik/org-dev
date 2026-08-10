@@ -113,6 +113,8 @@ services:
     environment:
       AGENT_ID: ${CUR_ANALYSER_AGENT_ID}
       AGENT_SLUG: cur-analyser
+      UAP_URL: http://backend:8000
+      UAP_AGENT_KEY: opk_fdDsM_awvISzm3snHoWBEwFIbBMsbWIcuFJ-9dD1IDs
       AGENT_NAME: CUR Analyser
       MODEL: ${MODEL:-claude-sonnet-4-6}
       LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}

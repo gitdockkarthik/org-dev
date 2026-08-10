@@ -5,10 +5,17 @@ from typing import Any
 
 DEFAULT_MODEL = os.environ.get("LLM_MODEL", "us.anthropic.claude-sonnet-5")
 
-class _GatewayContentBlock:
+class _GatewayContentBlock(dict):
+    """Dict subclass exposing both dict-style JSON serialization (so it can
+    be safely re-appended into conversation history and sent back through
+    create_message()) and attribute access (.type/.text/.id/.name/.input)
+    matching the Anthropic SDK's content block interface."""
     def __init__(self, d: dict):
+        super().__init__(d)
         self.type = d.get("type")
         self.text = d.get("text")
+        self.thinking = d.get("thinking")
+        self.signature = d.get("signature")
         self.id = d.get("id")
         self.name = d.get("name")
         self.input = d.get("input")

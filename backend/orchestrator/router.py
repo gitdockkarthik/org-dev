@@ -501,7 +501,9 @@ async def llm_invoke(
     return {
         "response": text,
         "content": [
-            {"type": b.type, **({"text": b.text} if getattr(b, "text", None) else {}),
+            {"type": b.type,
+             **({"text": b.text} if getattr(b, "text", None) else {}),
+             **({"thinking": getattr(b, "thinking", ""), "signature": getattr(b, "signature", "")} if b.type == "thinking" else {}),
              **({"id": b.id, "name": b.name, "input": b.input} if b.type == "tool_use" else {})}
             for b in response.content
         ],

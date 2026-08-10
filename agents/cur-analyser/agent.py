@@ -75,7 +75,7 @@ class AgentRunner:
 
             if response.stop_reason != "tool_use":
                 text = next(
-                    (b.text for b in response.content if hasattr(b, "text")), ""
+                    (b.text for b in response.content if getattr(b, "text", None)), ""
                 )
                 return text, total_tokens
 
