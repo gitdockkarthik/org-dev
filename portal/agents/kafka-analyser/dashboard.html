@@ -1235,7 +1235,6 @@
         return `<tr>
           <td data-copy="${groupId}" title="${groupId}"><div class="cg-cell"><span class="cg-cell-text" style="font-weight:600">${groupId}</span>${copyBtn}</div></td>
           <td class="cg-source-cell" data-gid="${groupId.replace(/"/g,'&quot;')}"></td>
-          <td><div class="cg-cell"><span class="cg-cell-text"><code style="font-size:.8rem">${topicCellHtml}</code></span></div></td>
           <td ${lagColor}>${fmtNum(g.total_lag)}</td>
           <td>${trendHtml}</td>
           <td style="font-size:.82rem;color:var(--text-muted)">${g.lag_rate_per_min > 0 ? '+' : ''}${fmtNum(g.lag_rate_per_min)}/min</td>
@@ -1301,7 +1300,7 @@
         <div class="chart-card__title">Consumer Group Inventory</div>
         <div class="data-table-wrap">
           <table class="data-table cg-table">
-            <thead><tr><th style="width:18%;max-width:200px">Group</th><th style="width:17%;max-width:180px">Source</th><th style="width:20%;max-width:200px">Topic</th><th style="width:10%;cursor:pointer" onclick="window._toggleColumnSort(window._cgView, 'sortLag', 'cg-lag-sort-arrow', window._cgApplyView)">Total Lag<span id="cg-lag-sort-arrow"></span></th><th style="width:10%">Trend</th><th style="width:10%">Rate/min</th><th style="width:8%">Status</th></tr></thead>
+            <thead><tr><th style="width:24%;max-width:260px">Group</th><th style="width:22%;max-width:220px">Source</th><th style="width:14%;cursor:pointer" onclick="window._toggleColumnSort(window._cgView, 'sortLag', 'cg-lag-sort-arrow', window._cgApplyView)">Total Lag<span id="cg-lag-sort-arrow"></span></th><th style="width:12%">Trend</th><th style="width:12%">Rate/min</th><th style="width:10%">Status</th></tr></thead>
             <tbody id="cg-tbody"></tbody>
           </table>
         </div>
@@ -1351,8 +1350,14 @@
         const shown = filtered.slice(0, st.visible);
         const tbody = document.getElementById('cg-tbody');
         if (tbody) {
-          tbody.innerHTML = shown.map(cgRowHtml).join('') ||
-            `<tr><td colspan="7" class="data-table__empty">No consumer groups match</td></tr>`;
+          const activeRows = shown.filter(g => !g.is_stale);
+          const staleRows = shown.filter(g => g.is_stale);
+          const sectionHeader = (label, isFirst) =>
+            `<tr><td colspan="6" style="padding:${isFirst ? '8px' : '16px'} 8px 4px;font-size:.72rem;font-weight:600;color:var(--text-muted);${isFirst ? '' : 'border-top:1px solid var(--border)'}">${label}</td></tr>`;
+          let html = '';
+          if (activeRows.length) html += sectionHeader('Active groups', true) + activeRows.map(cgRowHtml).join('');
+          if (staleRows.length) html += sectionHeader('Stale groups', !activeRows.length) + staleRows.map(cgRowHtml).join('');
+          tbody.innerHTML = html || `<tr><td colspan="7" class="data-table__empty">No consumer groups match</td></tr>`;
           if (window._cgApplySourceBadges) window._cgApplySourceBadges();
         }
         const label = document.getElementById('cg-count-label');
