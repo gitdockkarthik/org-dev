@@ -1180,6 +1180,25 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Cluster 3 (DevQA Kafka Internal) -- collected data purged, config kept for future re-enable (2026-08-10)
+Cluster genuinely disabled (kafka_clusters.enabled=false), no plans to re-enable
+in the near term -- focus has shifted to internal staging (cluster 8), with
+external/internal prod onboarding planned next. Confirmed via kafka_job_runs
+that its jobs haven't actually fired since 2026-08-04 (job_schedules rows still
+show enabled=true, but that's leftover config, not driving execution -- the
+scheduler correctly stopped once the cluster itself was disabled), so this
+cleanup is safe and won't be silently undone by still-running jobs.
+
+Purged ~2.9M rows of collected data across 18 tables (dominated by
+kafka_connector_snapshots at 2.3M rows). kafka_clusters config row and
+kafka_job_schedules entries deliberately kept intact -- if cluster 3 is
+re-enabled later, only the schedules need flipping back to enabled, no
+reconfiguration needed. VACUUM FULL run on the largest affected tables;
+kafka_connector_snapshots confirmed 519MB -> 203MB. Total Postgres database:
+3968MB -> 3651MB, container memory 83.67% -> 76.60% of the 4GB limit.
+
+*Added: 2026-08-10*
+
 ### Lag mismatch vs. external monitoring tool -- investigated, confirmed not a bug (2026-08-10)
 Reported: our dashboard showed a consumer group's (stg-posting-spotreference,
 internal staging) total lag differing by ~219K from an external, legacy Kafka
