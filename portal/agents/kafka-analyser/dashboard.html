@@ -1235,7 +1235,7 @@
         return `<tr>
           <td data-copy="${groupId}" title="${groupId}"><div class="cg-cell"><span class="cg-cell-text" style="font-weight:600">${groupId}</span>${copyBtn}</div></td>
           <td class="cg-source-cell" data-gid="${groupId.replace(/"/g,'&quot;')}"></td>
-          <td ${lagColor}>${fmtNum(g.total_lag)}</td>
+          <td ${lagColor}><span style="cursor:pointer;color:var(--accent,#FF6B35);text-decoration:underline" onclick="window._showGroupTopicsPopup('${groupId.replace(/'/g,"\\'")}')">${fmtNum(g.total_lag)}</span></td>
           <td>${trendHtml}</td>
           <td style="font-size:.82rem;color:var(--text-muted)">${g.lag_rate_per_min > 0 ? '+' : ''}${fmtNum(g.lag_rate_per_min)}/min</td>
           <td><span class="sev sev--${statusClass}" ${statusTitle}>${statusLabel}</span></td>
