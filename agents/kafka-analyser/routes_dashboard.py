@@ -1037,6 +1037,18 @@ async def get_connector_topic_breakdown(cluster_id: str | None = None, top_n: in
             topics_by_group: dict[str, list] = {}
             for r in rows.fetchall():
                 topics_by_group.setdefault(r.group_id, []).append({"topic": r.topic, "lag": r.lag})
+            # Same fallback as get_kafka_connect/get_consumer_group_topics: groups with
+            # no rows in the fresh window (e.g. paused connectors) still deserve their
+            # last-known topic breakdown rather than an empty, misleading [].
+            missing_gids = [g for g in group_ids if g not in topics_by_group]
+            if missing_gids:
+                stale_rows = await sess.execute(_t("""
+                    SELECT group_id, topic, lag FROM kafka_consumer_group_topic_lag
+                    WHERE cluster_id = :cid AND group_id = ANY(:gids)
+                    ORDER BY group_id, lag DESC
+                """), {"cid": int(cluster_id), "gids": missing_gids})
+                for r in stale_rows.fetchall():
+                    topics_by_group.setdefault(r.group_id, []).append({"topic": r.topic, "lag": r.lag})
 
         result = []
         for c in top:
