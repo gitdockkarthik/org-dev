@@ -1180,6 +1180,32 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Session summary and pending list -- end of 2026-08-10 evening session
+Genuinely completed and shipped tonight: paused-connector lag fix (3 endpoints),
+consumer group search backend extension + a real Dead-state-group data-integrity
+fix, Grafana admin password reset, "Last synced" label (real data write time,
+not job completion) above the Consumer Groups KPI cards.
+
+Confirmed explicitly NOT yet built (backend-only foundation exists, no UI):
+1. Source column (Connector name / MirrorMaker / Standalone) on the Consumer
+   Groups table -- GET /dashboard/consumer-groups/sources exists and is
+   validated, but zero frontend code references it yet.
+2. CSV export update to include the new Source column (depends on #1).
+3. Connector Anomalies chart split into Running vs Paused/Stale columns.
+4. Consumer group search by connector name / topic name -- attempted and
+   reverted tonight after real reliability issues (see the two 2026-08-10
+   entries above this one for full detail). Needs a properly-designed,
+   client-side-first approach next time, not a per-keystroke server call for
+   every search including plain group-name matching.
+5. On-demand live single-group lag lookup (autocomplete + popup showing
+   current, live topic/partition breakdown) -- design agreed with user, not
+   started.
+6. Uncommitted-partition lag visibility -- explicitly deferred, needs its own
+   dedicated discussion, see the 2026-08-10 entry above titled "Uncommitted-
+   partition lag / architectural gap awareness".
+
+*Added: 2026-08-10*
+
 ### Consumer group search -- reverted to working client-side group-name search; connector/topic name search parked entirely (2026-08-10)
 User's correct architectural critique: routing all search (including plain
 group-name matching, which worked instantly and purely client-side before
