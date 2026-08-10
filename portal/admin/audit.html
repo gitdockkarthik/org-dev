@@ -106,7 +106,7 @@
           <option value="">All Agents</option>
         </select>
         <select id="llm-filter-user" onchange="loadLLMUsage(false)" style="font-size:.8rem;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text)">
-          <option value="">All Users</option>
+          <option value="">All Initiators</option>
         </select>
         <select id="llm-filter-model" onchange="loadLLMUsage(false)" style="font-size:.8rem;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text)">
           <option value="">All Models</option>
@@ -116,7 +116,7 @@
       <div class="table-wrap">
         <table class="data-table" style="width:100%">
           <thead><tr>
-            <th>Timestamp</th><th>Agent</th><th>User</th><th>Model</th>
+            <th>Timestamp</th><th>Agent</th><th>Initiator</th><th>Model</th>
             <th style="text-align:right">Input Tokens</th>
             <th style="text-align:right">Output Tokens</th>
             <th style="text-align:right">Total Tokens</th>
