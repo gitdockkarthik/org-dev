@@ -77,6 +77,8 @@ services:
     environment:
       AGENT_ID: ${ALERT_ANALYSER_AGENT_ID}
       AGENT_SLUG: alert-analyser
+      UAP_URL: http://backend:8000
+      UAP_AGENT_KEY: opk_iYpfWiPMHeTyZdakMdvz2NjtNL1GrHaQKPLIKky4lqM
       AGENT_NAME: Alert Analyser
       MODEL: ${MODEL:-claude-sonnet-4-6}
       LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}

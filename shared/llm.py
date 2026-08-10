@@ -182,7 +182,6 @@ async def create_message(
                 model=resolved_model, max_tokens=max_tokens, system=system,
                 messages=messages, tools=tools,
             )
-            _lf_trace(response, resolved_model, "gateway", messages, user_id=user_id, session_id=session_id, agent_slug_override=agent_slug_override or agent_slug)
             return response
         except Exception as e:
             logger.warning("UAP Gateway call failed (%s) — falling back to direct provider call", e)
