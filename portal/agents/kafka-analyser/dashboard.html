@@ -1262,6 +1262,7 @@
       const healthyCount  = groups.filter(g => g.total_lag <= 1000).length;
 
       const cgKpis = `
+        <div id="cg-last-synced" style="font-size:.75rem;color:var(--text-muted);margin-bottom:8px"></div>
         <div class="kpi-grid">
           <div class="kpi kpi--orange">
             <div class="kpi__label">Total Groups</div>
@@ -1397,6 +1398,22 @@
       };
 
       window._cgApplyView();
+
+      (async () => {
+        try {
+          const cid = _currentClusterId || document.getElementById('ctrl-cluster')?.value;
+          const res = await fetch(`${PROXY}/dashboard/consumer-groups/last-synced?cluster_id=${cid}`, { headers: _authHeaders(), cache: 'no-store' });
+          const d = await res.json();
+          if (!d.last_synced) return;
+          const dt = new Date(d.last_synced);
+          const mins = Math.round((Date.now() - dt.getTime()) / 60000);
+          const text = `Last synced: ${mins < 1 ? 'just now' : mins + 'm ago'}`;
+          const el1 = document.getElementById('cg-last-synced');
+          if (el1) el1.textContent = text;
+        } catch (e) {
+          console.warn('last-synced fetch failed:', e);
+        }
+      })();
 
       if (hasLag) {
         setTimeout(() => {

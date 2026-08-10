@@ -1104,6 +1104,31 @@ async def get_consumer_group_sources(cluster_id: str | None = None) -> dict:
         return {"sources": {}, "error": str(exc)}
 
 
+@router.get("/dashboard/consumer-groups/last-synced")
+async def get_consumer_group_last_synced(cluster_id: str | None = None) -> dict:
+    """Genuine last-synced time for consumer group lag data -- MAX(updated_at)
+    from the actual data table, not job completion time. A job can complete
+    successfully while writing zero/partial rows (silent failure); this
+    reflects when data was actually, verifiably last written."""
+    if not cluster_id:
+        return {"last_synced": None}
+    try:
+        from database import DashboardSessionLocal as SessionLocal
+        from sqlalchemy import text as _t
+        if SessionLocal is None:
+            return {"last_synced": None}
+        async with SessionLocal() as sess:
+            row = await sess.execute(_t("""
+                SELECT MAX(updated_at) as last_synced FROM kafka_consumer_group_lag
+                WHERE cluster_id = :cid
+            """), {"cid": int(cluster_id)})
+            r = row.fetchone()
+            return {"last_synced": r.last_synced.isoformat() if r and r.last_synced else None}
+    except Exception as exc:
+        logger.warning("get_consumer_group_last_synced failed: %s", exc)
+        return {"last_synced": None, "error": str(exc)}
+
+
 @router.get("/dashboard/mirrormaker")
 async def get_mirrormaker(cluster_id: str | None = None, hours: int | None = None) -> dict:
     """Detect MirrorMaker replication and compare source/target lag."""
