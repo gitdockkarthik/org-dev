@@ -368,6 +368,8 @@ services:
       VERTEX_PROJECT_ID: ${VERTEX_PROJECT_ID:-}
       VERTEX_REGION: ${VERTEX_REGION:-us-east5}
       AGENT_SLUG: kafka-analyser
+      UAP_URL: http://backend:8000
+      UAP_AGENT_KEY: opk_p0-IA1oOQawVfSB8WSoKRPzujgtvzZOs7iBSO4_UPOA
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
       LANGFUSE_HOST: http://langfuse:3000
