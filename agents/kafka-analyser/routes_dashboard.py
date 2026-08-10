@@ -383,7 +383,7 @@ async def get_consumer_groups(cluster_id: str | None = None, hours: int | None =
             rows = await sess.execute(_t("""
                 SELECT group_id, state, total_lag, topic_count, committed_offsets, updated_at
                 FROM kafka_consumer_group_lag
-                WHERE cluster_id = :cid AND updated_at >= NOW() - INTERVAL '20 minutes'
+                WHERE cluster_id = :cid
                 ORDER BY total_lag DESC
             """), {"cid": int(cluster_id)})
             _rows = rows.fetchall()
@@ -417,19 +417,27 @@ async def get_consumer_groups(cluster_id: str | None = None, hours: int | None =
                     _trend_by_group[tr.group_id] = {"lag_trend": trend, "lag_rate_per_min": rate_per_min}
             except Exception as _tre:
                 logger.warning("consumer-groups trend aggregation failed: %s", _tre)
-            groups = [
-                {
+            import datetime as _dt
+            _now = _dt.datetime.now(_dt.timezone.utc)
+            groups = []
+            for r in _rows:
+                _age_min = int((_now - r.updated_at).total_seconds() / 60) if r.updated_at else None
+                groups.append({
                     "group_id": r.group_id,
                     "state": r.state,
                     "total_lag": r.total_lag,
                     "topic_count": r.topic_count,
                     "committed_offsets": r.committed_offsets,
                     "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+                    "is_stale": _age_min is not None and _age_min > 20,
+                    "stale_minutes": _age_min,
                     "lag_trend": _trend_by_group.get(r.group_id, {}).get("lag_trend", "stable"),
                     "lag_rate_per_min": _trend_by_group.get(r.group_id, {}).get("lag_rate_per_min", 0.0),
-                }
-                for r in _rows
-            ]
+                })
+            # Stale groups always sort after fresh ones -- an old, frozen lag
+            # number shouldn't outrank genuinely current, active data at the
+            # top of the table.
+            groups.sort(key=lambda g: (g["is_stale"], -g["total_lag"]))
         if not groups:
             return {"empty": True}
         return {"consumer_groups": groups, "total": len(groups)}
