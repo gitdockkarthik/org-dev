@@ -2584,16 +2584,37 @@ async def search_groups(cluster_id: str, q: str = ""):
         return {"groups": [], "query": q}
     # Search from postgres
     try:
+        # Also match by connector name (a group whose backing connector's name
+        # contains the query, even if the group_id itself -- typically
+        # "connect-{name}" -- doesn't literally contain it due to a
+        # group_id_override) and by topic name (a group reading/writing a
+        # matching topic), not just the group_id itself.
+        connector_group_ids: list[str] = []
+        try:
+            kc_data = await get_kafka_connect(cluster_id)
+            for c in kc_data.get("connectors", []):
+                if q.lower() in c.get("name", "").lower():
+                    connector_group_ids.append(c.get("group_id_override") or f"connect-{c.get('name', '')}")
+        except Exception:
+            pass
+
         from database import DashboardSessionLocal as SessionLocal
         from sqlalchemy import text as _gst
         if SessionLocal:
             async with SessionLocal() as sess:
                 rows = await sess.execute(_gst("""
-                    SELECT group_id, state, total_lag, topic_count
-                    FROM kafka_consumer_group_lag
-                    WHERE cluster_id=:cid AND group_id ILIKE :q
-                    ORDER BY total_lag DESC LIMIT 100
-                """), {"cid": int(cluster_id), "q": f"%{q}%"})
+                    SELECT DISTINCT l.group_id, l.state, l.total_lag, l.topic_count
+                    FROM kafka_consumer_group_lag l
+                    WHERE l.cluster_id=:cid AND (
+                        l.group_id ILIKE :q
+                        OR l.group_id = ANY(:connector_gids)
+                        OR l.group_id IN (
+                            SELECT DISTINCT group_id FROM kafka_consumer_group_topic_lag
+                            WHERE cluster_id=:cid AND topic ILIKE :q
+                        )
+                    )
+                    ORDER BY l.total_lag DESC LIMIT 100
+                """), {"cid": int(cluster_id), "q": f"%{q}%", "connector_gids": connector_group_ids})
                 matched = [{"group_id": r.group_id, "state": r.state,
                             "total_lag": r.total_lag, "topic_count": r.topic_count}
                            for r in rows.fetchall()]
@@ -2608,10 +2629,19 @@ async def search_groups(cluster_id: str, q: str = ""):
         lag_map = {g["group_id"]: g for g in lags}
         for g in matched:
             lag_data = lag_map.get(g["group_id"])
-            if lag_data:
+            # Only trust the live fetch if it genuinely returned something --
+            # a Kafka group can transition to "Dead" state (coordinator has
+            # removed it from active tracking, distinct from "Empty") once
+            # inactive long enough, at which point list_consumer_group_offsets
+            # correctly, genuinely returns nothing live -- but the group's real,
+            # last-known lag (stored in Postgres) is still the best information
+            # available and must not be silently overwritten with 0/empty.
+            if lag_data and lag_data.get("topic_count", 0) > 0:
                 g["total_lag"] = lag_data["total_lag"]
                 g["topic_count"] = lag_data["topic_count"]
                 g["partitions"] = lag_data.get("partitions", [])
+            elif lag_data and lag_data.get("error"):
+                g["live_fetch_error"] = lag_data["error"]
         return {"groups": matched, "query": q}
     except Exception as exc:
         return {"groups": matched, "query": q, "error": str(exc)}
