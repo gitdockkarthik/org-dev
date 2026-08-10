@@ -313,7 +313,41 @@ one contract today (using an older in-process/backend-injected-key pattern),
 not a different category of agent. This migration brings them into
 conformance, it does not create a new pattern for them.
 
-Next: migrate alert-analyser's actual runtime config (set UAP_URL,
-UAP_AGENT_KEY in its compose block, generate its own scoped developer key,
-flip uses_uap_llm=true) and validate its real chat/AI-Insights/tab-chat
-flows end-to-end through the Gateway — zero code changes expected, config-only.
+alert-analyser migration DONE (commit 77c498a) — first agent brought into
+conformance with the standalone-agent-runtime contract. Purely config-driven
+per the Chunk 3 design: added UAP_URL=http://backend:8000 and UAP_AGENT_KEY
+(scoped developer key id=15) to its docker-compose.yml environment block,
+flipped uses_uap_llm=true via Admin UI. Zero changes to its own LLM-calling
+logic — agent.py's create_message() call site is completely untouched;
+shared/llm.py transparently routes it through the Gateway.
+
+Two real bugs found and fixed during this migration's validation (not
+introduced by the migration itself — pre-existing, only surfaced because
+this was the first time a real tool-use-based agent exercised these paths):
+
+1. agents/alert-analyser/agent.py had the same hasattr(b, "text")-matches-
+   thinking-blocks bug already fixed in backend/orchestrator/router.py
+   earlier today — fixed identically (getattr(b, "text", None)).
+
+2. Double-tracing: create_message()'s and stream_message()'s Gateway
+   branches were calling _lf_trace() client-side (inside the calling agent's
+   own process) IN ADDITION to backend's own correct server-side trace
+   inside /llm/invoke — meaning every Gateway-routed LLM call was logged
+   twice in Langfuse, once correctly labeled and once with a blank
+   "Application:" label (explains earlier confusion about blank User
+   rows — not a separate bug, same root cause). Fixed by removing the
+   redundant client-side _lf_trace() calls entirely; Gateway calls are
+   now traced exactly once, server-side only, matching direct-provider
+   calls which are still correctly traced client-side (since those really
+   do execute the LLM call in the agent's own process).
+
+Validated end-to-end: real chat via /invoke exercising the full tool-use
+loop (config lookups, classify_alerts-grounded answers with real percentages
+from live data), streaming via /invoke/stream with correct SSE framing,
+single correctly-labeled Langfuse trace per call confirmed across 3
+independent test calls post-fix.
+
+Next: apply the identical config-only migration to cur-analyser and
+kafka-analyser (should be a fast, low-risk repeat now that the pattern and
+both discovered bugs are fixed at the shared/llm.py level — those two agents
+inherit the fixes automatically once migrated).
