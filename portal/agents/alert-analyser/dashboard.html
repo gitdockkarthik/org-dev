@@ -917,12 +917,12 @@
         <div class="kpi kpi--accent">
           <div class="kpi__label">TOTAL ALERTS</div>
           <div class="kpi__value">${(sAllTime.total_alerts || 0).toLocaleString()}</div>
-          <div class="kpi__sub">cumulative lifetime</div>
+          <div class="kpi__sub">${sAllTime.total_alerts_raw > sAllTime.total_alerts ? `(${(sAllTime.total_alerts_raw||0).toLocaleString()} total · ${(sAllTime.total_alerts_raw - sAllTime.total_alerts).toLocaleString()} dupes removed)` : 'cumulative lifetime'}</div>
         </div>
         <div class="kpi kpi--danger">
           <div class="kpi__label">NOISE</div>
           <div class="kpi__value">${(sAllTime.noise_count || 0).toLocaleString()}</div>
-          <div class="kpi__sub">identified as noise</div>
+          <div class="kpi__sub">${sAllTime.noise_count_raw > sAllTime.noise_count ? `(${(sAllTime.noise_count_raw||0).toLocaleString()} total · ${(sAllTime.noise_count_raw - sAllTime.noise_count).toLocaleString()} dupes removed)` : 'identified as noise'}</div>
         </div>
         <div class="kpi kpi--warn">
           <div class="kpi__label">NOISE SUSPECT</div>
@@ -932,7 +932,7 @@
         <div class="kpi kpi--success">
           <div class="kpi__label">GENUINE</div>
           <div class="kpi__value">${(sAllTime.genuine_count || 0).toLocaleString()}</div>
-          <div class="kpi__sub">real incidents</div>
+          <div class="kpi__sub">${sAllTime.genuine_count_raw > sAllTime.genuine_count ? `(${(sAllTime.genuine_count_raw||0).toLocaleString()} total · ${(sAllTime.genuine_count_raw - sAllTime.genuine_count).toLocaleString()} dupes removed)` : 'real incidents'}</div>
         </div>
       </div>`;
 

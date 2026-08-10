@@ -212,6 +212,18 @@ async def store_report(classified: list[dict], meta: dict) -> None:
                     {"slug": settings.agent_slug}
                 )
                 _prev_row = _prev.fetchone()
+
+                # Get previous report's stats_data from alert_reports (offset 1 to skip current report)
+                _prev_stats_result = await _sum_sess.execute(
+                    text("""
+                        SELECT stats_data FROM alert_reports
+                        WHERE agent_slug = :slug
+                        ORDER BY created_at DESC
+                        OFFSET 1 LIMIT 1
+                    """),
+                    {"slug": settings.agent_slug}
+                )
+                _prev_stats_row = _prev_stats_result.fetchone()
                 if _prev_row:
                     new_alerts  = max(0, total - (_prev_row.total_alerts or 0))
                     new_genuine = max(0, genuine - (_prev_row.genuine_count or 0))
@@ -222,6 +234,27 @@ async def store_report(classified: list[dict], meta: dict) -> None:
                     new_genuine = genuine
                     new_noise   = noise
                     new_suspect = suspect
+
+                # Extract previous deduplicated counts from stats_data JSON
+                prev_dedup_total = 0
+                prev_dedup_genuine = 0
+                prev_dedup_noise = 0
+                prev_dedup_suspect = 0
+                if _prev_stats_row and _prev_stats_row.stats_data:
+                    try:
+                        prev_stats = json.loads(_prev_stats_row.stats_data)
+                        prev_dedup_total = prev_stats.get("total", 0)
+                        prev_dedup_genuine = prev_stats.get("genuine_count", 0)
+                        prev_dedup_noise = prev_stats.get("noise_count", 0)
+                        prev_dedup_suspect = prev_stats.get("suspect_count", 0)
+                    except Exception:
+                        pass  # If parse fails, treat as no previous dedup data (zeros)
+
+                # Compute deduplicated deltas using current stats
+                new_alerts_dedup = max(0, stats.get("total", 0) - prev_dedup_total)
+                new_genuine_dedup = max(0, stats.get("genuine_count", 0) - prev_dedup_genuine)
+                new_noise_dedup = max(0, stats.get("noise_count", 0) - prev_dedup_noise)
+                new_suspect_dedup = max(0, stats.get("suspect_count", 0) - prev_dedup_suspect)
 
                 await _sum_sess.execute(
                     text("""
@@ -265,16 +298,22 @@ async def store_report(classified: list[dict], meta: dict) -> None:
                     await _sum_sess.execute(
                         text("""
                             INSERT INTO alert_lifetime_totals
-                              (agent_slug, total_alerts, genuine_count,
-                               noise_count, suspect_count, counting_since)
+                              (agent_slug, total_alerts_raw, genuine_count_raw,
+                               noise_count_raw, suspect_count_raw, total_alerts,
+                               genuine_count, noise_count, suspect_count, counting_since)
                             VALUES
                               (:slug, :new_alerts, :new_genuine,
-                               :new_noise, :new_suspect, NOW())
+                               :new_noise, :new_suspect, :new_alerts_dedup,
+                               :new_genuine_dedup, :new_noise_dedup, :new_suspect_dedup, NOW())
                             ON CONFLICT (agent_slug) DO UPDATE SET
-                              total_alerts = alert_lifetime_totals.total_alerts + :new_alerts,
-                              genuine_count = alert_lifetime_totals.genuine_count + :new_genuine,
-                              noise_count = alert_lifetime_totals.noise_count + :new_noise,
-                              suspect_count = alert_lifetime_totals.suspect_count + :new_suspect,
+                              total_alerts_raw = alert_lifetime_totals.total_alerts_raw + :new_alerts,
+                              genuine_count_raw = alert_lifetime_totals.genuine_count_raw + :new_genuine,
+                              noise_count_raw = alert_lifetime_totals.noise_count_raw + :new_noise,
+                              suspect_count_raw = alert_lifetime_totals.suspect_count_raw + :new_suspect,
+                              total_alerts = alert_lifetime_totals.total_alerts + :new_alerts_dedup,
+                              genuine_count = alert_lifetime_totals.genuine_count + :new_genuine_dedup,
+                              noise_count = alert_lifetime_totals.noise_count + :new_noise_dedup,
+                              suspect_count = alert_lifetime_totals.suspect_count + :new_suspect_dedup,
                               updated_at = NOW()
                         """),
                         {
@@ -283,6 +322,10 @@ async def store_report(classified: list[dict], meta: dict) -> None:
                             "new_genuine": new_genuine,
                             "new_noise": new_noise,
                             "new_suspect": new_suspect,
+                            "new_alerts_dedup": new_alerts_dedup,
+                            "new_genuine_dedup": new_genuine_dedup,
+                            "new_noise_dedup": new_noise_dedup,
+                            "new_suspect_dedup": new_suspect_dedup,
                         }
                     )
                     await _sum_sess.commit()

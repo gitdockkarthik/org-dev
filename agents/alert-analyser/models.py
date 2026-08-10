@@ -46,6 +46,10 @@ class AlertLifetimeTotal(Base):
     __tablename__ = "alert_lifetime_totals"
 
     agent_slug: Mapped[str] = mapped_column(String, primary_key=True, nullable=False)
+    total_alerts_raw: Mapped[int] = mapped_column(Integer, default=0)
+    genuine_count_raw: Mapped[int] = mapped_column(Integer, default=0)
+    noise_count_raw: Mapped[int] = mapped_column(Integer, default=0)
+    suspect_count_raw: Mapped[int] = mapped_column(Integer, default=0)
     total_alerts: Mapped[int] = mapped_column(Integer, default=0)
     genuine_count: Mapped[int] = mapped_column(Integer, default=0)
     noise_count: Mapped[int] = mapped_column(Integer, default=0)

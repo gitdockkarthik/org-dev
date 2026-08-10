@@ -967,6 +967,10 @@ async def get_lifetime_totals() -> dict:
             "genuine_count": 0,
             "noise_count": 0,
             "suspect_count": 0,
+            "total_alerts_raw": 0,
+            "genuine_count_raw": 0,
+            "noise_count_raw": 0,
+            "suspect_count_raw": 0,
             "counting_since": None,
             "last_cleanup_at": None,
         }
@@ -976,6 +980,7 @@ async def get_lifetime_totals() -> dict:
             result = await sess.execute(
                 text("""
                     SELECT total_alerts, genuine_count, noise_count, suspect_count,
+                           total_alerts_raw, genuine_count_raw, noise_count_raw, suspect_count_raw,
                            counting_since, last_cleanup_at
                     FROM alert_lifetime_totals
                     WHERE agent_slug = :slug
@@ -990,6 +995,10 @@ async def get_lifetime_totals() -> dict:
                 "genuine_count": row.genuine_count or 0,
                 "noise_count": row.noise_count or 0,
                 "suspect_count": row.suspect_count or 0,
+                "total_alerts_raw": row.total_alerts_raw or 0,
+                "genuine_count_raw": row.genuine_count_raw or 0,
+                "noise_count_raw": row.noise_count_raw or 0,
+                "suspect_count_raw": row.suspect_count_raw or 0,
                 "counting_since": row.counting_since.isoformat() if row.counting_since else None,
                 "last_cleanup_at": row.last_cleanup_at.isoformat() if row.last_cleanup_at else None,
             }
@@ -1000,6 +1009,10 @@ async def get_lifetime_totals() -> dict:
                 "genuine_count": 0,
                 "noise_count": 0,
                 "suspect_count": 0,
+                "total_alerts_raw": 0,
+                "genuine_count_raw": 0,
+                "noise_count_raw": 0,
+                "suspect_count_raw": 0,
                 "counting_since": None,
                 "last_cleanup_at": None,
             }
@@ -1010,6 +1023,10 @@ async def get_lifetime_totals() -> dict:
             "genuine_count": 0,
             "noise_count": 0,
             "suspect_count": 0,
+            "total_alerts_raw": 0,
+            "genuine_count_raw": 0,
+            "noise_count_raw": 0,
+            "suspect_count_raw": 0,
             "counting_since": None,
             "last_cleanup_at": None,
             "error": str(e),
