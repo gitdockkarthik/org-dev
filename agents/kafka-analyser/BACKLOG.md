@@ -1202,6 +1202,69 @@ staleness is obvious without needing auto-refresh enabled.
 
 *Added: 2026-08-10*
 
+### Message rate history -- 3-tier retention (raw -> hourly -> daily), cold archive for old hourly detail (2026-08-10)
+Real finding, investigated with the user: kafka_topic_message_rate_hourly_rollup
+projected to reach ~6.35GB at its full, mature 30-day retention window (only 9.5
+days of data so far, already at 2GB) -- would alone exceed the 4GB Postgres
+container limit. User's explicit direction: don't increase mem_limit or cut the
+30-day retention (needed for incident tracking) -- instead adjust sampling/
+aggregation granularity by age, the standard pattern used by native monitoring
+tools (Prometheus recording rules, InfluxDB continuous queries with tiered
+retention).
+
+**Approved design**: add a third tier. Raw snapshots (<=2h, existing) -> hourly
+rollup (2h-7 days, existing) -> NEW daily rollup (7-30 days). Projected result:
+~1.7GB at full steady state (~4x reduction from the hourly-only projection),
+comfortably within the 4GB limit.
+
+**Confirmed zero UX impact on existing charts**: the 30-day chart view already
+displays at 1-day bucket granularity (get_topic_message_rate's own bucket_interval
+logic) -- this change only pre-computes, at write time, an aggregation the read
+endpoint was already computing at query time. 1h/6h/24h/7d views untouched
+(never read data older than 7 days).
+
+**Real trade-off, discussed openly**: hourly detail for a specific day 7-30 days
+old would no longer be queryable from Postgres after this change (only that
+day's aggregate remains). Considered and rejected for now: a live, on-demand
+OLAP drill-down (MinIO + Parquet + DuckDB, mirroring cur-analyser's own proven
+architecture) that would preserve hourly detail forever, queried only when
+genuinely needed -- too much added complexity for the current, real need,
+deferred as its own future item (see next entry). Instead: before a
+daily-rollup delete, export the aging hourly rows to a lighter, offline archive
+(compressed CSV/JSON per day in MinIO).
+
+**In-app browse/download for the archive** (added after discussion): rather than
+requiring direct MinIO access/credentials to retrieve an archived file, a small
+addition to today's scope -- a backend endpoint listing available archive files
+(by date/topic) from MinIO and streaming a requested file on demand, surfaced as
+a simple "Archived Data" list in the dashboard. No query engine needed (this is
+list + download only, not the DuckDB drill-down below) -- small, additive UX on
+top of the archive mechanism already being built.
+
+**Scope for implementation**: new kafka_topic_message_rate_daily_rollup table +
+migration; extend rollup_topic_message_rates to also aggregate hourly rows
+older than 7 days into daily buckets (same proven aggregate-then-delete pattern
+already used for raw->hourly) with the lighter CSV/JSON export to MinIO before
+deletion; extend get_topic_message_rate to blend three tiers (same dynamic-
+boundary approach already used for raw/hourly, extended to a second boundary);
+new endpoint + small UI section to list/download archived files.
+
+*Added: 2026-08-10*
+
+### Message rate history -- OLAP-style drill-down via MinIO + Parquet + DuckDB (deferred, future value-add)
+Deferred from the tiered-retention work above (see that entry for full context).
+Rather than the lighter offline CSV/JSON archive being built now, this is the
+fuller version: archived hourly rows stored as ZSTD-compressed Parquet in MinIO
+(mirroring cur-analyser's own proven architecture -- DuckDB as a pure query
+engine over Parquet, not persistent storage), with a genuine on-demand read path
+wired into the dashboard so a drill-down into an old incident's hourly detail
+works live, in the UI, rather than requiring a manual file pull. User's own
+framing: "will add a real value at the UI side later" -- explicitly a future
+enhancement once the lighter archive is in place and the real drill-down need is
+better understood from actual usage.
+
+*Added: 2026-08-10*
+
 ### In-memory-state + run_in_executor cancellation audit — completed 2026-08-01
 Full findings: 9 module-level state dicts total, classified by restart consequence.
 `_jobs` (jobs.py) and `_lag_trend_cache` (routes_dashboard.py) — zero risk, rebuilt from

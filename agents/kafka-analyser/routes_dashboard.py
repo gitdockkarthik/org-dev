@@ -1339,6 +1339,18 @@ async def get_topic_message_rate(
                 # requested range, correctly using all available raw data.
                 cutoff = range_start - timedelta(days=1)
 
+            # Same dynamic-boundary approach, one tier further down: the real edge
+            # between "still in hourly_rollup" and "aged into daily_rollup" (rollup_hourly_to_daily
+            # deletes hourly rows once rolled up). MIN(hour_bucket) of what's left in
+            # hourly_rollup IS this boundary -- more direct than querying daily_rollup's max,
+            # since it can't drift out of sync with what hourly actually still holds.
+            min_hourly_row = await session.execute(text("""
+                SELECT MIN(hour_bucket) as min_bucket FROM kafka_topic_message_rate_hourly_rollup
+                WHERE cluster_id = :cluster_id
+            """), {"cluster_id": int(cluster_id)})
+            min_hourly = min_hourly_row.fetchone()
+            daily_cutoff = min_hourly.min_bucket if min_hourly and min_hourly.min_bucket else (range_start - timedelta(days=1))
+
             topic_filter_sql = "AND topic = :topic" if topic else ""
 
             # If the requested range doesn't reach past the cutoff, use raw table only
@@ -1420,6 +1432,11 @@ async def get_topic_message_rate(
                     FROM grouped
                 """
 
+                # hourly_rollup only actually holds rows from daily_cutoff forward (anything
+                # older was already deleted once rolled into daily_rollup) -- bound the query
+                # accordingly rather than querying a range it can no longer satisfy.
+                hourly_query_start = max(range_start, daily_cutoff)
+
                 sql_rollup = f"""
                     SELECT
                         date_bin(
@@ -1431,7 +1448,7 @@ async def get_topic_message_rate(
                         COALESCE(SUM(total_outflow), 0)::bigint AS total_outflow
                     FROM kafka_topic_message_rate_hourly_rollup
                     WHERE cluster_id = :cluster_id
-                    AND hour_bucket >= :range_start
+                    AND hour_bucket >= :hourly_query_start
                     AND hour_bucket < :cutoff
                     {topic_filter_sql}
                     GROUP BY date_bin(
@@ -1441,13 +1458,40 @@ async def get_topic_message_rate(
                     )
                 """
 
-                params = {"cluster_id": int(cluster_id), "cutoff": cutoff, "range_start": range_start}
+                sql_daily = f"""
+                    SELECT
+                        date_bin(
+                            '{bucket_interval}'::INTERVAL,
+                            day_bucket,
+                            TIMESTAMP '2001-01-01'
+                        ) AS bucket_time,
+                        COALESCE(SUM(total_inflow), 0)::bigint AS total_inflow,
+                        COALESCE(SUM(total_outflow), 0)::bigint AS total_outflow
+                    FROM kafka_topic_message_rate_daily_rollup
+                    WHERE cluster_id = :cluster_id
+                    AND day_bucket >= :range_start
+                    AND day_bucket < :daily_cutoff
+                    {topic_filter_sql}
+                    GROUP BY date_bin(
+                        '{bucket_interval}'::INTERVAL,
+                        day_bucket,
+                        TIMESTAMP '2001-01-01'
+                    )
+                """
+
+                params = {
+                    "cluster_id": int(cluster_id), "cutoff": cutoff, "range_start": range_start,
+                    "hourly_query_start": hourly_query_start, "daily_cutoff": daily_cutoff,
+                }
                 if topic:
                     params["topic"] = topic
 
-                # Execute both queries
+                # Execute all three tiers -- daily only actually needed when the range reaches
+                # that far back, but the query is cheap/empty-returning otherwise so no need
+                # to conditionally skip it.
                 raw_rows = await session.execute(text(sql_raw), params)
                 rollup_rows = await session.execute(text(sql_rollup), params)
+                daily_rows = await session.execute(text(sql_daily), params)
 
                 # Merge results: combine into one dict keyed by bucket_time, summing duplicates
                 merged = {}
@@ -1459,6 +1503,13 @@ async def get_topic_message_rate(
                     merged[key]["outflow"] += r.total_outflow
 
                 for r in rollup_rows.fetchall():
+                    key = r.bucket_time
+                    if key not in merged:
+                        merged[key] = {"inflow": 0, "outflow": 0}
+                    merged[key]["inflow"] += r.total_inflow
+                    merged[key]["outflow"] += r.total_outflow
+
+                for r in daily_rows.fetchall():
                     key = r.bucket_time
                     if key not in merged:
                         merged[key] = {"inflow": 0, "outflow": 0}

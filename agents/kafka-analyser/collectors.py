@@ -1431,11 +1431,10 @@ async def rollup_topic_message_rates(retention_hours: int = 2) -> dict:
             """), {"cutoff": cutoff})
             await sess.commit()
 
-            # Step 3: separately, purge rollup rows beyond 30 days -- the real,
-            # verified retention need (matches the UI's own "Last 30 days" maximum
-            # time-filter option; nothing in the codebase queries this table beyond
-            # that range). Independent concern from the raw-data cutoff above, so it
-            # gets its own cutoff and its own commit.
+            # Step 3: safety-net purge -- rollup rows beyond 30 days that somehow
+            # weren't caught by the daily-rollup step below (e.g. if that step is
+            # ever disabled or fails repeatedly). Should rarely fire in normal
+            # operation once the 7-day daily-rollup step (below) is active.
             rollup_cutoff = datetime.now(timezone.utc) - timedelta(days=30)
             rollup_del_result = await sess.execute(_t("""
                 DELETE FROM kafka_topic_message_rate_hourly_rollup
@@ -1446,7 +1445,7 @@ async def rollup_topic_message_rates(retention_hours: int = 2) -> dict:
         rollup_topic_message_rates._last_result = (
             f"Rolled up rows older than {cutoff.isoformat()}, "
             f"deleted {del_result.rowcount} raw rows, "
-            f"purged {rollup_del_result.rowcount} rollup rows beyond 30 days"
+            f"purged {rollup_del_result.rowcount} rollup rows beyond 30 days (safety net)"
         )
         return {"deleted": del_result.rowcount, "rollup_purged": rollup_del_result.rowcount}
     except Exception as e:
@@ -1455,10 +1454,122 @@ async def rollup_topic_message_rates(retention_hours: int = 2) -> dict:
         return {"error": str(e)}
 
 
+def _get_minio_client():
+    """Local MinIO client for the kafka message-rate cold archive -- same shared
+    MinIO instance used elsewhere on this platform, own dedicated bucket."""
+    import boto3
+    import os
+    return boto3.client(
+        "s3",
+        endpoint_url=os.environ.get("MINIO_ENDPOINT", "http://minio:9000"),
+        aws_access_key_id=os.environ.get("MINIO_ROOT_USER", "langfuse"),
+        aws_secret_access_key=os.environ.get("MINIO_ROOT_PASSWORD", "langfuse123"),
+    )
+
+
+_KAFKA_ARCHIVE_BUCKET = "kafka-message-rate-archive"
+
+
+async def rollup_hourly_to_daily(retention_days: int = 7) -> dict:
+    """Roll up kafka_topic_message_rate_hourly_rollup rows older than retention_days
+    into kafka_topic_message_rate_daily_rollup (daily granularity). Before deleting
+    the aged-out hourly rows, exports them to MinIO as CSV (cold archive, not lost
+    data) grouped by cluster+day. Same aggregate-then-delete safety pattern as
+    rollup_topic_message_rates."""
+    from database import SessionLocal
+    from sqlalchemy import text as _t
+    from datetime import datetime, timezone, timedelta
+    if SessionLocal is None:
+        return {"error": "DB unavailable"}
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    try:
+        async with SessionLocal() as sess:
+            # Step 1: aggregate everything older than cutoff into daily buckets,
+            # idempotent upsert -- safe to re-run, never double-counts.
+            await sess.execute(_t("""
+                INSERT INTO kafka_topic_message_rate_daily_rollup
+                    (cluster_id, topic, day_bucket, total_inflow, total_outflow, sample_count)
+                SELECT
+                    cluster_id,
+                    topic,
+                    date_trunc('day', hour_bucket) AS day_bucket,
+                    COALESCE(SUM(total_inflow), 0) AS total_inflow,
+                    COALESCE(SUM(total_outflow), 0) AS total_outflow,
+                    SUM(sample_count) AS sample_count
+                FROM kafka_topic_message_rate_hourly_rollup
+                WHERE hour_bucket < :cutoff
+                GROUP BY cluster_id, topic, date_trunc('day', hour_bucket)
+                ON CONFLICT (cluster_id, topic, day_bucket) DO UPDATE SET
+                    total_inflow = EXCLUDED.total_inflow,
+                    total_outflow = EXCLUDED.total_outflow,
+                    sample_count = EXCLUDED.sample_count
+            """), {"cutoff": cutoff})
+            await sess.commit()
+
+            # Step 2: export the soon-to-be-deleted hourly rows to MinIO as a cold
+            # archive, grouped by cluster+day (one CSV per cluster per day). Best
+            # effort -- if MinIO is unreachable, log and continue with the delete
+            # anyway rather than block retention on an archive failure; the data
+            # still exists in daily_rollup, only the hourly-level detail is lost
+            # for that one cycle if this genuinely fails.
+            rows_result = await sess.execute(_t("""
+                SELECT cluster_id, topic, hour_bucket, total_inflow, total_outflow, sample_count
+                FROM kafka_topic_message_rate_hourly_rollup
+                WHERE hour_bucket < :cutoff
+                ORDER BY cluster_id, date_trunc('day', hour_bucket), topic, hour_bucket
+            """), {"cutoff": cutoff})
+            rows = rows_result.fetchall()
+            archived_files = 0
+            if rows:
+                import csv
+                import io
+                groups: dict[tuple, list] = {}
+                for r in rows:
+                    day_key = r.hour_bucket.strftime("%Y-%m-%d")
+                    groups.setdefault((r.cluster_id, day_key), []).append(r)
+                try:
+                    s3 = _get_minio_client()
+                    try:
+                        s3.head_bucket(Bucket=_KAFKA_ARCHIVE_BUCKET)
+                    except Exception:
+                        s3.create_bucket(Bucket=_KAFKA_ARCHIVE_BUCKET)
+                    for (cid, day_key), group_rows in groups.items():
+                        buf = io.StringIO()
+                        writer = csv.writer(buf)
+                        writer.writerow(["cluster_id", "topic", "hour_bucket", "total_inflow", "total_outflow", "sample_count"])
+                        for r in group_rows:
+                            writer.writerow([r.cluster_id, r.topic, r.hour_bucket.isoformat(), r.total_inflow, r.total_outflow, r.sample_count])
+                        key = f"cluster-{cid}/{day_key}.csv"
+                        s3.put_object(Bucket=_KAFKA_ARCHIVE_BUCKET, Key=key, Body=buf.getvalue().encode("utf-8"))
+                        archived_files += 1
+                except Exception as archive_exc:
+                    logger.warning("rollup_hourly_to_daily: MinIO archive failed, continuing with delete: %s", archive_exc)
+
+            # Step 3: delete the now-safely-rolled-up (and archived, if MinIO
+            # succeeded) hourly rows, using the SAME cutoff.
+            del_result = await sess.execute(_t("""
+                DELETE FROM kafka_topic_message_rate_hourly_rollup
+                WHERE hour_bucket < :cutoff
+            """), {"cutoff": cutoff})
+            await sess.commit()
+
+        rollup_hourly_to_daily._last_result = (
+            f"Rolled up hourly rows older than {cutoff.isoformat()} into daily buckets, "
+            f"archived {archived_files} cluster/day CSV file(s) to MinIO, "
+            f"deleted {del_result.rowcount} hourly rows"
+        )
+        return {"deleted": del_result.rowcount, "archived_files": archived_files}
+    except Exception as e:
+        logger.error("rollup_hourly_to_daily failed: %s", e)
+        rollup_hourly_to_daily._last_result = f"Failed: {e}"
+        return {"error": str(e)}
+
+
 async def run_snapshot_rollups() -> dict:
     """Single job entry point -- calls each configured table's rollup function.
     Add new tables here as one more function call, not a new job registration."""
     results = {}
-    results["topic_message_rates"] = await rollup_topic_message_rates(retention_hours=6)
+    results["topic_message_rates"] = await rollup_topic_message_rates(retention_hours=2)
+    results["hourly_to_daily"] = await rollup_hourly_to_daily(retention_days=7)
     run_snapshot_rollups._last_result = f"Rollup pass: {results}"
     return results
