@@ -1234,6 +1234,7 @@
         const statusTitle = isConnectNoOffsets ? 'title="No committed offsets found — source connector (writes to Kafka, does not consume) or currently idle. Not measurable as healthy/unhealthy."' : '';
         return `<tr>
           <td data-copy="${groupId}" title="${groupId}"><div class="cg-cell"><span class="cg-cell-text" style="font-weight:600">${groupId}</span>${copyBtn}</div></td>
+          <td class="cg-source-cell" data-gid="${groupId.replace(/"/g,'&quot;')}"></td>
           <td><div class="cg-cell"><span class="cg-cell-text"><code style="font-size:.8rem">${topicCellHtml}</code></span></div></td>
           <td ${lagColor}>${fmtNum(g.total_lag)}</td>
           <td>${trendHtml}</td>
@@ -1300,7 +1301,7 @@
         <div class="chart-card__title">Consumer Group Inventory</div>
         <div class="data-table-wrap">
           <table class="data-table cg-table">
-            <thead><tr><th style="width:22%;max-width:220px">Group</th><th style="width:25%;max-width:250px">Topic</th><th style="width:10%;cursor:pointer" onclick="window._toggleColumnSort(window._cgView, 'sortLag', 'cg-lag-sort-arrow', window._cgApplyView)">Total Lag<span id="cg-lag-sort-arrow"></span></th><th style="width:10%">Trend</th><th style="width:10%">Rate/min</th><th style="width:8%">Status</th></tr></thead>
+            <thead><tr><th style="width:18%;max-width:200px">Group</th><th style="width:17%;max-width:180px">Source</th><th style="width:20%;max-width:200px">Topic</th><th style="width:10%;cursor:pointer" onclick="window._toggleColumnSort(window._cgView, 'sortLag', 'cg-lag-sort-arrow', window._cgApplyView)">Total Lag<span id="cg-lag-sort-arrow"></span></th><th style="width:10%">Trend</th><th style="width:10%">Rate/min</th><th style="width:8%">Status</th></tr></thead>
             <tbody id="cg-tbody"></tbody>
           </table>
         </div>
@@ -1351,7 +1352,8 @@
         const tbody = document.getElementById('cg-tbody');
         if (tbody) {
           tbody.innerHTML = shown.map(cgRowHtml).join('') ||
-            `<tr><td colspan="6" class="data-table__empty">No consumer groups match</td></tr>`;
+            `<tr><td colspan="7" class="data-table__empty">No consumer groups match</td></tr>`;
+          if (window._cgApplySourceBadges) window._cgApplySourceBadges();
         }
         const label = document.getElementById('cg-count-label');
         if (label) {
@@ -1412,6 +1414,33 @@
           if (el1) el1.textContent = text;
         } catch (e) {
           console.warn('last-synced fetch failed:', e);
+        }
+      })();
+
+      window._cgApplySourceBadges = function () {
+        if (!window._cgSources) return;
+        const badgeStyle = {
+          connector: 'background:var(--bg-accent);color:var(--text-accent)',
+          mirrormaker: 'background:var(--bg-warning);color:var(--text-warning)',
+          standalone: 'background:var(--surface-1);color:var(--text-secondary)',
+        };
+        document.querySelectorAll('.cg-source-cell').forEach(cell => {
+          const gid = cell.getAttribute('data-gid');
+          const src = window._cgSources[gid];
+          if (!src) return;
+          const style = badgeStyle[src.type] || badgeStyle.standalone;
+          cell.innerHTML = `<span style="${style};padding:2px 8px;border-radius:var(--radius);font-size:.72rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:inline-block;max-width:100%" title="${src.label.replace(/"/g,'&quot;')}">${src.label}</span>`;
+        });
+      };
+      (async () => {
+        try {
+          const cid = _currentClusterId || document.getElementById('ctrl-cluster')?.value;
+          const res = await fetch(`${PROXY}/dashboard/consumer-groups/sources?cluster_id=${cid}`, { headers: _authHeaders(), cache: 'no-store' });
+          const d = await res.json();
+          window._cgSources = d.sources || {};
+          window._cgApplySourceBadges();
+        } catch (e) {
+          console.warn('consumer-group sources fetch failed:', e);
         }
       })();
 
