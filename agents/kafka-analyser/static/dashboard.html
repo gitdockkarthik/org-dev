@@ -829,6 +829,11 @@
         <div class="chart-card" style="margin-bottom:22px">
           <div class="chart-card__title">Message Volume — Real In/Out (msgs/sec)</div>
           <div class="chart-wrap" id="overview-messages-wrap" style="height:220px"><canvas id="overview-messages-chart"></canvas></div>
+        </div>
+        <div class="chart-card" style="margin-bottom:22px">
+          <div class="chart-card__title">Archived Message-Rate Data</div>
+          <div style="font-size:.75rem;color:var(--text-muted);margin-bottom:8px">Hourly detail older than 7 days, archived here before being summarized into daily aggregates — download for incident investigation</div>
+          <div id="archive-file-list"><div style="color:var(--text-muted);font-size:.82rem;padding:8px">Loading...</div></div>
         </div>`;
 
       const topByParts = [...topics].sort((a, b) => partsOf(b) - partsOf(a)).slice(0, 10);
@@ -1012,6 +1017,60 @@
             noMessagesData();
           }
         }
+
+        // ── Archived message-rate data (browse/download the MinIO cold archive) ────
+        (async () => {
+          const listEl = document.getElementById('archive-file-list');
+          if (!listEl) return;
+          try {
+            const cid = window._currentClusterId || (typeof _currentClusterId !== 'undefined' ? _currentClusterId : null)
+              || document.getElementById('ctrl-cluster')?.value;
+            const res = await fetch(`${PROXY}/dashboard/topics/message-rate/archive?cluster_id=${cid}`,
+              { headers: _authHeaders(), cache: 'no-store' });
+            const d = await res.json();
+            const files = d.files || [];
+            if (!files.length) {
+              listEl.innerHTML = '<div style="color:var(--text-muted);font-size:.82rem;padding:8px">No archived data yet — data ages into the archive after 7 days</div>';
+              return;
+            }
+            const fmtSize = (b) => b > 1024*1024 ? (b/1024/1024).toFixed(1) + ' MB' : (b/1024).toFixed(0) + ' KB';
+            listEl.innerHTML = files.map((f, i) => `
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border)">
+                <span style="font-size:.82rem"><code>${f.filename}</code> <span style="color:var(--text-muted)">(${fmtSize(f.size_bytes)})</span></span>
+                <a href="#" id="archive-dl-${i}" style="font-size:.78rem;color:var(--accent)">Download CSV</a>
+              </div>`).join('');
+            files.forEach((f, i) => {
+              const link = document.getElementById(`archive-dl-${i}`);
+              if (!link) return;
+              link.addEventListener('click', async (ev) => {
+                ev.preventDefault();
+                link.textContent = 'Downloading…';
+                try {
+                  const res = await fetch(`${PROXY}/dashboard/topics/message-rate/archive/download?cluster_id=${cid}&filename=${encodeURIComponent(f.filename)}`,
+                    { headers: _authHeaders() });
+                  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                  const blob = await res.blob();
+                  const blobUrl = URL.createObjectURL(blob);
+                  const tempLink = document.createElement('a');
+                  tempLink.href = blobUrl;
+                  tempLink.download = `cluster-${cid}-${f.filename}`;
+                  document.body.appendChild(tempLink);
+                  tempLink.click();
+                  document.body.removeChild(tempLink);
+                  URL.revokeObjectURL(blobUrl);
+                } catch (dlErr) {
+                  console.warn('Archive download failed:', dlErr);
+                  alert('Download failed: ' + dlErr.message);
+                } finally {
+                  link.textContent = 'Download CSV';
+                }
+              });
+            });
+          } catch (e) {
+            listEl.innerHTML = '<div style="color:var(--text-muted);font-size:.82rem;padding:8px">Failed to load archive list</div>';
+            console.warn('Archive list failed:', e);
+          }
+        })();
 
         if (window._overviewLagTrendChart) { window._overviewLagTrendChart.destroy(); window._overviewLagTrendChart = null; }
         const lagCtx = document.getElementById('overview-lag-trend-chart')?.getContext('2d');
