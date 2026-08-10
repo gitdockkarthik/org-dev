@@ -379,5 +379,8 @@ first-with-fallback contract via shared/llm.py, with zero bespoke per-agent
 LLM-calling code. The "native vs standalone" distinction that existed at the
 start of this initiative no longer exists anywhere in the codebase.
 
-Remaining, deferred (not urgent): relabel Langfuse dashboard "User" column
-to "Initiator" for clarity (cosmetic, not started).
+DONE (commit eccf151): relabeled LLM Usage dashboard's "User" column and
+filter dropdown to "Initiator" in portal/admin/audit.html — correctly
+reflects that this field shows either a real user's email (portal chat) or
+"Application: <Agent Name>" (Gateway service call). Audit-log table's
+separate "User" column (unrelated, different table) left unchanged.
