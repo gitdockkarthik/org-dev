@@ -259,6 +259,33 @@ async def store_report(classified: list[dict], meta: dict) -> None:
                     }
                 )
                 await _sum_sess.commit()
+
+                # Increment agent's lifetime totals (skip if no new alerts)
+                if new_alerts > 0:
+                    await _sum_sess.execute(
+                        text("""
+                            INSERT INTO alert_lifetime_totals
+                              (agent_slug, total_alerts, genuine_count,
+                               noise_count, suspect_count, counting_since)
+                            VALUES
+                              (:slug, :new_alerts, :new_genuine,
+                               :new_noise, :new_suspect, NOW())
+                            ON CONFLICT (agent_slug) DO UPDATE SET
+                              total_alerts = alert_lifetime_totals.total_alerts + :new_alerts,
+                              genuine_count = alert_lifetime_totals.genuine_count + :new_genuine,
+                              noise_count = alert_lifetime_totals.noise_count + :new_noise,
+                              suspect_count = alert_lifetime_totals.suspect_count + :new_suspect,
+                              updated_at = NOW()
+                        """),
+                        {
+                            "slug": settings.agent_slug,
+                            "new_alerts": new_alerts,
+                            "new_genuine": new_genuine,
+                            "new_noise": new_noise,
+                            "new_suspect": new_suspect,
+                        }
+                    )
+                    await _sum_sess.commit()
         except Exception as _e:
             logger.warning("store_report: summary insert failed: %s", _e)
 

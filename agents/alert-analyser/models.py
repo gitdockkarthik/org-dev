@@ -42,6 +42,29 @@ class AlertReport(Base):
     )
 
 
+class AlertLifetimeTotal(Base):
+    __tablename__ = "alert_lifetime_totals"
+
+    agent_slug: Mapped[str] = mapped_column(String, primary_key=True, nullable=False)
+    total_alerts: Mapped[int] = mapped_column(Integer, default=0)
+    genuine_count: Mapped[int] = mapped_column(Integer, default=0)
+    noise_count: Mapped[int] = mapped_column(Integer, default=0)
+    suspect_count: Mapped[int] = mapped_column(Integer, default=0)
+    counting_since: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )
+    last_cleanup_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 class AlertJobSchedule(Base):
     __tablename__ = "alert_job_schedules"
 

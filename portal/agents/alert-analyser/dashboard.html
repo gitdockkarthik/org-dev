@@ -523,7 +523,7 @@
             api(_dashUrl),
             api('/settings').catch(() => ({})),
             api(_periodUrl).catch(() => ({})),
-            api('/dashboard').catch(() => ({})),
+            api('/dashboard/lifetime').catch(() => ({})),
         ]);
         window._periodData = periodData;
         window._allTimeData = allTimeData;
@@ -877,7 +877,7 @@
 
     function renderOverview() {
       const s = stats;
-      const sAllTime = window._allTimeData?.stats || stats;
+      const sAllTime = window._allTimeData || stats;
       const suspectCount = s.suspect_count || 0;
       const noisePct = s.total ? Math.round(s.noise_count / s.total * 1000) / 10 : 0;
       const suspectPct = s.total ? Math.round(suspectCount / s.total * 1000) / 10 : 0;
@@ -895,36 +895,44 @@
           : 'No syncs';
 
       // Row 1 — All time totals
+      const _formatDate = (isoStr) => {
+        if (!isoStr) return '—';
+        try {
+          const d = new Date(isoStr);
+          const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+          return `${d.getUTCDate()} ${months[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+        } catch (e) { return '—'; }
+      };
+      const countingSinceStr = _formatDate(sAllTime.counting_since);
+      const lastCleanupStr = _formatDate(sAllTime.last_cleanup_at);
       const row1HTML = `
       <div style="font-size:.75rem;font-weight:600;color:var(--text-muted);
         letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px">
         ${oldestLabel} — Overall
       </div>
+      <div style="font-size:.73rem;color:var(--text-dim);margin-bottom:12px">
+        Since: ${countingSinceStr} · Last cleanup: ${lastCleanupStr}
+      </div>
       <div class="kpi-grid" style="margin-bottom:20px">
         <div class="kpi kpi--accent">
           <div class="kpi__label">TOTAL ALERTS</div>
-          <div class="kpi__value">${sAllTime.total.toLocaleString()}</div>
-          <div class="kpi__sub">${sAllTime.duplicate_count > 0 ? `(${sAllTime.total_raw} total · ${sAllTime.duplicate_count} dupes removed)` : 'in dataset'}</div>
+          <div class="kpi__value">${(sAllTime.total_alerts || 0).toLocaleString()}</div>
+          <div class="kpi__sub">cumulative lifetime</div>
         </div>
         <div class="kpi kpi--danger">
           <div class="kpi__label">NOISE</div>
-          <div class="kpi__value">${sAllTime.noise_count.toLocaleString()}</div>
-          <div class="kpi__sub">${sAllTime.noise_duplicates > 0 ? `(${sAllTime.noise_count_raw} total · ${sAllTime.noise_duplicates} dupes removed)` : `${sAllTime.noise_ratio}% noise + ${sAllTime.suspect_ratio?.toFixed(1) || 0}% suspect = ${((sAllTime.noise_count + sAllTime.suspect_count) / sAllTime.total * 100).toFixed(1)}% total`}</div>
+          <div class="kpi__value">${(sAllTime.noise_count || 0).toLocaleString()}</div>
+          <div class="kpi__sub">identified as noise</div>
         </div>
         <div class="kpi kpi--warn">
           <div class="kpi__label">NOISE SUSPECT</div>
-          <div class="kpi__value">${sAllTime.suspect_count.toLocaleString()}</div>
-          <div class="kpi__sub">${sAllTime.suspect_duplicates > 0 ? `(${sAllTime.suspect_count_raw} total · ${sAllTime.suspect_duplicates} dupes removed)` : 'needs human review'}</div>
+          <div class="kpi__value">${(sAllTime.suspect_count || 0).toLocaleString()}</div>
+          <div class="kpi__sub">flagged for review</div>
         </div>
         <div class="kpi kpi--success">
           <div class="kpi__label">GENUINE</div>
-          <div class="kpi__value">${sAllTime.genuine_count.toLocaleString()}</div>
-          <div class="kpi__sub">${sAllTime.genuine_duplicates > 0 ? `(${sAllTime.genuine_count_raw} total · ${sAllTime.genuine_duplicates} dupes removed)` : 'require attention'}</div>
-        </div>
-        <div class="kpi kpi--warn">
-          <div class="kpi__label">MTTR</div>
-          <div class="kpi__value">${Math.round(sAllTime.mttr_minutes)}m</div>
-          <div class="kpi__sub">mean time to resolve</div>
+          <div class="kpi__value">${(sAllTime.genuine_count || 0).toLocaleString()}</div>
+          <div class="kpi__sub">real incidents</div>
         </div>
       </div>`;
 

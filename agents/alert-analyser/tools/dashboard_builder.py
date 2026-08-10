@@ -33,14 +33,11 @@ def _clean_team_name(team) -> str:
     return s
 
 
-# ── Core stats computation ────────────────────────────────────────────────────
-
-def compute_dashboard_stats(classified: list[dict]) -> dict:
-    """Compute full dashboard stats from a classified alert list."""
-    # Deduplicate by alias — keep most recent per alias
-    # Same incident can appear multiple times (open + close events)
+def dedupe_by_alias(alerts: list[dict]) -> list[dict]:
+    """Deduplicate alerts by alias, keeping the most recent per alias.
+    Same incident can appear multiple times (open + close events)."""
     seen: dict[str, dict] = {}
-    for a in classified:
+    for a in alerts:
         alias = a.get("alias") or a.get("id", "")
         if not alias:
             continue
@@ -48,10 +45,18 @@ def compute_dashboard_stats(classified: list[dict]) -> dict:
         if existing is None:
             seen[alias] = a
         else:
-            # Keep most recent
             if a.get("createdAt", "") > existing.get("createdAt", ""):
                 seen[alias] = a
-    deduplicated = list(seen.values())
+    return list(seen.values())
+
+
+# ── Core stats computation ────────────────────────────────────────────────────
+
+def compute_dashboard_stats(classified: list[dict]) -> dict:
+    """Compute full dashboard stats from a classified alert list."""
+    # Deduplicate by alias — keep most recent per alias
+    # Same incident can appear multiple times (open + close events)
+    deduplicated = dedupe_by_alias(classified)
 
     total = len(deduplicated)
     noise_list = [a for a in deduplicated if a["classification"] == "noise"]

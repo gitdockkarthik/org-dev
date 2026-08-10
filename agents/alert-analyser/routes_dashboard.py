@@ -952,6 +952,70 @@ async def get_incident_detail(ticket_id: str) -> dict:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/dashboard/lifetime")
+async def get_lifetime_totals() -> dict:
+    """Return agent's cumulative alert lifetime totals (counts since start of tracking)."""
+    from database import SessionLocal
+    from sqlalchemy import text
+    from config import settings
+    import logging
+    _log = logging.getLogger(__name__)
+
+    if SessionLocal is None:
+        return {
+            "total_alerts": 0,
+            "genuine_count": 0,
+            "noise_count": 0,
+            "suspect_count": 0,
+            "counting_since": None,
+            "last_cleanup_at": None,
+        }
+
+    try:
+        async with SessionLocal() as sess:
+            result = await sess.execute(
+                text("""
+                    SELECT total_alerts, genuine_count, noise_count, suspect_count,
+                           counting_since, last_cleanup_at
+                    FROM alert_lifetime_totals
+                    WHERE agent_slug = :slug
+                """),
+                {"slug": settings.agent_slug}
+            )
+            row = result.fetchone()
+
+        if row:
+            return {
+                "total_alerts": row.total_alerts or 0,
+                "genuine_count": row.genuine_count or 0,
+                "noise_count": row.noise_count or 0,
+                "suspect_count": row.suspect_count or 0,
+                "counting_since": row.counting_since.isoformat() if row.counting_since else None,
+                "last_cleanup_at": row.last_cleanup_at.isoformat() if row.last_cleanup_at else None,
+            }
+        else:
+            # No row found; return zeros with null dates (fail-open)
+            return {
+                "total_alerts": 0,
+                "genuine_count": 0,
+                "noise_count": 0,
+                "suspect_count": 0,
+                "counting_since": None,
+                "last_cleanup_at": None,
+            }
+    except Exception as e:
+        _log.error(f"lifetime totals error: {e}")
+        return {
+            "total_alerts": 0,
+            "genuine_count": 0,
+            "noise_count": 0,
+            "suspect_count": 0,
+            "counting_since": None,
+            "last_cleanup_at": None,
+            "error": str(e),
+        }
+
+
 @router.get("/dashboard/escalations")
 async def get_escalation_log(limit: int = 50) -> dict:
     """Return recent escalation log entries."""
