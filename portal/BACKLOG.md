@@ -347,7 +347,37 @@ from live data), streaming via /invoke/stream with correct SSE framing,
 single correctly-labeled Langfuse trace per call confirmed across 3
 independent test calls post-fix.
 
-Next: apply the identical config-only migration to cur-analyser and
-kafka-analyser (should be a fast, low-risk repeat now that the pattern and
-both discovered bugs are fixed at the shared/llm.py level — those two agents
-inherit the fixes automatically once migrated).
+cur-analyser migration DONE (commit 5ed89ca) — config-only (UAP_URL/
+UAP_AGENT_KEY id=16, uses_uap_llm=true). Two additional real bugs found and
+fixed during validation, both structural (benefit every future Gateway-routed
+agent, not just cur-analyser):
+1. _GatewayContentBlock was a plain object, not JSON-serializable — broke
+   tool-use conversation continuation the moment a Gateway response's content
+   got re-appended into messages and sent back through create_message()
+   (TypeError: not JSON serializable). Fixed by making it a dict subclass.
+2. Extended-thinking blocks were serialized without their required
+   thinking/signature fields — Anthropic's real thinking blocks always have
+   thinking='' (empty string, not absent) plus a real signature; the original
+   getattr(b,'thinking',None) truthiness check incorrectly treated the
+   always-empty field as absent, silently dropping signature and causing
+   'messages.N.content.0.thinking.thinking: Field required' on the next
+   turn. Fixed by checking b.type=='thinking' explicitly.
+Validated: real chat against real CUR cost data ($623K total, correct
+service/tax/credit breakdown), streaming, 7 correctly-labeled single traces.
+
+kafka-analyser migration DONE (commit 4a41d60) — config-only, ZERO code
+fixes needed (inherited every fix already made for alert/cur). Validated:
+real chat against a live staging Kafka cluster (real broker CPU/heap metrics,
+325 consumer groups, specific lag/timeout diagnostics, self-reported tool
+errors, chart payload — 96,965 tokens across the full conversation),
+streaming, 3 correctly-labeled single traces.
+
+MIGRATION COMPLETE — all agents (alert-analyser, cur-analyser, kafka-analyser,
+app-support-v2, mock-agent, rca-agent, radar) are now architecturally
+conformant: every agent in the runtime layer uses the identical Gateway-
+first-with-fallback contract via shared/llm.py, with zero bespoke per-agent
+LLM-calling code. The "native vs standalone" distinction that existed at the
+start of this initiative no longer exists anywhere in the codebase.
+
+Remaining, deferred (not urgent): relabel Langfuse dashboard "User" column
+to "Initiator" for clarity (cosmetic, not started).
