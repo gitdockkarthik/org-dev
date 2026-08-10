@@ -902,6 +902,28 @@ async def get_kafka_connect(cluster_id: str | None = None) -> dict:
                         WHERE cluster_id = :cid AND group_id = ANY(:gids) AND updated_at >= NOW() - INTERVAL '20 minutes'
                     """), {"cid": int(cluster_id), "gids": group_ids})
                     lag_by_group = {r.group_id: {"lag": r.total_lag, "topic_count": r.topic_count} for r in _lag_rows.fetchall()}
+                    # PAUSED connectors' consumer groups genuinely stop updating (nothing
+                    # actively consuming), so the 20-min freshness filter above -- correct
+                    # for RUNNING connectors, where stale means "untrustworthy" -- would
+                    # otherwise make a paused connector's real, often-worst-case lag
+                    # silently invisible. Separate, unfiltered lookup for paused connectors
+                    # only, with the actual age surfaced so the UI can show it's not live.
+                    paused_group_ids = [
+                        c.get("group_id_override") or f"connect-{c.get('name', '')}"
+                        for c in all_connectors if c.get("name") and c.get("state") == "PAUSED"
+                    ]
+                    stale_lag_by_group: dict[str, dict] = {}
+                    if paused_group_ids:
+                        _stale_rows = await _csess.execute(_cct("""
+                            SELECT group_id, total_lag, topic_count, updated_at FROM kafka_consumer_group_lag
+                            WHERE cluster_id = :cid AND group_id = ANY(:gids)
+                        """), {"cid": int(cluster_id), "gids": paused_group_ids})
+                        for r in _stale_rows.fetchall():
+                            if r.group_id not in lag_by_group:
+                                stale_lag_by_group[r.group_id] = {
+                                    "lag": r.total_lag, "topic_count": r.topic_count,
+                                    "lag_stale_since": r.updated_at.isoformat() if r.updated_at else None,
+                                }
                     # Trend/rate -- same aggregation already built and validated for the
                     # Consumer Groups tab, reused here to power the new bubble chart's
                     # y-axis (lag rate) without duplicating the underlying data source.
@@ -926,9 +948,10 @@ async def get_kafka_connect(cluster_id: str | None = None) -> dict:
                         logger.warning("connector trend lookup failed: %s", _ctre)
                     for c in all_connectors:
                         gid = c.get("group_id_override") or f"connect-{c.get('name', '')}"
-                        _lg = lag_by_group.get(gid, {})
+                        _lg = lag_by_group.get(gid) or stale_lag_by_group.get(gid, {})
                         c["lag"] = _lg.get("lag")
                         c["topic_count"] = _lg.get("topic_count")
+                        c["lag_stale_since"] = _lg.get("lag_stale_since")
                         c["lag_rate_per_min"] = trend_by_group.get(gid, 0.0)
     except Exception as _lag_exc:
         logger.warning("connector lag lookup failed: %s", _lag_exc)
