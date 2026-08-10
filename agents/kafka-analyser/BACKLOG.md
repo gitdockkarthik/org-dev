@@ -1180,6 +1180,39 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Uncommitted-partition lag / architectural gap awareness -- deferred, needs own discussion (2026-08-10)
+Discovered while investigating a real partition-count discrepancy report:
+operative-datastream01-hist has only ever committed offsets to 25 of
+stg_MRD_REPORT_EVENT's real 100 partitions (confirmed directly against live
+Kafka -- not a data bug, this group has simply never consumed from the other
+75). Those 75 uncommitted partitions were confirmed to contain 3,779,254 real,
+unconsumed messages, invisible to any current lag figure (which only sums
+committed partitions).
+
+A backend change surfacing this (true_partition_count, uncommitted_message_count
+per topic in get_consumer_group_topics) was built and validated against real
+data, then explicitly reverted per the user's direction: this is a genuinely
+different kind of finding from operational lag tracking -- an architectural
+gap in how the consuming application(s) were designed, not something the
+platform/support audience needs in the dashboard, and not something to
+introduce without full discussion given the risk of new, un-agreed definitions
+complicating an already-trusted, validated tool. User's explicit concern: adding
+this now, based on one example, risks exactly the kind of premature-conclusion
+mistake that has cost significant rework time this session already.
+
+Two genuinely separate open questions for a future, dedicated discussion:
+1. Whether/how to surface this class of finding at all, and to which audience
+   (user's framing: this may belong to engineering/architecture accountability,
+   not the operational dashboard the platform/support team uses).
+2. If ever included in a lag total, how to handle shared-topic ownership
+   correctly (multiple groups legitimately splitting one topic's partitions) --
+   attributing uncommitted-with-data partitions to the wrong group would be a
+   genuine new error, not a fix.
+
+Do not re-introduce without this discussion happening first.
+
+*Added: 2026-08-10*
+
 ### Cluster 3 (DevQA Kafka Internal) -- collected data purged, config kept for future re-enable (2026-08-10)
 Cluster genuinely disabled (kafka_clusters.enabled=false), no plans to re-enable
 in the near term -- focus has shifted to internal staging (cluster 8), with
