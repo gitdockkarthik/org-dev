@@ -1178,6 +1178,30 @@ click-through to the popup shows accurate partition-level detail.
 
 ---
 
+## Pending
+
+### Lag mismatch vs. external monitoring tool -- investigated, confirmed not a bug (2026-08-10)
+Reported: our dashboard showed a consumer group's (stg-posting-spotreference,
+internal staging) total lag differing by ~219K from an external, legacy Kafka
+monitoring tool at the same rough time.
+
+Root cause confirmed via live, side-by-side comparison at multiple timestamps: the
+dashboard's auto-refresh dropdown defaults to "Off" -- the main Consumer Groups
+table does not re-fetch on its own. A page left open without manually refreshing
+or enabling auto-refresh shows an increasingly stale number while lag is actively
+changing, while the external tool (or our own popup, which does fetch fresh data
+on open) shows the live value -- explains the full gap. Confirmed live: enabling
+30s auto-refresh shows the table tracking the true, current value correctly, no
+lag between table and popup once auto-refresh is on.
+
+No code change made -- feature works as designed, user's own testing confirmed
+it. Documented here so this doesn't get re-investigated as a "calculation bug"
+if reported again; the real fix, if ever prioritized, would be either a
+different default or a visible "as of HH:MM:SS" timestamp on the table so
+staleness is obvious without needing auto-refresh enabled.
+
+*Added: 2026-08-10*
+
 ### In-memory-state + run_in_executor cancellation audit — completed 2026-08-01
 Full findings: 9 module-level state dicts total, classified by restart consequence.
 `_jobs` (jobs.py) and `_lag_trend_cache` (routes_dashboard.py) — zero risk, rebuilt from
