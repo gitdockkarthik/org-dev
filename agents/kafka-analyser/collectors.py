@@ -456,9 +456,10 @@ async def collect_topic_sizes(cluster_id: str = ""):
         from sqlalchemy import text
         async with SessionLocal() as sess:
             if all_topics:
+                all_topics_sorted = sorted(all_topics, key=lambda t: t['topic'])
                 values = ",".join(
                     f"({int(cid)}, '{t['topic'].replace(chr(39), chr(39)*2)}', {t['size_bytes']})"
-                    for t in all_topics
+                    for t in all_topics_sorted
                 )
                 await sess.execute(text(f"""
                     INSERT INTO kafka_topic_metrics
@@ -547,9 +548,10 @@ async def collect_topic_structure(cluster_id: str = ""):
                 from database import SessionLocal
                 from sqlalchemy import text as _pct
                 async with SessionLocal() as sess:
+                    described_topics_sorted = sorted(described_topics, key=lambda t: t['name'])
                     values = ",".join(
                         f"('{t['name'].replace(chr(39), chr(39)*2)}', {t.get('partition_count',0)}, {t.get('replication_factor',0)}, {t.get('under_replicated',0)})"
-                        for t in described_topics
+                        for t in described_topics_sorted
                     )
                     if values:
                         await sess.execute(_pct(f"""
@@ -1098,8 +1100,9 @@ async def collect_msg_rate(cluster_id: str = ""):
             from sqlalchemy import text as _t_zr
             async with _SL_zr() as _sess_zr:
                 _ZR_BULK = 1000
-                for _zi in range(0, len(zero_rate_topics), _ZR_BULK):
-                    _zbatch = zero_rate_topics[_zi:_zi + _ZR_BULK]
+                zero_rate_topics_sorted = sorted(zero_rate_topics)
+                for _zi in range(0, len(zero_rate_topics_sorted), _ZR_BULK):
+                    _zbatch = zero_rate_topics_sorted[_zi:_zi + _ZR_BULK]
                     _zvalues = ", ".join(
                         f"({int(cid)}, '{t.replace(chr(39), chr(39)*2)}')"
                         for t in _zbatch
@@ -1117,7 +1120,7 @@ async def collect_msg_rate(cluster_id: str = ""):
             from sqlalchemy import text
             async with SessionLocal() as sess:
                 _AT_BULK = 1000
-                _at_items = list(active_topics.items())
+                _at_items = sorted(active_topics.items())
                 for _ai in range(0, len(_at_items), _AT_BULK):
                     _abatch = _at_items[_ai:_ai + _AT_BULK]
                     _avalues = ", ".join(
