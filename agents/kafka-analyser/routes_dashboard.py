@@ -1065,6 +1065,45 @@ async def get_connector_topic_breakdown(cluster_id: str | None = None, top_n: in
         return {"connectors": [], "error": str(exc)}
 
 
+@router.get("/dashboard/consumer-groups/sources")
+async def get_consumer_group_sources(cluster_id: str | None = None) -> dict:
+    """Classify every known consumer group's source: Connect-backed (with the
+    actual connector name), MirrorMaker, or Standalone/Application. Powers the
+    Consumer Groups tab's Source column, search-by-connector-name, and CSV
+    export -- built once here rather than duplicated across those three."""
+    if not cluster_id:
+        return {"sources": {}}
+    try:
+        kc_data = await get_kafka_connect(cluster_id)
+        connector_by_group: dict[str, str] = {}
+        for c in kc_data.get("connectors", []):
+            gid = c.get("group_id_override") or f"connect-{c.get('name', '')}"
+            connector_by_group[gid] = c.get("name", "")
+
+        from database import DashboardSessionLocal as SessionLocal
+        from sqlalchemy import text as _t
+        if SessionLocal is None:
+            return {"sources": {}}
+        async with SessionLocal() as sess:
+            rows = await sess.execute(_t("""
+                SELECT DISTINCT group_id FROM kafka_consumer_group_lag WHERE cluster_id = :cid
+            """), {"cid": int(cluster_id)})
+            all_group_ids = [r.group_id for r in rows.fetchall()]
+
+        sources = {}
+        for gid in all_group_ids:
+            if gid in connector_by_group:
+                sources[gid] = {"type": "connector", "label": f"Connector: {connector_by_group[gid]}"}
+            elif "mirror" in gid.lower():
+                sources[gid] = {"type": "mirrormaker", "label": "MirrorMaker"}
+            else:
+                sources[gid] = {"type": "standalone", "label": "Standalone / Application"}
+        return {"sources": sources}
+    except Exception as exc:
+        logger.warning("get_consumer_group_sources failed: %s", exc)
+        return {"sources": {}, "error": str(exc)}
+
+
 @router.get("/dashboard/mirrormaker")
 async def get_mirrormaker(cluster_id: str | None = None, hours: int | None = None) -> dict:
     """Detect MirrorMaker replication and compare source/target lag."""
