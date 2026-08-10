@@ -1352,8 +1352,20 @@
         if (tbody) {
           const activeRows = shown.filter(g => !g.is_stale);
           const staleRows = shown.filter(g => g.is_stale);
-          const sectionHeader = (label, isFirst) =>
-            `<tr><td colspan="6" style="padding:${isFirst ? '8px' : '16px'} 8px 4px;font-size:.72rem;font-weight:600;color:var(--text-muted);${isFirst ? '' : 'border-top:1px solid var(--border)'}">${label}</td></tr>`;
+          const sectionHelp = {
+            'Active groups': "These groups are currently running and being tracked in real time. Their lag numbers reflect what's happening right now.",
+            'Stale groups': "These groups haven't shown any activity recently -- they may have been shut down, deleted, or were just a one-time test. We're still showing their last known numbers, but they may no longer reflect what's actually happening.",
+          };
+          const sectionHeader = (label, isFirst) => {
+            const helpId = `sec-help-${label.replace(/\s+/g,'-')}`;
+            return `<tr><td colspan="6" style="padding:${isFirst ? '8px' : '16px'} 8px 4px;${isFirst ? '' : 'border-top:1px solid var(--border)'}">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span style="font-size:.72rem;font-weight:600;color:var(--text-muted)">${label}</span>
+                <span onclick="const el=document.getElementById('${helpId}');el.style.display=el.style.display==='none'?'block':'none'" style="width:14px;height:14px;border-radius:50%;border:1px solid var(--border-strong);font-size:10px;display:inline-flex;align-items:center;justify-content:center;color:var(--text-secondary);cursor:pointer;flex-shrink:0">?</span>
+              </div>
+              <div id="${helpId}" style="display:none;margin-top:6px;background:var(--surface-1);border-radius:var(--radius);padding:8px 10px;font-size:.72rem;color:var(--text-secondary);max-width:420px;font-weight:400">${sectionHelp[label]}</div>
+            </td></tr>`;
+          };
           let html = '';
           if (activeRows.length) html += sectionHeader('Active groups', true) + activeRows.map(cgRowHtml).join('');
           if (staleRows.length) html += sectionHeader('Stale groups', !activeRows.length) + staleRows.map(cgRowHtml).join('');
