@@ -1180,6 +1180,33 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Consumer group search -- reverted to working client-side group-name search; connector/topic name search parked entirely (2026-08-10)
+User's correct architectural critique: routing all search (including plain
+group-name matching, which worked instantly and purely client-side before
+today) through a new server round-trip for every keystroke was the wrong
+design -- added latency and genuine unreliability (a race condition between
+overlapping requests for partial query strings) even for the simple case that
+never needed a server call at all.
+
+Reverted portal's search input to the original, proven, instant client-side
+group-name matching (window._cgSearch). Connector-name and topic-name search
+(the actual feature that was being added) is parked entirely, not shipped in
+any form -- the backend endpoint itself (GET /dashboard/groups/search) is
+confirmed correct, but the multiple frontend attempts tonight to wire it in
+were unreliable and are not worth the added complexity/risk on top of the
+working baseline.
+
+Right design for a future session, not attempted tonight: keep group-name
+search purely client-side (already fast, reliable, unchanged). For
+connector-name matching, load the consumer-groups/sources data (already built,
+2026-08-10) once upfront alongside the initial groups list, then match
+client-side too -- no per-search server call needed. Only topic-name matching
+genuinely requires a server call, since topic names aren't loaded upfront;
+this could be done as a separate, clearly-distinct search action (not merged
+into the main instant filter) to avoid the same race-condition class of bug.
+
+*Added: 2026-08-10*
+
 ### Uncommitted-partition lag / architectural gap awareness -- deferred, needs own discussion (2026-08-10)
 Discovered while investigating a real partition-count discrepancy report:
 operative-datastream01-hist has only ever committed offsets to 25 of

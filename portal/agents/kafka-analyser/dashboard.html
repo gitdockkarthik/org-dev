@@ -1244,7 +1244,7 @@
 
       const cgFilters = `
         <div class="filter-bar">
-          <input class="filter-input" id="cg-search" placeholder="Search group…" oninput="_serverGroupSearch(this.value)" />
+          <input class="filter-input" id="cg-search" placeholder="Search group…" oninput="window._cgSearch(this.value)" />
         </div>
         <div class="filter-bar">
           <span class="dash-label">Health:</span>
@@ -4621,8 +4621,10 @@
 
     /* ── Server-side group search ────────────────────────── */
     let _groupSearchTimer = null;
+    let _groupSearchGen = 0;
     function _serverGroupSearch(query) {
       clearTimeout(_groupSearchTimer);
+      const myGen = ++_groupSearchGen;
       if (!query || query.length < 2) {
         if (window._cgSearch) window._cgSearch(query);
         return;
@@ -4630,14 +4632,20 @@
       _groupSearchTimer = setTimeout(async () => {
         const cid = _clusterId();
         try {
-          const d = await api('/dashboard/groups/search?cluster_id=' + cid + '&q=' + encodeURIComponent(query));
+          const d = await fetch(`${PROXY}/dashboard/groups/search?cluster_id=${cid}&q=${encodeURIComponent(query)}`, { headers: _authHeaders(), cache: "no-store" }).then(r => r.json());
+          if (myGen !== _groupSearchGen) return;
           if (d.groups && d.groups.length > 0) {
-            window._cgGroups = d.groups;
-            window._cgApplyView && window._cgApplyView();
+            const tbody = document.getElementById("cg-tbody");
+            if (tbody) tbody.innerHTML = d.groups.map(cgRowHtml).join("");
+            const label = document.getElementById("cg-count-label");
+            if (label) label.textContent = `Showing ${d.groups.length} of ${d.groups.length} groups (search)`;
+            const moreBtn = document.getElementById("cg-show-more");
+            if (moreBtn) moreBtn.style.display = "none";
           } else if (window._cgSearch) {
             window._cgSearch(query);
           }
         } catch (e) {
+          if (myGen !== _groupSearchGen) return;
           if (window._cgSearch) window._cgSearch(query);
         }
       }, 400);

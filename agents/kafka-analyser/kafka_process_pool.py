@@ -174,7 +174,7 @@ def _fetch_consumer_lag_worker(bootstrap_servers: str, cluster_config: dict) -> 
                     group_committed[gid] = {
                         tp: (meta.offset if hasattr(meta, 'offset') else meta)
                         for tp, meta in offsets.items()
-                        if (meta.offset if hasattr(meta, 'offset') else meta) > 0
+                        if (meta.offset if hasattr(meta, 'offset') else meta) >= 0
                     }
                 except Exception:
                     group_committed[gid] = {}
