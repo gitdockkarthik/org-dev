@@ -1287,6 +1287,7 @@
         </div>`;
 
       const topLag = [...groups]
+        .filter(g => !g.is_stale)
         .sort((a, b) => (b.total_lag || 0) - (a.total_lag || 0))
         .slice(0, 10);
       const hasLag = groups.some(g => (g.total_lag || 0) > 0);
