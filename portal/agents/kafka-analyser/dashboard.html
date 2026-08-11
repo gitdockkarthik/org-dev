@@ -4578,7 +4578,22 @@
           </div>`;
       }
 
-      el.innerHTML = mmKpis + mmChart + mmDetail;
+      el.innerHTML = `<div id="mm-last-synced" style="font-size:.75rem;color:var(--text-muted);margin-bottom:8px"></div>` + mmKpis + mmChart + mmDetail;
+
+      (async () => {
+        try {
+          const cid = _currentClusterId || document.getElementById('ctrl-cluster')?.value;
+          const res = await fetch(`${PROXY}/dashboard/consumer-groups/last-synced?cluster_id=${cid}`, { headers: _authHeaders(), cache: 'no-store' });
+          const d = await res.json();
+          if (!d.last_synced) return;
+          const dt = new Date(d.last_synced);
+          const mins = Math.round((Date.now() - dt.getTime()) / 60000);
+          const el2 = document.getElementById('mm-last-synced');
+          if (el2) el2.textContent = `Last synced: ${mins < 1 ? 'just now' : mins + 'm ago'}`;
+        } catch (e) {
+          console.warn('MM last-synced fetch failed:', e);
+        }
+      })();
 
       setTimeout(() => {
         if (window._mmLagChart) { window._mmLagChart.destroy(); window._mmLagChart = null; }
