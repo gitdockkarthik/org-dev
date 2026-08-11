@@ -1215,11 +1215,13 @@ async def get_mirrormaker(cluster_id: str | None = None, hours: int | None = Non
             from sqlalchemy import text as _mmt
             if SessionLocal:
                 async with SessionLocal() as _mms:
-                    # Consumer groups
+                    # Consumer groups -- include total_lag, required for
+                    # detect_mirrormaker() to compute real MM1/MM2 lag rather
+                    # than silently defaulting every group to 0.
                     _cg = await _mms.execute(_mmt(
-                        "SELECT group_id FROM kafka_consumer_group_lag WHERE cluster_id=:cid"
+                        "SELECT group_id, total_lag FROM kafka_consumer_group_lag WHERE cluster_id=:cid"
                     ), {"cid": int(cluster_id)})
-                    data["consumer_groups"] = [{"group_id": r.group_id} for r in _cg.fetchall()]
+                    data["consumer_groups"] = [{"group_id": r.group_id, "total_lag": r.total_lag} for r in _cg.fetchall()]
                     # Topics
                     _tn = await _mms.execute(_mmt(
                         "SELECT topic FROM kafka_topic_names WHERE cluster_id=:cid"
@@ -1244,33 +1246,11 @@ async def get_mirrormaker(cluster_id: str | None = None, hours: int | None = Non
             cluster = await get_backend().get_cluster(int(cluster_id))
             if cluster:
                 mirror_mode = cluster.get("mirror_mode", "none")
-                # Override detection with explicit mirror_mode config
-                if mirror_mode and mirror_mode != "none" and not result.get("detected"):
-                    result["detected"] = True
-                    result["mode"] = mirror_mode
-                    result["message"] = f"MirrorMaker {mirror_mode.upper()} configured for this cluster."
-                # For MM1: fetch mirror consumer groups from postgres
-                if mirror_mode == "mm1" and cluster_id:
-                    try:
-                        from database import DashboardSessionLocal as SessionLocal
-                        from sqlalchemy import text as _mm1t
-                        if SessionLocal:
-                            async with SessionLocal() as _mm1s:
-                                _mm1cg = await _mm1s.execute(_mm1t("""
-                                    SELECT group_id, total_lag FROM kafka_consumer_group_lag
-                                    WHERE cluster_id=:cid AND group_id ILIKE '%mirror%' AND updated_at >= NOW() - INTERVAL '20 minutes'
-                                    ORDER BY total_lag DESC
-                                """), {"cid": int(cluster_id)})
-                                mm1_groups = [{"group_id": r.group_id, "total_lag": r.total_lag} for r in _mm1cg.fetchall()]
-                                total_lag = sum(g["total_lag"] for g in mm1_groups)
-                                result["mm1"] = {
-                                    "consumer_groups": mm1_groups,
-                                    "group_count": len(mm1_groups),
-                                    "total_lag": total_lag,
-                                    "health": "healthy" if total_lag == 0 else ("warning" if total_lag < 10000 else "critical"),
-                                }
-                    except Exception as _mm1e:
-                        logger.warning("MM1 group fetch failed: %s", _mm1e)
+                # Detection itself is fully data-driven (detect_mirrormaker
+                # above already found real MM1/MM2 groups by pattern,
+                # independent of any config) -- config is only consulted for
+                # the separate cross-cluster comparison feature below, never
+                # to gate or override whether MirrorMaker was genuinely found.
                 source_id = cluster.get("mirror_source_cluster_id")
 
                 if mirror_mode != "none" and source_id:

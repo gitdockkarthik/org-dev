@@ -11,10 +11,11 @@ from __future__ import annotations
 import re
 from typing import Any
 
-# MM1 consumer group patterns
+# MM1 consumer group patterns -- "mirror" anywhere in the name (not just as a
+# prefix), since real-world naming varies (e.g. "bm-mirror-adops-cg-1" has it
+# mid-name, not at the start).
 _MM1_PATTERNS = [
-    re.compile(r"^mirror[-_]"),
-    re.compile(r"^kafka[-_]mirror"),
+    re.compile(r"mirror", re.IGNORECASE),
     re.compile(r"^mm1[-_]"),
 ]
 
