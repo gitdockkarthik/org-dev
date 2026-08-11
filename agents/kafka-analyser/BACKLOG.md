@@ -1196,6 +1196,23 @@ fragility likely affects other cards too, not just this one.
 
 *Added: 2026-08-11*
 
+### Consumer group search redesign -- DESIGN FROZEN, ready to build (2026-08-11)
+User's explicit final design, replacing the earlier live-typing/dynamic
+multi-field search that was found unreliable and reverted:
+
+- A dropdown: "Search by" with options Consumer Group (default), Connectors,
+  Topics
+- A text input for the search term
+- An explicit Search button (not live/auto-search on keystroke -- deliberately
+  simpler than the earlier attempt, avoiding the race-condition class of bug
+  found there)
+- On click, filter the table rows based on the selected type + term
+
+No dynamic, single-box, auto-detecting search across group/topic/connector at
+once -- explicitly rejected in favor of this simpler, explicit-mode design.
+
+*Added: 2026-08-11*
+
 ### Session summary and pending list -- end of 2026-08-10 evening session
 Genuinely completed and shipped tonight: paused-connector lag fix (3 endpoints),
 consumer group search backend extension + a real Dead-state-group data-integrity
