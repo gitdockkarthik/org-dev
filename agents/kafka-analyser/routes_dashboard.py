@@ -282,6 +282,11 @@ async def get_counts(cluster_id: str | None = None) -> dict:
                     "SELECT COUNT(*) FROM kafka_consumer_group_lag WHERE cluster_id = :cid"
                 ), {"cid": int(cluster_id)})
                 total_groups_count = _gcnt.scalar() or 0
+                _scnt = await _sess3.execute(_text(
+                    "SELECT COUNT(*) FROM kafka_consumer_group_lag WHERE cluster_id = :cid "
+                    "AND updated_at < NOW() - INTERVAL '20 minutes'"
+                ), {"cid": int(cluster_id)})
+                stale_groups_count = _scnt.scalar() or 0
                 _rf1 = await _sess3.execute(_text(
                     "SELECT COUNT(*) FROM kafka_topic_metrics WHERE cluster_id=:cid AND replication_factor=1 AND partition_count>0"
                 ), {"cid": int(cluster_id)})
@@ -315,6 +320,7 @@ async def get_counts(cluster_id: str | None = None) -> dict:
         return {
             "total_topics": total_topics_count or structure.get("total_topics", 0),
             "total_groups": total_groups_count,
+            "stale_groups": stale_groups_count,
             "total_brokers": structure.get("total_brokers", len(brokers)),
             "total_connectors": total_connectors_count,
             "total_rf1": total_rf1_count,
