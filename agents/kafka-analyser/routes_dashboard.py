@@ -1031,14 +1031,22 @@ async def get_connector_topic_breakdown(cluster_id: str | None = None, top_n: in
         kc_data = await get_kafka_connect(cluster_id)
         all_connectors = kc_data.get("connectors", [])
         with_lag = [c for c in all_connectors if (c.get("lag") or 0) > 0]
-        top = sorted(with_lag, key=lambda c: -(c.get("lag") or 0))[:top_n]
+        running_top = sorted(
+            [c for c in with_lag if c.get("state") == "RUNNING"],
+            key=lambda c: -(c.get("lag") or 0)
+        )[:top_n]
+        paused_top = sorted(
+            [c for c in with_lag if c.get("state") != "RUNNING"],
+            key=lambda c: -(c.get("lag") or 0)
+        )[:top_n]
+        top = running_top + paused_top
         if not top:
-            return {"connectors": []}
+            return {"connectors_running": [], "connectors_paused": []}
 
         from database import DashboardSessionLocal as SessionLocal
         from sqlalchemy import text as _t
         if SessionLocal is None:
-            return {"connectors": []}
+            return {"connectors_running": [], "connectors_paused": []}
 
         group_ids = [c.get("group_id_override") or f"connect-{c.get('name', '')}" for c in top]
         async with SessionLocal() as sess:
@@ -1063,16 +1071,18 @@ async def get_connector_topic_breakdown(cluster_id: str | None = None, top_n: in
                 for r in stale_rows.fetchall():
                     topics_by_group.setdefault(r.group_id, []).append({"topic": r.topic, "lag": r.lag})
 
-        result = []
-        for c in top:
-            gid = c.get("group_id_override") or f"connect-{c.get('name', '')}"
-            result.append({
-                "name": c.get("name"),
-                "state": c.get("state"),
-                "total_lag": c.get("lag") or 0,
-                "topics": topics_by_group.get(gid, []),
-            })
-        return {"connectors": result}
+        def _build(connector_list):
+            out = []
+            for c in connector_list:
+                gid = c.get("group_id_override") or f"connect-{c.get('name', '')}"
+                out.append({
+                    "name": c.get("name"),
+                    "state": c.get("state"),
+                    "total_lag": c.get("lag") or 0,
+                    "topics": topics_by_group.get(gid, []),
+                })
+            return out
+        return {"connectors_running": _build(running_top), "connectors_paused": _build(paused_top)}
     except Exception as exc:
         logger.warning("get_connector_topic_breakdown failed: %s", exc)
         return {"connectors": [], "error": str(exc)}
