@@ -4242,8 +4242,10 @@
       overlay.onclick = () => { popup.remove(); overlay.remove(); };
 
       if (type === 'connectors') {
+        const _connCount = (_sloData && _sloData.connectors || []).length;
         popup.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border)">
           <span style="font-weight:700;font-size:1rem">🔌 All Connectors</span>${closeBtn}</div>
+          <div style="padding:8px 20px 0;font-size:.75rem;color:var(--text-muted)">Showing all ${_connCount.toLocaleString()} connectors</div>
           <div style="padding:12px 20px;border-bottom:1px solid var(--border);display:flex;gap:8px">
             <input id="slo-conn-search" placeholder="Search connector..." oninput="window._filterSLOConnectors()"
               style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--navy-1);color:var(--text);font-size:.82rem;width:250px">
@@ -4304,6 +4306,7 @@
           .then(r=>r.json()).then(gd=>{
             const groups = gd.consumer_groups||[];
             popup.querySelector('div:last-child').innerHTML = `
+              <div style="font-size:.75rem;color:var(--text-muted);margin-bottom:4px">Showing all ${groups.length.toLocaleString()} groups</div>
               <table class="data-table" style="width:100%;margin-top:12px">
                 <thead><tr><th>Group</th><th style="text-align:right">Total Lag</th><th>Status</th></tr></thead>
                 <tbody>${groups.map(g=>{
@@ -4326,7 +4329,9 @@
         fetch(`${PROXY}/dashboard/topics?cluster_id=${cid}&limit=100&offset=0`, { headers: _authHeaders() })
           .then(r=>r.json()).then(td=>{
             const topics = td.topics||[];
+            const totalTopics = td.total || topics.length;
             popup.querySelector('div:last-child').innerHTML = `
+              <div style="font-size:.75rem;color:var(--text-warning,#FF9800);margin-bottom:4px">⚠ Showing top ${topics.length.toLocaleString()} of ${totalTopics.toLocaleString()} topics (by size) -- see the Topics tab for the full list</div>
               <table class="data-table" style="width:100%;margin-top:12px">
                 <thead><tr><th>Topic</th><th style="text-align:right">Size</th><th style="text-align:center">Partitions</th><th style="text-align:center">RF</th></tr></thead>
                 <tbody>${topics.map(tp=>{
