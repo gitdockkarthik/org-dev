@@ -473,7 +473,16 @@ def _fetch_group_lags_worker(bootstrap_servers: str, cluster_config: dict, group
                 if consumer is None:
                     consumer = _get_worker_consumer_client(bootstrap_servers, cluster_config)
                 tps = list(offsets.keys())
-                end_offsets = consumer.end_offsets(tps)
+                # Proven pattern (matches the working scheduled collector) --
+                # bulk end_offsets() is unreliable on this broker version and
+                # can hang/timeout even for a small partition count.
+                end_offsets = {}
+                SEEK_BATCH = 500
+                for i in range(0, len(tps), SEEK_BATCH):
+                    batch_tps = tps[i:i + SEEK_BATCH]
+                    consumer.assign(batch_tps)
+                    consumer.seek_to_end(*batch_tps)
+                    end_offsets.update({tp: consumer.position(tp) for tp in batch_tps})
                 partitions = []
                 total_lag = 0
                 topics = set()
@@ -533,6 +542,52 @@ async def fetch_group_lags_isolated(bootstrap_servers: str, cluster_config: dict
         return {"ok": False, "error": f"Timed out after {timeout}s (worker process killed)"}
     except Exception as exc:
         logger.warning("fetch_group_lags_isolated: unexpected error: %s", exc)
+        return {"ok": False, "error": str(exc)}
+
+
+def _describe_group_worker(bootstrap_servers: str, cluster_config: dict, group_id: str) -> dict:
+    """Runs inside a worker PROCESS -- describes a single consumer group's live
+    Kafka state and real topic subscriptions (from active member metadata),
+    for the on-demand lookup only. Not used by any scheduled job. No
+    admin_lock needed -- this worker process has exclusive use of its own
+    connection."""
+    admin = _get_worker_client(bootstrap_servers, cluster_config)
+    try:
+        groups = admin.describe_consumer_groups([group_id])
+        if not groups:
+            return {"ok": False, "error": "group not found"}
+        g = groups[0]
+        topics = set()
+        for m in g.members:
+            try:
+                topics.update(m.member_metadata.subscription)
+            except Exception:
+                continue
+        return {"ok": True, "state": g.state, "member_count": len(g.members), "subscribed_topics": sorted(topics)}
+    except Exception as exc:
+        _worker_clients.pop(bootstrap_servers, None)
+        return {"ok": False, "error": str(exc)}
+
+
+async def describe_group_isolated(bootstrap_servers: str, cluster_config: dict, group_id: str, timeout: float = 15.0) -> dict:
+    """Main-process-side entry point for describing a single consumer group's
+    live state. Returns {"ok": True, "state": ..., "subscribed_topics": [...]}
+    on success, or {"ok": False, "error": "..."} on failure/timeout."""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    try:
+        future = _process_pool.submit(_describe_group_worker, bootstrap_servers, cluster_config, group_id)
+        result = await loop.run_in_executor(None, future.result, timeout)
+        return result
+    except FutureTimeoutError:
+        logger.warning(
+            "describe_group_isolated: worker process did not respond within %ss for %s / %s -- killing and replacing it",
+            timeout, bootstrap_servers, group_id,
+        )
+        future.cancel()
+        return {"ok": False, "error": f"Timed out after {timeout}s (worker process killed)"}
+    except Exception as exc:
+        logger.warning("describe_group_isolated: unexpected error: %s", exc)
         return {"ok": False, "error": str(exc)}
 
 

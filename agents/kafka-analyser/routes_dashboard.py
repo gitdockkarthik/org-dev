@@ -1142,6 +1142,58 @@ async def get_consumer_group_last_synced(cluster_id: str | None = None) -> dict:
         return {"last_synced": None, "error": str(exc)}
 
 
+@router.get("/dashboard/consumer-groups/{group_id}/live-lag")
+async def get_consumer_group_live_lag(group_id: str, cluster_id: str | None = None) -> dict:
+    """On-demand, single-group live lag lookup -- bypasses the 3-min scheduled
+    collector entirely, safe because it's scoped to exactly one group and
+    user-initiated. Falls back to live group membership/subscription data when
+    the group has zero committed offsets, so 'dirty' groups (active but never
+    committed) are handled honestly rather than showing nothing."""
+    if not cluster_id:
+        return {"error": "cluster_id required"}
+    try:
+        collector = await _collector_for_cluster(cluster_id)
+        result = (await collector.fetch_group_lags([group_id]))[0]
+        if result.get("total_lag", -1) == -1:
+            return {"group_id": group_id, "error": result.get("error", "lookup failed"), "live": True}
+        if result.get("topic_count", 0) > 0:
+            return {
+                "group_id": group_id,
+                "total_lag": result["total_lag"],
+                "topic_count": result["topic_count"],
+                "partitions": result.get("partitions", []),
+                "live": True,
+                "source": "committed_offsets",
+            }
+        # Zero committed offsets -- check live group membership for a more
+        # honest picture than an empty result (e.g. an active connector that
+        # has simply never committed yet).
+        from kafka_process_pool import describe_group_isolated
+        desc = await describe_group_isolated(collector.bootstrap_servers, {
+            "bootstrap_servers": collector.bootstrap_servers,
+            "auth_type": collector.auth_type,
+            "sasl_username": collector.sasl_username,
+            "sasl_password": collector.sasl_password,
+            "sasl_mechanism": collector.sasl_mechanism,
+            "tls_enabled": collector.tls_enabled,
+        }, group_id, timeout=15.0)
+        if not desc.get("ok"):
+            return {"group_id": group_id, "error": desc.get("error", "describe failed"), "live": True}
+        return {
+            "group_id": group_id,
+            "total_lag": 0,
+            "topic_count": 0,
+            "partitions": [],
+            "live": True,
+            "source": "membership_only",
+            "kafka_state": desc.get("state"),
+            "subscribed_topics": desc.get("subscribed_topics", []),
+        }
+    except Exception as exc:
+        logger.warning("get_consumer_group_live_lag failed: %s", exc)
+        return {"group_id": group_id, "error": str(exc), "live": True}
+
+
 @router.get("/dashboard/mirrormaker")
 async def get_mirrormaker(cluster_id: str | None = None, hours: int | None = None) -> dict:
     """Detect MirrorMaker replication and compare source/target lag."""
