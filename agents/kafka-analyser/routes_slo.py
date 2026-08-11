@@ -262,6 +262,7 @@ async def get_slo_dashboard(cluster_id: str, hours: int = 24) -> dict:
                     "total_tasks": c.get("total_tasks"),
                     "running_tasks": c.get("running_tasks"),
                     "failed_tasks": c.get("failed_tasks"),
+                    "lag": c.get("lag"),
                 }
                 for c in live_connectors
             ],

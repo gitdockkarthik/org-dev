@@ -3815,7 +3815,9 @@
         const s=score(a)-score(b);
         return s!==0?s:taskPct(a)-taskPct(b);
       });
-      const topOffenders = connectors.filter(cn=>cn.state==='FAILED'||(cn.state==='RUNNING'&&cn.failed_tasks>0)).slice(0,5);
+      const activeFailures = connectors.filter(cn=>cn.state==='FAILED'||(cn.state==='RUNNING'&&cn.failed_tasks>0));
+      const pausedWithLag = connectors.filter(cn=>cn.state==='PAUSED'&&(cn.lag||0)>0).sort((a,b)=>(b.lag||0)-(a.lag||0));
+      const topOffenders = [...activeFailures, ...pausedWithLag].slice(0,5);
       const section3 = c.connector_status === 'na' ? `
         <div class="chart-card" style="margin-bottom:16px">
           <div class="chart-card__title">🔌 Connector Availability</div>
@@ -3834,17 +3836,19 @@
           <div style="font-size:.78rem;font-weight:600;color:var(--text-muted);margin-bottom:6px">⚠️ Top Anomalies</div>
           <table style="width:100%;border-collapse:collapse;font-size:.8rem">
             <thead><tr style="color:var(--text-muted);font-size:.72rem">
-              <th style="text-align:left;padding:4px">Connector</th><th style="text-align:center;padding:4px">State</th><th style="text-align:center;padding:4px">Tasks</th><th style="text-align:center;padding:4px">Task SLI</th>
+              <th style="text-align:left;padding:4px">Connector</th><th style="text-align:center;padding:4px">State</th><th style="text-align:center;padding:4px">Tasks</th><th style="text-align:center;padding:4px">Task SLI</th><th style="text-align:right;padding:4px">Lag</th>
             </tr></thead>
             <tbody>${topOffenders.map(cn=>{
               const stateCol=cn.state==='FAILED'?'#F44336':cn.state==='PAUSED'?'#FF9800':cn.failed_tasks>0?'#FF5722':'#4CAF50';
               const taskPct=cn.total_tasks>0?Math.round(cn.running_tasks/cn.total_tasks*100):0;
-              const taskStatus=cn.failed_tasks===0?badge('green','100%'):taskPct>=80?badge('amber',taskPct+'%'):badge('red',taskPct+'%');
+              const taskStatus=cn.state==='PAUSED'?badge('amber','paused'):cn.failed_tasks===0?badge('green','100%'):taskPct>=80?badge('amber',taskPct+'%'):badge('red',taskPct+'%');
+              const lagCell=cn.lag>0?`<span style="color:${cn.lag>10000?'#F44336':'#FF9800'};font-weight:700">${fmtNum(cn.lag)}</span>`:(cn.lag===0?'0':'—');
               return `<tr style="border-top:1px solid var(--border)">
                 <td style="padding:6px 4px"><code style="font-size:.72rem">${cn.name}</code></td>
                 <td style="text-align:center;padding:6px 4px"><span style="color:${stateCol};font-weight:700">${cn.state}</span></td>
                 <td style="text-align:center;padding:6px 4px">${cn.running_tasks||0}/${cn.total_tasks||0}${cn.failed_tasks>0?`<span style="color:#F44336"> (${cn.failed_tasks}✗)</span>`:''}</td>
                 <td style="text-align:center;padding:6px 4px">${taskStatus}</td>
+                <td style="text-align:right;padding:6px 4px">${lagCell}</td>
               </tr>`;
             }).join('')}</tbody>
           </table>`:'<div style="color:#4CAF50;font-size:.82rem;padding:8px">✅ All connectors healthy</div>'}
@@ -4242,15 +4246,20 @@
           </div>
           <div style="overflow-y:auto;flex:1;padding:0 20px 20px">
             <table class="data-table" style="width:100%">
-              <thead><tr><th>Connector</th><th>Type</th><th>State</th><th>Tasks</th><th>Task SLI</th></tr></thead>
+              <thead><tr><th>Connector</th><th>Type</th><th>State</th><th>Tasks</th><th>Task SLI</th><th style="text-align:right">Lag</th></tr></thead>
               <tbody id="slo-conn-tbody"></tbody>
             </table>
           </div>`;
         window._sloConnectorData = (_sloData&&_sloData.connectors||[]).sort((a,b)=>{
-          const score=cn=>cn.state==='FAILED'?0:cn.state==='RUNNING'&&cn.failed_tasks>0?1:cn.state==='RUNNING'?2:3;
-          const taskPct=cn=>cn.total_tasks>0?cn.running_tasks/cn.total_tasks:1;
+          // Active failures always rank first; within paused, real lag sorts
+          // to the top instead of being buried by task-percentage alone --
+          // matches the Top Anomalies table's own priority.
+          const score=cn=>cn.state==='FAILED'?0:cn.state==='RUNNING'&&cn.failed_tasks>0?1:cn.state==='RUNNING'?2:cn.state==='PAUSED'&&(cn.lag||0)>0?3:4;
           const s=score(a)-score(b);
-          return s!==0?s:taskPct(a)-taskPct(b);
+          if (s!==0) return s;
+          if (score(a)===3) return (b.lag||0)-(a.lag||0);
+          const taskPct=cn=>cn.total_tasks>0?cn.running_tasks/cn.total_tasks:1;
+          return taskPct(a)-taskPct(b);
         });
         window._filterSLOConnectors = function() {
           const q = (document.getElementById('slo-conn-search')?.value||'').toLowerCase();
@@ -4263,13 +4272,15 @@
           tbody.innerHTML = filtered.map(cn=>{
             const sc=cn.state==='FAILED'?'#F44336':cn.state==='PAUSED'?'#FF9800':cn.failed_tasks>0?'#FF5722':'#4CAF50';
             const tp=cn.total_tasks>0?Math.round(cn.running_tasks/cn.total_tasks*100):0;
-            const ts=cn.state==='PAUSED'?'— excl.':cn.failed_tasks===0?'✅ 100%':tp>=80?`⚠️ ${tp}%`:`🔴 ${tp}%`;
+            const ts=cn.state==='PAUSED'?'⚠️ paused':cn.failed_tasks===0?'✅ 100%':tp>=80?`⚠️ ${tp}%`:`🔴 ${tp}%`;
+            const lagCell=cn.lag>0?`<span style="color:${cn.lag>10000?'#F44336':'#FF9800'};font-weight:700">${fmtNum(cn.lag)}</span>`:(cn.lag===0?'0':'—');
             return `<tr><td><code style="font-size:.75rem">${cn.name}</code></td>
               <td style="font-size:.8rem;text-transform:capitalize">${cn.type||'—'}</td>
               <td><span style="color:${sc};font-weight:600">${cn.state}</span></td>
               <td>${cn.running_tasks||0}/${cn.total_tasks||0}${cn.failed_tasks>0?` <span style="color:#F44336">(${cn.failed_tasks}✗)</span>`:''}</td>
-              <td>${ts}</td></tr>`;
-          }).join('') || '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted)">No matches</td></tr>';
+              <td>${ts}</td>
+              <td style="text-align:right">${lagCell}</td></tr>`;
+          }).join('') || '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-muted)">No matches</td></tr>';
         };
         window._filterSLOConnectors();
 
