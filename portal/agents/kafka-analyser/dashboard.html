@@ -1637,13 +1637,15 @@
           connector: 'background:var(--bg-accent);color:var(--text-accent)',
           mirrormaker: 'background:var(--bg-warning);color:var(--text-warning)',
           standalone: 'background:var(--surface-1);color:var(--text-secondary)',
+          unmatched_connector_pattern: 'background:var(--bg-warning);color:var(--text-warning);cursor:help',
         };
         document.querySelectorAll('.cg-source-cell').forEach(cell => {
           const gid = cell.getAttribute('data-gid');
           const src = window._cgSources[gid];
           if (!src) return;
           const style = badgeStyle[src.type] || badgeStyle.standalone;
-          cell.innerHTML = `<span style="${style};padding:2px 8px;border-radius:var(--radius);font-size:.72rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:inline-block;max-width:100%" title="${src.label.replace(/"/g,'&quot;')}">${src.label}</span>`;
+          const tooltipText = (src.detail || src.label).replace(/"/g,'&quot;');
+          cell.innerHTML = `<span style="${style};padding:2px 8px;border-radius:var(--radius);font-size:.72rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:inline-block;max-width:100%" title="${tooltipText}">${src.label}</span>`;
         });
       };
       (async () => {
@@ -4137,12 +4139,20 @@
               if (el) el.innerHTML = '<div style="color:var(--text-muted);font-size:.82rem;padding:8px">Monthly data unavailable.</div>';
             });
 
-          // Load top lag groups
-          fetch(`${PROXY}/dashboard/consumer-groups?cluster_id=${cid}`, { headers: _authHeaders() })
-            .then(r => r.json()).then(gd => {
+          // Load top lag groups -- excludes connector-backed groups, since
+          // their lag is already shown with more context (task state,
+          // running/paused) in the Connector Availability section above.
+          // This list's own purpose is to surface standalone/application
+          // consumer problems that would otherwise be crowded out.
+          Promise.all([
+            fetch(`${PROXY}/dashboard/consumer-groups?cluster_id=${cid}`, { headers: _authHeaders() }).then(r => r.json()),
+            fetch(`${PROXY}/dashboard/consumer-groups/sources?cluster_id=${cid}`, { headers: _authHeaders() }).then(r => r.json()),
+          ]).then(([gd, sd]) => {
               const el = document.getElementById('slo-top-lag-groups');
               if (!el) return;
-              const groups = (gd.consumer_groups||[]).slice(0,5);
+              const sources = sd.sources || {};
+              const nonConnectorGroups = (gd.consumer_groups || []).filter(g => sources[g.group_id]?.type !== 'connector');
+              const groups = nonConnectorGroups.slice(0,5);
               if (!groups.length) { el.innerHTML = '<div style="color:#4CAF50;font-size:.82rem">✅ No significant lag</div>'; return; }
               el.innerHTML = `<div style="font-size:.78rem;font-weight:600;color:var(--text-muted);margin-bottom:6px">Top Lagging Groups</div>
                 <table style="width:100%;border-collapse:collapse;font-size:.8rem">

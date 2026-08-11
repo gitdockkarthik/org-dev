@@ -1119,6 +1119,35 @@ async def get_consumer_group_sources(cluster_id: str | None = None) -> dict:
                 sources[gid] = {"type": "connector", "label": f"Connector: {connector_by_group[gid]}"}
             elif "mirror" in gid.lower():
                 sources[gid] = {"type": "mirrormaker", "label": "MirrorMaker"}
+            elif gid.startswith("connect-"):
+                # Follows Kafka Connect's own group-naming convention (connect-{name})
+                # but doesn't match any currently-live connector -- a real finding,
+                # not a detection gap: almost always means the connector was renamed
+                # at some point and its original consumer group was never realigned
+                # or cleaned up. Also checks for a probable match: a live connector
+                # whose name is identical once hyphens/underscores are normalized --
+                # confirmed (2026-08-11) as a reliable signal of exactly this rename
+                # scenario, since it requires every other character to already match.
+                remainder = gid[len("connect-"):]
+                normalized_remainder = remainder.replace("-", "_")
+                probable_match = None
+                for c in kc_data.get("connectors", []):
+                    cname = c.get("name", "")
+                    if cname.replace("-", "_") == normalized_remainder:
+                        probable_match = cname
+                        break
+                if probable_match:
+                    sources[gid] = {
+                        "type": "unmatched_connector_pattern",
+                        "label": f"⚠ Likely: {probable_match}",
+                        "detail": f"This group's name doesn't exactly match any live connector, but connector '{probable_match}' matches once hyphens/underscores are normalized -- almost certainly the same connector under an old name, from before it was renamed. The group was likely never realigned or cleaned up after the rename.",
+                    }
+                else:
+                    sources[gid] = {
+                        "type": "unmatched_connector_pattern",
+                        "label": "⚠ Unmatched Connector Pattern",
+                        "detail": "This group's name follows Kafka Connect's naming convention (connect-{name}), but doesn't match any currently-live connector's actual name or group_id_override, even after normalizing hyphens/underscores. Likely a connector that was renamed or removed without its original consumer group being realigned or cleaned up.",
+                    }
             else:
                 sources[gid] = {"type": "standalone", "label": "Standalone / Application"}
         return {"sources": sources}
