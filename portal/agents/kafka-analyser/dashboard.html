@@ -753,6 +753,8 @@
       const topicCount       = (window._clusterCounts || {}).total_topics || topics.length || cluster.topic_count || 0;
       const partitionCount   = (window._clusterCounts || {}).total_partitions || topics.reduce((s, t) => s + (t.partition_count || 0), 0);
       const consumerGroupCount = (window._clusterCounts || {}).total_groups || groups.length;
+      const staleGroupCountOv = (window._clusterCounts || {}).stale_groups || 0;
+      const activeGroupCountOv = consumerGroupCount - staleGroupCountOv;
       const totalURPs        = brokers.reduce((s, b) => s + (b.urp_count || 0), 0);
       const healthScore      = cluster.health_score || 0;
       const criticalCount    = cluster.critical_count || 0;
@@ -779,7 +781,7 @@
           <div class="kpi kpi--orange">
             <div class="kpi__label">Consumer Groups</div>
             <div class="kpi__value">${consumerGroupCount.toLocaleString()}</div>
-            <div class="kpi__sub">active</div>
+            <div class="kpi__sub">${activeGroupCountOv.toLocaleString()} active &middot; ${staleGroupCountOv.toLocaleString()} stale</div>
           </div>
           <div class="kpi ${totalURPs > 0 ? 'kpi--danger' : 'kpi--success'}">
             <div class="kpi__label">Under-Replicated Partitions</div>
