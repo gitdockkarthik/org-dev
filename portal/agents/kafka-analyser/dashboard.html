@@ -498,6 +498,7 @@
       overlay.onclick = () => { popup.remove(); overlay.remove(); };
       document.body.appendChild(overlay);
       document.body.appendChild(popup);
+
       try {
         const cid = _currentClusterId || document.getElementById('ctrl-cluster')?.value || '';
         const res = await fetch(`${PROXY}/dashboard/consumer-groups/${encodeURIComponent(groupId)}/topics?cluster_id=${cid}`, { headers: _authHeaders(), cache: 'no-store' });
@@ -600,6 +601,57 @@
       } catch(e) {
         popup.innerHTML = `<div style="color:var(--danger)">${e.message}</div><button onclick="document.getElementById('group-topics-popup').remove();document.getElementById('group-topics-overlay').remove()" style="margin-top:8px" class="btn btn--ghost btn--sm">Close</button>`;
       }
+    };
+
+    window._showLiveGroupPopup = function(groupId, d) {
+      const existing = document.getElementById('group-topics-popup');
+      if (existing) existing.remove();
+      const existingOverlay = document.getElementById('group-topics-overlay');
+      if (existingOverlay) existingOverlay.remove();
+      const popup = document.createElement('div');
+      popup.id = 'group-topics-popup';
+      popup.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--navy-2);border:1px solid var(--border);border-radius:12px;padding:24px;width:80vw;max-width:900px;max-height:75vh;overflow-y:auto;z-index:1000;box-shadow:0 8px 32px rgba(0,0,0,.4)';
+      const closeBtn = `<button onclick="document.getElementById('group-topics-popup').remove();document.getElementById('group-topics-overlay').remove()" style="background:none;border:none;cursor:pointer;font-size:1.4rem;color:var(--text-muted);margin-left:8px;flex-shrink:0">×</button>`;
+      const liveBadge = `<span style="background:rgba(34,197,94,.12);border:1px solid #22c55e;color:#22c55e;border-radius:4px;padding:1px 6px;font-size:.65rem;font-weight:600;margin-left:8px">LIVE</span>`;
+      if (d.source === 'committed_offsets') {
+        const sortedPartitions = [...(d.partitions || [])].sort((a, b) => (b.lag || 0) - (a.lag || 0));
+        const rows = sortedPartitions.map(p => `
+          <tr>
+            <td style="padding:6px 10px;font-size:.78rem;word-break:break-word;max-width:0"><code>${p.topic}</code> — P${p.partition}</td>
+            <td style="padding:6px 10px;text-align:right;font-size:.78rem;white-space:nowrap;color:${p.lag > 10000 ? 'var(--danger)' : p.lag > 1000 ? '#d97706' : 'var(--success)'}">${fmtNum(p.lag)}</td>
+          </tr>`).join('') || '<tr><td colspan="2" style="padding:16px;text-align:center;color:var(--text-muted)">No partitions</td></tr>';
+        popup.innerHTML = `
+          <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:16px">
+            <div><div style="font-weight:700;font-size:.9rem;word-break:break-all">${groupId}${liveBadge}</div></div>
+            ${closeBtn}
+          </div>
+          <div style="font-size:.8rem;color:var(--text-muted);margin-bottom:12px">Total lag: <strong style="color:var(--text)">${fmtNum(d.total_lag)}</strong> across ${d.topic_count} topic(s)</div>
+          <table style="width:100%;border-collapse:collapse;font-size:.85rem">
+            <thead><tr style="border-bottom:1px solid var(--border)">
+              <th style="padding:8px 10px;text-align:left;font-size:.72rem;text-transform:uppercase;color:var(--text-dim)">Topic / Partition</th>
+              <th style="padding:8px 10px;text-align:right;font-size:.72rem;text-transform:uppercase;color:var(--text-dim)">Lag</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>`;
+      } else {
+        const topicsList = (d.subscribed_topics || []).map(t => `<li style="font-size:.8rem;padding:4px 0"><code>${t}</code></li>`).join('') || '<li style="color:var(--text-muted);font-size:.8rem">None found</li>';
+        popup.innerHTML = `
+          <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:16px">
+            <div><div style="font-weight:700;font-size:.9rem;word-break:break-all">${groupId}${liveBadge}</div></div>
+            ${closeBtn}
+          </div>
+          <div style="background:rgba(217,119,6,.12);border:1px solid #d97706;border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:.78rem;color:#d97706">
+            ⚠ Kafka state: <strong>${d.kafka_state || 'unknown'}</strong> — this group has no committed offsets, so lag cannot be measured. ${d.kafka_state === 'Dead' ? 'This group no longer exists in Kafka.' : 'Real subscribed topics shown below.'}
+          </div>
+          <div style="font-size:.72rem;text-transform:uppercase;color:var(--text-dim);margin-bottom:6px">Subscribed Topics</div>
+          <ul style="list-style:none;padding:0;margin:0">${topicsList}</ul>`;
+      }
+      const overlay = document.createElement('div');
+      overlay.id = 'group-topics-overlay';
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:999';
+      overlay.onclick = () => { popup.remove(); overlay.remove(); };
+      document.body.appendChild(overlay);
+      document.body.appendChild(popup);
     };
 
     // ── Per-tab loading ──────────────────────────────────────────────────────
@@ -1304,8 +1356,20 @@
 
       // Always render chart canvas + banner (banner hidden when lag exists)
       // Chart will be populated after streaming enriches lag data
-      const cgChart = '<div style="font-weight:600;font-size:.85rem;color:var(--text-muted);margin-bottom:8px">TOP 10 CONSUMER GROUPS BY LAG</div><div id="cg-chart-container"><canvas id="cg-lag-chart" height="300"></canvas></div>' +
-        '<div id="cg-no-lag-banner" class="filter-bar" style="color:var(--text-muted);padding:16px;text-align:center;' + (hasLag ? 'display:none' : '') + '">ℹ️ No active consumer lag detected — consumers are keeping up or no active subscribers</div>';
+      const cgLiveSearchPanel = `
+        <div>
+          <div style="font-weight:600;font-size:.85rem;color:var(--text-muted);margin-bottom:8px">LIVE LAG LOOKUP</div>
+          <div style="display:flex;gap:8px;position:relative">
+            <input id="cg-live-search-input" class="filter-input" style="flex:1" placeholder="Search a consumer group…" autocomplete="off" oninput="window._cgLiveSearchInput(this.value)" />
+            <button id="cg-live-search-btn" class="btn btn--secondary btn--sm" onclick="window._cgLiveSearchTrigger()" disabled>Search</button>
+            <div id="cg-live-search-suggestions" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--navy-2);border:1px solid var(--border);border-radius:8px;margin-top:4px;max-height:240px;overflow-y:auto;z-index:50"></div>
+          </div>
+          <div style="font-size:.75rem;color:var(--text-muted);margin-top:8px">Type to find a group, select one to fetch its current lag live.</div>
+        </div>`;
+      const cgChart = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">' +
+        '<div><div style="font-weight:600;font-size:.85rem;color:var(--text-muted);margin-bottom:8px">TOP 10 CONSUMER GROUPS BY LAG</div><div id="cg-chart-container"><canvas id="cg-lag-chart" height="300"></canvas></div>' +
+        '<div id="cg-no-lag-banner" class="filter-bar" style="color:var(--text-muted);padding:16px;text-align:center;' + (hasLag ? 'display:none' : '') + '">ℹ️ No active consumer lag detected — consumers are keeping up or no active subscribers</div></div>' +
+        cgLiveSearchPanel + '</div>';
 
       document.getElementById('tab-consumer-groups').innerHTML = '<div style="text-align:center;padding:8px 0;"><span id="cg-loading-badge" style="display:none;align-items:center;gap:8px;padding:8px 20px;background:linear-gradient(135deg,#ff6b35,#f7931e);color:#fff;border-radius:20px;font-size:14px;font-weight:600;box-shadow:0 2px 8px rgba(255,107,53,0.3);animation:pulse-badge 1.5s ease-in-out infinite;">⟳ Loading topics...</span></div>' + cgKpis + cgChart + cgFilters + `
         <div class="chart-card__title">Consumer Group Inventory</div>
@@ -1436,6 +1500,69 @@
       };
 
       window._cgApplyView();
+
+      let _cgLiveSearchGen = 0;
+      window._cgLiveSearchInput = function (query) {
+        const box = document.getElementById('cg-live-search-suggestions');
+        if (!box) return;
+        if (!query || query.length < 2) {
+          box.style.display = 'none';
+          box.innerHTML = '';
+          return;
+        }
+        const q = query.toLowerCase();
+        const matches = groups.filter(g => (g.group_id || '').toLowerCase().includes(q)).slice(0, 8);
+        if (!matches.length) {
+          box.style.display = 'block';
+          box.innerHTML = '<div style="padding:10px;font-size:.78rem;color:var(--text-muted)">No matching groups</div>';
+          return;
+        }
+        box.style.display = 'block';
+        box.innerHTML = matches.map(g => `
+          <div style="padding:8px 12px;cursor:pointer;font-size:.8rem;border-bottom:1px solid var(--border)"
+               onmouseenter="this.style.background='rgba(255,255,255,.05)'" onmouseleave="this.style.background='none'"
+               onclick="window._cgLiveSearchSelect('${g.group_id.replace(/'/g,"\\'")}')">
+            <code>${g.group_id}</code>
+            <span style="color:var(--text-muted);margin-left:8px">${fmtNum(g.total_lag)} lag</span>
+          </div>`).join('');
+      };
+
+      window._cgLiveSearchSelect = function (groupId) {
+        const input = document.getElementById('cg-live-search-input');
+        const box = document.getElementById('cg-live-search-suggestions');
+        const btn = document.getElementById('cg-live-search-btn');
+        if (box) { box.style.display = 'none'; box.innerHTML = ''; }
+        if (input) input.value = groupId;
+        if (btn) btn.disabled = false;
+      };
+
+      window._cgLiveSearchTrigger = async function () {
+        const input = document.getElementById('cg-live-search-input');
+        const btn = document.getElementById('cg-live-search-btn');
+        const groupId = input ? input.value.trim() : '';
+        if (!groupId) return;
+        const myGen = ++_cgLiveSearchGen;
+        if (input) input.disabled = true;
+        if (btn) { btn.disabled = true; btn.textContent = 'Fetching…'; }
+        try {
+          const cid = _currentClusterId || document.getElementById('ctrl-cluster')?.value;
+          const res = await fetch(`${PROXY}/dashboard/consumer-groups/${encodeURIComponent(groupId)}/live-lag?cluster_id=${cid}`, { headers: _authHeaders(), cache: 'no-store' });
+          const d = await res.json();
+          if (myGen !== _cgLiveSearchGen) return;
+          if (d.error) {
+            alert(`Live lookup failed: ${d.error}`);
+          } else if (window._showLiveGroupPopup) {
+            window._showLiveGroupPopup(groupId, d);
+          }
+        } catch (e) {
+          if (myGen === _cgLiveSearchGen) alert(`Live lookup failed: ${e.message}`);
+        } finally {
+          if (myGen === _cgLiveSearchGen) {
+            if (input) { input.disabled = false; input.value = ''; }
+            if (btn) { btn.textContent = 'Search'; btn.disabled = true; }
+          }
+        }
+      };
 
       (async () => {
         try {
