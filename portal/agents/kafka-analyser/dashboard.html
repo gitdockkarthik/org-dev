@@ -366,15 +366,21 @@
     };
 
     window._exportGroupsCSV = function() {
-      const rows = (window._cgGroups || []).map(g => ({
-        group_id: g.group_id || g.group_name || 'Unknown',
-        state: g.state || '',
-        total_lag: g.total_lag ?? '',
-        lag_trend: g.lag_trend || '',
-        topic_count: g.topic_count ?? '',
-      }));
+      const sources = window._cgSources || {};
+      const rows = (window._cgGroups || []).map(g => {
+        const gid = g.group_id || g.group_name || 'Unknown';
+        return {
+          group_id: gid,
+          source: sources[gid]?.label || '',
+          state: g.state || '',
+          total_lag: g.total_lag ?? '',
+          lag_trend: g.lag_trend || '',
+          topic_count: g.topic_count ?? '',
+        };
+      });
       _downloadCSV(rows, [
         {key: 'group_id', label: 'Group ID'},
+        {key: 'source', label: 'Source'},
         {key: 'state', label: 'State'},
         {key: 'total_lag', label: 'Total Lag'},
         {key: 'lag_trend', label: 'Lag Trend'},
