@@ -318,17 +318,31 @@ async def get_connector_trend(cluster_id: str, hours: int = 24) -> dict:
         since = datetime.now(timezone.utc) - timedelta(hours=hours)
         bucket = '5 minutes' if hours <= 24 else '1 hour' if hours <= 168 else '6 hours'
         async with SessionLocal() as sess:
+            # Fixed: was SUMming every snapshot within each bucket, so a bucket
+            # spanning multiple snapshot cycles (job runs every ~2 min, buckets
+            # are 5+ min) genuinely double/triple-counted every connector.
+            # Correct approach: pick the single latest snapshot per bucket as
+            # a clean point-in-time sample, not an accumulation.
             rows = await sess.execute(_t(f"""
-                SELECT date_bin('{bucket}'::interval, collected_at, TIMESTAMP '2001-01-01') as bucket_time,
-                       SUM(CASE WHEN state='RUNNING' THEN 1 ELSE 0 END) as running,
-                       SUM(CASE WHEN state='FAILED' THEN 1 ELSE 0 END) as failed,
-                       SUM(CASE WHEN state='PAUSED' THEN 1 ELSE 0 END) as paused,
+                WITH bucketed AS (
+                    SELECT *, date_bin('{bucket}'::interval, collected_at, TIMESTAMP '2001-01-01') as bucket_time
+                    FROM kafka_connector_snapshots
+                    WHERE cluster_id=:cid AND collected_at >= :since
+                    AND state IN ('RUNNING','FAILED','PAUSED')
+                ),
+                latest_per_bucket AS (
+                    SELECT bucket_time, MAX(collected_at) as latest_collected_at
+                    FROM bucketed GROUP BY bucket_time
+                )
+                SELECT b.bucket_time,
+                       SUM(CASE WHEN b.state='RUNNING' THEN 1 ELSE 0 END) as running,
+                       SUM(CASE WHEN b.state='FAILED' THEN 1 ELSE 0 END) as failed,
+                       SUM(CASE WHEN b.state='PAUSED' THEN 1 ELSE 0 END) as paused,
                        COUNT(*) as total
-                FROM kafka_connector_snapshots
-                WHERE cluster_id=:cid AND collected_at >= :since
-                AND state IN ('RUNNING','FAILED','PAUSED')
-                GROUP BY bucket_time
-                ORDER BY bucket_time ASC
+                FROM bucketed b
+                JOIN latest_per_bucket l ON b.bucket_time = l.bucket_time AND b.collected_at = l.latest_collected_at
+                GROUP BY b.bucket_time
+                ORDER BY b.bucket_time ASC
             """), {"cid": int(cluster_id), "since": since})
             points = []
             for r in rows.fetchall():
