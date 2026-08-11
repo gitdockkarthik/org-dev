@@ -2731,7 +2731,7 @@
             }
           }
           if (c.lag > 0) {
-            return `<span style="cursor:pointer;color:${c.lag > 10000 ? 'var(--danger)' : '#d97706'};font-weight:700;text-decoration:underline" onclick="window._showGroupTopicsPopup('connect-${c.name.replace(/'/g,"\\'")}', '${c.name.replace(/'/g,"\\'")}')">${fmtNum(c.lag)}</span>`;
+            return `<span style="cursor:pointer;color:${c.lag > 10000 ? 'var(--danger)' : '#d97706'};font-weight:700;text-decoration:underline" onclick="window._showGroupTopicsPopup('${(c.lag_from_probable_match || 'connect-' + c.name).replace(/'/g,"\\'")}', '${c.name.replace(/'/g,"\\'")}')">${fmtNum(c.lag)}</span>`;
           }
           return `<span style="color:var(--success)">0</span>`;
         })();
@@ -2894,7 +2894,7 @@
                   <span style="color:var(--text-muted)">${fmtNum(total)} total lag</span>
                 </div>
                 <div style="display:flex;height:30px;border:2px solid ${stateBorder[c.state] || 'var(--border)'};border-radius:6px;overflow:hidden;cursor:pointer"
-                     onclick="window._showGroupTopicsPopup('connect-${c.name.replace(/'/g,"\'")}', '${c.name.replace(/'/g,"\'")}')">
+                     onclick="window._showGroupTopicsPopup('${(c.lag_from_probable_match || 'connect-' + c.name).replace(/'/g,"\'")}', '${c.name.replace(/'/g,"\'")}')">
                   ${segs}
                 </div>
               </div>`;

@@ -981,9 +981,41 @@ async def get_kafka_connect(cluster_id: str | None = None) -> dict:
                             trend_by_group[tr.group_id] = _rate
                     except Exception as _ctre:
                         logger.warning("connector trend lookup failed: %s", _ctre)
+                    # For any connector whose exact group_id has no lag data at all,
+                    # check for a probable match -- a live group starting with
+                    # "connect-" whose remainder is identical once hyphens/underscores
+                    # are normalized. Confirmed (2026-08-11) as a reliable signal that
+                    # the connector was renamed and its old group was never cleaned up
+                    # -- the same detection already validated on the Source column,
+                    # applied here for consistency.
+                    unmatched_names = [
+                        c.get("name", "") for c in all_connectors
+                        if c.get("name") and (c.get("group_id_override") or f"connect-{c.get('name', '')}") not in lag_by_group
+                        and (c.get("group_id_override") or f"connect-{c.get('name', '')}") not in stale_lag_by_group
+                    ]
+                    probable_match_lag: dict[str, dict] = {}
+                    if unmatched_names:
+                        _all_connect_groups = await _csess.execute(_cct("""
+                            SELECT group_id, total_lag, topic_count, updated_at FROM kafka_consumer_group_lag
+                            WHERE cluster_id = :cid AND group_id LIKE 'connect-%'
+                        """), {"cid": int(cluster_id)})
+                        _connect_group_rows = _all_connect_groups.fetchall()
+                        for cname in unmatched_names:
+                            normalized_name = cname.replace("-", "_")
+                            for r in _connect_group_rows:
+                                remainder = r.group_id[len("connect-"):]
+                                if remainder.replace("-", "_") == normalized_name:
+                                    probable_match_lag[cname] = {
+                                        "lag": r.total_lag, "topic_count": r.topic_count,
+                                        "probable_match_group": r.group_id,
+                                    }
+                                    break
                     for c in all_connectors:
                         gid = c.get("group_id_override") or f"connect-{c.get('name', '')}"
                         _lg = lag_by_group.get(gid) or stale_lag_by_group.get(gid, {})
+                        if not _lg and c.get("name") in probable_match_lag:
+                            _lg = probable_match_lag[c.get("name")]
+                            c["lag_from_probable_match"] = _lg.get("probable_match_group")
                         c["lag"] = _lg.get("lag")
                         c["topic_count"] = _lg.get("topic_count")
                         c["lag_stale_since"] = _lg.get("lag_stale_since")
