@@ -1304,7 +1304,14 @@
 
       const cgFilters = `
         <div class="filter-bar">
-          <input class="filter-input" id="cg-search" placeholder="Search group…" oninput="window._cgSearch(this.value)" />
+          <select id="cg-search-type" class="filter-input" style="max-width:160px">
+            <option value="group" selected>Consumer Group</option>
+            <option value="connector">Connectors</option>
+            <option value="topic">Topics</option>
+          </select>
+          <input class="filter-input" id="cg-search" placeholder="Enter name…" onkeydown="if(event.key==='Enter')window._cgExplicitSearch()" />
+          <button id="cg-search-btn" class="btn btn--secondary btn--sm" onclick="window._cgExplicitSearch()">Search</button>
+          <button id="cg-search-clear-btn" class="btn btn--ghost btn--sm" onclick="window._cgClearSearch()" style="display:none">Clear</button>
         </div>
         <div class="filter-bar">
           <span class="dash-label">Health:</span>
@@ -1506,6 +1513,44 @@
       };
 
       window._cgApplyView();
+
+      window._cgExplicitSearch = async function () {
+        const q = document.getElementById('cg-search')?.value.trim();
+        const type = document.getElementById('cg-search-type')?.value || 'group';
+        if (!q || q.length < 2) { alert('Enter at least 2 characters to search.'); return; }
+        const btn = document.getElementById('cg-search-btn');
+        if (btn) { btn.disabled = true; btn.textContent = 'Searching…'; }
+        try {
+          const cid = _currentClusterId || document.getElementById('ctrl-cluster')?.value;
+          const res = await fetch(`${PROXY}/dashboard/groups/search?cluster_id=${cid}&q=${encodeURIComponent(q)}&search_type=${type}`, { headers: _authHeaders(), cache: 'no-store' });
+          const d = await res.json();
+          const tbody = document.getElementById('cg-tbody');
+          const label = document.getElementById('cg-count-label');
+          const moreBtn = document.getElementById('cg-show-more');
+          const clearBtn = document.getElementById('cg-search-clear-btn');
+          if (tbody) {
+            tbody.innerHTML = (d.groups && d.groups.length)
+              ? d.groups.map(cgRowHtml).join('')
+              : `<tr><td colspan="7" class="data-table__empty">No results for this search</td></tr>`;
+          }
+          if (label) label.textContent = `Showing ${(d.groups || []).length} of ${(d.groups || []).length} groups (search)`;
+          if (moreBtn) moreBtn.style.display = 'none';
+          if (clearBtn) clearBtn.style.display = '';
+          if (window._cgApplySourceBadges) window._cgApplySourceBadges();
+        } catch (e) {
+          alert(`Search failed: ${e.message}`);
+        } finally {
+          if (btn) { btn.disabled = false; btn.textContent = 'Search'; }
+        }
+      };
+
+      window._cgClearSearch = function () {
+        const input = document.getElementById('cg-search');
+        if (input) input.value = '';
+        const clearBtn = document.getElementById('cg-search-clear-btn');
+        if (clearBtn) clearBtn.style.display = 'none';
+        window._cgApplyView();
+      };
 
       let _cgLiveSearchGen = 0;
       window._cgLiveSearchInput = function (query) {
