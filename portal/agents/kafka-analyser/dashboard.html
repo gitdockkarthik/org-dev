@@ -2621,7 +2621,16 @@
         <div class="chart-card" style="margin-bottom:22px">
           <div class="chart-card__title">Connector Anomalies — Top 5 by Lag</div>
           <div style="font-size:.75rem;color:var(--text-muted);margin-bottom:12px">Each row = one connector, segmented by its contributing topics (darker = bigger contributor) · border = state · hover a segment for exact topic lag</div>
-          <div id="connect-anomaly-rows"><div style="color:var(--text-muted);font-size:.82rem;padding:8px">Loading...</div></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+            <div>
+              <div style="font-size:.72rem;font-weight:600;color:var(--text-muted);margin-bottom:8px">RUNNING</div>
+              <div id="connect-anomaly-rows-running"><div style="color:var(--text-muted);font-size:.82rem;padding:8px">Loading...</div></div>
+            </div>
+            <div>
+              <div style="font-size:.72rem;font-weight:600;color:var(--text-muted);margin-bottom:8px">PAUSED / STALE</div>
+              <div id="connect-anomaly-rows-paused"><div style="color:var(--text-muted);font-size:.82rem;padding:8px">Loading...</div></div>
+            </div>
+          </div>
           <div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:10px;font-size:.75rem;color:var(--text-muted)">
             <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border:2px solid #F44336"></span>Failed</span>
             <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border:2px solid #FF9800"></span>Paused</span>
@@ -2807,19 +2816,15 @@
 
       // ── Connector anomaly row chart (Top 5 by lag, segmented by topic) ─────────
       (async () => {
-        const rowsEl = document.getElementById('connect-anomaly-rows');
-        if (!rowsEl) return;
-        try {
-          const cid = _currentClusterId || document.getElementById('ctrl-cluster')?.value || '';
-          const res = await fetch(`${PROXY}/dashboard/connectors/topic-breakdown?cluster_id=${cid}&top_n=5`, { headers: _authHeaders(), cache: 'no-store' });
-          const d = await res.json();
-          const rowConnectors = d.connectors || [];
+        const runningEl = document.getElementById('connect-anomaly-rows-running');
+        const pausedEl = document.getElementById('connect-anomaly-rows-paused');
+        if (!runningEl || !pausedEl) return;
+        const stateBorder = { FAILED: '#F44336', PAUSED: '#FF9800', RUNNING: 'var(--border)', UNASSIGNED: 'var(--border)' };
+        const renderRows = (rowConnectors, emptyMsg) => {
           if (!rowConnectors.length) {
-            rowsEl.innerHTML = '<div style="color:var(--text-muted);font-size:.85rem;padding:8px">No connectors with active lag — all caught up</div>';
-            return;
+            return `<div style="color:var(--text-muted);font-size:.85rem;padding:8px">${emptyMsg}</div>`;
           }
-          const stateBorder = { FAILED: '#F44336', PAUSED: '#FF9800', RUNNING: 'var(--border)', UNASSIGNED: 'var(--border)' };
-          rowsEl.innerHTML = rowConnectors.map(c => {
+          return rowConnectors.map(c => {
             const topics = (c.topics || []).filter(t => t.lag > 0);
             const total = c.total_lag || 0;
             const maxTopicLag = Math.max(1, ...topics.map(t => t.lag));
@@ -2841,8 +2846,17 @@
                 </div>
               </div>`;
           }).join('');
+        };
+        try {
+          const cid = _currentClusterId || document.getElementById('ctrl-cluster')?.value || '';
+          const res = await fetch(`${PROXY}/dashboard/connectors/topic-breakdown?cluster_id=${cid}&top_n=5`, { headers: _authHeaders(), cache: 'no-store' });
+          const d = await res.json();
+          runningEl.innerHTML = renderRows(d.connectors_running || [], 'No running connectors with active lag — all caught up');
+          pausedEl.innerHTML = renderRows(d.connectors_paused || [], 'No paused/stale connectors with lag');
         } catch (e) {
-          rowsEl.innerHTML = '<div style="color:var(--text-muted);font-size:.85rem;padding:8px">Failed to load connector breakdown</div>';
+          const failMsg = '<div style="color:var(--text-muted);font-size:.85rem;padding:8px">Failed to load connector breakdown</div>';
+          runningEl.innerHTML = failMsg;
+          pausedEl.innerHTML = failMsg;
           console.warn('Connector anomaly rows failed:', e);
         }
       })();
