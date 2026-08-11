@@ -1256,6 +1256,12 @@
           <span class="filter-chip" onclick="window._cgSetFilter('healthy',this)">Healthy</span>
           <button class="btn btn--ghost btn--sm" onclick="window._exportGroupsCSV()" style="margin-left:8px">⬇ Export All Consumer Groups to CSV</button>
         </div>
+        <div class="filter-bar">
+          <span class="dash-label">Status:</span>
+          <span class="filter-chip active" onclick="window._cgSetStatus('all',this)">All</span>
+          <span class="filter-chip" onclick="window._cgSetStatus('active',this)">Active</span>
+          <span class="filter-chip" onclick="window._cgSetStatus('stale',this)">Stale</span>
+        </div>
       `;
 
       const totalGroups   = groups.length;
@@ -1305,7 +1311,7 @@
         <div class="chart-card__title">Consumer Group Inventory</div>
         <div class="data-table-wrap">
           <table class="data-table cg-table">
-            <thead><tr><th style="width:24%;max-width:260px">Group</th><th style="width:22%;max-width:220px">Source</th><th style="width:14%;cursor:pointer" onclick="window._toggleColumnSort(window._cgView, 'sortLag', 'cg-lag-sort-arrow', window._cgApplyView)">Total Lag<span id="cg-lag-sort-arrow"></span></th><th style="width:12%">Trend</th><th style="width:12%">Rate/min</th><th style="width:10%">Status</th></tr></thead>
+            <thead><tr><th style="width:24%;max-width:260px">Group</th><th style="width:22%;max-width:220px">Source</th><th style="width:14%;cursor:pointer" onclick="window._toggleColumnSort(window._cgView, 'sortLag', 'cg-lag-sort-arrow', window._cgApplyView)">Total Lag<span id="cg-lag-sort-arrow"></span></th><th style="width:12%">Trend</th><th style="width:12%">Rate/min</th><th style="width:10%">Health</th></tr></thead>
             <tbody id="cg-tbody"></tbody>
           </table>
         </div>
@@ -1328,7 +1334,7 @@
 
       // ── Self-contained consumer-group table view: pagination + filters + search (AND) ──
       const CG_PAGE = 20;
-      window._cgView = { state: 'all', filter: 'all', type: 'all', search: '', visible: CG_PAGE, sortLag: null };
+      window._cgView = { state: 'all', filter: 'all', type: 'all', status: 'all', search: '', visible: CG_PAGE, sortLag: null };
 
       const cgMatches = (g, st) => {
         const name = (g.group_id || g.group_name || 'Unknown');
@@ -1339,6 +1345,8 @@
         const gType = (g.state || '').toLowerCase();
         if (st.type === 'consumer' && gType !== 'consumer') return false;
         if (st.type === 'connect' && gType !== 'connect') return false;
+        if (st.status === 'active' && g.is_stale) return false;
+        if (st.status === 'stale' && !g.is_stale) return false;
         const lag = g.total_lag || 0;
         switch (st.filter) {
           case 'critical': return lag > 10000;
@@ -1401,6 +1409,12 @@
       };
       window._cgSetType = function (type, el) {
         window._cgView.type = type;
+        window._cgView.visible = CG_PAGE;
+        cgSetActiveChip(el);
+        window._cgApplyView();
+      };
+      window._cgSetStatus = function (status, el) {
+        window._cgView.status = status;
         window._cgView.visible = CG_PAGE;
         cgSetActiveChip(el);
         window._cgApplyView();
