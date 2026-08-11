@@ -1261,13 +1261,15 @@
       const warningCount  = groups.filter(g => g.total_lag > 1000 && g.total_lag <= 10000).length;
       const healthyCount  = groups.filter(g => g.total_lag <= 1000).length;
 
+      const staleGroupCount = groups.filter(g => g.is_stale).length;
+      const activeGroupCount = totalGroups - staleGroupCount;
       const cgKpis = `
         <div id="cg-last-synced" style="font-size:.75rem;color:var(--text-muted);margin-bottom:8px"></div>
         <div class="kpi-grid">
           <div class="kpi kpi--orange">
             <div class="kpi__label">Total Groups</div>
             <div class="kpi__value">${totalGroups}</div>
-            <div class="kpi__sub">consumer groups</div>
+            <div class="kpi__sub">${activeGroupCount.toLocaleString()} active &middot; ${staleGroupCount.toLocaleString()} stale</div>
           </div>
           <div class="kpi kpi--danger">
             <div class="kpi__label">Critical</div>
