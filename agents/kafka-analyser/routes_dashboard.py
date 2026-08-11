@@ -2678,43 +2678,49 @@ async def search_topics(cluster_id: str, q: str = ""):
 
 
 @router.get("/dashboard/groups/search")
-async def search_groups(cluster_id: str, q: str = ""):
-    """Search consumer groups by name."""
+async def search_groups(cluster_id: str, q: str = "", search_type: str = "group"):
+    """Search consumer groups -- explicit mode: group (default), connector, or
+    topic. User picks the field to search, not a combined/ambiguous match."""
     if not q or len(q) < 2:
         return {"groups": [], "query": q}
-    # Search from postgres
     try:
-        # Also match by connector name (a group whose backing connector's name
-        # contains the query, even if the group_id itself -- typically
-        # "connect-{name}" -- doesn't literally contain it due to a
-        # group_id_override) and by topic name (a group reading/writing a
-        # matching topic), not just the group_id itself.
-        connector_group_ids: list[str] = []
-        try:
-            kc_data = await get_kafka_connect(cluster_id)
-            for c in kc_data.get("connectors", []):
-                if q.lower() in c.get("name", "").lower():
-                    connector_group_ids.append(c.get("group_id_override") or f"connect-{c.get('name', '')}")
-        except Exception:
-            pass
-
         from database import DashboardSessionLocal as SessionLocal
         from sqlalchemy import text as _gst
+        matched = []
         if SessionLocal:
             async with SessionLocal() as sess:
-                rows = await sess.execute(_gst("""
-                    SELECT DISTINCT l.group_id, l.state, l.total_lag, l.topic_count
-                    FROM kafka_consumer_group_lag l
-                    WHERE l.cluster_id=:cid AND (
-                        l.group_id ILIKE :q
-                        OR l.group_id = ANY(:connector_gids)
-                        OR l.group_id IN (
+                if search_type == "connector":
+                    connector_group_ids: list[str] = []
+                    try:
+                        kc_data = await get_kafka_connect(cluster_id)
+                        for c in kc_data.get("connectors", []):
+                            if q.lower() in c.get("name", "").lower():
+                                connector_group_ids.append(c.get("group_id_override") or f"connect-{c.get('name', '')}")
+                    except Exception:
+                        pass
+                    if not connector_group_ids:
+                        return {"groups": [], "query": q}
+                    rows = await sess.execute(_gst("""
+                        SELECT group_id, state, total_lag, topic_count FROM kafka_consumer_group_lag
+                        WHERE cluster_id=:cid AND group_id = ANY(:gids)
+                        ORDER BY total_lag DESC LIMIT 100
+                    """), {"cid": int(cluster_id), "gids": connector_group_ids})
+                elif search_type == "topic":
+                    rows = await sess.execute(_gst("""
+                        SELECT DISTINCT l.group_id, l.state, l.total_lag, l.topic_count
+                        FROM kafka_consumer_group_lag l
+                        WHERE l.cluster_id=:cid AND l.group_id IN (
                             SELECT DISTINCT group_id FROM kafka_consumer_group_topic_lag
                             WHERE cluster_id=:cid AND topic ILIKE :q
                         )
-                    )
-                    ORDER BY l.total_lag DESC LIMIT 100
-                """), {"cid": int(cluster_id), "q": f"%{q}%", "connector_gids": connector_group_ids})
+                        ORDER BY l.total_lag DESC LIMIT 100
+                    """), {"cid": int(cluster_id), "q": f"%{q}%"})
+                else:
+                    rows = await sess.execute(_gst("""
+                        SELECT group_id, state, total_lag, topic_count FROM kafka_consumer_group_lag
+                        WHERE cluster_id=:cid AND group_id ILIKE :q
+                        ORDER BY total_lag DESC LIMIT 100
+                    """), {"cid": int(cluster_id), "q": f"%{q}%"})
                 matched = [{"group_id": r.group_id, "state": r.state,
                             "total_lag": r.total_lag, "topic_count": r.topic_count}
                            for r in rows.fetchall()]
