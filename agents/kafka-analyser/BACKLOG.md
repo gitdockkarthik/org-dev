@@ -1180,6 +1180,22 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Total Lag KPI card -- reverted, real bug found but not fully root-caused (2026-08-11)
+Attempted to add a Total Lag KPI card (sum across active/non-stale groups) to
+the Consumer Groups tab. Found and partially fixed one real bug: positional
+KPI-index code (`_kpis[0]`, `[1]`, etc.) assumed a fixed card order and broke
+when a new card was inserted mid-grid, shifting every later index. Fixed that
+specific indexing, but Critical/Warning/Healthy counts still showed clearly
+corrupted values after rebuild (7/401/401, summing to 809 against a real total
+of 415 -- mutually exclusive lag buckets should never overlap like this).
+This means there's a second, separate positional-index or overwrite issue not
+yet found. Reverted entirely per user's direction rather than continue
+iterating live. Needs a dedicated, careful session: find every place that
+touches `.kpi__value` by position (not id) across this file, since the same
+fragility likely affects other cards too, not just this one.
+
+*Added: 2026-08-11*
+
 ### Session summary and pending list -- end of 2026-08-10 evening session
 Genuinely completed and shipped tonight: paused-connector lag fix (3 endpoints),
 consumer group search backend extension + a real Dead-state-group data-integrity
