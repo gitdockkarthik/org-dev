@@ -18,6 +18,27 @@ Each item: short description, why it matters, status, date added.
 
 ## Resolved
 
+### Root filesystem at 78% — stale VS Code Remote-SSH server caches, automated cleanup added (2026-08-13)
+Root filesystem (/, 30G) reached 78% used. Investigation found this was
+unrelated to Docker (Docker's data-root correctly lives on the separate
+/data volume, healthy at 34%) — root's usage was driven by
+~/.vscode-server/cli/servers/ accumulating one full server-version folder
+(~600-700MB each) per VS Code update, across 3 user home directories
+(karthikeyan.gopalan, praveen.kd, ec2-user), never cleaned up automatically.
+Manually cleaned all stale versions (kept only the most-recently-used, per
+each user's own lru.json) — freed ~7.5GB total, root dropped from 78% to 53%.
+
+Added permanent fix: /usr/local/bin/vscode-server-cleanup.sh (root cron-style
+job) scans all /home/*/.vscode-server/cli/servers/lru.json files, keeps only
+the MRU entry, removes stale Stable-<hash> folders and orphaned top-level
+code-<hash> binaries, logs to /var/log/vscode-server-cleanup.log. Installed
+as systemd service + timer (vscode-server-cleanup.service/.timer, matches
+the existing docker-housekeeping.service/.timer pattern already on this
+box), runs daily at 05:00 UTC, Persistent=true. Validated live: manual run
+found and removed an additional 1.5GB of stale data missed by the initial
+manual pass, confirming the automated logic works correctly and will
+prevent this from silently reaccumulating.
+
 ### Fix: uses_uap_llm flag was cosmetic only, never enforced (2026-08-10, commit 8441223)
 Discovered while discussing what "checking Uses UAP LLM at registration" should
 actually mean. The flag existed on the Agent model and was shown in the
