@@ -50,6 +50,52 @@ def dedupe_by_alias(alerts: list[dict]) -> list[dict]:
     return list(seen.values())
 
 
+def categorize_alert(alert: dict) -> str:
+    """Best-effort heuristic categorization of an alert into a broad category,
+    based on keyword matching against the alert message/title. This is NOT
+    authoritative - it's an interim heuristic until org-wide bracket-format
+    standardization (see INCIDENT_SCHEMA.md) provides real structured fields
+    (source_tool/environment/affected_resource) to categorize from directly.
+    Returns one of: 'Data Pipeline', 'Database', 'Infrastructure', 'Application', 'Uncategorized'.
+    Checked in this priority order to avoid false matches (e.g. a connector
+    hostname containing 'mongo' should match Data Pipeline, not Database)."""
+    text = (alert.get("message") or "").lower()
+
+    data_pipeline_keywords = [
+        "sinkconnector", "sink-connect", "sink connector", "connect-cluster",
+        "nifi", "kafka", "cloud composer", "composer environment",
+    ]
+    database_keywords = [
+        "tungsten", "replicator", "rds.amazonaws.com", "slavedb", "mssql",
+        "mysql", "postgres", "mongodb", "oracle",
+    ]
+    infrastructure_keywords = [
+        "memory_usage", "memory used", "lack of available memory", "cpu.load",
+        "cpu.utilization", "high cpu used", "inodes usage", "filesystem utilization",
+        "disk queue depth", "high memory", "cpu_utilization", "disk space",
+    ]
+    application_keywords = [
+        "reliability is below", "apdex", "service is down", "service fault",
+        "error 5xx", "throughput", "hpa reached max replicas", "lambda latency",
+        "lambda duration", "vda health check", "springbootadmin", "apigov",
+        "signal lost",
+    ]
+
+    for kw in data_pipeline_keywords:
+        if kw in text:
+            return "Data Pipeline"
+    for kw in database_keywords:
+        if kw in text:
+            return "Database"
+    for kw in infrastructure_keywords:
+        if kw in text:
+            return "Infrastructure"
+    for kw in application_keywords:
+        if kw in text:
+            return "Application"
+    return "Uncategorized"
+
+
 # ── Core stats computation ────────────────────────────────────────────────────
 
 def compute_dashboard_stats(classified: list[dict]) -> dict:
@@ -125,6 +171,19 @@ def compute_dashboard_stats(classified: list[dict]) -> dict:
         else:
             t["genuine"] += 1
 
+    # Category breakdown
+    category_counts: dict[str, dict[str, int]] = {}
+    for a in classified:
+        cat = categorize_alert(a)
+        c = category_counts.setdefault(cat, {"genuine": 0, "noise": 0, "suspect": 0})
+        cls = a["classification"]
+        if cls == "noise":
+            c["noise"] += 1
+        elif cls == "noise-suspect":
+            c["suspect"] += 1
+        else:
+            c["genuine"] += 1
+
     # Hourly distribution and daily trend (last 7 days)
     hourly_bins: dict[int, int] = defaultdict(int)
     daily_bins: dict[str, dict[str, int]] = defaultdict(
@@ -174,6 +233,7 @@ def compute_dashboard_stats(classified: list[dict]) -> dict:
         "unresolved_count": len([a for a in genuine_list if a.get("status") == "open"]),
         "unresolved_genuine": [a for a in genuine_list if a.get("status") == "open"][:50],
         "team_breakdown": [{"team": _clean_team_name(t), **v} for t, v in team_counts.items()],
+        "category_breakdown": [{"category": k, **v} for k, v in category_counts.items()],
         "hourly_distribution": [
             {"hour": h, "count": hourly_bins[h]} for h in range(24)
         ],

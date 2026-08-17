@@ -44,6 +44,16 @@ report_store.py reads `stats.get("priority_counts", {})` when building the alert
 
 ---
 
+## New Feature — Alert Category Breakdown (heuristic, 2026-08-17)
+
+Added categorize_alert() in tools/dashboard_builder.py - best-effort keyword-based categorization into Data Pipeline/Database/Infrastructure/Application/Uncategorized, checked in that priority order to avoid false matches (e.g. a connector hostname containing "mongo" correctly matches Data Pipeline, not Database). Explicitly NOT authoritative - architected as an interim heuristic until org-wide bracket-format standardization (see INCIDENT_SCHEMA.md) provides real structured fields to categorize from directly, at which point this function can be swapped without redesigning callers. New category_breakdown field added to compute_dashboard_stats() return, mirroring the existing team_breakdown pattern. Verified with live data: sensible distribution across all 5 categories, no single category (including Uncategorized) dominating. UI integration pending - user will share specific requirements before frontend work begins.
+
+## Recurring Issue — Orphaned alert_job_runs rows after container restart (2026-08-17, third occurrence)
+
+Same class of bug manually fixed once already on 2026-08-03 (documented in cur-analyser's handoff docs as a known gap, and separately flagged as alert-analyser backlog item #7 "startup reconciliation for orphaned running job rows"). Recurred today: a container rebuild during active reconciliation work killed an in-flight sync job mid-execution, leaving its alert_job_runs row stuck at status='running' forever (DB-based check in jobs.py's trigger_job(), separate from the in-memory _sync_lock which correctly resets on restart). This silently blocked all sync triggers for ~20 minutes and wasted 493 trigger attempts from an unrelated background backlog-clearing loop before being diagnosed. Manually fixed again (UPDATE alert_job_runs SET status='failed' WHERE id=2776). Permanent fix (auto-mark orphaned running rows as failed on every app startup, since a fresh process start means nothing could genuinely still be running) deferred until after the category breakdown feature ships, per user decision - but this is now a proven, recurring, real gap worth prioritizing soon given how disruptive it was this time.
+
+---
+
 ## Tab-by-Tab Audit
 
 **Overview tab: fully audited and fixed, 2026-08-17.**
