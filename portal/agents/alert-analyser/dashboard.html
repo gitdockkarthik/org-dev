@@ -1322,11 +1322,11 @@
 
     function renderTrends() {
       const s = stats;
-      const hourly = s.hourly_distribution;
+      const hourly = (window._historyData?.hourly_pattern || []).map(h => ({ hour: h.hour, count: h.new_alerts }));
       const maxH = Math.max(...hourly.map(h=>h.count), 1);
       document.getElementById('tab-trends').innerHTML = `
         <div class="chart-card" id="noise-trend-placeholder"
-          style="margin-bottom:16px">
+          style="margin-bottom:16px;width:100%">
           <div class="chart-card__title">Noise % Trend Over Time</div>
           <div class="chart-wrap">
             <canvas id="noiseTrendChart"></canvas>
@@ -1334,14 +1334,14 @@
         </div>
         <div class="chart-grid">
           <div class="chart-card">
-            <div class="chart-card__title">Alert Volume by Hour</div>
+            <div class="chart-card__title">Alert Volume by Hour (Last 30 Days)</div>
             <div class="heatmap" id="heatmapGrid"></div>
             <div class="heatmap__labels">${hourly.map(h=>`<span>${h.hour}</span>`).join('')}</div>
           </div>
-          <div class="chart-card"><div class="chart-card__title">Peak Alert Hours</div><div class="chart-wrap"><canvas id="hourChart"></canvas></div></div>
+          <div class="chart-card"><div class="chart-card__title">Peak Alert Hours (Last 30 Days)</div><div class="chart-wrap"><canvas id="hourChart"></canvas></div></div>
         </div>
-        <div class="chart-card"><div class="chart-card__title">Daily Alert Classification</div><div class="chart-wrap"><canvas id="classChart"></canvas></div></div>
-        <div class="chart-card" style="margin-top:16px"><div class="chart-card__title">Hourly Alert Distribution</div><div class="chart-wrap"><canvas id="hourDistChart"></canvas></div></div>`;
+        <div class="chart-card" style="width:100%"><div class="chart-card__title">Daily Alert Classification (Last 30 Days)</div><div class="chart-wrap"><canvas id="classChart"></canvas></div></div>
+        <div class="chart-card" style="margin-top:16px;width:100%"><div class="chart-card__title">Hourly Alert Distribution (Last 30 Days)</div><div class="chart-wrap"><canvas id="hourDistChart"></canvas></div></div>`;
       const grid = document.getElementById('heatmapGrid');
       hourly.forEach(h => {
         const cell = document.createElement('div');
@@ -1360,71 +1360,57 @@
         // FIX 3 — daily classification stacked bar (replaces Signal Quality line)
         destroyChart('class');
         const cc = document.getElementById('classChart')?.getContext('2d');
-        if (cc && s.daily_trend.length) charts['class'] = new Chart(cc, { type:'bar', data:{ labels:s.daily_trend.map(d=>d.date), datasets:[
-          {label:'Genuine',       data:s.daily_trend.map(d=>d.genuine||0), backgroundColor:'#16a34a'},
-          {label:'Noise Suspect', data:s.daily_trend.map(d=>d.suspect||0), backgroundColor:'#f59e0b'},
-          {label:'Noise',         data:s.daily_trend.map(d=>d.noise||0),   backgroundColor:'#dc2626'},
-        ] }, options:{responsive:true,plugins:{legend:{position:'bottom'},datalabels:{display:false}},scales:{x:{stacked:true},y:{stacked:true}}} });
+        const histCls = window._historyData || { trend: [] };
+        if (cc && histCls.trend && histCls.trend.length) charts['class'] = new Chart(cc, { type:'bar', data:{ labels:histCls.trend.map(d=>d.bucket ? d.bucket.slice(0,10) : ''), datasets:[
+          {label:'Genuine',       data:histCls.trend.map(d=>d.new_genuine||0), backgroundColor:'#16a34a'},
+          {label:'Noise Suspect', data:histCls.trend.map(d=>d.new_suspect||0), backgroundColor:'#f59e0b'},
+          {label:'Noise',         data:histCls.trend.map(d=>d.new_noise||0),   backgroundColor:'#dc2626'},
+        ] }, options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'},datalabels:{display:false}},scales:{x:{stacked:true},y:{stacked:true}}} });
         // FIX 3 — hourly distribution bar with peak-hour annotation
         destroyChart('hourdist');
         const hd = document.getElementById('hourDistChart')?.getContext('2d');
         if (hd && hourly.length) {
           const peak = hourly.reduce((m,h)=>h.count>m.count?h:m, hourly[0]);
-          charts['hourdist'] = new Chart(hd, { type:'bar', data:{ labels:hourly.map(h=>`${h.hour}:00`), datasets:[{label:'Alerts',data:hourly.map(h=>h.count),backgroundColor:hourly.map(h=>h.hour===peak.hour?'#dc2626':'#6366f1')}] }, options:{responsive:true,plugins:{legend:{display:false},datalabels:{display:false},title:{display:true,text:`Peak: ${peak.hour}:00 (${peak.count} alerts)`}}} });
+          charts['hourdist'] = new Chart(hd, { type:'bar', data:{ labels:hourly.map(h=>`${h.hour}:00`), datasets:[{label:'Alerts',data:hourly.map(h=>h.count),backgroundColor:hourly.map(h=>h.hour===peak.hour?'#dc2626':'#6366f1')}] }, options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},datalabels:{display:false},title:{display:true,text:`Peak: ${peak.hour}:00 (${peak.count} alerts)`}}} });
         }
       }, 50);
 
-    // Noise trend over time from alert_report_summary
-    const _tqs = new URLSearchParams();
-    if (_activeFromDate) _tqs.set('from_date', _activeFromDate);
-    if (_activeToDate) _tqs.set('to_date', _activeToDate);
-    api('/dashboard/trend' + (_tqs.toString() ? '?' + _tqs.toString() : ''))
-      .then(td => {
-        if (td.empty || !td.points?.length) return;
-        setTimeout(() => {
-          const ctx = document.getElementById('noiseTrendChart')?.getContext('2d');
-          if (!ctx) return;
-          destroyChart('noiseTrend');
-          charts['noiseTrend'] = new Chart(ctx, {
-            type: 'line',
-            data: {
-              labels: td.points.map(p => p.time.replace('T', ' ')),
-              datasets: [
-                {
-                  label: 'Noise %',
-                  data: td.points.map(p => p.noise_pct),
-                  borderColor: '#dc2626',
-                  backgroundColor: 'rgba(220,38,38,0.1)',
-                  tension: 0.3, fill: true, borderWidth: 2,
-                  pointRadius: td.points.length < 20 ? 3 : 0,
-                },
-                {
-                  label: 'Genuine %',
-                  data: td.points.map(p =>
-                    p.total > 0 ? +(p.genuine/p.total*100).toFixed(1) : 0
-                  ),
-                  borderColor: '#16a34a',
-                  backgroundColor: 'rgba(22,163,74,0.05)',
-                  tension: 0.3, fill: true, borderWidth: 2,
-                  pointRadius: td.points.length < 20 ? 3 : 0,
-                },
-              ],
+    // Noise trend over time - uses bucketed history data (immune to
+    // pre/post 2026-08-03 snapshot-discontinuity bug), not raw /dashboard/trend
+    setTimeout(() => {
+      const ctx = document.getElementById('noiseTrendChart')?.getContext('2d');
+      const histNoise = window._historyData || { trend: [] };
+      if (!ctx || !histNoise.trend || !histNoise.trend.length) return;
+      destroyChart('noiseTrend');
+      charts['noiseTrend'] = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: histNoise.trend.map(d => d.bucket ? d.bucket.slice(0, 10) : ''),
+          datasets: [
+            {
+              label: 'Noise %',
+              data: histNoise.trend.map(d => d.noise_pct || 0),
+              borderColor: '#dc2626',
+              backgroundColor: 'rgba(220,38,38,0.1)',
+              tension: 0.3, fill: true, borderWidth: 2,
+              pointRadius: histNoise.trend.length < 20 ? 3 : 0,
             },
-            options: {
-              responsive: true,
-              scales: {
-                x: { ticks: { maxTicksLimit: 8, font: { size: 10 }, maxRotation: 45 } },
-                y: {
-                  ticks: { callback: v => v + '%', font: { size: 10 } },
-                  beginAtZero: false,
-                  min: 0, max: 100,
-                },
-              },
-              plugins: { legend: { position: 'bottom' }, datalabels: { display: false } },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            x: { ticks: { maxTicksLimit: 15, font: { size: 10 }, maxRotation: 45 } },
+            y: {
+              ticks: { callback: v => v + '%', font: { size: 10 } },
+              beginAtZero: true,
             },
-          });
-        }, 50);
-      }).catch(() => {});
+          },
+          plugins: { legend: { position: 'bottom' }, datalabels: { display: false } },
+        },
+      });
+    }, 50);
     }
 
     // ── Escalated Incidents ──────────────────────────────────────────────────
