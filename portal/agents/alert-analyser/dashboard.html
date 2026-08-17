@@ -520,16 +520,18 @@
         const _dashUrl = '/dashboard' + (_qs.toString() ? '?' + _qs.toString() : '');
         const _periodUrl = '/dashboard/period-summary' + (_qs.toString() ? '?' + _qs.toString() : '');
         const _histUrl = '/dashboard/history';
-        const [data, cfg, periodData, allTimeData, historyData] = await Promise.all([
+        const [data, cfg, periodData, allTimeData, historyData, incidentsData] = await Promise.all([
             api(_dashUrl),
             api('/settings').catch(() => ({})),
             api(_periodUrl).catch(() => ({})),
             api('/dashboard/lifetime').catch(() => ({})),
             api(_histUrl).catch(() => ({ empty: true, trend: [], hourly_pattern: [] })),
+            api('/dashboard/incidents').catch(() => ({})),
         ]);
         window._periodData = periodData;
         window._allTimeData = allTimeData;
         window._historyData = historyData;
+        window._incidentsData = incidentsData;
         const sourceType = cfg.source_type || 'synthetic';
         const genBtn = document.getElementById('genBtn');
         if (genBtn) genBtn.style.display = sourceType === 'synthetic' ? '' : 'none';
@@ -788,34 +790,21 @@
         <div class="chart-card__title" style="font-size:1rem;margin:6px 0 14px">Data Quality Insights</div>
         <div class="chart-grid">
           <div class="chart-card">
-            <div class="chart-card__title">Alert Lifecycle Health</div>
+            <div class="chart-card__title">Alert Lifecycle Health (Selected Period)</div>
             <table class="data-table" style="margin-top:8px">
               <thead><tr>
                 <th>Metric</th>
-                <th style="color:var(--accent)">All Time</th>
-                ${hasLc ? '<th style="color:var(--warn)">This Period</th>' : ''}
+                <th style="color:var(--accent)">Value</th>
               </tr></thead>
               <tbody>
-                <tr><td>Never closed</td>
-                  <td>${_fmtPct(lc.never_closed_pct)}</td>
-                  ${hasLc ? `<td>${_fmtPct(pd.avg_never_closed_pct)}</td>` : ''}
-                </tr>
-                <tr><td>Proper open/close cycle</td>
-                  <td>${_fmtPct(lc.proper_cycle_pct)}</td>
-                  ${hasLc ? `<td>${_fmtPct(pd.avg_proper_cycle_pct)}</td>` : ''}
-                </tr>
-                <tr><td>Acknowledged</td>
-                  <td style="color:var(--success);font-weight:600">${_fmtPct(lc.acknowledged_pct)}</td>
-                  ${hasLc ? `<td style="color:var(--success);font-weight:600">${_fmtPct(pd.avg_acknowledged_pct)}</td>` : ''}
-                </tr>
-                <tr><td>Unacknowledged</td>
-                  <td>${_fmtPct(lc.unacknowledged_pct)}</td>
-                  ${hasLc ? `<td>${_fmtPct(pd.avg_never_acked_pct)}</td>` : ''}
-                </tr>
+                <tr><td>Never closed</td><td>${_fmtPct(dq.lifecycle?.never_closed_pct)}</td></tr>
+                <tr><td>Proper open/close cycle</td><td>${_fmtPct(dq.lifecycle?.proper_cycle_pct)}</td></tr>
+                <tr><td>Acknowledged</td><td style="color:var(--success);font-weight:600">${_fmtPct(dq.lifecycle?.acknowledged_pct)}</td></tr>
+                <tr><td>Unacknowledged</td><td>${_fmtPct(dq.lifecycle?.unacknowledged_pct)}</td></tr>
               </tbody>
             </table>
-            ${lc.recommendation ? `<div class="insight-box" style="margin-top:10px;
-              font-size:.78rem">${lc.recommendation}</div>` : ''}
+            ${dq.lifecycle?.recommendation ? `<div class="insight-box" style="margin-top:10px;
+              font-size:.78rem">${dq.lifecycle.recommendation}</div>` : ''}
           </div>
           <div class="chart-card">
             <div class="chart-card__title">Source Health</div>
@@ -830,27 +819,25 @@
             ${dqRec(pr.recommendation)}
           </div>
           <div class="chart-card">
-            <div class="chart-card__title">Acknowledgement Rate</div>
-            <table class="data-table" style="margin-top:8px">
-              <thead><tr>
-                <th>Metric</th>
-                <th style="color:var(--accent)">All Time</th>
-                ${hasLc ? '<th style="color:var(--warn)">This Period</th>' : ''}
-              </tr></thead>
-              <tbody>
-                <tr><td>Acknowledged</td>
-                  <td style="color:var(--success);font-weight:600">${_fmtPct(ack.acknowledged_pct)}</td>
-                  ${hasLc ? `<td style="color:var(--success);font-weight:600">${_fmtPct(pd.avg_acknowledged_pct)}</td>` : ''}
-                </tr>
-                <tr><td>Never acknowledged</td>
-                  <td>${_fmtPct(ack.never_acked_pct)}</td>
-                  ${hasLc ? `<td>${_fmtPct(pd.avg_never_acked_pct)}</td>` : ''}
-                </tr>
-              </tbody>
+            <div class="chart-card__title">Resolution Time (MTTR by Priority)</div>
+            <table class="data-table" style="margin-top:8px;font-size:.8rem">
+              <thead><tr><th>Priority</th><th>Avg MTTR</th><th>SLA Target</th><th>Within SLA</th></tr></thead>
+              <tbody>${(() => {
+                const mp = window._incidentsData?.mttr_by_priority || {};
+                const priorities = ['P1', 'P2', 'P3', 'P4'];
+                return priorities.map(p => {
+                  const d = mp[p];
+                  if (!d || d.sample_size === 0) {
+                    return `<tr><td>${p}</td><td colspan="3" class="data-table__empty">No verified resolutions yet</td></tr>`;
+                  }
+                  const slaLabel = d.sla_minutes >= 1440 ? `${Math.round(d.sla_minutes/1440)}d` : d.sla_minutes >= 60 ? `${Math.round(d.sla_minutes/60)}h` : `${d.sla_minutes}m`;
+                  const color = d.within_sla_pct >= 90 ? 'var(--success)' : d.within_sla_pct >= 70 ? 'var(--warn)' : 'var(--danger)';
+                  return `<tr><td>${p}</td><td>${d.avg_mttr_minutes}m</td><td>${slaLabel}</td><td style="color:${color};font-weight:600">${d.within_sla_pct}% (n=${d.sample_size})</td></tr>`;
+                }).join('');
+              })()}</tbody>
             </table>
             <div style="font-size:.72rem;color:var(--text-muted);margin-top:8px">
-              Within-15-min timing requires acknowledgement timestamps,
-              not tracked in current alert data.
+              Based on verified resolutions only (resolution_type set via live OpsGenie reconciliation) - excludes historical unverified data.
             </div>
           </div>
         </div>`;

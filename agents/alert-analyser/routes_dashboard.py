@@ -824,6 +824,41 @@ async def get_incidents() -> dict:
                 "per_priority": per_priority_breach,
             }
 
+            # 5. MTTR by priority: actual resolution time for verified-resolved tickets
+            mttr_by_priority = {}
+            try:
+                result = await sess.execute(text("""
+                    SELECT priority,
+                           EXTRACT(EPOCH FROM (resolved_at - created_at))/60 as mttr_minutes
+                    FROM incident_management.incidents
+                    WHERE resolution_type IS NOT NULL AND resolved_at IS NOT NULL
+                    AND priority IN ('P1', 'P2', 'P3', 'P4')
+                """))
+                mttr_rows = result.fetchall()
+                mttr_data = {"P1": [], "P2": [], "P3": [], "P4": []}
+                for row in mttr_rows:
+                    if row.mttr_minutes is not None and row.priority in mttr_data:
+                        mttr_data[row.priority].append(row.mttr_minutes)
+                for p, values in mttr_data.items():
+                    if values:
+                        avg_mttr = sum(values) / len(values)
+                        within_sla = sum(1 for v in values if v <= sla_thresholds[p])
+                        mttr_by_priority[p] = {
+                            "avg_mttr_minutes": round(avg_mttr, 1),
+                            "sla_minutes": sla_thresholds[p],
+                            "sample_size": len(values),
+                            "within_sla_pct": round(within_sla / len(values) * 100, 1),
+                        }
+                    else:
+                        mttr_by_priority[p] = {
+                            "avg_mttr_minutes": None,
+                            "sla_minutes": sla_thresholds[p],
+                            "sample_size": 0,
+                            "within_sla_pct": None,
+                        }
+            except Exception as _mttr_e:
+                _log.error(f"MTTR calculation error: {_mttr_e}")
+
             # 3. Aging longest wait: single ticket with max age (non-resolved/manual)
             result = await sess.execute(text("""
                 SELECT id, alert_id, title,
@@ -843,25 +878,37 @@ async def get_incidents() -> dict:
                     "minutes_waiting": int(longest_row.minutes_waiting) if longest_row.minutes_waiting else 0,
                 }
 
-            # 4. Resolution ring: auto-resolved vs action-resolved vs manual
+            # 4. Resolution ring: self-healed vs RCA-assisted vs action-resolved vs manual
+            # Uses resolution_type (new, accurate) with fallback to resolved_externally/status
+            # for historical tickets resolved before resolution_type was introduced.
             result = await sess.execute(text("""
                 SELECT
-                    SUM(CASE WHEN status = 'RESOLVED' AND (resolved_externally IS NULL OR resolved_externally = FALSE) THEN 1 ELSE 0 END) as auto_resolved_count,
-                    SUM(CASE WHEN status = 'RESOLVED' AND resolved_externally = TRUE THEN 1 ELSE 0 END) as action_resolved_count,
-                    SUM(CASE WHEN status = 'MANUAL' THEN 1 ELSE 0 END) as manual_count
+                    SUM(CASE WHEN resolution_type = 'self_healed' THEN 1
+                             WHEN resolution_type IS NULL AND status = 'RESOLVED' AND (resolved_externally IS NULL OR resolved_externally = FALSE) THEN 1
+                             ELSE 0 END) as auto_resolved_count,
+                    SUM(CASE WHEN resolution_type = 'rca_assisted' THEN 1 ELSE 0 END) as rca_assisted_count,
+                    SUM(CASE WHEN resolution_type = 'action_resolved' THEN 1
+                             WHEN resolution_type IS NULL AND status = 'RESOLVED' AND resolved_externally = TRUE THEN 1
+                             ELSE 0 END) as action_resolved_count,
+                    SUM(CASE WHEN resolution_type = 'manual' THEN 1
+                             WHEN resolution_type IS NULL AND status = 'MANUAL' THEN 1
+                             ELSE 0 END) as manual_count
                 FROM incident_management.incidents
                 WHERE status IN ('RESOLVED', 'MANUAL')
             """))
             ring_row = result.fetchone()
             auto_resolved_count = ring_row.auto_resolved_count or 0
+            rca_assisted_count = ring_row.rca_assisted_count or 0
             action_resolved_count = ring_row.action_resolved_count or 0
             manual_count = ring_row.manual_count or 0
-            total_resolved = auto_resolved_count + action_resolved_count + manual_count
+            total_resolved = auto_resolved_count + rca_assisted_count + action_resolved_count + manual_count
             auto_resolved_pct = (auto_resolved_count / total_resolved * 100) if total_resolved > 0 else 0
+            rca_assisted_pct = (rca_assisted_count / total_resolved * 100) if total_resolved > 0 else 0
             action_resolved_pct = (action_resolved_count / total_resolved * 100) if total_resolved > 0 else 0
             manual_pct = (manual_count / total_resolved * 100) if total_resolved > 0 else 0
             resolution_ring = {
                 "auto_resolved_pct": round(auto_resolved_pct, 1),
+                "rca_assisted_pct": round(rca_assisted_pct, 1),
                 "action_resolved_pct": round(action_resolved_pct, 1),
                 "manual_pct": round(manual_pct, 1),
             }
@@ -890,6 +937,7 @@ async def get_incidents() -> dict:
                 "pipeline_flow": pipeline_flow,
                 "aging_buckets": aging_buckets,
                 "sla_breach": sla_breach,
+                "mttr_by_priority": mttr_by_priority,
                 "aging_longest_wait": aging_longest_wait,
                 "resolution_ring": resolution_ring,
                 "recurrence_signal": recurrence_signal,
