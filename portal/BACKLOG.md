@@ -69,6 +69,36 @@ telemetry dumps vs. distilled/processed input — see the earlier discussion
 this session about their tool-use loop sending raw InvestigationEntity Java
 toString() dumps directly into prompts).
 
+### Postgres health check and tuning (2026-08-17, commit 8ca33fb)
+Requested routine health check. Findings: CPU healthy (0.04%), memory at
+89.29% of the 4GB limit (3.57GiB) but not concerning — mostly OS page cache
+for the 2.6GB database, not a leak. 36 connections (30 idle) — normal for
+this many services/agents pooling connections, not investigated further
+this session (not a red flag on its own).
+
+Cache hit ratio measured at 91.21% — below the ~99% typically desired for a
+healthy Postgres instance, meaning ~9% of reads were hitting disk instead of
+buffer cache. Root cause: shared_buffers was set to only 256MB against a
+2.6GB database and 4GB container limit — undersized relative to available
+headroom. Increased to 1GB (~25% of container limit, standard Postgres
+sizing guidance) via docker-compose.yml's postgres command: flag.
+
+Also confirmed (informational, not fixed here — Kafka Analyser's own
+domain): kafka_topic_message_rate_hourly_rollup is the single largest table
+in the database at 1.39GB, holding 5.3M rows across only 7 days
+(2026-08-10 to 2026-08-17) — on track to grow ~4x (to ~5.5-6GB) once it
+reaches its designed 30-day retention window. This matches the Kafka
+Analyser governance thread's own prior tiered-retention design work
+(raw->hourly->daily rollup) — flagged there as a heads-up, not addressed
+in this session since it's Kafka's own retention policy, not a Postgres
+configuration issue.
+
+Required --force-recreate (not restart) for the shared_buffers change to
+take effect — same gotcha as ClickHouse's config.d mount earlier today.
+Validated: all 3 agents reconnected cleanly post-recreate (brief transient
+"database unavailable" on 2 agents, self-recovered within 15s via normal
+connection pool retry).
+
 ### ClickHouse CPU spike (360%) — recurrence of a prior issue, root cause finally fixed permanently (2026-08-17, commit 15331cd)
 org-dev-clickhouse-1 CPU hit 360.18%, directly competing with kafka-analyser's
 multi-threaded jobs for host CPU. This is a RECURRENCE of an issue "fixed"
