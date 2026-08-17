@@ -1244,7 +1244,7 @@
           vs
           <span style="color:var(--warn)">${window._compareLabelB||'Period B'}</span>
         </div>` : ''}
-        <div class="chart-card" style="margin-top:16px"><div class="chart-card__title">Team Alert Breakdown</div><div class="chart-wrap"><canvas id="teamChart"></canvas></div></div>
+        <div class="chart-card" style="margin-top:16px;width:100%"><div class="chart-card__title">Team Alert Breakdown</div><div class="chart-wrap"><canvas id="teamChart"></canvas></div></div>
         ${isCompare ? `
         <div style="font-size:.82rem;color:var(--text-muted);
           padding:12px 16px;background:var(--navy-2);
@@ -1310,6 +1310,7 @@
             data: { labels: allTeams, datasets },
             options: {
                 responsive: true,
+                maintainAspectRatio: false,
                 plugins: { legend: { position: 'bottom' }, datalabels: { display: false } },
                 scales: {
                     x: { stacked: !isCompare },
@@ -1338,10 +1339,18 @@
             <div class="heatmap" id="heatmapGrid"></div>
             <div class="heatmap__labels">${hourly.map(h=>`<span>${h.hour}</span>`).join('')}</div>
           </div>
-          <div class="chart-card"><div class="chart-card__title">Peak Alert Hours (Last 30 Days)</div><div class="chart-wrap"><canvas id="hourChart"></canvas></div></div>
+          <div class="chart-card">
+            <div class="chart-card__title">Peak Alert Hours (Last 30 Days)</div>
+            <div style="font-size:.7rem;color:var(--text-muted);margin-bottom:8px">Which hour of day is noisiest, aggregated across all 30 days</div>
+            <div class="chart-wrap"><canvas id="hourChart"></canvas></div>
+          </div>
         </div>
         <div class="chart-card" style="width:100%"><div class="chart-card__title">Daily Alert Classification (Last 30 Days)</div><div class="chart-wrap"><canvas id="classChart"></canvas></div></div>
-        <div class="chart-card" style="margin-top:16px;width:100%"><div class="chart-card__title">Hourly Alert Distribution (Last 30 Days)</div><div class="chart-wrap"><canvas id="hourDistChart"></canvas></div></div>`;
+        <div class="chart-card" style="margin-top:16px;width:100%">
+          <div class="chart-card__title">Hourly Alert Distribution (Last 30 Days)</div>
+          <div style="font-size:.7rem;color:var(--text-muted);margin-bottom:8px">Total alert volume by hour of day, aggregated across all 30 days</div>
+          <div class="chart-wrap"><canvas id="hourDistChart"></canvas></div>
+        </div>`;
       const grid = document.getElementById('heatmapGrid');
       hourly.forEach(h => {
         const cell = document.createElement('div');
@@ -1401,7 +1410,7 @@
           responsive: true,
           maintainAspectRatio: false,
           scales: {
-            x: { ticks: { maxTicksLimit: 15, font: { size: 10 }, maxRotation: 45 } },
+            x: { ticks: { autoSkip: false, font: { size: 10 }, maxRotation: 45, minRotation: 45 } },
             y: {
               ticks: { callback: v => v + '%', font: { size: 10 } },
               beginAtZero: true,
