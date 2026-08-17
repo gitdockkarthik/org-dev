@@ -52,6 +52,8 @@ Added categorize_alert() in tools/dashboard_builder.py - best-effort keyword-bas
 
 Same class of bug manually fixed once already on 2026-08-03 (documented in cur-analyser's handoff docs as a known gap, and separately flagged as alert-analyser backlog item #7 "startup reconciliation for orphaned running job rows"). Recurred today: a container rebuild during active reconciliation work killed an in-flight sync job mid-execution, leaving its alert_job_runs row stuck at status='running' forever (DB-based check in jobs.py's trigger_job(), separate from the in-memory _sync_lock which correctly resets on restart). This silently blocked all sync triggers for ~20 minutes and wasted 493 trigger attempts from an unrelated background backlog-clearing loop before being diagnosed. Manually fixed again (UPDATE alert_job_runs SET status='failed' WHERE id=2776). Permanent fix (auto-mark orphaned running rows as failed on every app startup, since a fresh process start means nothing could genuinely still be running) deferred until after the category breakdown feature ships, per user decision - but this is now a proven, recurring, real gap worth prioritizing soon given how disruptive it was this time.
 
+**Permanent fix shipped (2026-08-17):** added startup reconciliation to main.py's lifespan() - marks any status='running' alert_job_runs rows as 'failed' on every app startup, since a fresh process start means nothing could genuinely still be running. Verified end-to-end: manually inserted a fake orphaned row, confirmed it was correctly cleaned up (status='failed', error_message set) on the next container restart, with zero remaining 'running' rows afterward. This should be the last time this bug needs manual intervention.
+
 ---
 
 ## Tab-by-Tab Audit

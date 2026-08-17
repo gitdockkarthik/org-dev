@@ -316,6 +316,28 @@ async def lifespan(app: FastAPI):
     if _db_engine is not None:
         async with _db_engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+    # Startup reconciliation: mark orphaned 'running' job rows as failed.
+    # A fresh process start means nothing could genuinely still be running -
+    # these are leftover from a container restart/crash mid-sync. Without
+    # this cleanup, trigger_job()'s active-run check silently blocks all
+    # future sync triggers forever (recurring bug, documented in
+    # DASHBOARD_AUDIT.md - third occurrence 2026-08-17).
+    try:
+        from sqlalchemy import text as _text
+        async with SessionLocal() as _cleanup_sess:
+            result = await _cleanup_sess.execute(
+                _text("""
+                    UPDATE alert_job_runs
+                    SET status = 'failed', ended_at = now(),
+                        error_message = 'Orphaned by container restart - marked failed on startup'
+                    WHERE status = 'running'
+                """)
+            )
+            await _cleanup_sess.commit()
+            if result.rowcount > 0:
+                logger.warning("Startup: cleaned up %d orphaned 'running' job run(s)", result.rowcount)
+    except Exception:
+        logger.exception("Startup: orphaned job run cleanup failed (agent will still start)")
     # Register OpsGenie sync job
     async def _opsgenie_sync_job():
         from routes_settings import _config as _ac
