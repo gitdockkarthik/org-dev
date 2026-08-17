@@ -311,39 +311,104 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                             created_count += 1
                     await session.commit()
 
-                    # Reconciliation: auto-close tickets for alerts no longer open+genuine
+                    # Reconciliation: live per-ticket OpsGenie status check.
+                    # Replaces bounded-window snapshot comparison (was falsely
+                    # auto-resolving incidents whose triggering alert aged past the
+                    # ~4hr classification window, regardless of real OpsGenie state).
                     try:
-                        open_genuine_ids = [
-                            a.get("id") for a in deduped_alerts
-                            if a.get("classification") == "genuine"
-                            and a.get("status", "").lower() not in ("closed", "resolved")
-                        ]
+                        import asyncio as _asyncio
+
+                        RECONCILE_BATCH_SIZE = 100
+                        RECONCILE_CONCURRENCY = 10
+
+                        result = await session.execute(
+                            text("""
+                                SELECT id, alert_id, status
+                                FROM incident_management.incidents
+                                WHERE status NOT IN ('RESOLVED', 'MANUAL')
+                                ORDER BY last_reconciliation_check_at ASC NULLS FIRST
+                                LIMIT :batch_size
+                            """),
+                            {"batch_size": RECONCILE_BATCH_SIZE},
+                        )
+                        to_check = result.fetchall()
+
+                        sem = _asyncio.Semaphore(RECONCILE_CONCURRENCY)
+
+                        async def _check_one(ticket):
+                            async with sem:
+                                try:
+                                    status = await source.get_alert_status(ticket.alert_id)
+                                except Exception:
+                                    status = None
+                            return ticket, status
+
+                        checked = await _asyncio.gather(*[_check_one(t) for t in to_check])
 
                         auto_resolved_count = 0
                         resolved_externally_count = 0
+                        still_open_count = 0
+                        unknown_count = 0
 
-                        result = await session.execute(
-                            text("""
-                                UPDATE incident_management.incidents
-                                SET status = 'RESOLVED', resolved_at = now(), updated_at = now()
-                                WHERE status = 'ESCALATED' AND NOT (alert_id = ANY(:open_ids))
-                            """),
-                            {"open_ids": open_genuine_ids},
-                        )
-                        auto_resolved_count = result.rowcount
+                        for ticket, live_status in checked:
+                            now_ts = "now()"
+                            if live_status is None:
+                                # Lookup failed (rate limit, network error, not found) -
+                                # fail-safe: just record the check attempt, leave ticket untouched.
+                                await session.execute(
+                                    text("""
+                                        UPDATE incident_management.incidents
+                                        SET last_reconciliation_check_at = now()
+                                        WHERE id = :id
+                                    """),
+                                    {"id": ticket.id},
+                                )
+                                unknown_count += 1
+                                continue
 
-                        result = await session.execute(
-                            text("""
-                                UPDATE incident_management.incidents
-                                SET resolved_externally = TRUE, updated_at = now()
-                                WHERE status NOT IN ('RESOLVED','MANUAL','ESCALATED') AND NOT (alert_id = ANY(:open_ids))
-                            """),
-                            {"open_ids": open_genuine_ids},
-                        )
-                        resolved_externally_count = result.rowcount
+                            if live_status.lower() == "closed":
+                                if ticket.status == "ESCALATED":
+                                    await session.execute(
+                                        text("""
+                                            UPDATE incident_management.incidents
+                                            SET status = 'RESOLVED', resolved_at = now(),
+                                                resolution_type = 'self_healed',
+                                                last_reconciliation_check_at = now(),
+                                                updated_at = now()
+                                            WHERE id = :id
+                                        """),
+                                        {"id": ticket.id},
+                                    )
+                                    auto_resolved_count += 1
+                                else:
+                                    await session.execute(
+                                        text("""
+                                            UPDATE incident_management.incidents
+                                            SET resolved_externally = TRUE,
+                                                last_reconciliation_check_at = now(),
+                                                updated_at = now()
+                                            WHERE id = :id
+                                        """),
+                                        {"id": ticket.id},
+                                    )
+                                    resolved_externally_count += 1
+                            else:
+                                # Confirmed still open - just record the check, no status change.
+                                await session.execute(
+                                    text("""
+                                        UPDATE incident_management.incidents
+                                        SET last_reconciliation_check_at = now()
+                                        WHERE id = :id
+                                    """),
+                                    {"id": ticket.id},
+                                )
+                                still_open_count += 1
 
                         await session.commit()
-                        logger.info("Incident reconciliation: %d auto-resolved, %d marked resolved_externally", auto_resolved_count, resolved_externally_count)
+                        logger.info(
+                            "Incident reconciliation: %d checked (batch=%d), %d auto-resolved, %d marked resolved_externally, %d confirmed still open, %d lookup failed/unknown",
+                            len(checked), RECONCILE_BATCH_SIZE, auto_resolved_count, resolved_externally_count, still_open_count, unknown_count,
+                        )
                     except Exception as recon_exc:
                         logger.warning("Incident reconciliation failed: %s", recon_exc)
 

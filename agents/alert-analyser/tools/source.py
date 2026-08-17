@@ -11,6 +11,14 @@ class AlertSource(ABC):
     async def load_alerts(self) -> list[dict]:
         ...
 
+    @abstractmethod
+    async def get_alert_status(self, alert_id: str) -> str | None:
+        """Return the current status ('open'/'closed'/etc.) of a single alert
+        by its OpsGenie/JSM ID, or None if the lookup failed (rate limited,
+        network error, alert not found) - callers must treat None as
+        'unknown, do not act' rather than assuming closed or open."""
+        ...
+
 
 class FileSource(AlertSource):
     """Reads alert data from an uploaded CSV or JSON string (stored in DB as TEXT)."""
@@ -24,6 +32,9 @@ class FileSource(AlertSource):
             reader = csv.DictReader(io.StringIO(self._raw_data))
             return [dict(row) for row in reader]
         return json.loads(self._raw_data)
+
+    async def get_alert_status(self, alert_id: str) -> str | None:
+        return None
 
 
 def _map_alert(a: dict, team_lookup: dict | None = None) -> dict:
@@ -145,6 +156,32 @@ class JSMSource(AlertSource):
 
         return [_map_alert(a) for a in all_alerts]
 
+    async def get_alert_status(self, alert_id: str) -> str | None:
+        import httpx
+        url = f"https://api.atlassian.com/jsm/ops/api/{self._cloud_id}/v1/alerts/{alert_id}"
+        credentials = base64.b64encode(f"{self._email}:{self._api_token}".encode()).decode()
+        headers = {
+            "Authorization": f"Basic {credentials}",
+            "Accept": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                for _attempt in range(3):
+                    resp = await client.get(url, headers=headers)
+                    if resp.status_code == 429:
+                        import asyncio
+                        retry_after = int(resp.headers.get("Retry-After", 5))
+                        await asyncio.sleep(retry_after)
+                        continue
+                    if resp.status_code == 404:
+                        return None
+                    resp.raise_for_status()
+                    data = resp.json()
+                    return data.get("data", {}).get("status")
+        except Exception:
+            return None
+        return None
+
 
 class StandaloneOpsgenieSource(AlertSource):
     """Standalone OpsGenie API — api.opsgenie.com/v2/.
@@ -232,6 +269,31 @@ class StandaloneOpsgenieSource(AlertSource):
             except Exception:
                 pass
         return [_map_alert(a, team_lookup=team_lookup) for a in all_alerts]
+
+    async def get_alert_status(self, alert_id: str) -> str | None:
+        import httpx
+        url = f"{self._base_url}/v2/alerts/{alert_id}"
+        headers = {
+            "Authorization": f"GenieKey {self._api_key}",
+            "Accept": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                for _attempt in range(3):
+                    resp = await client.get(url, headers=headers)
+                    if resp.status_code == 429:
+                        import asyncio
+                        retry_after = int(resp.headers.get("Retry-After", 5))
+                        await asyncio.sleep(retry_after)
+                        continue
+                    if resp.status_code == 404:
+                        return None
+                    resp.raise_for_status()
+                    data = resp.json()
+                    return data.get("data", {}).get("status")
+        except Exception:
+            return None
+        return None
 
 
 # Backward-compatibility alias — existing callers (routes_settings.py, main.py) keep working.

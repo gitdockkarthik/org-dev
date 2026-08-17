@@ -905,6 +905,264 @@ async def run_purge(dry_run: bool = True) -> dict:
         return {"purged_count": 0, "dry_run": dry_run, "error": str(e)}
 
 
+@router.get("/dashboard/incidents/resolution-audit")
+async def get_resolution_audit(sample_size: int = 50) -> dict:
+    """Audit sample of historically-resolved tickets to verify reconciliation accuracy.
+
+    Queries a random sample of RESOLVED tickets with resolution_type IS NULL (pre-live-check
+    historical resolutions), makes live per-ticket status checks against OpsGenie, and reports
+    how many were actually closed vs. still open (falsely resolved). Used to assess accuracy
+    of the old bounded-window snapshot comparison logic that was replaced by live checks.
+
+    READ-ONLY: no updates made to any ticket. This is an audit/reporting endpoint only.
+    """
+    from database import SessionLocal
+    from sqlalchemy import text
+    from routes_settings import _config
+    from tools.source import JSMSource, StandaloneOpsgenieSource
+    import logging
+    import asyncio as _asyncio
+    _log = logging.getLogger(__name__)
+
+    if SessionLocal is None:
+        return {"sampled": 0, "confirmed_closed": 0, "still_open_incorrectly_resolved": 0, "unknown": 0, "accuracy_pct": None}
+
+    try:
+        async with SessionLocal() as sess:
+            # Query random sample of unverified historical resolutions
+            result = await sess.execute(
+                text("""
+                    SELECT id, alert_id FROM incident_management.incidents
+                    WHERE status = 'RESOLVED' AND resolution_type IS NULL
+                    ORDER BY RANDOM()
+                    LIMIT :sample_size
+                """),
+                {"sample_size": sample_size},
+            )
+            sampled = result.fetchall()
+
+        if not sampled:
+            return {
+                "sampled": 0,
+                "confirmed_closed": 0,
+                "still_open_incorrectly_resolved": 0,
+                "unknown": 0,
+                "accuracy_pct": None,
+                "note": "No unverified historical resolutions to audit - either none exist or all have been reconciled under the new live-check logic.",
+            }
+
+        # Build source object (same logic as _run_opsgenie_sync)
+        source_type = _config.get("source_type", "opsgenie")
+        opsgenie_type = _config.get("opsgenie_type", "standalone")
+        use_jsm = source_type == "standalone" and opsgenie_type == "jsm"
+
+        if use_jsm:
+            source = JSMSource(
+                cloud_id=_config.get("cloud_id", ""),
+                email=_config.get("email", ""),
+                api_token=_config.get("api_token", ""),
+            )
+        else:
+            source = StandaloneOpsgenieSource(
+                api_key=_config.get("api_token", ""),
+                base_url=_config.get("opsgenie_base_url") or "https://api.opsgenie.com",
+            )
+
+        # Bounded concurrency: 10 concurrent checks
+        sem = _asyncio.Semaphore(10)
+
+        async def _check_one(ticket):
+            async with sem:
+                try:
+                    status = await source.get_alert_status(ticket.alert_id)
+                except Exception:
+                    status = None
+            return ticket, status
+
+        checked = await _asyncio.gather(*[_check_one(t) for t in sampled])
+
+        confirmed_closed = 0
+        still_open_incorrectly_resolved = 0
+        unknown = 0
+
+        for ticket, live_status in checked:
+            if live_status is None:
+                unknown += 1
+            elif live_status.lower() == "closed":
+                confirmed_closed += 1
+            else:
+                still_open_incorrectly_resolved += 1
+
+        # Accuracy: confirmed_closed / (confirmed_closed + still_open), excluding unknowns
+        accuracy_pct = None
+        if (confirmed_closed + still_open_incorrectly_resolved) > 0:
+            accuracy_pct = round(confirmed_closed / (confirmed_closed + still_open_incorrectly_resolved) * 100, 1)
+
+        return {
+            "sampled": len(checked),
+            "confirmed_closed": confirmed_closed,
+            "still_open_incorrectly_resolved": still_open_incorrectly_resolved,
+            "unknown": unknown,
+            "accuracy_pct": accuracy_pct,
+        }
+    except Exception as e:
+        _log.error(f"resolution-audit error: {e}")
+        return {
+            "sampled": 0,
+            "confirmed_closed": 0,
+            "still_open_incorrectly_resolved": 0,
+            "unknown": 0,
+            "accuracy_pct": None,
+            "error": str(e),
+        }
+
+
+@router.post("/dashboard/incidents/resolution-audit/correct")
+async def correct_false_resolutions(batch_size: int = 100, dry_run: bool = True) -> dict:
+    """Correct tickets falsely resolved under old snapshot-comparison logic.
+
+    Processes a deterministic FIFO batch (oldest-first) of unverified RESOLVED
+    tickets, verifies each against live OpsGenie, and either:
+    - Reopens tickets confirmed still open (status != closed)
+    - Marks tickets verified-correct if they really are closed
+    - Leaves unknown/failed-lookup tickets for retry in a future batch
+
+    dry_run=true: preview what would change without committing. dry_run=false: apply corrections.
+
+    This is the write counterpart to GET /dashboard/incidents/resolution-audit (read-only audit).
+    """
+    from database import SessionLocal
+    from sqlalchemy import text
+    from routes_settings import _config
+    from tools.source import JSMSource, StandaloneOpsgenieSource
+    import logging
+    import asyncio as _asyncio
+    from datetime import datetime, timezone
+    _log = logging.getLogger(__name__)
+
+    if SessionLocal is None:
+        return {"processed": 0, "reopened": 0, "confirmed_correctly_closed": 0, "unknown": 0, "dry_run": dry_run}
+
+    try:
+        async with SessionLocal() as sess:
+            # Query deterministic batch: oldest-first, so repeated calls make progress
+            result = await sess.execute(
+                text("""
+                    SELECT id, alert_id FROM incident_management.incidents
+                    WHERE status = 'RESOLVED' AND resolution_type IS NULL AND reopened_at IS NULL
+                    ORDER BY resolved_at ASC
+                    LIMIT :batch_size
+                """),
+                {"batch_size": batch_size},
+            )
+            batch = result.fetchall()
+
+        if not batch:
+            return {
+                "processed": 0,
+                "reopened": 0,
+                "confirmed_correctly_closed": 0,
+                "unknown": 0,
+                "dry_run": dry_run,
+                "note": "No more unverified historical resolutions remain - correction complete.",
+            }
+
+        # Build source object (same logic as resolution-audit endpoint)
+        source_type = _config.get("source_type", "opsgenie")
+        opsgenie_type = _config.get("opsgenie_type", "standalone")
+        use_jsm = source_type == "standalone" and opsgenie_type == "jsm"
+
+        if use_jsm:
+            source = JSMSource(
+                cloud_id=_config.get("cloud_id", ""),
+                email=_config.get("email", ""),
+                api_token=_config.get("api_token", ""),
+            )
+        else:
+            source = StandaloneOpsgenieSource(
+                api_key=_config.get("api_token", ""),
+                base_url=_config.get("opsgenie_base_url") or "https://api.opsgenie.com",
+            )
+
+        # Bounded concurrency: 10 concurrent checks
+        sem = _asyncio.Semaphore(10)
+
+        async def _check_one(ticket):
+            async with sem:
+                try:
+                    status = await source.get_alert_status(ticket.alert_id)
+                except Exception:
+                    status = None
+            return ticket, status
+
+        checked = await _asyncio.gather(*[_check_one(t) for t in batch])
+
+        reopened = 0
+        confirmed_correctly_closed = 0
+        unknown = 0
+        now = datetime.now(timezone.utc)
+
+        # Apply corrections only if not dry_run
+        if not dry_run:
+            async with SessionLocal() as sess:
+                for ticket, live_status in checked:
+                    if live_status is None:
+                        # Unknown/lookup failed - do nothing, leave for retry in next batch
+                        unknown += 1
+                    elif live_status.lower() == "closed":
+                        # Resolution was correct - mark as verified
+                        await sess.execute(
+                            text("""
+                                UPDATE incident_management.incidents
+                                SET resolution_type = 'self_healed', updated_at = now()
+                                WHERE id = :id
+                            """),
+                            {"id": ticket.id},
+                        )
+                        confirmed_correctly_closed += 1
+                    else:
+                        # Still open - reopen the ticket
+                        await sess.execute(
+                            text("""
+                                UPDATE incident_management.incidents
+                                SET status = 'ESCALATED', reopened_at = :now,
+                                    reopen_reason = 'false_positive_reconciliation',
+                                    resolved_at = NULL, updated_at = :now
+                                WHERE id = :id
+                            """),
+                            {"id": ticket.id, "now": now},
+                        )
+                        reopened += 1
+                await sess.commit()
+        else:
+            # Dry run: just classify without updating
+            for ticket, live_status in checked:
+                if live_status is None:
+                    unknown += 1
+                elif live_status.lower() == "closed":
+                    confirmed_correctly_closed += 1
+                else:
+                    reopened += 1
+
+        return {
+            "processed": len(checked),
+            "reopened": reopened,
+            "confirmed_correctly_closed": confirmed_correctly_closed,
+            "unknown": unknown,
+            "dry_run": dry_run,
+        }
+    except Exception as e:
+        _log.error(f"resolution-audit/correct error: {e}")
+        return {
+            "processed": 0,
+            "reopened": 0,
+            "confirmed_correctly_closed": 0,
+            "unknown": 0,
+            "dry_run": dry_run,
+            "error": str(e),
+        }
+
+
 @router.get("/dashboard/incidents/{ticket_id}")
 async def get_incident_detail(ticket_id: str) -> dict:
     """Return alert payload for a single incident ticket by ID."""

@@ -23,6 +23,25 @@ Not Audited | In Progress | Confirmed OK | Bug Found | Fixed
 ### BUG 2 — p1_count through p5_count always zero
 report_store.py reads `stats.get("priority_counts", {})` when building the alert_report_summary insert, but compute_dashboard_stats() (tools/dashboard_builder.py) never returns a key called `priority_counts` — the real data lives under `data_quality.priority.distribution`. Result: `.get()` always silently returns `{}`, so p1_count-p5_count have been zero in every row since this table's inception. The live dashboard's own Priority Distribution panel is unaffected (reads from the correct live `data_quality` path), but no historical priority trend has ever been possible from this table.
 
+### CRITICAL BUG 3 — False auto-resolution of incidents (fixed 2026-08-17)
+
+**Severity: Critical.** Reconciliation logic compared open tickets against `deduped_alerts`, itself derived from the 4-hour bounded classification window (2026-08-03 fix). Any ticket whose triggering alert aged past that window was auto-resolved regardless of real OpsGenie state - the pipeline's core promise (accurate incident tracking) was broken for any incident open longer than ~4 hours.
+
+**Real-world impact, measured before fix:** 51,541 tickets had been auto-resolved under this logic. A live audit against real OpsGenie (see resolution-audit endpoint below) found only 3,290 (6.4%) were genuinely closed - 48,251 (93.6%) were still actually open in production, incorrectly showing as RESOLVED on the dashboard.
+
+**Fix (routes_settings.py, migration 0044):**
+- Replaced snapshot comparison with live per-ticket OpsGenie status checks via new `AlertSource.get_alert_status()` method (added to JSMSource, StandaloneOpsgenieSource, FileSource in tools/source.py)
+- Bounded, fair rotation: 100 oldest-unchecked tickets per sync cycle, 10 concurrent lookups, fail-safe on lookup failure (leaves ticket untouched rather than guessing)
+- New `last_reconciliation_check_at` and `resolution_type` columns track verification state per ticket
+- This also sets up the future capability to have the pipeline close OpsGenie alerts automatically once RCA/Action agents can apply real fixes
+
+**Historical correction (migration 0045, resolution-audit endpoints):**
+- New GET /dashboard/incidents/resolution-audit (read-only, samples unverified resolutions, reports live accuracy) and POST /dashboard/incidents/resolution-audit/correct (batched, deterministic FIFO correction with dry_run support)
+- Ran full correction across all 51,541 unverified tickets (512 batches): 48,251 reopened to ESCALATED with `reopen_reason='false_positive_reconciliation'`, 3,290 verified correct and marked `resolution_type='self_healed'`
+- Final verified state: 48,614 genuinely open ESCALATED tickets, 3,290 verified-correct RESOLVED tickets
+
+**Separate finding during this work:** discovered `RCA_INELIGIBLE` (72 tickets) and `RCA_COMPLETED` (23 tickets) statuses in the table, from an early RCA agent implementation that called Claude directly for investigation rather than building real intelligence into the agent - user has already directed this agent be rejected and rebuilt from scratch. These statuses predate this session's work and are unaffected by the reconciliation fix (which only touches RESOLVED tickets). INCIDENT_SCHEMA.md needs updating to reflect these statuses exist in historical data, or note the RCA agent is being rebuilt.
+
 ---
 
 ## Tab-by-Tab Audit
