@@ -98,6 +98,7 @@
             <option value="0">All time</option>
           </select>
           <button onclick="loadLLMUsage(false)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:.75rem;color:var(--accent)">↻ Refresh</button>
+          <button onclick="window.location.href = '/api/audit/llm-usage/export?' + document.getElementById('llm-range').value.replace(/^/, 'hours=')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:.75rem;color:var(--accent)">⬇ Export CSV</button>
         </div>
       </div>
       <div id="llm-stats-bar" style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px"></div>
@@ -220,8 +221,11 @@
       const statsBar = document.getElementById('llm-stats-bar');
       if (!tbody) return;
       try {
+        if (!loadMore) {
+          statsBar.innerHTML = `<div style="color:var(--text-muted);font-size:.85rem;padding:8px">Loading stats…</div>`;
+        }
         const range = document.getElementById('llm-range')?.value || '168';
-        const rangeParam = range !== '0' ? `&hours=${range}` : '';
+        const rangeParam = `&hours=${range}`;
         const res = await fetch(`/api/audit/llm-usage?limit=50&page=${_llmPage}${rangeParam}`, { credentials: 'include' });
         if (!res.ok) throw new Error('Failed to fetch LLM usage');
         const data = await res.json();
@@ -236,7 +240,6 @@
           if (modelFilter && (g.model||'') !== modelFilter) return false;
           return true;
         });
-        const validCount = filteredGens.length;
         // Populate filter dropdowns on first load
         if (!loadMore) {
           const agents = [...new Set(generations.map(g => (g.name||'').split('.')[0]).filter(Boolean))];
@@ -250,11 +253,15 @@
           if (modelSel && modelSel.options.length <= 1) models.forEach(m => modelSel.add(new Option(m.split('.').pop(), m)));
         }
         if (!loadMore) {
-          // Stats
-          const totalTokens = filteredGens.reduce((s,g) => s + (g.usageDetails?.total||g.usage?.totalTokens||0), 0);
-          const totalInput = filteredGens.reduce((s,g) => s + (g.usageDetails?.input||g.usage?.input||0), 0);
-          const totalOutput = filteredGens.reduce((s,g) => s + (g.usageDetails?.output||g.usage?.output||0), 0);
-          const totalCost = filteredGens.reduce((s,g) => s + (g.calculatedTotalCost||0), 0);
+          // Fetch true aggregate stats directly (not limited by pagination)
+          const statsUrl = `/api/audit/llm-usage/stats?${rangeParam.slice(1)}`;
+          const statsRes = await fetch(statsUrl, { credentials: 'include' });
+          const stats = await statsRes.json();
+          const validCount = stats.total_calls || 0;
+          const totalTokens = stats.total_tokens || 0;
+          const totalInput = stats.total_input || 0;
+          const totalOutput = stats.total_output || 0;
+          const totalCost = stats.total_cost || 0;
           const avgCost = validCount > 0 ? totalCost / validCount : 0;
           statsBar.innerHTML = `
             <div style="background:var(--navy-1);border:1px solid var(--border);border-radius:8px;padding:12px 20px;text-align:center">

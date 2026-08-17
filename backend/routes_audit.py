@@ -1,6 +1,6 @@
 """Audit log API routes."""
 import logging
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy import text
 
 router = APIRouter()
@@ -114,14 +114,6 @@ async def get_llm_usage(limit: int = 50, page: int = 1, hours: int = 168) -> dic
             )
             resp.raise_for_status()
             data = resp.json()
-            # Fetch usage summary
-            traces_resp = await client.get(
-                f"{langfuse_url}/api/public/traces",
-                params={"limit": limit, "page": page},
-                auth=(public_key, secret_key),
-            )
-            traces_resp.raise_for_status()
-            traces = traces_resp.json()
         # Filter out zero-token observations server-side
         all_data = data.get("data", [])
         generations = [g for g in all_data if (g.get("usageDetails") or {}).get("total", 0) > 0 or g.get("model")]
@@ -148,9 +140,122 @@ async def get_llm_usage(limit: int = 50, page: int = 1, hours: int = 168) -> dic
             pass
         return {
             "generations": generations,
-            "traces": traces.get("data", []),
             "meta": data.get("meta", {}),
         }
     except Exception as e:
         logger.error("get_llm_usage failed: %s", e)
-        return {"error": str(e), "generations": [], "traces": [], "meta": {}}
+        return {"error": str(e), "generations": [], "meta": {}}
+
+
+@router.get("/api/audit/llm-usage/stats")
+async def get_llm_usage_stats(hours: int = 168) -> dict:
+    """Fast, accurate aggregate stats queried directly from ClickHouse
+    (Langfuse's backing store), bypassing pagination entirely — the
+    paginated /api/audit/llm-usage endpoint is for browsing individual
+    rows, not for computing true totals."""
+    import httpx
+    from datetime import datetime, timezone, timedelta
+
+    where_clause = "WHERE type = 'GENERATION'"
+    if hours > 0:
+        since = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+        where_clause += f" AND start_time >= '{since}'"
+
+    query = f"""
+    SELECT
+      count() as total_calls,
+      sum(usage_details['input']) as total_input,
+      sum(usage_details['output']) as total_output,
+      sum(usage_details['total']) as total_tokens,
+      sum(total_cost) as total_cost
+    FROM default.observations
+    {where_clause}
+    FORMAT JSON
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                "http://clickhouse:8123/",
+                params={"user": "langfuse", "password": "langfuse"},
+                content=query,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            row = data["data"][0] if data.get("data") else {}
+            return {
+                "total_calls": int(row.get("total_calls", 0)),
+                "total_input": int(row.get("total_input", 0)),
+                "total_output": int(row.get("total_output", 0)),
+                "total_tokens": int(row.get("total_tokens", 0)),
+                "total_cost": float(row.get("total_cost", 0) or 0),
+            }
+    except Exception as e:
+        logger.error("get_llm_usage_stats failed: %s", e)
+        return {"total_calls": 0, "total_input": 0, "total_output": 0, "total_tokens": 0, "total_cost": 0}
+
+
+@router.get("/api/audit/llm-usage/export")
+async def export_llm_usage_csv(hours: int = 168) -> Response:
+    """CSV export of LLM usage grouped by agent, for cost review/optimization
+    discussions with agent teams."""
+    import httpx
+    from datetime import datetime, timezone, timedelta
+    import csv
+    import io
+
+    where_clause = "WHERE type = 'GENERATION'"
+    if hours > 0:
+        since = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+        where_clause += f" AND start_time >= '{since}'"
+
+    query = f"""
+    SELECT
+      name,
+      count() as calls,
+      sum(usage_details['input']) as input_tokens,
+      sum(usage_details['output']) as output_tokens,
+      sum(usage_details['total']) as total_tokens,
+      sum(total_cost) as total_cost,
+      round(sum(usage_details['input']) / count(), 1) as avg_input_per_call
+    FROM default.observations
+    {where_clause}
+    GROUP BY name
+    ORDER BY total_cost DESC
+    FORMAT JSON
+    """
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                "http://clickhouse:8123/",
+                params={"user": "langfuse", "password": "langfuse"},
+                content=query,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            rows = data.get("data", [])
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["Agent", "Calls", "Input Tokens", "Output Tokens", "Total Tokens", "Total Cost (USD)", "Avg Input Tokens/Call"])
+        for r in rows:
+            agent_name = (r.get("name") or "unknown").replace(".llm_call", "")
+            writer.writerow([
+                agent_name,
+                r.get("calls", 0),
+                r.get("input_tokens", 0),
+                r.get("output_tokens", 0),
+                r.get("total_tokens", 0),
+                f"{float(r.get('total_cost', 0) or 0):.4f}",
+                r.get("avg_input_per_call", 0),
+            ])
+
+        csv_content = output.getvalue()
+        filename = f"llm-usage-by-agent-{datetime.now(timezone.utc).strftime('%Y%m%d')}.csv"
+        return Response(
+            content=csv_content,
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
+    except Exception as e:
+        logger.error("export_llm_usage_csv failed: %s", e)
+        return Response(content=f"Export failed: {e}", media_type="text/plain", status_code=500)
