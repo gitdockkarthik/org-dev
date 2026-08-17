@@ -18,6 +18,57 @@ Each item: short description, why it matters, status, date added.
 
 ## Resolved
 
+### LLM Usage dashboard audit — accuracy bugs fixed, CSV export added (2026-08-17, commit ea8ac0e)
+Requested audit: dashboard felt slow, accuracy of displayed numbers was in
+question, wanted no caps on visible data. Found and fixed four real issues:
+
+1. get_llm_usage() fetched Langfuse's /api/public/traces on every single
+   request but the frontend never consumed the result — pure wasted latency,
+   removed entirely.
+
+2. Stats bar (Total Calls/Tokens/Cost) was computed client-side via
+   Array.reduce() over only the currently-loaded/paginated rows
+   (filteredGens) — silently WRONG whenever more data existed than what had
+   been paginated in. Confirmed live: displayed $8.59/138 calls for "All
+   time" when the true figure (queried directly from ClickHouse, Langfuse's
+   backing store) was $11.27/368 calls. Added GET /api/audit/llm-usage/stats
+   — queries ClickHouse's observations table directly for true SUM/COUNT
+   aggregates, completely bypassing pagination. This is the general fix for
+   "no caps" — the stats bar now always reflects the true total regardless
+   of how many rows have been paginated into the browser.
+
+3. The "All time" range option constructed its query param as an EMPTY
+   STRING (omitting hours entirely) rather than an explicit hours=0 — since
+   the backend's default is hours=168, omitting the param silently made "All
+   time" behave identically to "Last 7 days". Fixed by always sending hours
+   explicitly, including hours=0 for all-time.
+
+4. Backend crashed on startup (NameError, 502 Bad Gateway) after adding the
+   new export endpoint — Response was used in a function's return-type
+   annotation, which Python evaluates at import time, but was only imported
+   locally inside the function body (works fine for code executed at
+   call-time, not for signature annotations evaluated at module load).
+   Fixed by moving the import to module level.
+
+Added: GET /api/audit/llm-usage/export — CSV export of usage grouped by
+agent (Calls, Input/Output/Total Tokens, Total Cost, Avg Input Tokens/Call),
+sorted by cost descending, respects the selected time range filter. Wired to
+a new "Export CSV" button. Also added a "Loading stats…" indicator on the
+stats bar (previously showed nothing during fetch, contributing to the
+perceived slowness/uncertainty about whether a refresh was happening).
+
+Validated: all 4 range options (24h/7d/30d/all-time) confirmed matching
+direct ClickHouse aggregate queries exactly, both in the stats bar and the
+CSV export.
+
+Real finding surfaced by this work: rca-agent accounts for 81% ($9.15 of
+$11.27 total) of all platform LLM cost, with 210 calls — the highest call
+volume of any agent by a wide margin, directly driving its cost. Flagged
+for the RCA team's own review of how they construct LLM context (raw
+telemetry dumps vs. distilled/processed input — see the earlier discussion
+this session about their tool-use loop sending raw InvestigationEntity Java
+toString() dumps directly into prompts).
+
 ### ClickHouse CPU spike (360%) — recurrence of a prior issue, root cause finally fixed permanently (2026-08-17, commit 15331cd)
 org-dev-clickhouse-1 CPU hit 360.18%, directly competing with kafka-analyser's
 multi-threaded jobs for host CPU. This is a RECURRENCE of an issue "fixed"
