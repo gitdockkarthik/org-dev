@@ -223,6 +223,7 @@ services:
     volumes:
       - clickhouse_data:/var/lib/clickhouse
       - ./monitoring/clickhouse/prometheus.xml:/etc/clickhouse-server/config.d/prometheus.xml:ro
+      - ./monitoring/clickhouse/clickhouse-config-override.xml:/etc/clickhouse-server/config.d/clickhouse-config-override.xml:ro
     cap_add:
       - SYS_NICE
       - IPC_LOCK
