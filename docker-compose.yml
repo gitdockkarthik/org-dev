@@ -7,7 +7,7 @@ services:
     mem_limit: 4g
     mem_reservation: 1g
     shm_size: 1g
-    command: ["postgres", "-c", "shared_buffers=256MB", "-c", "effective_cache_size=3GB", "-c", "maintenance_work_mem=128MB"]
+    command: ["postgres", "-c", "shared_buffers=1GB", "-c", "effective_cache_size=3GB", "-c", "maintenance_work_mem=128MB"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
