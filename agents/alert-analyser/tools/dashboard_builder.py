@@ -173,6 +173,7 @@ def compute_dashboard_stats(classified: list[dict]) -> dict:
 
     # Category breakdown
     category_counts: dict[str, dict[str, int]] = {}
+    category_priority: dict[str, dict[str, dict[str, int]]] = {}
     for a in classified:
         cat = categorize_alert(a)
         c = category_counts.setdefault(cat, {"genuine": 0, "noise": 0, "suspect": 0})
@@ -183,6 +184,11 @@ def compute_dashboard_stats(classified: list[dict]) -> dict:
             c["suspect"] += 1
         else:
             c["genuine"] += 1
+
+        cls_bucket = "noise" if cls in ("noise", "noise-suspect") else "genuine"
+        cp = category_priority.setdefault(cat, {"genuine": {}, "noise": {}})
+        priority = a.get("priority", "P5")
+        cp[cls_bucket][priority] = cp[cls_bucket].get(priority, 0) + 1
 
     # Hourly distribution and daily trend (last 7 days)
     hourly_bins: dict[int, int] = defaultdict(int)
@@ -234,6 +240,10 @@ def compute_dashboard_stats(classified: list[dict]) -> dict:
         "unresolved_genuine": [a for a in genuine_list if a.get("status") == "open"][:50],
         "team_breakdown": [{"team": _clean_team_name(t), **v} for t, v in team_counts.items()],
         "category_breakdown": [{"category": k, **v} for k, v in category_counts.items()],
+        "category_priority_breakdown": [
+            {"category": cat, "genuine": pdata.get("genuine", {}), "noise": pdata.get("noise", {})}
+            for cat, pdata in category_priority.items()
+        ],
         "hourly_distribution": [
             {"hour": h, "count": hourly_bins[h]} for h in range(24)
         ],
