@@ -233,7 +233,7 @@ def compute_dashboard_stats(classified: list[dict]) -> dict:
             {"alias": alias_message.get(a) or (a[:8] if a else ""), "count": c}
             for a, c in repeat_offenders
         ],
-        "suppression_recommendations": [{"alias": alias_message.get(a) or (a[:8] if a else ""), "count": c} for a, c in repeat_offenders[:10]],
+        "suppression_recommendations": [{"alias": alias_message.get(a) or (a[:8] if a else ""), "count": c} for a, c in repeat_offenders if c >= 5][:10],
         "high_severity_count": high_severity_count,
         "high_severity_genuine": high_severity_genuine,
         "unresolved_count": len([a for a in genuine_list if a.get("status") == "open"]),

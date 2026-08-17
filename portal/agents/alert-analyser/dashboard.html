@@ -1096,7 +1096,11 @@
       document.getElementById('tab-noise').innerHTML = `
         <div class="chart-grid">
           <div class="chart-card"><div class="chart-card__title">Top Noisy Sources</div><div class="chart-wrap"><canvas id="srcChart"></canvas></div></div>
-          <div class="chart-card"><div class="chart-card__title">Noise Score by Service</div><div class="chart-wrap"><canvas id="scoreChart"></canvas></div></div>
+          <div class="chart-card">
+            <div class="chart-card__title">Noise Score by Service</div>
+            <div style="font-size:.72rem;color:var(--text-muted);margin-bottom:8px">Positive (red) = tends toward noise · Negative (green) = tends toward genuine</div>
+            <div class="chart-wrap"><canvas id="scoreChart"></canvas></div>
+          </div>
         </div>
         <div class="data-table-wrap"><table class="data-table noise-table">
           <thead><tr>
@@ -1140,7 +1144,9 @@
           })()}</tbody>
         </table></div>
         <div class="data-table-wrap" style="margin-top:16px"><table class="data-table noise-table">
-          <caption style="text-align:left;padding:14px 14px 0;font-size:.87rem;font-weight:600">Suppression Recommendations</caption>
+          <caption style="text-align:left;padding:14px 14px 0;font-size:.87rem;font-weight:600">Suppression Recommendations
+            <div style="font-size:.7rem;color:var(--text-muted);font-weight:400;margin-top:2px">Alerts firing 5+ times in this period - strong candidates for suppression rules</div>
+          </caption>
           <thead><tr>
             <th>Alert</th>
             <th>Occurrences</th>
@@ -1193,7 +1199,7 @@
         destroyChart('score');
         const sc = document.getElementById('scoreChart')?.getContext('2d');
         const sorted = [...s.service_noise_scores].sort((a,b)=>b.score-a.score).slice(0,10);
-        if (sc) charts['score'] = new Chart(sc, { type:'bar', data:{ labels:sorted.map(x=>x.service), datasets:[{label:'Noise %',data:sorted.map(x=>x.score),backgroundColor:'#6366f1'}] }, options:{indexAxis:'y',responsive:true,plugins:{legend:{display:false},datalabels:{display:false}},scales:{x:{max:100}}} });
+        if (sc) charts['score'] = new Chart(sc, { type:'bar', data:{ labels:sorted.map(x=>x.service), datasets:[{label:'Noise Score',data:sorted.map(x=>x.score),backgroundColor:sorted.map(x=>x.score>0?'#dc2626':'#16a34a')}] }, options:{indexAxis:'y',responsive:true,plugins:{legend:{display:false},datalabels:{display:false}},scales:{x:{}}} });
       }, 50);
     }
 
