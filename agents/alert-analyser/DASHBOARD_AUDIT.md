@@ -46,13 +46,16 @@ report_store.py reads `stats.get("priority_counts", {})` when building the alert
 
 ## Tab-by-Tab Audit
 
+**Overview tab: fully audited and fixed, 2026-08-17.**
+
 ### Overview Tab
 | Item | Status | Notes |
 |---|---|---|
-| Total Alerts / Noise / Suspect / Genuine KPI cards (all-time) | Confirmed OK | Fixed 2026-08-10 (lifetime counter work) |
-| Alert Volume by Day chart | Bug Found | Sourced from single-report stats.daily_trend, bounded to ~4hr window - shows single dot regardless of date filter. Needs migration to alert_report_summary deltas |
-| Genuine vs Noise donut | Not Audited | Appears to be current-snapshot by design - verify this is the intended scope |
-| Data Quality Insights panels (Lifecycle Health, Source Health, Priority Distribution, Acknowledgement Rate) | Not Audited | |
+| Total Alerts / Noise / Suspect / Genuine KPI cards (all-time) | Confirmed OK | Fixed 2026-08-10 (lifetime counter work), raw/dedup split verified |
+| Alert Volume trend chart | Fixed | New /dashboard/history endpoint aggregates delta columns (immune to snapshot discontinuity), auto-granularity by span. Decoupled from top date filter - always shows trailing 30-day view in its own "Historical Trend" section, since a trend chart's purpose doesn't match a narrow KPI snapshot window |
+| Alert Breakdown donut | Fixed | Was bound to lifetime totals (sAllTime) despite sitting in the period-filtered section - now correctly bound to period-filtered stats (s). Also expanded from 2 categories (Genuine/Noise) to 3 (Genuine/Noise/Suspect) - was silently hiding suspect count |
+| Default date range | Fixed | Was 1 hour (caused near-empty views on every chart) - changed to 24 hours |
+| Data Quality Insights panels (Lifecycle Health, Source Health, Priority Distribution, Acknowledgement Rate) | Confirmed OK | Verified against live data - all four panels populated correctly with sensible values |
 
 ### Noise Analysis Tab
 | Item | Status | Notes |

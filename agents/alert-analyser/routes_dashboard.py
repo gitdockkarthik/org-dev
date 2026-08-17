@@ -312,6 +312,178 @@ async def get_dashboard_trend(
         return {"empty": True, "points": []}
 
 
+@router.get("/dashboard/history")
+async def get_dashboard_history(
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> dict:
+    """Return bucketed historical delta aggregates from alert_report_summary.
+
+    Unlike /dashboard/trend (which plots unbucketed snapshot columns prone to
+    discontinuity from the 2026-08-03 bounded-window fix), this endpoint
+    aggregates delta columns (new_alerts, new_genuine, new_noise, new_suspect)
+    which are immune to that discontinuity, buckets them into sensible time
+    periods (hour/day/week auto-selected by span), and includes hourly patterns.
+    """
+    from database import SessionLocal
+    from sqlalchemy import text
+    from datetime import datetime, timezone, timedelta
+    import logging
+    _log = logging.getLogger(__name__)
+
+    if SessionLocal is None:
+        return {"empty": True, "granularity": None, "trend": [], "hourly_pattern": []}
+
+    try:
+        # Parse dates - same pattern as get_dashboard_trend
+        params = {}
+
+        if from_date:
+            try:
+                dt_from = datetime.strptime(
+                    from_date, '%Y-%m-%d %H:%M'
+                ).replace(tzinfo=timezone.utc)
+            except ValueError:
+                dt_from = datetime.strptime(
+                    from_date, '%Y-%m-%d'
+                ).replace(tzinfo=timezone.utc)
+            params["from_date"] = dt_from
+
+        if to_date:
+            try:
+                dt_to = datetime.strptime(
+                    to_date, '%Y-%m-%d %H:%M'
+                ).replace(tzinfo=timezone.utc)
+            except ValueError:
+                dt_to = datetime.strptime(
+                    to_date + ' 23:59:59', '%Y-%m-%d %H:%M:%S'
+                ).replace(tzinfo=timezone.utc)
+            params["to_date"] = dt_to
+
+        # Default if neither provided: last 30 days
+        if "from_date" not in params or "to_date" not in params:
+            dt_now = datetime.now(timezone.utc)
+            if "to_date" not in params:
+                params["to_date"] = dt_now
+            if "from_date" not in params:
+                params["from_date"] = dt_now - timedelta(days=30)
+
+        # Auto-select granularity based on span
+        span = (params["to_date"] - params["from_date"]).days
+        if span <= 2:
+            granularity = "hour"
+            date_trunc_arg = "hour"
+        elif span <= 120:
+            granularity = "day"
+            date_trunc_arg = "day"
+        else:
+            granularity = "week"
+            date_trunc_arg = "week"
+
+        async with SessionLocal() as sess:
+            # Bucketed trend query
+            trend_sql = f"""
+                SELECT date_trunc('{date_trunc_arg}', synced_at) as bucket,
+                       SUM(new_alerts) as new_alerts,
+                       SUM(new_genuine) as new_genuine,
+                       SUM(new_noise) as new_noise,
+                       SUM(new_suspect) as new_suspect
+                FROM alert_report_summary
+                WHERE agent_slug = 'alert-analyser'
+                  AND synced_at >= :from_date
+                  AND synced_at <= :to_date
+                GROUP BY bucket
+                ORDER BY bucket ASC
+            """
+
+            result = await sess.execute(text(trend_sql), params)
+            rows = result.fetchall()
+
+            if not rows:
+                return {
+                    "empty": True,
+                    "granularity": None,
+                    "trend": [],
+                    "hourly_pattern": []
+                }
+
+            # Build trend list with computed noise_pct
+            trend = []
+            for r in rows:
+                total = r.new_alerts or 0
+                noise = r.new_noise or 0
+                noise_pct = round(noise / total * 100, 1) if total > 0 else 0.0
+                trend.append({
+                    "bucket": r.bucket.isoformat() if r.bucket else None,
+                    "new_alerts": int(r.new_alerts or 0),
+                    "new_genuine": int(r.new_genuine or 0),
+                    "new_noise": int(r.new_noise or 0),
+                    "new_suspect": int(r.new_suspect or 0),
+                    "noise_pct": noise_pct,
+                })
+
+            # Hourly pattern query (separate, groups by hour across entire range)
+            hourly_sql = """
+                SELECT EXTRACT(hour FROM synced_at)::int as hour,
+                       SUM(new_alerts) as new_alerts,
+                       SUM(new_genuine) as new_genuine,
+                       SUM(new_noise) as new_noise
+                FROM alert_report_summary
+                WHERE agent_slug = 'alert-analyser'
+                  AND synced_at >= :from_date
+                  AND synced_at <= :to_date
+                GROUP BY hour
+                ORDER BY hour ASC
+            """
+
+            hourly_result = await sess.execute(text(hourly_sql), params)
+            hourly_rows = hourly_result.fetchall()
+
+            # Build hourly pattern (24 entries, hour 0-23, fill zeros for missing hours)
+            hourly_dict = {r.hour: r for r in hourly_rows}
+            hourly_pattern = []
+            for h in range(24):
+                if h in hourly_dict:
+                    r = hourly_dict[h]
+                    total = r.new_alerts or 0
+                    noise = r.new_noise or 0
+                    noise_pct = round(noise / total * 100, 1) if total > 0 else 0.0
+                    hourly_pattern.append({
+                        "hour": h,
+                        "new_alerts": int(r.new_alerts or 0),
+                        "new_genuine": int(r.new_genuine or 0),
+                        "new_noise": int(r.new_noise or 0),
+                        "noise_pct": noise_pct,
+                    })
+                else:
+                    hourly_pattern.append({
+                        "hour": h,
+                        "new_alerts": 0,
+                        "new_genuine": 0,
+                        "new_noise": 0,
+                        "noise_pct": 0.0,
+                    })
+
+            return {
+                "empty": False,
+                "granularity": granularity,
+                "from_date": params["from_date"].isoformat(),
+                "to_date": params["to_date"].isoformat(),
+                "trend": trend,
+                "hourly_pattern": hourly_pattern,
+            }
+
+    except Exception as e:
+        _log.error(f"dashboard history error: {e}")
+        return {
+            "empty": True,
+            "granularity": None,
+            "trend": [],
+            "hourly_pattern": [],
+            "error": str(e),
+        }
+
+
 @router.get("/dashboard/period-summary")
 async def get_period_summary(
     from_date: str | None = None,

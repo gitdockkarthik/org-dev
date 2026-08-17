@@ -273,9 +273,9 @@
 
     function _initDefaultDateRange() {
       const now = new Date();
-      const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+      const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
       const fmt = d => d.toISOString().slice(0, 16);
-      const fromVal = fmt(oneHourAgo);
+      const fromVal = fmt(oneDayAgo);
       const toVal = fmt(now);
       document.getElementById('filter-from').value = fromVal;
       document.getElementById('filter-to').value = toVal;
@@ -519,14 +519,17 @@
         if (_activeToDate) _qs.set('to_date', _activeToDate);
         const _dashUrl = '/dashboard' + (_qs.toString() ? '?' + _qs.toString() : '');
         const _periodUrl = '/dashboard/period-summary' + (_qs.toString() ? '?' + _qs.toString() : '');
-        const [data, cfg, periodData, allTimeData] = await Promise.all([
+        const _histUrl = '/dashboard/history';
+        const [data, cfg, periodData, allTimeData, historyData] = await Promise.all([
             api(_dashUrl),
             api('/settings').catch(() => ({})),
             api(_periodUrl).catch(() => ({})),
             api('/dashboard/lifetime').catch(() => ({})),
+            api(_histUrl).catch(() => ({ empty: true, trend: [], hourly_pattern: [] })),
         ]);
         window._periodData = periodData;
         window._allTimeData = allTimeData;
+        window._historyData = historyData;
         const sourceType = cfg.source_type || 'synthetic';
         const genBtn = document.getElementById('genBtn');
         if (genBtn) genBtn.style.display = sourceType === 'synthetic' ? '' : 'none';
@@ -1009,25 +1012,35 @@
       document.getElementById('tab-overview').innerHTML = `
         ${row1HTML}${row2HTML}
         <div class="chart-grid">
-          <div class="chart-card"><div class="chart-card__title">Genuine vs Noise</div><div class="chart-wrap"><canvas id="donutChart"></canvas></div></div>
-          ${isCompare ? '' : `
-            <div class="chart-card">
-              <div class="chart-card__title">Alert Volume by Day</div>
+          <div class="chart-card"><div class="chart-card__title">Alert Breakdown (Selected Period)</div><div class="chart-wrap"><canvas id="donutChart"></canvas></div></div>
+        </div>
+        ${isCompare ? '' : `
+          <div style="font-size:.75rem;font-weight:600;color:var(--text-muted);
+            letter-spacing:.08em;text-transform:uppercase;margin:20px 0 4px">
+            Historical Trend — Last 30 Days
+          </div>
+          <div style="font-size:.73rem;color:var(--text-dim);margin-bottom:12px">
+            Independent of the date filter above - always shows a trailing 30-day view
+          </div>
+          <div class="chart-grid">
+            <div class="chart-card" style="grid-column:1/-1">
+              <div class="chart-card__title">Alert Volume — ${window._historyData?.granularity === 'hour' ? 'Hourly' : window._historyData?.granularity === 'week' ? 'Weekly' : 'Daily'} Trend</div>
               <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
             </div>
-          `}
-        </div>
+          </div>
+        `}
         ${s.data_quality ? renderDataQuality(s.data_quality) : ''}`;
       setTimeout(() => {
         destroyChart('donut');
         const c = document.getElementById('donutChart')?.getContext('2d');
-        if (c) charts['donut'] = new Chart(c, { type:'doughnut', data:{ labels:['Genuine','Noise'], datasets:[{ data:[sAllTime.genuine_count,sAllTime.noise_count], backgroundColor:['#16a34a','#dc2626'], borderWidth:0 }] }, options:{ responsive:true, cutout:'65%', plugins:{legend:{position:'bottom'},datalabels:{display:false}} } });
+        if (c) charts['donut'] = new Chart(c, { type:'doughnut', data:{ labels:['Genuine','Noise','Suspect'], datasets:[{ data:[s.genuine_count,s.noise_count,s.suspect_count||0], backgroundColor:['#16a34a','#dc2626','#f59e0b'], borderWidth:0 }] }, options:{ responsive:true, cutout:'65%', plugins:{legend:{position:'bottom'},datalabels:{display:false}} } });
         destroyChart('trend');
         const t = document.getElementById('trendChart')?.getContext('2d');
-        if (t && s.daily_trend.length) charts['trend'] = new Chart(t, { type:'line', data:{ labels:s.daily_trend.map(d=>d.date), datasets:[
-          { label:'Genuine',       data:s.daily_trend.map(d=>d.genuine),     borderColor:'#16a34a', backgroundColor:'rgba(22,163,74,.1)', fill:true, tension:.4 },
-          { label:'Noise',         data:s.daily_trend.map(d=>d.noise),       borderColor:'#dc2626', backgroundColor:'rgba(220,38,38,.1)',  fill:true, tension:.4 },
-          { label:'Noise Suspect', data:s.daily_trend.map(d=>d.suspect||0),  borderColor:'#f59e0b', backgroundColor:'rgba(245,158,11,.1)', fill:true, tension:.4 },
+        const hist = window._historyData || { trend: [] };
+        if (t && hist.trend && hist.trend.length) charts['trend'] = new Chart(t, { type:'line', data:{ labels:hist.trend.map(d=>d.bucket ? d.bucket.slice(0, hist.granularity === 'hour' ? 13 : 10) : ''), datasets:[
+          { label:'Genuine',       data:hist.trend.map(d=>d.new_genuine),     borderColor:'#16a34a', backgroundColor:'rgba(22,163,74,.1)', fill:true, tension:.4 },
+          { label:'Noise',         data:hist.trend.map(d=>d.new_noise),       borderColor:'#dc2626', backgroundColor:'rgba(220,38,38,.1)',  fill:true, tension:.4 },
+          { label:'Noise Suspect', data:hist.trend.map(d=>d.new_suspect||0),  borderColor:'#f59e0b', backgroundColor:'rgba(245,158,11,.1)', fill:true, tension:.4 },
         ] }, options:{ responsive:true, plugins:{legend:{position:'bottom'},datalabels:{display:false}} } });
       }, 50);
     }
