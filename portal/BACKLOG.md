@@ -18,6 +18,43 @@ Each item: short description, why it matters, status, date added.
 
 ## Resolved
 
+### ClickHouse CPU spike (360%) — recurrence of a prior issue, root cause finally fixed permanently (2026-08-17, commit 15331cd)
+org-dev-clickhouse-1 CPU hit 360.18%, directly competing with kafka-analyser's
+multi-threaded jobs for host CPU. This is a RECURRENCE of an issue "fixed"
+about a week prior — investigation revealed the earlier fix was apparently
+just a manual table drop (emptying accumulated log tables), not a config-
+level change to stop the underlying writes — so the same tables silently
+refilled and hit the same merge-pressure ceiling again within a week.
+
+Root cause (confirmed via system.merges and system.parts): ClickHouse's own
+internal self-monitoring tables — metric_log (1 row/sec by default),
+asynchronous_metric_log, text_log, trace_log, error_log,
+processors_profile_log, part_log, opentelemetry_span_log — none of which
+Langfuse ever queries or depends on for its actual application function.
+These accumulate into hundreds of small parts requiring constant background
+merges, which was the actual CPU consumer — confirmed via system.processes
+showing zero expensive running queries, while system.merges showed multiple
+concurrent Regular merges on metric_log actively consuming real CPU/memory
+at the moment of the spike.
+
+Permanent fix this time: monitoring/clickhouse/clickhouse-config-override.xml
+(new file, uses ClickHouse's <table_name remove="1"/> config directive to
+disable each log at the source) mounted into
+/etc/clickhouse-server/config.d/ via docker-compose.yml. Required
+--force-recreate (not just restart) for the new volume mount to take effect
+— docker compose restart does not re-read docker-compose.yml's volume
+definitions. Confirmed the config loaded via startup log ("Merging
+configuration file... clickhouse-config-override.xml"), confirmed metric_log
+genuinely stopped collecting (max(event_time) static across a 5-second
+recheck, not just old data sitting unmerged), then dropped the stale
+accumulated tables. CPU: 360.18% -> 1.76%, held stable at ~1.9% over a 30s
+monitoring window post-fix.
+
+This fix is version-controlled and will survive future container
+rebuilds/recreations, unlike the prior week's manual-only cleanup — should
+not recur the same way again. If CPU spikes again despite this, the cause
+is something new, not this same root cause.
+
 ### Root filesystem at 78% — stale VS Code Remote-SSH server caches, automated cleanup added (2026-08-13)
 Root filesystem (/, 30G) reached 78% used. Investigation found this was
 unrelated to Docker (Docker's data-root correctly lives on the separate
