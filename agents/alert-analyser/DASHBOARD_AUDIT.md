@@ -56,6 +56,18 @@ Same class of bug manually fixed once already on 2026-08-03 (documented in cur-a
 
 ---
 
+## CRITICAL BUG 4 — Ticket-creation loop had zero exception handling (fixed 2026-08-18)
+
+**Severity: Critical.** Found via live incident report: a genuine, correctly-classified P2 alert ("Active mq service is down", awo1-sup-alerts02, alert_id 44788bf2-ef7b-4ccf-85a0-ea527b28ff5a-1787023677139, created 2026-08-18T03:27:57Z) was confirmed fetched from OpsGenie by the 03:30 sync cycle and confirmed classified as genuine (verified by re-running classify_alerts() against the real OpsGenie payload), but never created an incident ticket - no error was logged anywhere.
+
+**Root cause:** the per-alert ticket creation/update loop in routes_settings.py had no exception handling at all, unlike reconciliation (already hardened earlier in this session). Any single alert's DB error during that loop would silently abort processing for the REST of that cycle's entire batch, with zero trace in logs - meaning other alerts in the same affected cycle could also have been silently dropped, not just this one.
+
+**Investigation method (for future reference):** confirmed step by step - (1) searched incidents table for the ticket, not found; (2) confirmed sync cycles ran on schedule with no gap; (3) decrypted real OpsGenie credentials from agent_config using ENCRYPTION_KEY + Fernet to query OpsGenie directly (bypassing the earlier known issue where a fresh Python process can't access the live server's decrypted in-memory config); (4) confirmed via direct OpsGenie API query that the alert is genuinely new (not a reopened/reused alert - ruled out the createdAt-based incremental sync gap as the cause); (5) replicated the exact sync query with the exact cutoff timestamp used at 03:30, confirmed OpsGenie's raw response DID include this alert; (6) ran the alert through the real classify_alerts() function, confirmed genuine classification; (7) reviewed the ticket-creation loop code, found no try/except; (8) confirmed via logs that no error/exception/traceback was logged for that sync run, consistent with a silent, unlogged failure.
+
+**Fix:** wrapped the per-alert ticket creation/update logic in try/except, logs alert_id + error on any failure, loop continues to the next alert instead of silently aborting the batch. Matches the same defensive pattern already used in reconciliation (see BUG 3 above).
+
+---
+
 ## Tab-by-Tab Audit
 
 **Overview tab: fully audited and fixed, 2026-08-17.**
