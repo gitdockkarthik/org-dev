@@ -245,70 +245,73 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
 
                 async with SessionLocal() as session:
                     for alert in deduped_alerts:
-                        if alert.get("classification") != "genuine":
-                            continue
-                        if alert.get("status", "").lower() in ("closed", "resolved"):
-                            continue
-                        alert_id = alert.get("id")
-                        priority = alert.get("priority", "P3")
-                        title = alert.get("message", alert.get("alias", "Unknown"))[:200]
-                        payload_json = json.dumps(alert)
+                        try:
+                            if alert.get("classification") != "genuine":
+                                continue
+                            if alert.get("status", "").lower() in ("closed", "resolved"):
+                                continue
+                            alert_id = alert.get("id")
+                            priority = alert.get("priority", "P3")
+                            title = alert.get("message", alert.get("alias", "Unknown"))[:200]
+                            payload_json = json.dumps(alert)
 
-                        # Derive source_tool
-                        source_tool = alert.get("source", "unknown")
+                            # Derive source_tool
+                            source_tool = alert.get("source", "unknown")
 
-                        result = await session.execute(
-                            text("""
-                                SELECT id, status FROM incident_management.incidents
-                                WHERE alert_id = :alert_id
-                                ORDER BY created_at DESC LIMIT 1
-                            """),
-                            {"alert_id": alert_id},
-                        )
-                        row = result.fetchone()
+                            result = await session.execute(
+                                text("""
+                                    SELECT id, status FROM incident_management.incidents
+                                    WHERE alert_id = :alert_id
+                                    ORDER BY created_at DESC LIMIT 1
+                                """),
+                                {"alert_id": alert_id},
+                            )
+                            row = result.fetchone()
 
-                        if row is None:
-                            await session.execute(
-                                text("""
-                                    INSERT INTO incident_management.incidents
-                                    (alert_id, status, priority, title, alert_payload,
-                                     recurrence_count, source_tool, created_at, updated_at)
-                                    VALUES (:alert_id, 'ESCALATED', :priority, :title,
-                                            :payload, 1, :source_tool, now(), now())
-                                """),
-                                {"alert_id": alert_id, "priority": priority,
-                                 "title": title, "payload": payload_json,
-                                 "source_tool": source_tool},
-                            )
-                            created_count += 1
-                        elif row.status not in ("RESOLVED", "MANUAL"):
-                            await session.execute(
-                                text("""
-                                    UPDATE incident_management.incidents
-                                    SET updated_at = now(), recurrence_count = recurrence_count + 1,
-                                        source_tool = :source_tool
-                                    WHERE id = :id
-                                """),
-                                {"id": row.id,
-                                 "source_tool": source_tool},
-                            )
-                            updated_count += 1
-                        else:
-                            await session.execute(
-                                text("""
-                                    INSERT INTO incident_management.incidents
-                                    (alert_id, status, priority, title, alert_payload,
-                                     recurrence_count, related_ticket_id, source_tool,
-                                     created_at, updated_at)
-                                    VALUES (:alert_id, 'ESCALATED', :priority, :title,
-                                            :payload, 1, :related_id, :source_tool,
-                                            now(), now())
-                                """),
-                                {"alert_id": alert_id, "priority": priority, "title": title,
-                                 "payload": payload_json, "related_id": row.id,
-                                 "source_tool": source_tool},
-                            )
-                            created_count += 1
+                            if row is None:
+                                await session.execute(
+                                    text("""
+                                        INSERT INTO incident_management.incidents
+                                        (alert_id, status, priority, title, alert_payload,
+                                         recurrence_count, source_tool, created_at, updated_at)
+                                        VALUES (:alert_id, 'ESCALATED', :priority, :title,
+                                                :payload, 1, :source_tool, now(), now())
+                                    """),
+                                    {"alert_id": alert_id, "priority": priority,
+                                     "title": title, "payload": payload_json,
+                                     "source_tool": source_tool},
+                                )
+                                created_count += 1
+                            elif row.status not in ("RESOLVED", "MANUAL"):
+                                await session.execute(
+                                    text("""
+                                        UPDATE incident_management.incidents
+                                        SET updated_at = now(), recurrence_count = recurrence_count + 1,
+                                            source_tool = :source_tool
+                                        WHERE id = :id
+                                    """),
+                                    {"id": row.id,
+                                     "source_tool": source_tool},
+                                )
+                                updated_count += 1
+                            else:
+                                await session.execute(
+                                    text("""
+                                        INSERT INTO incident_management.incidents
+                                        (alert_id, status, priority, title, alert_payload,
+                                         recurrence_count, related_ticket_id, source_tool,
+                                         created_at, updated_at)
+                                        VALUES (:alert_id, 'ESCALATED', :priority, :title,
+                                                :payload, 1, :related_id, :source_tool,
+                                                now(), now())
+                                    """),
+                                    {"alert_id": alert_id, "priority": priority, "title": title,
+                                     "payload": payload_json, "related_id": row.id,
+                                     "source_tool": source_tool},
+                                )
+                                created_count += 1
+                        except Exception as _alert_exc:
+                            logger.error("Ticket creation/update failed for alert_id=%s: %s", alert.get("id"), _alert_exc)
                     await session.commit()
 
                     # Reconciliation: live per-ticket OpsGenie status check.
