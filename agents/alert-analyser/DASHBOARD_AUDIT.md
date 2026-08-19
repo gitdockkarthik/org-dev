@@ -68,6 +68,28 @@ Same class of bug manually fixed once already on 2026-08-03 (documented in cur-a
 
 ---
 
+## MAJOR FEATURE — Escalated Incidents tab rebuild + message-based resolution detection (2026-08-19)
+
+Complete rebuild of the Escalated Incidents tab per CTO demo requirements. Summary of what shipped:
+
+**New schema (migrations 0046, 0047):**
+- incident_status_history - every status transition logged (creation, auto-resolve, reopen-correction)
+- incident_creation_failures - persists ticket-creation failures (was log-only before today)
+- incidents.detected_via - tracks whether a resolution was detected via message-text parsing or live OpsGenie check
+- incidents.opsgenie_sync_status - reserved placeholder for a future feature (writing agent decisions back to OpsGenie automatically) - not implemented yet, per user decision
+
+**New backend endpoints:** mttx-summary (real MTTD/MTTA/MTTR min/max/avg), open-list, resolved-list (both with search/status/hours filters, per-row MTTD/MTTA/MTTR, opsgenie_status snapshot), failures + retrigger, incident flow-map ({ticket_id}/flow - full status history + stage map with skipped-stage detection), trend (weekly/monthly by priority).
+
+**Critical business fix - message-based resolution detection:** OpsGenie's own status field only updates when a human manually closes it in the UI - confirmed by the user as the actual operational gap the agent should eliminate, not the source of truth to trust. Standardized bracket-tagged messages (Zabbix, New Relic, LightStep) are auto-updated by the source tool itself the instant it detects real resolution, with zero human latency. New parse_message_status() (tools/dashboard_builder.py) checks bracketed tokens against closed/resolved keywords first, open/firing keywords second, case-insensitive, tolerant of inconsistent formatting. Reconciliation checks this FIRST, falls back to live OpsGenie check only when the message gives no clear signal - verified live, first message-parse-detected resolution occurred within one sync cycle of deployment.
+
+**Known gap, not yet fixed:** LightStep's actual format is "[Light step]Resolved Resolved: system filesystem utilization" - the word "Resolved" appears OUTSIDE brackets, not matching our bracket-only parser. Found via live testing 2026-08-19. User is gathering more real inconsistent-format examples from the source-tool owning team to expand parse_message_status() - this is an active, ongoing refinement, not a one-time fix, given the team's confirmed lack of uniform configuration compliance.
+
+**Sync interval reduced 15min -> 2min (2026-08-19):** directly addresses the "OpsGenie Status (at creation)" snapshot staleness - user's reasoning: "5 mins is also too long for an incident management system to detect the issue." Verified job completes in ~6.4s, comfortable headroom under the 2-minute interval. Verified schedule change required an explicit `docker compose restart` (not just `up -d --build`, which no-ops if the image is unchanged) - worth remembering for future schedule changes.
+
+**Frontend:** new renderMttxKpis(), renderPipelineSummary(), renderOpenIncidentsSection(), renderResolvedIncidentsSection(), renderFailuresSection(), renderIncidentsTrendSection(), openFlowModal() - full pagination (20/page) across all three tables, shared fmtDuration() helper (seconds/minutes/hours/days as appropriate, not everything in raw minutes). Old Pipeline Flow/Aging/Resolution Method/Recurrence Signal panels removed per user decision; kanban lanes kept for now, removal decision deferred.
+
+---
+
 ## Tab-by-Tab Audit
 
 **Overview tab: fully audited and fixed, 2026-08-17.**
