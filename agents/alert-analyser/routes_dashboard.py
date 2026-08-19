@@ -892,7 +892,9 @@ async def get_incidents() -> dict:
                              ELSE 0 END) as action_resolved_count,
                     SUM(CASE WHEN resolution_type = 'manual' THEN 1
                              WHEN resolution_type IS NULL AND status = 'MANUAL' THEN 1
-                             ELSE 0 END) as manual_count
+                             ELSE 0 END) as manual_count,
+                    SUM(CASE WHEN detected_via = 'message_parse' THEN 1 ELSE 0 END) as detected_via_message_count,
+                    SUM(CASE WHEN detected_via = 'opsgenie_live' THEN 1 ELSE 0 END) as detected_via_opsgenie_count
                 FROM incident_management.incidents
                 WHERE status IN ('RESOLVED', 'MANUAL')
             """))
@@ -901,6 +903,8 @@ async def get_incidents() -> dict:
             rca_assisted_count = ring_row.rca_assisted_count or 0
             action_resolved_count = ring_row.action_resolved_count or 0
             manual_count = ring_row.manual_count or 0
+            detected_via_message_count = ring_row.detected_via_message_count or 0
+            detected_via_opsgenie_count = ring_row.detected_via_opsgenie_count or 0
             total_resolved = auto_resolved_count + rca_assisted_count + action_resolved_count + manual_count
             auto_resolved_pct = (auto_resolved_count / total_resolved * 100) if total_resolved > 0 else 0
             rca_assisted_pct = (rca_assisted_count / total_resolved * 100) if total_resolved > 0 else 0
@@ -911,6 +915,9 @@ async def get_incidents() -> dict:
                 "rca_assisted_pct": round(rca_assisted_pct, 1),
                 "action_resolved_pct": round(action_resolved_pct, 1),
                 "manual_pct": round(manual_pct, 1),
+                "detected_via_message_count": detected_via_message_count,
+                "detected_via_opsgenie_count": detected_via_opsgenie_count,
+                "total_resolved": total_resolved,
             }
 
             # 5. Recurrence signal: top 10 by recurrence_count > 1
