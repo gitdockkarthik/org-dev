@@ -282,6 +282,20 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                                      "source_tool": source_tool},
                                 )
                                 created_count += 1
+                                _new_row = await session.execute(
+                                    text("SELECT id FROM incident_management.incidents WHERE alert_id = :alert_id ORDER BY created_at DESC LIMIT 1"),
+                                    {"alert_id": alert_id}
+                                )
+                                _new_ticket = _new_row.fetchone()
+                                if _new_ticket:
+                                    await session.execute(
+                                        text("""
+                                            INSERT INTO incident_management.incident_status_history
+                                            (incident_id, from_status, to_status, changed_at)
+                                            VALUES (:incident_id, NULL, 'ESCALATED', now())
+                                        """),
+                                        {"incident_id": _new_ticket.id}
+                                    )
                             elif row.status not in ("RESOLVED", "MANUAL"):
                                 await session.execute(
                                     text("""
@@ -310,8 +324,51 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                                      "source_tool": source_tool},
                                 )
                                 created_count += 1
+                                _new_row = await session.execute(
+                                    text("SELECT id FROM incident_management.incidents WHERE alert_id = :alert_id ORDER BY created_at DESC LIMIT 1"),
+                                    {"alert_id": alert_id}
+                                )
+                                _new_ticket = _new_row.fetchone()
+                                if _new_ticket:
+                                    await session.execute(
+                                        text("""
+                                            INSERT INTO incident_management.incident_status_history
+                                            (incident_id, from_status, to_status, changed_at)
+                                            VALUES (:incident_id, NULL, 'ESCALATED', now())
+                                        """),
+                                        {"incident_id": _new_ticket.id}
+                                    )
                         except Exception as _alert_exc:
                             logger.error("Ticket creation/update failed for alert_id=%s: %s", alert.get("id"), _alert_exc)
+                            # Persist failure record for debugging + retriggering
+                            try:
+                                # Safely parse ISO timestamp with Z suffix
+                                alert_created_at = None
+                                if alert.get("createdAt"):
+                                    try:
+                                        alert_created_at = datetime.fromisoformat(
+                                            alert.get("createdAt", "").replace("Z", "+00:00")
+                                        )
+                                    except Exception:
+                                        alert_created_at = None
+
+                                await session.execute(
+                                    text("""
+                                        INSERT INTO incident_management.incident_creation_failures
+                                        (alert_id, alert_title, alert_created_at, failure_reason, alert_payload)
+                                        VALUES (:alert_id, :title, :created_at, :reason, :payload)
+                                    """),
+                                    {
+                                        "alert_id": alert.get("id", ""),
+                                        "title": alert.get("message", alert.get("alias", "Unknown"))[:500],
+                                        "created_at": alert_created_at,
+                                        "reason": str(_alert_exc)[:2000],
+                                        "payload": json.dumps(alert),
+                                    }
+                                )
+                                await session.commit()
+                            except Exception as _log_exc:
+                                logger.error("Failed to persist creation failure record: %s", _log_exc)
                     await session.commit()
 
                     # Reconciliation: live per-ticket OpsGenie status check.
@@ -383,6 +440,14 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                                         {"id": ticket.id},
                                     )
                                     auto_resolved_count += 1
+                                    await session.execute(
+                                        text("""
+                                            INSERT INTO incident_management.incident_status_history
+                                            (incident_id, from_status, to_status, changed_at)
+                                            VALUES (:incident_id, 'ESCALATED', 'RESOLVED', now())
+                                        """),
+                                        {"incident_id": ticket.id}
+                                    )
                                 else:
                                     await session.execute(
                                         text("""

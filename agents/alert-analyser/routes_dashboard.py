@@ -1353,6 +1353,14 @@ async def correct_false_resolutions(batch_size: int = 100, dry_run: bool = True)
                             {"id": ticket.id, "now": now},
                         )
                         reopened += 1
+                        await sess.execute(
+                            text("""
+                                INSERT INTO incident_management.incident_status_history
+                                (incident_id, from_status, to_status, changed_at)
+                                VALUES (:incident_id, 'RESOLVED', 'ESCALATED', now())
+                            """),
+                            {"incident_id": ticket.id}
+                        )
                 await sess.commit()
         else:
             # Dry run: just classify without updating
