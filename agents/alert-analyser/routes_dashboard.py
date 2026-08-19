@@ -1847,6 +1847,99 @@ async def retrigger_incident_creation(failure_id: int) -> dict:
         return {"ok": False, "error": str(e)}
 
 
+@router.get("/dashboard/incidents/{ticket_id}/flow")
+async def get_incident_flow(ticket_id: str) -> dict:
+    """Return an incident's full status-transition history (for the flow-map
+    popup) plus computed MTTD/MTTA/MTTR for this specific ticket."""
+    from database import SessionLocal
+    from sqlalchemy import text
+    from fastapi import HTTPException
+    import logging, json
+    from datetime import datetime
+    _log = logging.getLogger(__name__)
+
+    if SessionLocal is None:
+        raise HTTPException(status_code=500, detail="Database not available")
+
+    try:
+        async with SessionLocal() as sess:
+            ticket_result = await sess.execute(
+                text("""
+                    SELECT id, alert_id, title, priority, status, created_at,
+                           resolved_at, resolution_type, alert_payload
+                    FROM incident_management.incidents WHERE id = :id
+                """),
+                {"id": ticket_id}
+            )
+            ticket = ticket_result.fetchone()
+            if not ticket:
+                raise HTTPException(status_code=404, detail="Incident not found")
+
+            history_result = await sess.execute(
+                text("""
+                    SELECT from_status, to_status, changed_at
+                    FROM incident_management.incident_status_history
+                    WHERE incident_id = :id ORDER BY changed_at ASC
+                """),
+                {"id": ticket_id}
+            )
+            history = [{"from": h.from_status, "to": h.to_status, "changed_at": h.changed_at.isoformat()} for h in history_result.fetchall()]
+
+        payload = ticket.alert_payload if isinstance(ticket.alert_payload, dict) else (json.loads(ticket.alert_payload) if ticket.alert_payload else {})
+        alert_created_str = payload.get("createdAt")
+        mttd_min = None
+        mtta_min = None
+        mttr_min = None
+        alert_dt = None
+        if alert_created_str:
+            try:
+                alert_dt = datetime.fromisoformat(alert_created_str.replace("Z", "+00:00"))
+                mttd_min = round((ticket.created_at - alert_dt).total_seconds() / 60, 1)
+            except Exception:
+                pass
+        first_transition = next((h for h in history if h["from"] == "ESCALATED"), None)
+        if alert_dt and first_transition:
+            try:
+                mtta_min = round((datetime.fromisoformat(first_transition["changed_at"]) - alert_dt).total_seconds() / 60, 1)
+            except Exception:
+                pass
+        if ticket.resolved_at:
+            try:
+                mttr_min = round((ticket.resolved_at - ticket.created_at).total_seconds() / 60, 1)
+            except Exception:
+                pass
+
+        all_statuses = ["ESCALATED", "INVESTIGATING", "RCA_COMPLETE", "REMEDIATING", "RESOLVED"]
+        visited = set([h["to"] for h in history])
+        stage_map = []
+        for s in all_statuses:
+            entry = next((h for h in history if h["to"] == s), None)
+            stage_map.append({
+                "status": s,
+                "reached": s in visited,
+                "changed_at": entry["changed_at"] if entry else None,
+                "skipped": s not in visited and s != ticket.status,
+            })
+
+        return {
+            "id": str(ticket.id),
+            "alert_id": ticket.alert_id,
+            "title": ticket.title,
+            "priority": ticket.priority,
+            "current_status": ticket.status,
+            "history": history,
+            "stage_map": stage_map,
+            "mttd_minutes": mttd_min,
+            "mtta_minutes": mtta_min,
+            "mttr_minutes": mttr_min,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        _log.error(f"incident-flow error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/dashboard/incidents/{ticket_id}")
 async def get_incident_detail(ticket_id: str) -> dict:
     """Return alert payload for a single incident ticket by ID."""
