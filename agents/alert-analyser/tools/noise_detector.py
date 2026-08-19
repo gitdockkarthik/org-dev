@@ -85,13 +85,14 @@ def classify_alerts(alerts: list[dict]) -> list[dict]:
             noise_score -= 3
             genuine_reasons.append(f"{priority} priority")
 
-        # CHANGE 1 — acknowledgement signal
-        if not acknowledged:
-            noise_score += 2
-            noise_reasons.append("not acknowledged")
-        else:
-            noise_score -= 2
-            genuine_reasons.append("acknowledged by team")
+        # Acknowledgement is only a noise signal when COMBINED with rapid
+        # repeat-firing (fires >Nx/hour) - a single fresh alert should not
+        # be penalized just for not yet being acknowledged by a human,
+        # since this is an agentic system meant to decide genuineness
+        # itself, not wait on human response time (2026-08-19 fix).
+        if alias in frequent_aliases and not acknowledged:
+            noise_score += 1
+            noise_reasons.append("fires repeatedly and unacknowledged")
 
         # CHANGE 2 — cycle speed signal
         if close_time > 0 and close_time < 180:
@@ -104,14 +105,12 @@ def classify_alerts(alerts: list[dict]) -> list[dict]:
             noise_score -= 1
             genuine_reasons.append("open for extended period (>4hrs)")
 
-        # CHANGE 4 — persistent open signal
+        # CHANGE 4 — persistent open signal (no longer conditioned on
+        # acknowledgement - a persisting, unresolved condition is itself
+        # informative regardless of human response time, 2026-08-19 fix)
         if status == "open" and close_time == 0:
-            if not acknowledged:
-                noise_score += 2
-                noise_reasons.append("persistent open — not acknowledged")
-            else:
-                noise_score -= 1
-                genuine_reasons.append("persistent open — being investigated")
+            noise_score -= 1
+            genuine_reasons.append("persistent open — not yet resolved")
 
         # CHANGE 3 — three-tier classification
         noise_threshold = getattr(settings, "noise_classification_threshold", 0)
