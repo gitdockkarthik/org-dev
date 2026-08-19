@@ -851,3 +851,91 @@ async def sync_alerts() -> dict:
 @router.post("/incidents/backfill-check")
 async def route_backfill_check(hours: float = 24, dry_run: bool = True) -> dict:
     return await backfill_check_incidents(hours=hours, dry_run=dry_run)
+
+
+@router.post("/incidents/reconciliation-retrigger")
+async def reconciliation_retrigger(alert_id: str) -> dict:
+    """Given a single alert_id found missing by the reconciliation check,
+    fetch it fresh from OpsGenie, classify it, and create a ticket if
+    genuine. Companion to backfill_check_incidents - lets a user act
+    directly on a specific gap found in the Pipeline Reconciliation Check
+    panel, without needing the separate incident_creation_failures flow."""
+    from database import SessionLocal
+    from sqlalchemy import text
+    from tools.noise_detector import classify_alerts
+    import httpx, json
+
+    if SessionLocal is None:
+        return {"ok": False, "error": "Database not available"}
+
+    base_url = _config.get("opsgenie_base_url") or "https://api.opsgenie.com"
+    api_key = _config.get("api_token", "")
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                f"{base_url}/v2/alerts/{alert_id}",
+                headers={"Authorization": f"GenieKey {api_key}", "Accept": "application/json"},
+            )
+            resp.raise_for_status()
+            raw = resp.json().get("data", {})
+    except Exception as e:
+        return {"ok": False, "error": f"Failed to fetch alert from OpsGenie: {e}"}
+
+    if not raw:
+        return {"ok": False, "error": "Alert not found in OpsGenie"}
+
+    mapped = {
+        "id": raw.get("id"),
+        "alias": raw.get("alias", raw.get("id")),
+        "message": raw.get("message", ""),
+        "status": raw.get("status", "open"),
+        "priority": raw.get("priority", "P3"),
+        "source": raw.get("source", "unknown"),
+        "createdAt": raw.get("createdAt"),
+        "acknowledged": raw.get("acknowledged", False),
+        "count": raw.get("count", 1),
+        "responders": raw.get("responders", []),
+        "report": raw.get("report", {}),
+    }
+    classified = classify_alerts([mapped])[0]
+
+    if classified.get("classification") != "genuine":
+        return {"ok": True, "status": "not_genuine", "classification": classified.get("classification")}
+
+    try:
+        async with SessionLocal() as sess:
+            existing = await sess.execute(
+                text("SELECT id FROM incident_management.incidents WHERE alert_id = :alert_id LIMIT 1"),
+                {"alert_id": alert_id}
+            )
+            if existing.fetchone():
+                return {"ok": True, "status": "already_exists"}
+
+            result = await sess.execute(
+                text("""
+                    INSERT INTO incident_management.incidents
+                    (alert_id, status, priority, title, alert_payload, recurrence_count, source_tool, created_at, updated_at)
+                    VALUES (:alert_id, 'ESCALATED', :priority, :title, :payload, 1, :source_tool, now(), now())
+                    RETURNING id
+                """),
+                {
+                    "alert_id": alert_id,
+                    "priority": classified.get("priority", "P3"),
+                    "title": classified.get("message", "Unknown")[:200],
+                    "payload": json.dumps(classified),
+                    "source_tool": classified.get("source", "unknown"),
+                }
+            )
+            new_id = result.fetchone().id
+            await sess.execute(
+                text("""
+                    INSERT INTO incident_management.incident_status_history
+                    (incident_id, from_status, to_status, changed_at)
+                    VALUES (:incident_id, NULL, 'ESCALATED', now())
+                """),
+                {"incident_id": new_id}
+            )
+            await sess.commit()
+        return {"ok": True, "status": "created", "incident_id": str(new_id)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}

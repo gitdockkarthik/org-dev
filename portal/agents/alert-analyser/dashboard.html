@@ -201,7 +201,7 @@
       <button class="tab-btn" onclick="switchTab('noise',this)">Noise Analysis</button>
       <button class="tab-btn" onclick="switchTab('genuine',this)">Genuine Alerts</button>
       <button class="tab-btn" onclick="switchTab('trends',this)">Trends</button>
-      <button class="tab-btn" onclick="switchTab('incidents',this)">🚨 Escalated Incidents</button>
+      <button class="tab-btn" onclick="switchTab('incidents',this)">🚨 Incident Management</button>
       <button class="tab-btn" onclick="switchTab('insights',this)">AI Insights</button>
     </div>
 
@@ -1601,7 +1601,7 @@
       return arr.slice(start, start + size);
     }
 
-    const _incSectionFns = { open: 'renderOpenIncidentsSection', resolved: 'renderResolvedIncidentsSection', failures: 'renderFailuresSection' };
+    const _incSectionFns = { open: 'renderOpenIncidentsSection', resolved: 'renderResolvedIncidentsSection' };
     function _paginationControls(section, total, page, size) {
       const totalPages = Math.max(1, Math.ceil(total / size));
       if (totalPages <= 1) return '';
@@ -1635,6 +1635,80 @@
             Detection method: <strong>${ring.detected_via_message_count || 0}</strong> resolved via alert message parsing (fast, no manual OpsGenie action needed) · <strong>${ring.detected_via_opsgenie_count || 0}</strong> via live OpsGenie status check · ${ring.total_resolved} total verified resolutions
           </div>
         </div>`;
+    }
+
+    async function renderReconciliationCheck() {
+      const el = document.getElementById('reconciliation-check-container');
+      if (!el) return;
+      el.innerHTML = `
+        <div class="chart-card" style="margin-bottom:20px">
+          <div class="chart-card__title">Pipeline Reconciliation Check</div>
+          <div style="font-size:.75rem;color:var(--text-muted);margin-bottom:10px">Verifies every genuine alert in the selected window resulted in a ticket - catches any pipeline gap early.</div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+            <input type="datetime-local" id="reconFrom" style="padding:6px 8px;background:var(--navy-1);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);font-size:.82rem" step="60">
+            <span style="color:var(--text-muted);font-size:.85rem">to</span>
+            <input type="datetime-local" id="reconTo" style="padding:6px 8px;background:var(--navy-1);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);font-size:.82rem" step="60">
+            <button class="btn btn--primary" onclick="runReconciliationCheck()" style="padding:6px 14px">Run Check</button>
+            <span id="reconStatus" style="font-size:.8rem;color:var(--text-muted)"></span>
+          </div>
+          <div id="reconResults"></div>
+        </div>`;
+  const now = new Date();
+  const yesterday = new Date(now.getTime() - 24*60*60*1000);
+  const fmt = d => d.toISOString().slice(0,16);
+  const fEl = document.getElementById('reconFrom');
+  const tEl = document.getElementById('reconTo');
+  if (fEl && !fEl.value) fEl.value = fmt(yesterday);
+  if (tEl && !tEl.value) tEl.value = fmt(now);
+}
+
+    async function runReconciliationCheck() {
+      const fromVal = document.getElementById('reconFrom')?.value;
+      const toVal = document.getElementById('reconTo')?.value;
+      let hours = 24;
+      if (fromVal && toVal) {
+        const diffMs = new Date(toVal) - new Date(fromVal);
+        hours = Math.max(0.1, diffMs / (1000 * 60 * 60));
+      }
+      const statusEl = document.getElementById('reconStatus');
+      const resultsEl = document.getElementById('reconResults');
+      statusEl.textContent = 'Checking...';
+      resultsEl.innerHTML = '';
+      const data = await api(`/settings/incidents/backfill-check?hours=${hours}&dry_run=true`, { method: 'POST' }).catch(e => ({ error: e.message || JSON.stringify(e) }));
+      statusEl.textContent = '';
+      if (data.error || data.detail) {
+        const errMsg = data.error || (Array.isArray(data.detail) ? data.detail.map(d => d.msg).join(', ') : JSON.stringify(data.detail));
+        resultsEl.innerHTML = `<div style="color:var(--danger)">Check failed: ${errMsg}</div>`;
+        return;
+      }
+      const gapPct = data.checked > 0 ? ((data.missing / data.checked) * 100).toFixed(1) : 0;
+      const color = data.missing === 0 ? 'var(--success)' : (gapPct > 5 ? 'var(--danger)' : 'var(--warn)');
+      const samplesHtml = (data.missing_samples || []).slice(0, 10).map(s => `
+        <tr><td>${s.createdAt ? s.createdAt.replace('T',' ').slice(0,19) : '—'}</td><td class="msg-cell"><span class="msg-text">${(s.title||'').substring(0,70)}</span></td><td><button class="btn btn--sm" onclick="retriggerFromReconciliation('${s.alert_id}')">Create Ticket</button></td></tr>
+      `).join('');
+      resultsEl.innerHTML = `
+        <div style="display:flex;gap:24px;margin-bottom:12px;flex-wrap:wrap">
+          <div><div class="kpi__label">Alerts Checked</div><div class="kpi__value">${data.checked}</div></div>
+          <div><div class="kpi__label">Missing Tickets</div><div class="kpi__value" style="color:${color}">${data.missing}</div></div>
+          <div><div class="kpi__label">Gap Rate</div><div class="kpi__value" style="color:${color}">${gapPct}%</div></div>
+        </div>
+        ${data.missing > 0 ? `
+          <div style="font-size:.78rem;font-weight:600;color:var(--text-muted);margin-bottom:6px">Sample gaps (up to 10 shown):</div>
+          <div class="data-table-wrap" style="max-height:250px;overflow-y:auto"><table class="data-table" style="font-size:.78rem">
+            <thead><tr><th>Alert Created At</th><th>Title</th><th>Action</th></tr></thead>
+            <tbody>${samplesHtml}</tbody>
+          </table></div>
+        ` : `<div style="color:var(--success);font-weight:600">✓ No gaps detected - every genuine alert in this window has a ticket.</div>`}`;
+    }
+
+    async function retriggerFromReconciliation(alertId) {
+      const result = await api(`/settings/incidents/reconciliation-retrigger?alert_id=${encodeURIComponent(alertId)}`, { method: 'POST' }).catch(e => ({ ok: false, error: e.message }));
+      if (result.ok) {
+        showToast(`Result: ${result.status}`, 'success');
+        runReconciliationCheck();
+      } else {
+        showToast(`Failed: ${result.error}`, 'error');
+      }
     }
 
     async function renderMttxKpis() {
@@ -1812,46 +1886,6 @@
       }, 50);
     }
 
-    async function renderFailuresSection() {
-      const container = document.getElementById('failures-section');
-      if (!container) return;
-      const search = document.getElementById('failSearch')?.value || '';
-      const params = new URLSearchParams();
-      if (search) params.set('search', search);
-      const data = await api('/dashboard/incidents/failures?' + params.toString()).catch(() => ({ failures: [], total: 0 }));
-      const failures = data.failures || [];
-
-      const pagedFailures = _paginate(failures, _incPageState.failures, _incPageSize);
-      const rows = pagedFailures.map(f => `
-        <tr>
-          <td class="msg-cell"><span class="msg-text">${(f.title || '').substring(0, 50)}</span></td>
-          <td>${f.alert_created_at ? f.alert_created_at.replace('T', ' ').slice(0, 16) : '—'}</td>
-          <td style="color:var(--danger)">${(f.failure_reason || '').substring(0, 60)}</td>
-          <td>${f.retriggered ? `<span class="badge">${f.retrigger_status}</span>` : `<button class="btn btn--sm" onclick="retriggerFailure(${f.id})">Retrigger</button>`}</td>
-          <td>${f.retrigger_status || '—'}</td>
-        </tr>`).join('') || '<tr><td colspan="5" class="data-table__empty">No failed incident creations - all genuine alerts are being ticketed correctly</td></tr>';
-
-      container.innerHTML = `
-        <div class="section-title" style="margin-top:24px">Failed Incident Creation</div>
-        <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap;padding:10px;background:var(--navy-2);border-radius:var(--r)">
-          <input type="text" id="failSearch" placeholder="Search by alert name..." value="${search}"
-            onkeyup="if(event.key==='Enter')renderFailuresSection()"
-            style="flex:1;min-width:180px;padding:6px 10px;background:var(--navy-1);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);font-size:.85rem">
-          <button class="btn btn--primary" onclick="renderFailuresSection()" style="padding:6px 14px">Search</button>
-          <span style="font-size:.78rem;color:var(--text-muted)">${data.total} failures</span>
-        </div>
-        <div class="data-table-wrap" style="max-height:600px;overflow-y:auto"><table class="data-table" style="font-size:.8rem">
-          <thead><tr><th>Alert</th><th>Created At</th><th>Failed Reason</th><th>Action</th><th>Trigger Status</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table></div>
-        ${_paginationControls('failures', failures.length, _incPageState.failures, _incPageSize)}`;
-    }
-
-    async function retriggerFailure(id) {
-      const result = await api(`/dashboard/incidents/failures/${id}/retrigger`, { method: 'POST' }).catch(e => ({ ok: false, error: e.message }));
-      showToast(result.ok ? `Retrigger: ${result.status}` : `Failed: ${result.error}`, result.ok ? 'success' : 'error');
-      renderFailuresSection();
-    }
 
     async function openFlowModal(ticketId) {
       const data = await api(`/dashboard/incidents/${ticketId}/flow`).catch(e => ({ error: e.message }));
@@ -2120,7 +2154,7 @@
           <div id="mttx-kpi-container"></div>
           <div id="open-incidents-section"></div>
           <div id="resolved-incidents-section"></div>
-          <div id="failures-section"></div>
+          <div id="reconciliation-check-container"></div>
           <div id="incidents-trend-section"></div>
           <div style="margin-top:20px">
             <div style="display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap;padding:12px;background:var(--navy-2);border-radius:var(--r)">
@@ -2156,7 +2190,7 @@
         renderPipelineSummary();
         renderOpenIncidentsSection();
         renderResolvedIncidentsSection();
-        renderFailuresSection();
+        renderReconciliationCheck();
         renderIncidentsTrendSection();
 
         // Attach event listeners to ticket cards for modal opening
