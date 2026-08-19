@@ -292,6 +292,19 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                                 continue
                             if alert.get("status", "").lower() in ("closed", "resolved"):
                                 continue
+                            # Skip creating a ticket for an alert whose own title
+                            # already declares it resolved via bracket tag (e.g.
+                            # "[Closed]") - the alert's status field can lag behind
+                            # or disagree with the title on some sources (e.g.
+                            # flapping Zabbix alerts), and resolution already
+                            # trusts this same signal. Checking it here too keeps
+                            # creation and resolution consistent and stops the
+                            # create-then-instantly-resolve loop for alerts that
+                            # are self-reporting as closed. Root cause: 2026-08-19.
+                            from tools.dashboard_builder import parse_message_status as _pms
+                            _title_preview = alert.get("message", alert.get("alias", ""))
+                            if _pms(_title_preview) == "resolved":
+                                continue
                             alert_id = alert.get("id")
                             priority = alert.get("priority", "P3")
                             title = alert.get("message", alert.get("alias", "Unknown"))[:200]
