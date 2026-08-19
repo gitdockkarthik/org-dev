@@ -1584,6 +1584,347 @@
       });
     }
 
+    function fmtDuration(minutes) {
+      if (minutes == null) return '—';
+      const m = Number(minutes);
+      if (m < 1) return Math.round(m * 60) + 's';
+      if (m < 60) return Math.round(m) + 'm';
+      if (m < 1440) return (m / 60).toFixed(1) + 'h';
+      return (m / 1440).toFixed(1) + 'd';
+    }
+
+    const _incPageState = { open: 1, resolved: 1, failures: 1 };
+    const _incPageSize = 20;
+
+    function _paginate(arr, page, size) {
+      const start = (page - 1) * size;
+      return arr.slice(start, start + size);
+    }
+
+    const _incSectionFns = { open: 'renderOpenIncidentsSection', resolved: 'renderResolvedIncidentsSection', failures: 'renderFailuresSection' };
+    function _paginationControls(section, total, page, size) {
+      const totalPages = Math.max(1, Math.ceil(total / size));
+      if (totalPages <= 1) return '';
+      const fn = _incSectionFns[section];
+      return `<div style="display:flex;align-items:center;gap:10px;justify-content:flex-end;padding:8px;font-size:.8rem;color:var(--text-muted)">
+        <button class="btn btn--sm" ${page<=1?'disabled':''} onclick="_incPageState['${section}']=${page-1};${fn}()">← Prev</button>
+        <span>Page ${page} of ${totalPages}</span>
+        <button class="btn btn--sm" ${page>=totalPages?'disabled':''} onclick="_incPageState['${section}']=${page+1};${fn}()">Next →</button>
+      </div>`;
+    }
+
+    async function renderPipelineSummary() {
+      const data = await api('/dashboard/incidents').catch(() => ({}));
+      const ring = data.resolution_ring || {};
+      const el = document.getElementById('pipeline-summary-container');
+      if (!el) return;
+      if (!ring.total_resolved) {
+        el.innerHTML = '';
+        return;
+      }
+      el.innerHTML = `
+        <div class="chart-card" style="margin-bottom:20px">
+          <div class="chart-card__title">Resolution Summary — How Incidents Get Closed</div>
+          <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:10px">
+            <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#16a34a;margin-right:6px"></span>Self-Healed: <strong>${ring.auto_resolved_pct}%</strong></div>
+            <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#a855f7;margin-right:6px"></span>RCA-Assisted: <strong>${ring.rca_assisted_pct}%</strong></div>
+            <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#0EA5E9;margin-right:6px"></span>Action-Resolved (App Support Agent): <strong>${ring.action_resolved_pct}%</strong></div>
+            <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#dc2626;margin-right:6px"></span>Manual: <strong>${ring.manual_pct}%</strong></div>
+          </div>
+          <div style="margin-top:12px;font-size:.78rem;color:var(--text-muted)">
+            Detection method: <strong>${ring.detected_via_message_count || 0}</strong> resolved via alert message parsing (fast, no manual OpsGenie action needed) · <strong>${ring.detected_via_opsgenie_count || 0}</strong> via live OpsGenie status check · ${ring.total_resolved} total verified resolutions
+          </div>
+        </div>`;
+    }
+
+    async function renderMttxKpis() {
+      const mttx = await api('/dashboard/incidents/mttx-summary').catch(() => ({ mttd: null, mtta: null, mttr: null }));
+      const fmtMetric = (m, label) => {
+        if (!m || m.sample_size === 0) {
+          return `<div class="kpi"><div class="kpi__label">${label}</div><div class="kpi__value" style="color:var(--text-dim)">No data</div></div>`;
+        }
+        return `<div class="kpi">
+          <div class="kpi__label">${label}</div>
+          <div class="kpi__value">${fmtDuration(m.avg)} <span style="font-size:.6em;color:var(--text-muted)">avg</span></div>
+          <div class="kpi__sub">Min ${fmtDuration(m.min)} · Max ${fmtDuration(m.max)} · n=${m.sample_size}</div>
+        </div>`;
+      };
+      const html = `<div class="kpi-grid" style="margin-bottom:20px">
+        ${fmtMetric(mttx.mttd, 'MTTD — Mean Time To Detect')}
+        ${fmtMetric(mttx.mtta, 'MTTA — Mean Time To Acknowledge')}
+        ${fmtMetric(mttx.mttr, 'MTTR — Mean Time To Resolve')}
+      </div>`;
+      const el = document.getElementById('mttx-kpi-container');
+      if (el) el.innerHTML = html;
+    }
+
+    async function renderOpenIncidentsSection() {
+      const container = document.getElementById('open-incidents-section');
+      if (!container) return;
+      const search = document.getElementById('openIncSearch')?.value || '';
+      const statusFilter = document.getElementById('openIncStatusFilter')?.value || '';
+      const params = new URLSearchParams({ hours: '24' });
+      if (search) params.set('search', search);
+      if (statusFilter) params.set('status', statusFilter);
+      const data = await api('/dashboard/incidents/open-list?' + params.toString()).catch(() => ({ incidents: [], total: 0 }));
+      const incidents = data.incidents || [];
+
+      const statusColors = { 'ESCALATED': '#ea580c', 'INVESTIGATING': '#f59e0b', 'RCA_COMPLETE': '#a855f7', 'REMEDIATING': '#0EA5E9' };
+      const priCounts = {};
+      incidents.forEach(i => { priCounts[i.priority] = (priCounts[i.priority] || 0) + 1; });
+      const statusCounts = {};
+      incidents.forEach(i => { statusCounts[i.status] = (statusCounts[i.status] || 0) + 1; });
+
+      const pagedIncidents = _paginate(incidents, _incPageState.open, _incPageSize);
+      const rows = pagedIncidents.map(i => `
+        <tr>
+          <td class="msg-cell"><span class="msg-text">${(i.title || '').substring(0, 60)}</span></td>
+          <td>${i.alert_created_at ? i.alert_created_at.replace('T', ' ').slice(0, 16) : '—'}</td>
+          <td><a href="#" onclick="openFlowModal('${i.id}');return false;" style="color:var(--accent);text-decoration:underline">${i.id.slice(0, 8)}</a></td>
+          <td>${i.incident_created_at.replace('T', ' ').slice(0, 16)}</td>
+          <td><span class="badge" style="background:${statusColors[i.status] || '#64748b'}22;color:${statusColors[i.status] || '#64748b'}">${i.status}</span></td>
+          <td style="font-size:.75rem;color:var(--text-muted)">${i.opsgenie_status || '—'}</td>
+          <td>${fmtDuration(i.mttd_minutes)}</td>
+          <td>${fmtDuration(i.mtta_minutes)}</td>
+          <td>${fmtDuration(i.mttr_elapsed_minutes)}</td>
+        </tr>`).join('') || '<tr><td colspan="8" class="data-table__empty">No open incidents in this period</td></tr>';
+
+      container.innerHTML = `
+        <div class="section-title" style="margin-top:24px">Open Incidents</div>
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap;padding:10px;background:var(--navy-2);border-radius:var(--r)">
+          <input type="text" id="openIncSearch" placeholder="Search by alert name..." value="${search}"
+            onkeyup="if(event.key==='Enter')renderOpenIncidentsSection()"
+            style="flex:1;min-width:180px;padding:6px 10px;background:var(--navy-1);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);font-size:.85rem">
+          <select id="openIncStatusFilter" onchange="renderOpenIncidentsSection()"
+            style="padding:6px 10px;background:var(--navy-1);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);font-size:.85rem">
+            <option value="">All Statuses</option>
+            <option value="ESCALATED" ${statusFilter==='ESCALATED'?'selected':''}>ESCALATED</option>
+            <option value="INVESTIGATING" ${statusFilter==='INVESTIGATING'?'selected':''}>INVESTIGATING</option>
+            <option value="RCA_COMPLETE" ${statusFilter==='RCA_COMPLETE'?'selected':''}>RCA_COMPLETE</option>
+            <option value="REMEDIATING" ${statusFilter==='REMEDIATING'?'selected':''}>REMEDIATING</option>
+          </select>
+          <button class="btn btn--primary" onclick="renderOpenIncidentsSection()" style="padding:6px 14px">Search</button>
+          <span style="font-size:.78rem;color:var(--text-muted)">${data.total} open (last 24h)</span>
+        </div>
+        <div class="chart-grid">
+          <div class="chart-card" style="grid-column:span 2">
+            <div class="data-table-wrap" style="max-height:600px;overflow-y:auto"><table class="data-table" style="font-size:.8rem">
+              <thead><tr><th>Alert</th><th>Created At</th><th>Incident #</th><th>Incident Created</th><th>Status</th><th>OpsGenie Status <span style="font-weight:400;color:var(--text-dim)">(at creation)</span></th><th>MTTD</th><th>MTTA</th><th>MTTR (Elapsed)</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table></div>
+            ${_paginationControls('open', incidents.length, _incPageState.open, _incPageSize)}
+          </div>
+          <div class="chart-card">
+            <div class="chart-card__title">Open Incidents by Status</div>
+            <div class="chart-wrap"><canvas id="openStatusChart"></canvas></div>
+          </div>
+        </div>`;
+
+      setTimeout(() => {
+        destroyChart('openStatus');
+        const c = document.getElementById('openStatusChart')?.getContext('2d');
+        if (c) charts['openStatus'] = new Chart(c, {
+          type: 'doughnut',
+          data: {
+            labels: Object.keys(statusCounts),
+            datasets: [{ data: Object.values(statusCounts), backgroundColor: Object.keys(statusCounts).map(s => statusColors[s] || '#64748b'), borderWidth: 0 }]
+          },
+          options: { responsive: true, cutout: '60%', plugins: { legend: { position: 'bottom' } } }
+        });
+      }, 50);
+    }
+
+    async function renderResolvedIncidentsSection() {
+      const container = document.getElementById('resolved-incidents-section');
+      if (!container) return;
+      const search = document.getElementById('resIncSearch')?.value || '';
+      const statusFilter = document.getElementById('resIncStatusFilter')?.value || '';
+      const params = new URLSearchParams({ hours: '24' });
+      if (search) params.set('search', search);
+      if (statusFilter) params.set('status', statusFilter);
+      const data = await api('/dashboard/incidents/resolved-list?' + params.toString()).catch(() => ({ incidents: [], total: 0 }));
+      const incidents = data.incidents || [];
+
+      const priCounts = {};
+      incidents.forEach(i => { priCounts[i.priority] = (priCounts[i.priority] || 0) + 1; });
+      const mttrByPriority = {};
+      incidents.forEach(i => {
+        if (i.mttr_minutes != null) {
+          if (!mttrByPriority[i.priority]) mttrByPriority[i.priority] = [];
+          mttrByPriority[i.priority].push(i.mttr_minutes);
+        }
+      });
+      const avgMttrByPriority = {};
+      Object.entries(mttrByPriority).forEach(([p, vals]) => { avgMttrByPriority[p] = Math.round(vals.reduce((a,b)=>a+b,0)/vals.length); });
+
+      const pagedIncidents = _paginate(incidents, _incPageState.resolved, _incPageSize);
+      const rows = pagedIncidents.map(i => `
+        <tr>
+          <td class="msg-cell"><span class="msg-text">${(i.title || '').substring(0, 55)}</span></td>
+          <td>${i.alert_created_at ? i.alert_created_at.replace('T', ' ').slice(0, 16) : '—'}</td>
+          <td><a href="#" onclick="openFlowModal('${i.id}');return false;" style="color:var(--accent);text-decoration:underline">${i.id.slice(0, 8)}</a></td>
+          <td>${i.incident_created_at.replace('T', ' ').slice(0, 16)}</td>
+          <td><span class="badge badge--success">${i.status}</span></td>
+          <td style="font-size:.75rem;color:var(--text-muted)">${i.opsgenie_status || '—'}</td>
+          <td>${i.closed_by}</td>
+          <td>${fmtDuration(i.mttd_minutes)}</td>
+          <td>${fmtDuration(i.mtta_minutes)}</td>
+          <td>${fmtDuration(i.mttr_minutes)}</td>
+        </tr>`).join('') || '<tr><td colspan="9" class="data-table__empty">No resolved incidents in this period</td></tr>';
+
+      container.innerHTML = `
+        <div class="section-title" style="margin-top:24px">Resolved / Closed Incidents</div>
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap;padding:10px;background:var(--navy-2);border-radius:var(--r)">
+          <input type="text" id="resIncSearch" placeholder="Search by alert name..." value="${search}"
+            onkeyup="if(event.key==='Enter')renderResolvedIncidentsSection()"
+            style="flex:1;min-width:180px;padding:6px 10px;background:var(--navy-1);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);font-size:.85rem">
+          <select id="resIncStatusFilter" onchange="renderResolvedIncidentsSection()"
+            style="padding:6px 10px;background:var(--navy-1);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);font-size:.85rem">
+            <option value="">All Statuses</option>
+            <option value="RESOLVED" ${statusFilter==='RESOLVED'?'selected':''}>RESOLVED</option>
+            <option value="MANUAL" ${statusFilter==='MANUAL'?'selected':''}>MANUAL</option>
+          </select>
+          <button class="btn btn--primary" onclick="renderResolvedIncidentsSection()" style="padding:6px 14px">Search</button>
+          <span style="font-size:.78rem;color:var(--text-muted)">${data.total} resolved (last 24h)</span>
+        </div>
+        <div class="chart-grid">
+          <div class="chart-card" style="grid-column:span 2">
+            <div class="data-table-wrap" style="max-height:600px;overflow-y:auto"><table class="data-table" style="font-size:.8rem">
+              <thead><tr><th>Alert</th><th>Created At</th><th>Incident #</th><th>Incident Created</th><th>Status</th><th>OpsGenie Status <span style="font-weight:400;color:var(--text-dim)">(at creation)</span></th><th>Closed By</th><th>MTTD</th><th>MTTA</th><th>MTTR</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table></div>
+            ${_paginationControls('resolved', incidents.length, _incPageState.resolved, _incPageSize)}
+          </div>
+          <div class="chart-card">
+            <div class="chart-card__title">Avg MTTR by Priority</div>
+            <div class="chart-wrap"><canvas id="resMttrChart"></canvas></div>
+          </div>
+        </div>`;
+
+      setTimeout(() => {
+        destroyChart('resMttr');
+        const c = document.getElementById('resMttrChart')?.getContext('2d');
+        if (c) charts['resMttr'] = new Chart(c, {
+          type: 'bar',
+          data: { labels: Object.keys(avgMttrByPriority), datasets: [{ label: 'Avg MTTR (min)', data: Object.values(avgMttrByPriority), backgroundColor: '#6366f1' }] },
+          options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+        });
+      }, 50);
+    }
+
+    async function renderFailuresSection() {
+      const container = document.getElementById('failures-section');
+      if (!container) return;
+      const search = document.getElementById('failSearch')?.value || '';
+      const params = new URLSearchParams();
+      if (search) params.set('search', search);
+      const data = await api('/dashboard/incidents/failures?' + params.toString()).catch(() => ({ failures: [], total: 0 }));
+      const failures = data.failures || [];
+
+      const pagedFailures = _paginate(failures, _incPageState.failures, _incPageSize);
+      const rows = pagedFailures.map(f => `
+        <tr>
+          <td class="msg-cell"><span class="msg-text">${(f.title || '').substring(0, 50)}</span></td>
+          <td>${f.alert_created_at ? f.alert_created_at.replace('T', ' ').slice(0, 16) : '—'}</td>
+          <td style="color:var(--danger)">${(f.failure_reason || '').substring(0, 60)}</td>
+          <td>${f.retriggered ? `<span class="badge">${f.retrigger_status}</span>` : `<button class="btn btn--sm" onclick="retriggerFailure(${f.id})">Retrigger</button>`}</td>
+          <td>${f.retrigger_status || '—'}</td>
+        </tr>`).join('') || '<tr><td colspan="5" class="data-table__empty">No failed incident creations - all genuine alerts are being ticketed correctly</td></tr>';
+
+      container.innerHTML = `
+        <div class="section-title" style="margin-top:24px">Failed Incident Creation</div>
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap;padding:10px;background:var(--navy-2);border-radius:var(--r)">
+          <input type="text" id="failSearch" placeholder="Search by alert name..." value="${search}"
+            onkeyup="if(event.key==='Enter')renderFailuresSection()"
+            style="flex:1;min-width:180px;padding:6px 10px;background:var(--navy-1);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);font-size:.85rem">
+          <button class="btn btn--primary" onclick="renderFailuresSection()" style="padding:6px 14px">Search</button>
+          <span style="font-size:.78rem;color:var(--text-muted)">${data.total} failures</span>
+        </div>
+        <div class="data-table-wrap" style="max-height:600px;overflow-y:auto"><table class="data-table" style="font-size:.8rem">
+          <thead><tr><th>Alert</th><th>Created At</th><th>Failed Reason</th><th>Action</th><th>Trigger Status</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table></div>
+        ${_paginationControls('failures', failures.length, _incPageState.failures, _incPageSize)}`;
+    }
+
+    async function retriggerFailure(id) {
+      const result = await api(`/dashboard/incidents/failures/${id}/retrigger`, { method: 'POST' }).catch(e => ({ ok: false, error: e.message }));
+      showToast(result.ok ? `Retrigger: ${result.status}` : `Failed: ${result.error}`, result.ok ? 'success' : 'error');
+      renderFailuresSection();
+    }
+
+    async function openFlowModal(ticketId) {
+      const data = await api(`/dashboard/incidents/${ticketId}/flow`).catch(e => ({ error: e.message }));
+      if (data.error) { showToast('Failed to load incident flow: ' + data.error, 'error'); return; }
+
+      const statusColors = { 'ESCALATED': '#ea580c', 'INVESTIGATING': '#f59e0b', 'RCA_COMPLETE': '#a855f7', 'REMEDIATING': '#0EA5E9', 'RESOLVED': '#16a34a' };
+      const stageHtml = data.stage_map.map((s, i) => `
+        <div style="display:flex;align-items:center;gap:8px;opacity:${s.skipped ? '0.35' : '1'}">
+          <div style="width:14px;height:14px;border-radius:50%;background:${s.reached ? (statusColors[s.status] || '#64748b') : 'var(--navy-3)'};flex-shrink:0"></div>
+          <div style="flex:1">
+            <div style="font-weight:600;font-size:.82rem">${s.status}${s.skipped ? ' (skipped)' : ''}</div>
+            ${s.changed_at ? `<div style="font-size:.72rem;color:var(--text-muted)">${s.changed_at.replace('T',' ').slice(0,19)}</div>` : ''}
+          </div>
+        </div>
+        ${i < data.stage_map.length - 1 ? '<div style="width:2px;height:16px;background:var(--border);margin-left:6px"></div>' : ''}
+      `).join('');
+
+      const popup = document.createElement('div');
+      popup.className = 'ticket-modal-overlay';
+      popup.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:1000';
+      popup.innerHTML = `
+        <div class="ticket-modal-panel" style="padding:24px">
+          <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:16px">
+            <div>
+              <div style="font-size:.75rem;color:var(--text-muted)">Incident #${data.id.slice(0,8)}</div>
+              <div style="font-weight:600;font-size:.95rem;margin-top:4px">${(data.title||'').substring(0,90)}</div>
+            </div>
+            <button onclick="this.closest('.ticket-modal-overlay').remove()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:1.2rem">✕</button>
+          </div>
+          <div style="display:flex;gap:16px;margin-bottom:16px;font-size:.78rem">
+            <div>MTTD: <strong>${fmtDuration(data.mttd_minutes)}</strong></div>
+            <div>MTTA: <strong>${fmtDuration(data.mtta_minutes)}</strong></div>
+            <div>MTTR: <strong>${fmtDuration(data.mttr_minutes)}</strong></div>
+          </div>
+          ${data.detected_via ? `<div style="font-size:.72rem;color:var(--text-muted);margin-bottom:10px">Resolution detected via: <strong>${data.detected_via === 'message_parse' ? 'Alert message parsing (fast, no manual OpsGenie action needed)' : 'Live OpsGenie status check'}</strong></div>` : ''}
+          <div style="font-size:.78rem;font-weight:600;color:var(--text-muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:.05em">Status Flow</div>
+          ${stageHtml}
+        </div>`;
+      document.body.appendChild(popup);
+    }
+
+    async function renderIncidentsTrendSection() {
+      const container = document.getElementById('incidents-trend-section');
+      if (!container) return;
+      container.innerHTML = `
+        <div class="section-title" style="margin-top:24px">Incidents Trend</div>
+        <div class="chart-grid">
+          <div class="chart-card"><div class="chart-card__title">Weekly Trend</div><div class="chart-wrap"><canvas id="weeklyTrendChart"></canvas></div></div>
+          <div class="chart-card"><div class="chart-card__title">Monthly Trend</div><div class="chart-wrap"><canvas id="monthlyTrendChart"></canvas></div></div>
+        </div>`;
+      const [weekly, monthly] = await Promise.all([
+        api('/dashboard/incidents/trend?period=weekly').catch(() => ({ trend: [] })),
+        api('/dashboard/incidents/trend?period=monthly').catch(() => ({ trend: [] })),
+      ]);
+      setTimeout(() => {
+        const priColors = { P1: '#dc2626', P2: '#f59e0b', P3: '#2563eb', P4: '#16a34a', P5: '#9333ea' };
+        destroyChart('weeklyTrend');
+        const wc = document.getElementById('weeklyTrendChart')?.getContext('2d');
+        if (wc && weekly.trend?.length) charts['weeklyTrend'] = new Chart(wc, {
+          type: 'bar',
+          data: { labels: weekly.trend.map(t => t.bucket.slice(0,10)), datasets: ['P1','P2','P3','P4','P5'].map(p => ({ label: p, data: weekly.trend.map(t => t[p]), backgroundColor: priColors[p] })) },
+          options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { x: { stacked: true }, y: { stacked: true } } }
+        });
+        destroyChart('monthlyTrend');
+        const mc = document.getElementById('monthlyTrendChart')?.getContext('2d');
+        if (mc && monthly.trend?.length) charts['monthlyTrend'] = new Chart(mc, {
+          type: 'bar',
+          data: { labels: monthly.trend.map(t => t.bucket.slice(0,7)), datasets: ['P1','P2','P3','P4','P5'].map(p => ({ label: p, data: monthly.trend.map(t => t[p]), backgroundColor: priColors[p] })) },
+          options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { x: { stacked: true }, y: { stacked: true } } }
+        });
+      }, 50);
+    }
+
     async function renderIncidents() {
       const el = document.getElementById('tab-incidents');
       const esc = s => { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; };
@@ -1775,26 +2116,12 @@
         </div>`;
 
         el.innerHTML = `
-          <div class="chart-grid">
-            <div class="chart-card">
-              <div class="chart-card__title">Pipeline Flow</div>
-              <div class="chart-wrap" style="max-height:240px"><canvas id="pipelineChart"></canvas></div>
-            </div>
-            <div class="chart-card">
-              <div class="chart-card__title">Ticket Aging</div>
-              <div class="chart-wrap" style="max-height:300px"><canvas id="agingChart"></canvas></div>
-              ${agingCallout}
-              ${slaBreachSummary}
-            </div>
-            <div class="chart-card">
-              <div class="chart-card__title">Resolution Method</div>
-              <div class="chart-wrap" style="max-height:240px"><canvas id="resolutionChart"></canvas></div>
-            </div>
-            <div class="chart-card">
-              <div class="chart-card__title">Recurrence Signal</div>
-              <div style="max-height:280px;overflow-y:auto">${recurrenceList}</div>
-            </div>
-          </div>
+          <div id="pipeline-summary-container"></div>
+          <div id="mttx-kpi-container"></div>
+          <div id="open-incidents-section"></div>
+          <div id="resolved-incidents-section"></div>
+          <div id="failures-section"></div>
+          <div id="incidents-trend-section"></div>
           <div style="margin-top:20px">
             <div style="display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap;padding:12px;background:var(--navy-2);border-radius:var(--r)">
               <input type="text" id="incidentSearch" placeholder="Search by title or alert ID..."
@@ -1824,112 +2151,13 @@
 
         setTimeout(() => {
           attachIncidentCardListeners();
-          destroyChart('pipeline');
-          const pc = document.getElementById('pipelineChart')?.getContext('2d');
-          if (pc) charts['pipeline'] = new Chart(pc, {
-            type: 'bar',
-            data: {
-              labels: pipelineLabels,
-              datasets: [{
-                label: 'Count',
-                data: pipelineData,
-                backgroundColor: pipelineColors,
-                borderWidth: 0,
-              }],
-            },
-            options: {
-              indexAxis: 'y',
-              responsive: true,
-              plugins: {
-                legend: { display: false },
-                datalabels: {
-                  color: 'var(--text)',
-                  font: { size: 11, weight: '600' },
-                  anchor: 'end',
-                  align: 'right',
-                  clamp: false,
-                  clip: false,
-                  formatter: function(value) { return value > 0 ? value.toLocaleString() : ''; }
-                }
-              },
-              scales: { x: { beginAtZero: true } },
-              layout: { padding: { right: 60 } },
-            },
-          });
-
-          // Add pipeline status count summary below chart
-          const pipelineWrap = document.getElementById('pipelineChart')?.parentElement;
-          if (pipelineWrap && pipelineData.length > 0) {
-            const summary = pipelineLabels.map((label, i) => `${label}: ${pipelineData[i]}`).join(' · ');
-            const summaryEl = document.createElement('div');
-            summaryEl.style.cssText = 'margin-top:8px;padding:8px;background:var(--navy-2);border-radius:var(--r-sm);font-size:.75rem;color:var(--text-dim);word-break:break-word';
-            summaryEl.textContent = summary;
-            pipelineWrap.appendChild(summaryEl);
-          }
-
-          destroyChart('aging');
-          const ac = document.getElementById('agingChart')?.getContext('2d');
-          if (ac) charts['aging'] = new Chart(ac, {
-            type: 'bar',
-            data: {
-              labels: agingPriorityNames,
-              datasets: agingBandDatasets,
-            },
-            options: {
-              responsive: true,
-              plugins: {
-                legend: { display: true, position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
-                datalabels: {
-                  display: function(context) {
-                    // Only show label on the last (top) dataset for each bar
-                    const datasetCount = context.chart.data.datasets.length;
-                    return context.datasetIndex === datasetCount - 1;
-                  },
-                  color: 'var(--text)',
-                  font: { size: 11, weight: '700' },
-                  anchor: 'end',
-                  align: 'top',
-                  formatter: function(value, context) {
-                    // Sum all datasets for this index to get stack total
-                    const total = context.chart.data.datasets.reduce((sum, ds) => sum + (ds.data[context.dataIndex] || 0), 0);
-                    return total > 0 ? total.toLocaleString() : '';
-                  }
-                }
-              },
-              layout: { padding: { top: 24 } },
-              scales: {
-                x: { beginAtZero: true, stacked: true },
-                y: { beginAtZero: true, stacked: true }
-              },
-            },
-          });
-
-          destroyChart('resolution');
-          if (resolutionRing.auto_resolved_pct === 0 && resolutionRing.action_resolved_pct === 0 && resolutionRing.manual_pct === 0) {
-            const resChartWrap = document.getElementById('resolutionChart')?.parentElement;
-            if (resChartWrap) {
-              resChartWrap.innerHTML = emptyState('📊', 'No resolved or manual tickets yet', 'Tickets will appear here once they are marked as resolved or manual.');
-            }
-          } else {
-            const rc = document.getElementById('resolutionChart')?.getContext('2d');
-            if (rc) charts['resolution'] = new Chart(rc, {
-              type: 'doughnut',
-              data: {
-                labels: ['Auto-Resolved', 'Action-Resolved', 'Manual'],
-                datasets: [{
-                  data: [resolutionRing.auto_resolved_pct || 0, resolutionRing.action_resolved_pct || 0, resolutionRing.manual_pct || 0],
-                  backgroundColor: ['#16a34a', '#0EA5E9', '#dc2626'],
-                  borderWidth: 0,
-                }],
-              },
-              options: {
-                responsive: true,
-                cutout: '65%',
-                plugins: { legend: { position: 'bottom' }, datalabels: { display: true, color: '#ffffff', font: { size: 11 }, formatter: function(value) { return value > 0 ? value.toFixed(0) + '%' : ''; } } },
-              },
-            });
-          }
         }, 50);
+        renderMttxKpis();
+        renderPipelineSummary();
+        renderOpenIncidentsSection();
+        renderResolvedIncidentsSection();
+        renderFailuresSection();
+        renderIncidentsTrendSection();
 
         // Attach event listeners to ticket cards for modal opening
         document.querySelectorAll('.ticket-card').forEach(card => {
