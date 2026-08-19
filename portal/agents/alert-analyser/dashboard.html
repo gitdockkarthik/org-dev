@@ -1913,14 +1913,14 @@
         if (wc && weekly.trend?.length) charts['weeklyTrend'] = new Chart(wc, {
           type: 'bar',
           data: { labels: weekly.trend.map(t => t.bucket.slice(0,10)), datasets: ['P1','P2','P3','P4','P5'].map(p => ({ label: p, data: weekly.trend.map(t => t[p]), backgroundColor: priColors[p] })) },
-          options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { x: { stacked: true }, y: { stacked: true } } }
+          options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' }, datalabels: { display: false } }, scales: { x: { stacked: true }, y: { stacked: true } } }
         });
         destroyChart('monthlyTrend');
         const mc = document.getElementById('monthlyTrendChart')?.getContext('2d');
         if (mc && monthly.trend?.length) charts['monthlyTrend'] = new Chart(mc, {
           type: 'bar',
           data: { labels: monthly.trend.map(t => t.bucket.slice(0,7)), datasets: ['P1','P2','P3','P4','P5'].map(p => ({ label: p, data: monthly.trend.map(t => t[p]), backgroundColor: priColors[p] })) },
-          options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { x: { stacked: true }, y: { stacked: true } } }
+          options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' }, datalabels: { display: false } }, scales: { x: { stacked: true }, y: { stacked: true } } }
         });
       }, 50);
     }
