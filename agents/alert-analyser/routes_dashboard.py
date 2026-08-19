@@ -1391,6 +1391,99 @@ async def correct_false_resolutions(batch_size: int = 100, dry_run: bool = True)
         }
 
 
+@router.get("/dashboard/incidents/mttx-summary")
+async def get_mttx_summary() -> dict:
+    """Return MTTD/MTTA/MTTR min/max/avg across verified tickets.
+
+    MTTD (Mean Time To Detect): alert's real OpsGenie createdAt (from
+    alert_payload JSON) -> our ticket's created_at.
+    MTTA (Mean Time To Acknowledge): alert's real OpsGenie createdAt ->
+    first status change away from ESCALATED (from incident_status_history).
+    MTTR (Mean Time To Resolve): ticket created_at -> resolved_at, for
+    verified resolutions only (resolution_type IS NOT NULL).
+    """
+    from database import SessionLocal
+    from sqlalchemy import text
+    import logging, json
+    _log = logging.getLogger(__name__)
+
+    if SessionLocal is None:
+        return {"mttd": None, "mtta": None, "mttr": None}
+
+    try:
+        async with SessionLocal() as sess:
+            # MTTD: alert_payload's createdAt -> incidents.created_at
+            mttd_result = await sess.execute(text("""
+                SELECT alert_payload, created_at FROM incident_management.incidents
+                WHERE alert_payload IS NOT NULL
+                ORDER BY created_at DESC LIMIT 5000
+            """))
+            mttd_values = []
+            for row in mttd_result.fetchall():
+                try:
+                    payload = row.alert_payload if isinstance(row.alert_payload, dict) else json.loads(row.alert_payload)
+                    alert_created = payload.get("createdAt")
+                    if alert_created:
+                        from datetime import datetime
+                        alert_dt = datetime.fromisoformat(alert_created.replace("Z", "+00:00"))
+                        ticket_dt = row.created_at
+                        delta_min = (ticket_dt - alert_dt).total_seconds() / 60
+                        if 0 <= delta_min <= 1440:
+                            mttd_values.append(delta_min)
+                except Exception:
+                    continue
+
+            # MTTA: alert_payload's createdAt -> first status_history change away from ESCALATED
+            mtta_result = await sess.execute(text("""
+                SELECT i.alert_payload, h.changed_at
+                FROM incident_management.incident_status_history h
+                JOIN incident_management.incidents i ON i.id = h.incident_id
+                WHERE h.from_status = 'ESCALATED'
+                ORDER BY h.changed_at DESC LIMIT 5000
+            """))
+            mtta_values = []
+            for row in mtta_result.fetchall():
+                try:
+                    payload = row.alert_payload if isinstance(row.alert_payload, dict) else json.loads(row.alert_payload)
+                    alert_created = payload.get("createdAt")
+                    if alert_created:
+                        from datetime import datetime
+                        alert_dt = datetime.fromisoformat(alert_created.replace("Z", "+00:00"))
+                        delta_min = (row.changed_at - alert_dt).total_seconds() / 60
+                        if 0 <= delta_min <= 1440:
+                            mtta_values.append(delta_min)
+                except Exception:
+                    continue
+
+            # MTTR: created_at -> resolved_at, verified resolutions only
+            mttr_result = await sess.execute(text("""
+                SELECT EXTRACT(EPOCH FROM (resolved_at - created_at))/60 as mttr_minutes
+                FROM incident_management.incidents
+                WHERE resolution_type IS NOT NULL AND resolved_at IS NOT NULL
+                LIMIT 5000
+            """))
+            mttr_values = [r.mttr_minutes for r in mttr_result.fetchall() if r.mttr_minutes is not None and r.mttr_minutes >= 0]
+
+        def _summarize(values):
+            if not values:
+                return {"min": None, "max": None, "avg": None, "sample_size": 0}
+            return {
+                "min": round(min(values), 1),
+                "max": round(max(values), 1),
+                "avg": round(sum(values) / len(values), 1),
+                "sample_size": len(values),
+            }
+
+        return {
+            "mttd": _summarize(mttd_values),
+            "mtta": _summarize(mtta_values),
+            "mttr": _summarize(mttr_values),
+        }
+    except Exception as e:
+        _log.error(f"mttx-summary error: {e}")
+        return {"mttd": None, "mtta": None, "mttr": None, "error": str(e)}
+
+
 @router.get("/dashboard/incidents/{ticket_id}")
 async def get_incident_detail(ticket_id: str) -> dict:
     """Return alert payload for a single incident ticket by ID."""
