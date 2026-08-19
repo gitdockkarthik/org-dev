@@ -155,7 +155,13 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
             )
         last_synced = _config.get("last_synced")
         if last_synced and not full_sync:
-            alerts = await source.load_alerts(created_after=last_synced)
+            try:
+                from datetime import timedelta
+                _ls_dt = datetime.fromisoformat(last_synced.replace("Z", "+00:00"))
+                _fetch_from = (_ls_dt - timedelta(minutes=5)).isoformat()
+            except Exception:
+                _fetch_from = last_synced
+            alerts = await source.load_alerts(created_after=_fetch_from)
         else:
             sync_window_days = _config.get("sync_window_days", 7)
             alerts = await source.load_alerts(sync_window_days=sync_window_days)
@@ -588,7 +594,7 @@ class SettingsPayload(BaseModel):
     opsgenie_type: str = "standalone"
 
 
-async def backfill_check_incidents(hours: int = 24, dry_run: bool = True) -> dict:
+async def backfill_check_incidents(hours: float = 24, dry_run: bool = True) -> dict:
     """Fetch alerts from OpsGenie for the last N hours, compare against
     incidents.alert_id, classify any genuinely missing ones, and either
     report (dry_run=True) or create tickets (dry_run=False) for confirmed
@@ -612,7 +618,7 @@ async def backfill_check_incidents(hours: int = 24, dry_run: bool = True) -> dic
     else:
         source = StandaloneOpsgenieSource(api_key=_config["api_token"], base_url=_config.get("opsgenie_base_url") or "https://api.opsgenie.com")
 
-    sync_window_days = max(hours / 24, 0.1)
+    sync_window_days = max(hours / 24, 0.01)
     alerts = await source.load_alerts(sync_window_days=sync_window_days)
     classified = classify_alerts(alerts)
 
@@ -802,5 +808,5 @@ async def sync_alerts() -> dict:
 
 
 @router.post("/incidents/backfill-check")
-async def route_backfill_check(hours: int = 24, dry_run: bool = True) -> dict:
+async def route_backfill_check(hours: float = 24, dry_run: bool = True) -> dict:
     return await backfill_check_incidents(hours=hours, dry_run=dry_run)
