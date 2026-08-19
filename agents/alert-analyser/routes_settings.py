@@ -167,28 +167,72 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
             alerts = await source.load_alerts(sync_window_days=sync_window_days)
         from datetime import datetime, timezone, timedelta
         filename = f"opsgenie-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.json"
-        from report_store import get_latest_classified
-        existing = get_latest_classified()
-        if existing and last_synced:
-            window_mins = _config.get("noise_threshold_window_mins", 60)
-            cutoff = datetime.now() - timedelta(minutes=window_mins * 4)
-            def _alert_ts(a):
-                try:
-                    return datetime.fromisoformat(a["createdAt"].replace("Z", ""))
-                except Exception:
-                    return None
-            all_alerts_raw = [
-                a for a in existing
-                if (_alert_ts(a) is None) or (_alert_ts(a) >= cutoff)
-            ]
-            existing_ids = {a.get("id") for a in all_alerts_raw}
-            new_alerts = [a for a in alerts if a.get("id") not in existing_ids]
-            combined_alerts = all_alerts_raw + new_alerts
-            classified = classify_alerts(combined_alerts)
-        else:
-            classified = classify_alerts(alerts)
-            combined_alerts = alerts
+        from database import SessionLocal
+        from sqlalchemy import text
+        import json as _json
+
+        # Load recent history from Postgres (persistent, survives restarts -
+        # replaces the fragile in-memory cache found empty after most
+        # restarts, 2026-08-19).
+        window_mins = _config.get("noise_threshold_window_mins", 60)
+        history_cutoff = datetime.now(timezone.utc) - timedelta(minutes=window_mins * 4)
+        all_alerts_raw = []
+        if SessionLocal is not None:
+            try:
+                async with SessionLocal() as _hist_sess:
+                    _hist_result = await _hist_sess.execute(
+                        text("SELECT alert_data FROM alert_sync_history WHERE alert_created_at >= :cutoff"),
+                        {"cutoff": history_cutoff}
+                    )
+                    all_alerts_raw = [r.alert_data for r in _hist_result.fetchall() if r.alert_data]
+            except Exception as _hist_exc:
+                logger.error("Failed to load alert history from Postgres: %s", _hist_exc)
+                all_alerts_raw = []
+
+        existing_ids = {a.get("id") for a in all_alerts_raw}
+        new_alerts = [a for a in alerts if a.get("id") not in existing_ids]
+        combined_alerts = all_alerts_raw + new_alerts
+        classified = classify_alerts(combined_alerts)
         report = add_report(filename, combined_alerts, classified)
+
+        # Persist newly classified alerts to Postgres SYNCHRONOUSLY (not
+        # fire-and-forget - background persist could be lost entirely on a
+        # container restart before completing, 2026-08-19).
+        if SessionLocal is not None and new_alerts:
+            try:
+                classified_by_id = {a.get("id"): a for a in classified}
+                async with SessionLocal() as _persist_sess:
+                    for a in new_alerts:
+                        c = classified_by_id.get(a.get("id"), a)
+                        try:
+                            _created_dt = None
+                            if c.get("createdAt"):
+                                _created_dt = datetime.fromisoformat(c["createdAt"].replace("Z", "+00:00"))
+                            await _persist_sess.execute(
+                                text("""
+                                    INSERT INTO alert_sync_history (alert_id, alert_created_at, classification, alert_data, synced_at)
+                                    VALUES (:alert_id, :created_at, :classification, :data, now())
+                                    ON CONFLICT (alert_id) DO NOTHING
+                                """),
+                                {"alert_id": c.get("id"), "created_at": _created_dt, "classification": c.get("classification"), "data": _json.dumps(c)}
+                            )
+                        except Exception as _item_exc:
+                            logger.error("Failed to persist alert history for %s: %s", c.get("id"), _item_exc)
+                    await _persist_sess.commit()
+            except Exception as _persist_exc:
+                logger.error("Failed to persist alert sync history batch: %s", _persist_exc)
+
+        # Retention: purge history older than 30 days (bounded, cheap query -
+        # runs every cycle, keeps disk usage predictable).
+        if SessionLocal is not None:
+            try:
+                async with SessionLocal() as _purge_sess:
+                    await _purge_sess.execute(
+                        text("DELETE FROM alert_sync_history WHERE synced_at < now() - interval '30 days'")
+                    )
+                    await _purge_sess.commit()
+            except Exception as _purge_exc:
+                logger.error("Failed to purge old alert_sync_history: %s", _purge_exc)
         # Teams escalation for genuine P1/P2 unacknowledged alerts
         try:
             from tools.escalation_notifier import send_anomaly_summary
@@ -204,11 +248,8 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
 
             # Build anomalies from genuine P1/P2 unacknowledged alerts
             # Only escalate newly fetched alerts, not historical data
-            if existing and last_synced:
-                _new_ids = {a.get("id") for a in new_alerts}
-                new_alerts_to_escalate = [a for a in classified if a.get("id") in _new_ids]
-            else:
-                new_alerts_to_escalate = classified
+            _new_ids = {a.get("id") for a in new_alerts}
+            new_alerts_to_escalate = [a for a in classified if a.get("id") in _new_ids]
             escalation_anomalies = []
             for alert in new_alerts_to_escalate:
                 if (alert.get("classification") == "genuine"
