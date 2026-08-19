@@ -232,19 +232,14 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                 created_count = 0
                 updated_count = 0
 
-                # Deduplicate alerts by alias, keep newest createdAt
-                _seen = {}
-                for a in classified:
-                    alias = a.get("alias") or a.get("id", "")
-                    if not alias:
-                        continue
-                    existing = _seen.get(alias)
-                    if existing is None or a.get("createdAt", "") > existing.get("createdAt", ""):
-                        _seen[alias] = a
-                deduped_alerts = list(_seen.values())
-
+                # Process every classified alert directly against the DB (no
+                # in-memory alias-dedup gatekeeping - that step was found to
+                # silently drop genuine alerts in some cases, 2026-08-19).
+                # The per-alert DB check below (SELECT ... WHERE alert_id)
+                # is already correct and idempotent, so it's the sole
+                # source of truth for create-vs-update decisions.
                 async with SessionLocal() as session:
-                    for alert in deduped_alerts:
+                    for alert in classified:
                         try:
                             if alert.get("classification") != "genuine":
                                 continue
@@ -340,7 +335,12 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                                     )
                         except Exception as _alert_exc:
                             logger.error("Ticket creation/update failed for alert_id=%s: %s", alert.get("id"), _alert_exc)
-                            # Persist failure record for debugging + retriggering
+                            # Roll back poisoned session immediately to prevent cascading failures
+                            try:
+                                await session.rollback()
+                            except Exception:
+                                pass
+                            # Persist failure record for debugging + retriggering (use fresh session)
                             try:
                                 # Safely parse ISO timestamp with Z suffix
                                 alert_created_at = None
@@ -352,21 +352,23 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                                     except Exception:
                                         alert_created_at = None
 
-                                await session.execute(
-                                    text("""
-                                        INSERT INTO incident_management.incident_creation_failures
-                                        (alert_id, alert_title, alert_created_at, failure_reason, alert_payload)
-                                        VALUES (:alert_id, :title, :created_at, :reason, :payload)
-                                    """),
-                                    {
-                                        "alert_id": alert.get("id", ""),
-                                        "title": alert.get("message", alert.get("alias", "Unknown"))[:500],
-                                        "created_at": alert_created_at,
-                                        "reason": str(_alert_exc)[:2000],
-                                        "payload": json.dumps(alert),
-                                    }
-                                )
-                                await session.commit()
+                                from database import SessionLocal
+                                async with SessionLocal() as _fail_sess:
+                                    await _fail_sess.execute(
+                                        text("""
+                                            INSERT INTO incident_management.incident_creation_failures
+                                            (alert_id, alert_title, alert_created_at, failure_reason, alert_payload)
+                                            VALUES (:alert_id, :title, :created_at, :reason, :payload)
+                                        """),
+                                        {
+                                            "alert_id": alert.get("id", ""),
+                                            "title": alert.get("message", alert.get("alias", "Unknown"))[:500],
+                                            "created_at": alert_created_at,
+                                            "reason": str(_alert_exc)[:2000],
+                                            "payload": json.dumps(alert),
+                                        }
+                                    )
+                                    await _fail_sess.commit()
                             except Exception as _log_exc:
                                 logger.error("Failed to persist creation failure record: %s", _log_exc)
                     await session.commit()
@@ -586,6 +588,83 @@ class SettingsPayload(BaseModel):
     opsgenie_type: str = "standalone"
 
 
+async def backfill_check_incidents(hours: int = 24, dry_run: bool = True) -> dict:
+    """Fetch alerts from OpsGenie for the last N hours, compare against
+    incidents.alert_id, classify any genuinely missing ones, and either
+    report (dry_run=True) or create tickets (dry_run=False) for confirmed
+    genuine alerts with no existing ticket. Safety net for the class of
+    bug found 2026-08-18/19 where a genuine alert silently never got a
+    ticket, with no trace anywhere."""
+    from database import SessionLocal
+    from sqlalchemy import text
+    from tools.noise_detector import classify_alerts
+    from tools.source import JSMSource, StandaloneOpsgenieSource
+    import json
+
+    if SessionLocal is None:
+        return {"checked": 0, "missing": 0, "created": 0, "dry_run": dry_run}
+
+    source_type = _config.get("source_type", "opsgenie")
+    opsgenie_type = _config.get("opsgenie_type", "standalone")
+    use_jsm = source_type == "standalone" and opsgenie_type == "jsm"
+    if use_jsm:
+        source = JSMSource(cloud_id=_config["cloud_id"], email=_config["email"], api_token=_config["api_token"])
+    else:
+        source = StandaloneOpsgenieSource(api_key=_config["api_token"], base_url=_config.get("opsgenie_base_url") or "https://api.opsgenie.com")
+
+    sync_window_days = max(hours / 24, 0.1)
+    alerts = await source.load_alerts(sync_window_days=sync_window_days)
+    classified = classify_alerts(alerts)
+
+    async with SessionLocal() as sess:
+        existing_result = await sess.execute(text("SELECT alert_id FROM incident_management.incidents"))
+        existing_ids = {r.alert_id for r in existing_result.fetchall()}
+
+    missing_genuine = [a for a in classified if a.get("classification") == "genuine" and a.get("id") not in existing_ids]
+
+    created = 0
+    if not dry_run and missing_genuine:
+        async with SessionLocal() as sess:
+            for alert in missing_genuine:
+                try:
+                    result = await sess.execute(
+                        text("""
+                            INSERT INTO incident_management.incidents
+                            (alert_id, status, priority, title, alert_payload, recurrence_count, source_tool, created_at, updated_at)
+                            VALUES (:alert_id, 'ESCALATED', :priority, :title, :payload, 1, :source_tool, now(), now())
+                            RETURNING id
+                        """),
+                        {
+                            "alert_id": alert.get("id"),
+                            "priority": alert.get("priority", "P3"),
+                            "title": alert.get("message", "Unknown")[:200],
+                            "payload": json.dumps(alert),
+                            "source_tool": alert.get("source", "unknown"),
+                        }
+                    )
+                    new_id = result.fetchone().id
+                    await sess.execute(
+                        text("""
+                            INSERT INTO incident_management.incident_status_history
+                            (incident_id, from_status, to_status, changed_at)
+                            VALUES (:incident_id, NULL, 'ESCALATED', now())
+                        """),
+                        {"incident_id": new_id}
+                    )
+                    created += 1
+                except Exception as e:
+                    logger.error("Backfill: failed to create ticket for alert_id=%s: %s", alert.get("id"), e)
+            await sess.commit()
+
+    return {
+        "checked": len(classified),
+        "missing": len(missing_genuine),
+        "created": created,
+        "dry_run": dry_run,
+        "missing_samples": [{"alert_id": a.get("id"), "title": a.get("message", "")[:100], "createdAt": a.get("createdAt")} for a in missing_genuine[:20]],
+    }
+
+
 @router.get("")
 async def get_settings() -> dict:
     await load_config_from_db()
@@ -720,3 +799,8 @@ async def sync_alerts() -> dict:
             detail="Source type must be 'opsgenie' (JSM) or 'standalone' to sync",
         )
     return await _run_opsgenie_sync(full_sync=True)
+
+
+@router.post("/incidents/backfill-check")
+async def route_backfill_check(hours: int = 24, dry_run: bool = True) -> dict:
+    return await backfill_check_incidents(hours=hours, dry_run=dry_run)
