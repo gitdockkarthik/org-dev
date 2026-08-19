@@ -1940,6 +1940,56 @@ async def get_incident_flow(ticket_id: str) -> dict:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/dashboard/incidents/trend")
+async def get_incidents_trend(period: str = "weekly") -> dict:
+    """Incident creation trend, bucketed weekly or monthly, broken down by
+    priority. period: 'weekly' (last 12 weeks) or 'monthly' (last 12 months)."""
+    from database import SessionLocal
+    from sqlalchemy import text
+    import logging
+    _log = logging.getLogger(__name__)
+
+    if SessionLocal is None:
+        return {"empty": True, "trend": []}
+
+    try:
+        if period == "monthly":
+            trunc = "month"
+            lookback = "12 months"
+        else:
+            trunc = "week"
+            lookback = "12 weeks"
+
+        async with SessionLocal() as sess:
+            result = await sess.execute(
+                text(f"""
+                    SELECT date_trunc('{trunc}', created_at) as bucket,
+                           priority,
+                           COUNT(*) as count
+                    FROM incident_management.incidents
+                    WHERE created_at >= now() - interval '{lookback}'
+                    GROUP BY bucket, priority
+                    ORDER BY bucket ASC
+                """)
+            )
+            rows = result.fetchall()
+
+        buckets = {}
+        for r in rows:
+            key = r.bucket.isoformat()
+            if key not in buckets:
+                buckets[key] = {"bucket": key, "P1": 0, "P2": 0, "P3": 0, "P4": 0, "P5": 0, "total": 0}
+            p = r.priority if r.priority in ("P1", "P2", "P3", "P4", "P5") else "P5"
+            buckets[key][p] += r.count
+            buckets[key]["total"] += r.count
+
+        trend = sorted(buckets.values(), key=lambda x: x["bucket"])
+        return {"empty": len(trend) == 0, "period": period, "trend": trend}
+    except Exception as e:
+        _log.error(f"incidents-trend error: {e}")
+        return {"empty": True, "trend": [], "error": str(e)}
+
+
 @router.get("/dashboard/incidents/{ticket_id}")
 async def get_incident_detail(ticket_id: str) -> dict:
     """Return alert payload for a single incident ticket by ID."""
