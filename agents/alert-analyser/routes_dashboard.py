@@ -1688,6 +1688,165 @@ async def get_resolved_incidents_list(
         return {"incidents": [], "total": 0, "error": str(e)}
 
 
+@router.get("/dashboard/incidents/failures")
+async def get_creation_failures(
+    search: str | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> dict:
+    """List failed incident-creation attempts (real alerts classified genuine
+    but which threw an exception during ticket creation/update)."""
+    from database import SessionLocal
+    from sqlalchemy import text
+    import logging
+    from datetime import datetime, timezone
+    _log = logging.getLogger(__name__)
+
+    if SessionLocal is None:
+        return {"failures": [], "total": 0}
+
+    try:
+        conditions = ["1=1"]
+        params = {}
+        if search:
+            conditions.append("alert_title ILIKE :search")
+            params["search"] = f"%{search}%"
+        if from_date:
+            conditions.append("alert_created_at >= :from_date")
+            params["from_date"] = from_date
+        if to_date:
+            conditions.append("alert_created_at <= :to_date")
+            params["to_date"] = to_date
+
+        where_clause = " AND ".join(conditions)
+
+        async with SessionLocal() as sess:
+            result = await sess.execute(
+                text(f"""
+                    SELECT id, alert_id, alert_title, alert_created_at, failure_reason,
+                           detected_at, retriggered, retrigger_status, retriggered_at
+                    FROM incident_management.incident_creation_failures
+                    WHERE {where_clause}
+                    ORDER BY detected_at DESC
+                    LIMIT 500
+                """),
+                params
+            )
+            rows = result.fetchall()
+
+        failures = [{
+            "id": r.id,
+            "alert_id": r.alert_id,
+            "title": r.alert_title,
+            "alert_created_at": r.alert_created_at.isoformat() if r.alert_created_at else None,
+            "failure_reason": r.failure_reason,
+            "detected_at": r.detected_at.isoformat() if r.detected_at else None,
+            "retriggered": r.retriggered,
+            "retrigger_status": r.retrigger_status,
+            "retriggered_at": r.retriggered_at.isoformat() if r.retriggered_at else None,
+        } for r in rows]
+
+        return {"failures": failures, "total": len(failures)}
+    except Exception as e:
+        _log.error(f"creation-failures error: {e}")
+        return {"failures": [], "total": 0, "error": str(e)}
+
+
+@router.post("/dashboard/incidents/failures/{failure_id}/retrigger")
+async def retrigger_incident_creation(failure_id: int) -> dict:
+    """Manually retry creating a ticket for a previously-failed alert.
+    Fetches the failure record, re-attempts the same INSERT logic, marks
+    the failure record with the outcome."""
+    from database import SessionLocal
+    from sqlalchemy import text
+    import logging, json
+    from datetime import datetime, timezone
+    _log = logging.getLogger(__name__)
+
+    if SessionLocal is None:
+        return {"ok": False, "error": "Database not available"}
+
+    try:
+        async with SessionLocal() as sess:
+            result = await sess.execute(
+                text("SELECT * FROM incident_management.incident_creation_failures WHERE id = :id"),
+                {"id": failure_id}
+            )
+            failure = result.fetchone()
+            if not failure:
+                return {"ok": False, "error": "Failure record not found"}
+
+            payload = failure.alert_payload if isinstance(failure.alert_payload, dict) else (json.loads(failure.alert_payload) if failure.alert_payload else {})
+            alert_id = payload.get("id", failure.alert_id)
+            priority = payload.get("priority", "P3")
+            title = payload.get("message", "Unknown")[:200]
+            source_tool = payload.get("source", "unknown")
+
+            existing = await sess.execute(
+                text("SELECT id FROM incident_management.incidents WHERE alert_id = :alert_id LIMIT 1"),
+                {"alert_id": alert_id}
+            )
+            if existing.fetchone():
+                await sess.execute(
+                    text("""
+                        UPDATE incident_management.incident_creation_failures
+                        SET retriggered = TRUE, retrigger_status = 'skipped_already_exists', retriggered_at = now()
+                        WHERE id = :id
+                    """),
+                    {"id": failure_id}
+                )
+                await sess.commit()
+                return {"ok": True, "status": "skipped_already_exists"}
+
+            insert_result = await sess.execute(
+                text("""
+                    INSERT INTO incident_management.incidents
+                    (alert_id, status, priority, title, alert_payload, recurrence_count, source_tool, created_at, updated_at)
+                    VALUES (:alert_id, 'ESCALATED', :priority, :title, :payload, 1, :source_tool, now(), now())
+                    RETURNING id
+                """),
+                {"alert_id": alert_id, "priority": priority, "title": title,
+                 "payload": json.dumps(payload), "source_tool": source_tool}
+            )
+            new_id = insert_result.fetchone().id
+
+            await sess.execute(
+                text("""
+                    INSERT INTO incident_management.incident_status_history
+                    (incident_id, from_status, to_status, changed_at)
+                    VALUES (:incident_id, NULL, 'ESCALATED', now())
+                """),
+                {"incident_id": new_id}
+            )
+
+            await sess.execute(
+                text("""
+                    UPDATE incident_management.incident_creation_failures
+                    SET retriggered = TRUE, retrigger_status = 'success', retriggered_at = now()
+                    WHERE id = :id
+                """),
+                {"id": failure_id}
+            )
+            await sess.commit()
+            return {"ok": True, "status": "success", "incident_id": str(new_id)}
+    except Exception as e:
+        _log.error(f"retrigger error: {e}")
+        try:
+            async with SessionLocal() as sess2:
+                await sess2.execute(
+                    text("""
+                        UPDATE incident_management.incident_creation_failures
+                        SET retriggered = TRUE, retrigger_status = :status, retriggered_at = now()
+                        WHERE id = :id
+                    """),
+                    {"id": failure_id, "status": f"failed: {str(e)[:200]}"}
+                )
+                await sess2.commit()
+        except Exception:
+            pass
+        return {"ok": False, "error": str(e)}
+
+
 @router.get("/dashboard/incidents/{ticket_id}")
 async def get_incident_detail(ticket_id: str) -> dict:
     """Return alert payload for a single incident ticket by ID."""
