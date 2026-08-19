@@ -1484,6 +1484,210 @@ async def get_mttx_summary() -> dict:
         return {"mttd": None, "mtta": None, "mttr": None, "error": str(e)}
 
 
+@router.get("/dashboard/incidents/open-list")
+async def get_open_incidents_list(
+    search: str | None = None,
+    status: str | None = None,
+    hours: int = 24,
+) -> dict:
+    """List open (non-resolved, non-manual) incidents with per-row MTTD/MTTA/MTTR-elapsed.
+    Default: all open incidents from the last 24 hours (by created_at)."""
+    from database import SessionLocal
+    from sqlalchemy import text
+    import logging, json
+    from datetime import datetime, timezone
+    _log = logging.getLogger(__name__)
+
+    if SessionLocal is None:
+        return {"incidents": [], "total": 0}
+
+    try:
+        conditions = ["status NOT IN ('RESOLVED', 'MANUAL')"]
+        params = {}
+        if hours and hours > 0:
+            conditions.append("created_at >= now() - (:hours || ' hours')::interval")
+            params["hours"] = str(hours)
+        if status:
+            conditions.append("status = :status")
+            params["status"] = status
+        if search:
+            conditions.append("title ILIKE :search")
+            params["search"] = f"%{search}%"
+
+        where_clause = " AND ".join(conditions)
+
+        async with SessionLocal() as sess:
+            result = await sess.execute(
+                text(f"""
+                    SELECT id, alert_id, title, priority, status, created_at, alert_payload
+                    FROM incident_management.incidents
+                    WHERE {where_clause}
+                    ORDER BY created_at DESC
+                    LIMIT 500
+                """),
+                params
+            )
+            rows = result.fetchall()
+
+            # Fetch first-status-change timestamps for MTTA, keyed by incident_id
+            ids = [r.id for r in rows]
+            mtta_map = {}
+            if ids:
+                mtta_result = await sess.execute(
+                    text("""
+                        SELECT incident_id, MIN(changed_at) as first_change
+                        FROM incident_management.incident_status_history
+                        WHERE from_status = 'ESCALATED' AND incident_id = ANY(:ids)
+                        GROUP BY incident_id
+                    """),
+                    {"ids": ids}
+                )
+                mtta_map = {r.incident_id: r.first_change for r in mtta_result.fetchall()}
+
+        incidents = []
+        now = datetime.now(timezone.utc)
+        for r in rows:
+            payload = r.alert_payload if isinstance(r.alert_payload, dict) else (json.loads(r.alert_payload) if r.alert_payload else {})
+            alert_created_str = payload.get("createdAt")
+            mttd_min = None
+            mtta_min = None
+            alert_dt = None
+            if alert_created_str:
+                try:
+                    alert_dt = datetime.fromisoformat(alert_created_str.replace("Z", "+00:00"))
+                    mttd_min = round((r.created_at - alert_dt).total_seconds() / 60, 1)
+                except Exception:
+                    pass
+            if alert_dt and r.id in mtta_map:
+                try:
+                    mtta_min = round((mtta_map[r.id] - alert_dt).total_seconds() / 60, 1)
+                except Exception:
+                    pass
+            mttr_elapsed_min = round((now - r.created_at).total_seconds() / 60, 1)
+            incidents.append({
+                "id": str(r.id),
+                "alert_id": r.alert_id,
+                "title": r.title,
+                "priority": r.priority,
+                "status": r.status,
+                "alert_created_at": alert_created_str,
+                "incident_created_at": r.created_at.isoformat(),
+                "mttd_minutes": mttd_min,
+                "mtta_minutes": mtta_min,
+                "mttr_elapsed_minutes": mttr_elapsed_min,
+            })
+
+        return {"incidents": incidents, "total": len(incidents)}
+    except Exception as e:
+        _log.error(f"open-incidents-list error: {e}")
+        return {"incidents": [], "total": 0, "error": str(e)}
+
+
+@router.get("/dashboard/incidents/resolved-list")
+async def get_resolved_incidents_list(
+    search: str | None = None,
+    status: str | None = None,
+    hours: int = 24,
+) -> dict:
+    """List resolved/manual incidents with per-row MTTD/MTTA/MTTR.
+    Default: all resolved incidents from the last 24 hours (by resolved_at)."""
+    from database import SessionLocal
+    from sqlalchemy import text
+    import logging, json
+    from datetime import datetime
+    _log = logging.getLogger(__name__)
+
+    if SessionLocal is None:
+        return {"incidents": [], "total": 0}
+
+    try:
+        conditions = ["status IN ('RESOLVED', 'MANUAL')"]
+        params = {}
+        if hours and hours > 0:
+            conditions.append("resolved_at >= now() - (:hours || ' hours')::interval")
+            params["hours"] = str(hours)
+        if status:
+            conditions.append("status = :status")
+            params["status"] = status
+        if search:
+            conditions.append("title ILIKE :search")
+            params["search"] = f"%{search}%"
+
+        where_clause = " AND ".join(conditions)
+
+        async with SessionLocal() as sess:
+            result = await sess.execute(
+                text(f"""
+                    SELECT id, alert_id, title, priority, status, created_at, resolved_at,
+                           resolution_type, resolved_externally, alert_payload
+                    FROM incident_management.incidents
+                    WHERE {where_clause}
+                    ORDER BY resolved_at DESC
+                    LIMIT 500
+                """),
+                params
+            )
+            rows = result.fetchall()
+
+            ids = [r.id for r in rows]
+            mtta_map = {}
+            if ids:
+                mtta_result = await sess.execute(
+                    text("""
+                        SELECT incident_id, MIN(changed_at) as first_change
+                        FROM incident_management.incident_status_history
+                        WHERE from_status = 'ESCALATED' AND incident_id = ANY(:ids)
+                        GROUP BY incident_id
+                    """),
+                    {"ids": ids}
+                )
+                mtta_map = {r.incident_id: r.first_change for r in mtta_result.fetchall()}
+
+        incidents = []
+        for r in rows:
+            payload = r.alert_payload if isinstance(r.alert_payload, dict) else (json.loads(r.alert_payload) if r.alert_payload else {})
+            alert_created_str = payload.get("createdAt")
+            mttd_min = None
+            mtta_min = None
+            mttr_min = None
+            alert_dt = None
+            if alert_created_str:
+                try:
+                    alert_dt = datetime.fromisoformat(alert_created_str.replace("Z", "+00:00"))
+                    mttd_min = round((r.created_at - alert_dt).total_seconds() / 60, 1)
+                except Exception:
+                    pass
+            if alert_dt and r.id in mtta_map:
+                try:
+                    mtta_min = round((mtta_map[r.id] - alert_dt).total_seconds() / 60, 1)
+                except Exception:
+                    pass
+            if r.resolved_at:
+                try:
+                    mttr_min = round((r.resolved_at - r.created_at).total_seconds() / 60, 1)
+                except Exception:
+                    pass
+            closed_by = r.resolution_type or ("action_resolved" if r.resolved_externally else "self_healed")
+            incidents.append({
+                "id": str(r.id),
+                "alert_id": r.alert_id,
+                "title": r.title,
+                "priority": r.priority,
+                "status": r.status,
+                "alert_created_at": alert_created_str,
+                "incident_created_at": r.created_at.isoformat(),
+                "closed_by": closed_by,
+                "mttd_minutes": mttd_min,
+                "mtta_minutes": mtta_min,
+                "mttr_minutes": mttr_min,
+            })
+
+        return {"incidents": incidents, "total": len(incidents)}
+    except Exception as e:
+        _log.error(f"resolved-incidents-list error: {e}")
+        return {"incidents": [], "total": 0, "error": str(e)}
+
+
 @router.get("/dashboard/incidents/{ticket_id}")
 async def get_incident_detail(ticket_id: str) -> dict:
     """Return alert payload for a single incident ticket by ID."""
