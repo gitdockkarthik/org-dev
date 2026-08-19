@@ -383,7 +383,7 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
 
                         result = await session.execute(
                             text("""
-                                SELECT id, alert_id, status
+                                SELECT id, alert_id, status, title
                                 FROM incident_management.incidents
                                 WHERE status NOT IN ('RESOLVED', 'MANUAL')
                                 ORDER BY last_reconciliation_check_at ASC NULLS FIRST
@@ -394,14 +394,20 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                         to_check = result.fetchall()
 
                         sem = _asyncio.Semaphore(RECONCILE_CONCURRENCY)
+                        from tools.dashboard_builder import parse_message_status
 
                         async def _check_one(ticket):
+                            msg_status = parse_message_status(ticket.title)
+                            if msg_status == "resolved":
+                                return ticket, "closed", "message_parse"
+                            if msg_status == "open":
+                                return ticket, "open", "message_parse"
                             async with sem:
                                 try:
                                     status = await source.get_alert_status(ticket.alert_id)
                                 except Exception:
                                     status = None
-                            return ticket, status
+                            return ticket, status, "opsgenie_live"
 
                         checked = await _asyncio.gather(*[_check_one(t) for t in to_check])
 
@@ -410,7 +416,7 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                         still_open_count = 0
                         unknown_count = 0
 
-                        for ticket, live_status in checked:
+                        for ticket, live_status, detected_via in checked:
                             now_ts = "now()"
                             if live_status is None:
                                 # Lookup failed (rate limit, network error, not found) -
@@ -433,11 +439,12 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                                             UPDATE incident_management.incidents
                                             SET status = 'RESOLVED', resolved_at = now(),
                                                 resolution_type = 'self_healed',
+                                                detected_via = :detected_via,
                                                 last_reconciliation_check_at = now(),
                                                 updated_at = now()
                                             WHERE id = :id
                                         """),
-                                        {"id": ticket.id},
+                                        {"id": ticket.id, "detected_via": detected_via},
                                     )
                                     auto_resolved_count += 1
                                     await session.execute(

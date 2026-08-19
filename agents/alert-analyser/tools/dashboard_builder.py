@@ -96,6 +96,31 @@ def categorize_alert(alert: dict) -> str:
     return "Uncategorized"
 
 
+def parse_message_status(message: str) -> str | None:
+    """Extract a resolution-status signal from bracket-tagged alert text,
+    e.g. '[Zabbix] [Open] [Critical]...' or '[Zabbix] : [Closed] : ...'.
+    Case-insensitive, tolerant of inconsistent bracket formatting across
+    source tools. Returns 'resolved' if any bracketed token matches a
+    closed/resolved keyword, 'open' if any bracketed token matches an
+    open/firing keyword, or None if no recognizable status tag is found
+    (falls back to live OpsGenie status check in that case)."""
+    import re
+    if not message:
+        return None
+    tokens = re.findall(r"\[([^\]]+)\]", message)
+    closed_keywords = {"closed", "resolved", "resolve", "ok", "recovered", "recovery"}
+    open_keywords = {"open", "firing", "critical", "warning", "severe", "alert"}
+    for t in tokens:
+        t_clean = t.strip().lower()
+        if t_clean in closed_keywords:
+            return "resolved"
+    for t in tokens:
+        t_clean = t.strip().lower()
+        if t_clean in open_keywords:
+            return "open"
+    return None
+
+
 # ── Core stats computation ────────────────────────────────────────────────────
 
 def compute_dashboard_stats(classified: list[dict]) -> dict:
