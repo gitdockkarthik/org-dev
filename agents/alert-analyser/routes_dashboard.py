@@ -170,6 +170,7 @@ async def get_dashboard(
                                         SELECT COUNT(DISTINCT alert_id) as incident_count
                                         FROM incident_management.incidents
                                         WHERE (alert_payload->>'createdAt')::timestamptz BETWEEN :period_start AND :period_end
+                                        AND purged_at IS NULL
                                     """),
                                     incident_params
                                 )
@@ -220,6 +221,7 @@ async def get_dashboard(
                     text("""
                         SELECT COUNT(DISTINCT alert_id) as incident_count
                         FROM incident_management.incidents
+                        WHERE purged_at IS NULL
                     """)
                 )
                 incident_row = incident_result.fetchone()
@@ -514,20 +516,33 @@ async def get_period_summary(
                 # createdAt. Filtering reports by report.created_at (sync time)
                 # wrongly dropped the report when the sync fell outside the
                 # selected window — which showed Row 2 as "NO SYNCS".
-                q = select(AlertReport).where(
-                    AlertReport.agent_slug == 'alert-analyser'
-                ).order_by(AlertReport.created_at.desc()).limit(1)
-                result = await sess.execute(q)
-                reports = result.scalars().all()
+                _pd_from = from_date.replace('T', ' ') if from_date else None
+                _pd_to = to_date.replace('T', ' ') if to_date else None
+                _delta_result = await sess.execute(
+                    text("""
+                        SELECT COALESCE(SUM(new_alerts),0) as total_alerts,
+                               COALESCE(SUM(new_genuine),0) as genuine_count,
+                               COALESCE(SUM(new_noise),0) as noise_count,
+                               COALESCE(SUM(new_suspect),0) as suspect_count
+                        FROM alert_report_summary
+                        WHERE agent_slug = 'alert-analyser'
+                          AND synced_at >= :from_dt AND synced_at <= :to_dt
+                    """),
+                    {"from_dt": _pd_from, "to_dt": _pd_to}
+                )
+                _delta_row = _delta_result.fetchone()
+            stats = {
+                "total": _delta_row.total_alerts if _delta_row else 0,
+                "genuine_count": _delta_row.genuine_count if _delta_row else 0,
+                "noise_count": _delta_row.noise_count if _delta_row else 0,
+                "suspect_count": _delta_row.suspect_count if _delta_row else 0,
+                "noise_ratio": 0,
+                "duplicate_count": 0, "genuine_duplicates": 0,
+                "noise_duplicates": 0, "suspect_duplicates": 0,
+            }
+            reports = [True]
 
             if reports:
-                latest = reports[0]
-                raw_classified = _json.loads(latest.report_data) \
-                    if latest.report_data else []
-                filtered = _filter_alerts_by_date(
-                    raw_classified, from_date, to_date
-                )
-                stats = compute_dashboard_stats(filtered)
 
                 # Query incident_management.incidents for period
                 new_incidents_count = 0
@@ -565,6 +580,7 @@ async def get_period_summary(
                                     SELECT COUNT(DISTINCT alert_id) as incident_count
                                     FROM incident_management.incidents
                                     WHERE (alert_payload->>'createdAt')::timestamptz BETWEEN :period_start AND :period_end
+                                    AND purged_at IS NULL
                                 """),
                                 incident_params
                             )
@@ -668,6 +684,7 @@ async def get_period_summary(
                             SELECT COUNT(DISTINCT alert_id) as incident_count
                             FROM incident_management.incidents
                             WHERE created_at BETWEEN :period_start AND :period_end
+                            AND purged_at IS NULL
                         """),
                         {"period_start": params["from_date"], "period_end": params["to_date"]}
                     )
@@ -1594,7 +1611,7 @@ async def get_open_incidents_list(
 @router.get("/dashboard/incidents/resolved-list")
 async def get_resolved_incidents_list(
     search: str | None = None,
-    status: str | None = None,
+    closed_by: str | None = None,
     hours: int = 24,
 ) -> dict:
     """List resolved/manual incidents with per-row MTTD/MTTA/MTTR.
@@ -1614,9 +1631,15 @@ async def get_resolved_incidents_list(
         if hours and hours > 0:
             conditions.append("resolved_at >= now() - (:hours || ' hours')::interval")
             params["hours"] = str(hours)
-        if status:
-            conditions.append("status = :status")
-            params["status"] = status
+        if closed_by:
+            if closed_by == "self_healed":
+                conditions.append("(resolution_type = 'self_healed' OR (resolution_type IS NULL AND status = 'RESOLVED' AND (resolved_externally IS NULL OR resolved_externally = FALSE)))")
+            elif closed_by == "action_resolved":
+                conditions.append("(resolution_type = 'action_resolved' OR (resolution_type IS NULL AND status = 'RESOLVED' AND resolved_externally = TRUE))")
+            elif closed_by == "rca_assisted":
+                conditions.append("resolution_type = 'rca_assisted'")
+            elif closed_by == "manual":
+                conditions.append("(resolution_type = 'manual' OR (resolution_type IS NULL AND status = 'MANUAL'))")
         if search:
             conditions.append("title ILIKE :search")
             params["search"] = f"%{search}%"
