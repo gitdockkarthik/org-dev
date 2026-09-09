@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -42,6 +42,7 @@ _DEFAULTS: dict = {
     "teams_severity_filter": ["critical", "warning"],
     "teams_cooldown_mins": 10,
     "esc_priorities": ["P1", "P2"],
+    "incident_recreate_cooldown_mins": 15,
 }
 
 # Write-through in-memory cache; populated from DB on startup.
@@ -315,13 +316,40 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
 
                             result = await session.execute(
                                 text("""
-                                    SELECT id, status FROM incident_management.incidents
+                                    SELECT id, status, created_at, resolved_at
+                                    FROM incident_management.incidents
                                     WHERE alert_id = :alert_id
                                     ORDER BY created_at DESC LIMIT 1
                                 """),
                                 {"alert_id": alert_id},
                             )
                             row = result.fetchone()
+
+                            # Cooldown: if the most recent ticket for this alert_id
+                            # resolved very recently, treat this as the same flap
+                            # episode rather than a new occurrence, instead of
+                            # opening a fresh ticket. Root cause (2026-08-24):
+                            # alerts with a genuinely flapping live OpsGenie status
+                            # (e.g. LightStep "No Data Violation", no title-tag
+                            # mismatch involved) were creating a new ticket every
+                            # ~2min sync cycle, each instantly resolved by the
+                            # reconciliation live-status check. Threshold is
+                            # configurable (incident_recreate_cooldown_mins,
+                            # default 15) rather than hardcoded, so it can be
+                            # tuned without risking suppression of genuine
+                            # recurrences for noisier or quieter sources.
+                            if row is not None and row.status in ("RESOLVED", "MANUAL") and row.resolved_at:
+                                _cooldown_mins = _config.get("incident_recreate_cooldown_mins", 15)
+                                _resolved_at = row.resolved_at
+                                if _resolved_at.tzinfo is None:
+                                    _resolved_at = _resolved_at.replace(tzinfo=timezone.utc)
+                                _since_resolved = datetime.now(timezone.utc) - _resolved_at
+                                if _since_resolved < timedelta(minutes=_cooldown_mins):
+                                    logger.info(
+                                        "Skipping re-creation for alert_id=%s: prior ticket resolved %.1f min ago (cooldown=%dmin)",
+                                        alert_id, _since_resolved.total_seconds() / 60, _cooldown_mins,
+                                    )
+                                    continue
 
                             if row is None:
                                 await session.execute(
@@ -646,6 +674,7 @@ class SettingsPayload(BaseModel):
     noise_suspect_threshold: int = -2
     opsgenie_base_url: str = ""
     opsgenie_type: str = "standalone"
+    incident_recreate_cooldown_mins: int = 15
 
 
 async def backfill_check_incidents(hours: float = 24, dry_run: bool = True) -> dict:
