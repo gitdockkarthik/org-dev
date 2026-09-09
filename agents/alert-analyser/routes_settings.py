@@ -289,6 +289,47 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                 async with SessionLocal() as session:
                     for alert in classified:
                         try:
+                            # Audit-trail record for noise-suspect alerts whose own
+                            # title conclusively says resolved (e.g. "[Closed]").
+                            # These previously vanished with no incident record at
+                            # all, since only "genuine" alerts reach ticket
+                            # creation. Root cause: TOC manually updates Zabbix
+                            # alert text to reflect closure without OpsGenie's
+                            # status field following automatically (accepted,
+                            # known lag - not something this fix changes).
+                            # Created directly as RESOLVED, not escalated, purely
+                            # for audit visibility. Added 2026-09-09.
+                            if alert.get("classification") == "noise-suspect":
+                                from tools.dashboard_builder import parse_message_status as _pms_audit
+                                _audit_title = alert.get("message", alert.get("alias", ""))
+                                if _pms_audit(_audit_title) == "resolved":
+                                    _audit_alert_id = alert.get("id")
+                                    _existing_audit = await session.execute(
+                                        text("SELECT id FROM incident_management.incidents WHERE alert_id = :alert_id LIMIT 1"),
+                                        {"alert_id": _audit_alert_id}
+                                    )
+                                    if not _existing_audit.fetchone():
+                                        await session.execute(
+                                            text("""
+                                                INSERT INTO incident_management.incidents
+                                                (alert_id, status, priority, title, alert_payload,
+                                                 recurrence_count, source_tool, resolution_type,
+                                                 detected_via, created_at, resolved_at, updated_at)
+                                                VALUES (:alert_id, 'RESOLVED', :priority, :title,
+                                                        :payload, 1, :source_tool,
+                                                        'noise_suspect_audit_record', 'message_parse',
+                                                        now(), now(), now())
+                                            """),
+                                            {
+                                                "alert_id": _audit_alert_id,
+                                                "priority": alert.get("priority", "P3"),
+                                                "title": _audit_title[:200],
+                                                "payload": json.dumps(alert),
+                                                "source_tool": alert.get("source", "unknown"),
+                                            },
+                                        )
+                                        await session.commit()
+                                continue
                             if alert.get("classification") != "genuine":
                                 continue
                             if alert.get("status", "").lower() in ("closed", "resolved"):
