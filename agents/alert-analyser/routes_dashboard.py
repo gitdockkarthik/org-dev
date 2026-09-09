@@ -1,4 +1,7 @@
-from fastapi import APIRouter
+import csv
+import io
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 
 from report_store import get_latest_stats, get_latest_meta
 
@@ -239,6 +242,96 @@ async def get_dashboard(
         "stats": _ensure_dedup_fields(stats),
         "report": get_latest_meta(),
     }
+
+
+@router.get("/dashboard/alerts/export-csv")
+async def export_alerts_csv(
+    from_date: str,
+    to_date: str,
+    classifications: str = "genuine,noise,noise-suspect",
+):
+    """Export classified alerts as CSV, filtered by creation date and classification."""
+    from database import SessionLocal
+    from sqlalchemy import text
+    from datetime import datetime, timezone
+    import logging
+    _log = logging.getLogger(__name__)
+
+    if SessionLocal is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    class_list = [c.strip() for c in classifications.split(",") if c.strip()]
+    if not class_list:
+        raise HTTPException(status_code=400, detail="At least one classification required")
+
+    try:
+        _fd = from_date.replace("T", " ")
+        _td = to_date.replace("T", " ")
+        try:
+            period_start = datetime.strptime(_fd, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+        except ValueError:
+            period_start = datetime.strptime(_fd, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        try:
+            period_end = datetime.strptime(_td, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+        except ValueError:
+            period_end = datetime.strptime(_td + " 23:59:59", "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format")
+
+    async with SessionLocal() as sess:
+        result = await sess.execute(
+            text("""
+                SELECT DISTINCT ON (alert_data->>'id')
+                    alert_data->>'id' AS alert_id,
+                    alert_data->>'message' AS title,
+                    alert_data->>'source' AS source,
+                    alert_data->>'status' AS current_status,
+                    classification,
+                    alert_data->>'createdAt' AS created_at
+                FROM alert_sync_history
+                WHERE (alert_data->>'createdAt')::timestamptz BETWEEN :period_start AND :period_end
+                AND classification = ANY(:classifications)
+                ORDER BY alert_data->>'id', synced_at ASC
+            """),
+            {"period_start": period_start, "period_end": period_end, "classifications": class_list}
+        )
+        rows = result.fetchall()
+
+    def _format_created_at(raw: str) -> str:
+        if not raw:
+            return ""
+        try:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+        except Exception:
+            return raw
+
+    def _generate():
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["Alert ID", "Title", "Source", "Current Status", "Classification", "Created At (UTC)"])
+        yield buf.getvalue()
+        buf.seek(0)
+        buf.truncate(0)
+        for r in rows:
+            writer.writerow([
+                r.alert_id or "",
+                r.title or "",
+                r.source or "",
+                r.current_status or "",
+                r.classification or "",
+                _format_created_at(r.created_at),
+            ])
+            yield buf.getvalue()
+            buf.seek(0)
+            buf.truncate(0)
+
+    filename = f"alerts_export_{period_start.strftime('%Y%m%d')}_{period_end.strftime('%Y%m%d')}.csv"
+    return StreamingResponse(
+        _generate(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/dashboard/trend")
