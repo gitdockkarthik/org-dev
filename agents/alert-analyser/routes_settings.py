@@ -468,8 +468,8 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                     try:
                         import asyncio as _asyncio
 
-                        RECONCILE_BATCH_SIZE = 100
-                        RECONCILE_CONCURRENCY = 10
+                        RECONCILE_BATCH_SIZE = 250
+                        RECONCILE_CONCURRENCY = 15
 
                         result = await session.execute(
                             text("""
@@ -574,6 +574,35 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                             "Incident reconciliation: %d checked (batch=%d), %d auto-resolved, %d marked resolved_externally, %d confirmed still open, %d lookup failed/unknown",
                             len(checked), RECONCILE_BATCH_SIZE, auto_resolved_count, resolved_externally_count, still_open_count, unknown_count,
                         )
+
+                        # Backlog visibility guard: warn loudly if open-ticket count
+                        # exceeds what reconciliation can keep pace with. Added after
+                        # a 77,000-ticket backlog went unnoticed for ~5 weeks
+                        # (2026-08-03 to 2026-09-09) because nothing surfaced its
+                        # existence in logs - reconciliation just kept quietly
+                        # checking its 100-per-cycle batch without ever indicating
+                        # the queue was barely being dented.
+                        BACKLOG_WARNING_THRESHOLD = 5000
+                        try:
+                            backlog_result = await session.execute(
+                                text("""
+                                    SELECT COUNT(*) AS open_count
+                                    FROM incident_management.incidents
+                                    WHERE status NOT IN ('RESOLVED', 'MANUAL')
+                                """)
+                            )
+                            open_count = backlog_result.scalar() or 0
+                            if open_count > BACKLOG_WARNING_THRESHOLD:
+                                logger.warning(
+                                    "Incident reconciliation backlog warning: %d open tickets "
+                                    "exceeds threshold of %d - at current batch_size=%d this "
+                                    "backlog is not being cleared in a timely manner. Consider "
+                                    "increasing RECONCILE_BATCH_SIZE/RECONCILE_CONCURRENCY or "
+                                    "investigating why tickets aren't resolving.",
+                                    open_count, BACKLOG_WARNING_THRESHOLD, RECONCILE_BATCH_SIZE,
+                                )
+                        except Exception as backlog_exc:
+                            logger.warning("Backlog size check failed: %s", backlog_exc)
                     except Exception as recon_exc:
                         logger.warning("Incident reconciliation failed: %s", recon_exc)
 
