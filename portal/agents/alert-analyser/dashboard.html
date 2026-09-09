@@ -197,19 +197,21 @@
     </div>
 
     <div class="tab-bar">
-      <button class="tab-btn tab-btn--active" onclick="switchTab('overview',this)">Overview</button>
+      <button class="tab-btn tab-btn--active" onclick="switchTab('incidents',this)">🚨 Incident Management</button>
+      <button class="tab-btn" onclick="switchTab('overview',this)">Overview</button>
       <button class="tab-btn" onclick="switchTab('noise',this)">Noise Analysis</button>
       <button class="tab-btn" onclick="switchTab('genuine',this)">Genuine Alerts</button>
       <button class="tab-btn" onclick="switchTab('trends',this)">Trends</button>
-      <button class="tab-btn" onclick="switchTab('incidents',this)">🚨 Incident Management</button>
+      <button class="tab-btn" onclick="switchTab('downloads',this)">⬇️ Downloads</button>
       <button class="tab-btn" onclick="switchTab('insights',this)">AI Insights</button>
     </div>
 
-    <div id="tab-overview" class="tab-panel tab-panel--active"></div>
+    <div id="tab-incidents" class="tab-panel tab-panel--active"></div>
+    <div id="tab-overview" class="tab-panel"></div>
     <div id="tab-noise"    class="tab-panel"></div>
     <div id="tab-genuine"  class="tab-panel"></div>
     <div id="tab-trends"   class="tab-panel"></div>
-    <div id="tab-incidents" class="tab-panel"></div>
+    <div id="tab-downloads" class="tab-panel"></div>
     <div id="tab-insights" class="tab-panel"></div>
   </div>
 
@@ -249,6 +251,98 @@
       document.getElementById('tab-' + name).classList.add('tab-panel--active');
       btn.classList.add('tab-btn--active');
       if (name === 'insights') renderInsights();
+      if (name === 'downloads') renderDownloads();
+    }
+
+    function renderDownloads() {
+      const now = new Date();
+      const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      const fmt = d => d.toISOString().slice(0, 16);
+      document.getElementById('tab-downloads').innerHTML = `
+        <div class="chart-card" style="width:100%;max-width:640px">
+          <div class="chart-card__title">Export classified alerts as CSV</div>
+          <div style="font-size:.75rem;color:var(--text-muted);margin-bottom:16px">
+            Filtered by the alert's original OpsGenie creation date, not our sync time.
+          </div>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:16px">
+            <div style="flex:1;min-width:150px">
+              <label style="font-size:.75rem;color:var(--text-muted);display:block;margin-bottom:5px">From date</label>
+              <input type="datetime-local" id="dl-from" class="dash-select" step="60" value="${fmt(oneDayAgo)}" style="width:100%;font-size:.82rem;padding:4px 8px">
+            </div>
+            <div style="flex:1;min-width:150px">
+              <label style="font-size:.75rem;color:var(--text-muted);display:block;margin-bottom:5px">To date</label>
+              <input type="datetime-local" id="dl-to" class="dash-select" step="60" value="${fmt(now)}" style="width:100%;font-size:.82rem;padding:4px 8px">
+            </div>
+          </div>
+          <div style="margin-bottom:16px">
+            <label style="font-size:.75rem;color:var(--text-muted);display:block;margin-bottom:6px">Classification</label>
+            <div style="display:flex;gap:16px;flex-wrap:wrap">
+              <label style="display:flex;align-items:center;gap:6px;font-size:.82rem"><input type="checkbox" id="dl-genuine" checked> Genuine</label>
+              <label style="display:flex;align-items:center;gap:6px;font-size:.82rem"><input type="checkbox" id="dl-noise" checked> Noise</label>
+              <label style="display:flex;align-items:center;gap:6px;font-size:.82rem"><input type="checkbox" id="dl-suspect" checked> Noise-suspect</label>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:.72rem;color:var(--text-muted)">Alert ID, Title, Source, Current Status, Classification, Created At (UTC)</span>
+            <button class="btn btn--primary" id="dl-btn" onclick="downloadAlertsCSV()" style="padding:6px 16px;font-size:.82rem">Download CSV</button>
+          </div>
+          <div id="dl-status" style="font-size:.75rem;color:var(--text-muted);margin-top:10px;display:none"></div>
+        </div>`;
+    }
+
+    async function downloadAlertsCSV() {
+      const btn = document.getElementById('dl-btn');
+      const statusEl = document.getElementById('dl-status');
+      const from = document.getElementById('dl-from').value;
+      const to = document.getElementById('dl-to').value;
+      if (!from || !to) {
+        statusEl.style.display = 'block';
+        statusEl.style.color = 'var(--danger, #dc2626)';
+        statusEl.textContent = 'Select both a from and to date.';
+        return;
+      }
+      const classes = [];
+      if (document.getElementById('dl-genuine').checked) classes.push('genuine');
+      if (document.getElementById('dl-noise').checked) classes.push('noise');
+      if (document.getElementById('dl-suspect').checked) classes.push('noise-suspect');
+      if (!classes.length) {
+        statusEl.style.display = 'block';
+        statusEl.style.color = 'var(--danger, #dc2626)';
+        statusEl.textContent = 'Select at least one classification.';
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = 'Preparing…';
+      statusEl.style.display = 'none';
+      try {
+        const qs = new URLSearchParams({ from_date: from, to_date: to, classifications: classes.join(',') });
+        const res = await fetch(`${PROXY}/dashboard/alerts/export-csv?${qs.toString()}`, {
+          headers: { ..._authHeaders() },
+        });
+        if (!res.ok) {
+          const e = await res.json().catch(() => ({ detail: res.statusText }));
+          throw new Error(e.detail || `HTTP ${res.status}`);
+        }
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `alerts_export_${from.slice(0,10)}_${to.slice(0,10)}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+        statusEl.style.display = 'block';
+        statusEl.style.color = 'var(--text-muted)';
+        statusEl.textContent = 'Download started.';
+      } catch (e) {
+        statusEl.style.display = 'block';
+        statusEl.style.color = 'var(--danger, #dc2626)';
+        statusEl.textContent = 'Export failed: ' + e.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Download CSV';
+      }
     }
 
     async function generateAndLoad() {
@@ -901,7 +995,7 @@
         ${oldestLabel} — Overall
       </div>
       <div style="font-size:.73rem;color:var(--text-dim);margin-bottom:12px">
-        Since: ${countingSinceStr} · Last cleanup: ${lastCleanupStr}
+        Since: ${countingSinceStr}
       </div>
       <div class="kpi-grid" style="margin-bottom:20px">
         <div class="kpi kpi--accent">
@@ -951,7 +1045,7 @@
               (cmpA.new_genuine||0)+(cmpA.new_noise||0)+(cmpA.new_suspect||0),
               (cmpB.new_genuine||0)+(cmpB.new_noise||0)+(cmpB.new_suspect||0)
             )}`
-            : (noData ? '—' : '+' + ((pd.new_genuine||0) + (pd.new_noise||0) + (pd.new_suspect||0)).toLocaleString())
+            : (noData ? '—' : '+' + (pd.new_alerts||0).toLocaleString())
           }</div>
           <div class="kpi__sub">${isCompare ? 'A → B' : (pd.duplicate_count > 0 ? `(${pd.new_alerts + pd.duplicate_count} total · ${pd.duplicate_count} dupes removed)` : 'received in period')}</div>
         </div>
@@ -978,9 +1072,9 @@
           <div class="kpi__label">NEW GENUINE</div>
           <div class="kpi__value">${isCompare
             ? `+${(cmpA.new_genuine||0).toLocaleString()} → +${(cmpB.new_genuine||0).toLocaleString()} ${_cmpArrow(cmpA.new_genuine, cmpB.new_genuine)}`
-            : (noData ? '—' : '+' + (pd.new_incidents_count != null ? pd.new_incidents_count : pd.new_genuine||0).toLocaleString())
+            : (noData ? '—' : '+' + (pd.new_genuine||0).toLocaleString())
           }</div>
-          <div class="kpi__sub">${isCompare ? 'A → B' : (noData ? '—' : `(${pd.new_genuine || 0} total · ${pd.recurring_incidents_count || 0} recurring)`)}</div>
+          <div class="kpi__sub">${isCompare ? 'A → B' : (noData ? '—' : `New incident tickets: ${pd.new_incidents_count || 0}`)}</div>
         </div>
         <div class="kpi ${isCompare ? 'kpi--accent' : (noData ? 'kpi--accent' : (pd.new_alerts && pd.new_noise/pd.new_alerts > 0.5 ? 'kpi--danger' : 'kpi--success'))}"
           style="border-top:3px solid var(--accent)">
@@ -1001,7 +1095,7 @@
         <div class="chart-grid">
           <div class="chart-card"><div class="chart-card__title">Alert Breakdown (Selected Period)</div><div class="chart-wrap"><canvas id="donutChart"></canvas></div></div>
           <div class="chart-card">
-            <div class="chart-card__title">Alerts by Category & Priority (Selected Period)</div>
+            <div class="chart-card__title">Alerts by Category & Priority (Current Window)</div>
             <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:.72rem;color:var(--text-muted);margin-bottom:8px">
               <span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:#e34948;margin-right:3px"></span>P1</span>
               <span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:#eda100;margin-right:3px"></span>P2</span>
@@ -1035,7 +1129,7 @@
       setTimeout(() => {
         destroyChart('donut');
         const c = document.getElementById('donutChart')?.getContext('2d');
-        if (c) charts['donut'] = new Chart(c, { type:'doughnut', data:{ labels:['Genuine','Noise','Suspect'], datasets:[{ data:[s.genuine_count,s.noise_count,s.suspect_count||0], backgroundColor:['#16a34a','#dc2626','#f59e0b'], borderWidth:0 }] }, options:{ responsive:true, cutout:'65%', plugins:{legend:{position:'bottom'},datalabels:{display:false}} } });
+        if (c) charts['donut'] = new Chart(c, { type:'doughnut', data:{ labels:['Genuine','Noise','Suspect'], datasets:[{ data:[pd.new_genuine||0,pd.new_noise||0,pd.new_suspect||0], backgroundColor:['#16a34a','#dc2626','#f59e0b'], borderWidth:0 }] }, options:{ responsive:true, cutout:'65%', plugins:{legend:{position:'bottom'},datalabels:{display:false}} } });
         destroyChart('catPri');
         const cpData = s.category_priority_breakdown || [];
         const cpCanvas = document.getElementById('catPriChart')?.getContext('2d');
@@ -1602,6 +1696,12 @@
     }
 
     const _incSectionFns = { open: 'renderOpenIncidentsSection', resolved: 'renderResolvedIncidentsSection' };
+    const _resolvedByLabels = {
+      self_healed: 'Resolved Externally',
+      rca_assisted: 'Agentic Pipeline',
+      action_resolved: 'Agentic Pipeline',
+      manual: 'Manual (Reserved)',
+    };
     function _paginationControls(section, total, page, size) {
       const totalPages = Math.max(1, Math.ceil(total / size));
       if (totalPages <= 1) return '';
@@ -1812,10 +1912,10 @@
       const container = document.getElementById('resolved-incidents-section');
       if (!container) return;
       const search = document.getElementById('resIncSearch')?.value || '';
-      const statusFilter = document.getElementById('resIncStatusFilter')?.value || '';
+      const closedByFilter = document.getElementById('resIncClosedByFilter')?.value || '';
       const params = new URLSearchParams({ hours: '24' });
       if (search) params.set('search', search);
-      if (statusFilter) params.set('status', statusFilter);
+      if (closedByFilter) params.set('closed_by', closedByFilter);
       const data = await api('/dashboard/incidents/resolved-list?' + params.toString()).catch(() => ({ incidents: [], total: 0 }));
       const incidents = data.incidents || [];
 
@@ -1840,7 +1940,7 @@
           <td>${i.incident_created_at.replace('T', ' ').slice(0, 16)}</td>
           <td><span class="badge badge--success">${i.status}</span></td>
           <td style="font-size:.75rem;color:var(--text-muted)">${i.opsgenie_status || '—'}</td>
-          <td>${i.closed_by}</td>
+          <td>${fmtResolvedBy(i.closed_by)}</td>
           <td>${fmtDuration(i.mttd_minutes)}</td>
           <td>${fmtDuration(i.mtta_minutes)}</td>
           <td>${fmtDuration(i.mttr_minutes)}</td>
@@ -1852,11 +1952,12 @@
           <input type="text" id="resIncSearch" placeholder="Search by alert name..." value="${search}"
             onkeyup="if(event.key==='Enter')renderResolvedIncidentsSection()"
             style="flex:1;min-width:180px;padding:6px 10px;background:var(--navy-1);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);font-size:.85rem">
-          <select id="resIncStatusFilter" onchange="renderResolvedIncidentsSection()"
+          <select id="resIncClosedByFilter" onchange="renderResolvedIncidentsSection()"
             style="padding:6px 10px;background:var(--navy-1);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);font-size:.85rem">
-            <option value="">All Statuses</option>
-            <option value="RESOLVED" ${statusFilter==='RESOLVED'?'selected':''}>RESOLVED</option>
-            <option value="MANUAL" ${statusFilter==='MANUAL'?'selected':''}>MANUAL</option>
+            <option value="">All (Resolved By)</option>
+            <option value="self_healed" ${closedByFilter==='self_healed'?'selected':''}>Resolved Externally</option>
+            <option value="action_resolved" ${closedByFilter==='action_resolved'?'selected':''}>Agentic Pipeline</option>
+            <option value="manual" ${closedByFilter==='manual'?'selected':''}>Manual (Reserved)</option>
           </select>
           <button class="btn btn--primary" onclick="renderResolvedIncidentsSection()" style="padding:6px 14px">Search</button>
           <span style="font-size:.78rem;color:var(--text-muted)">${data.total} resolved (last 24h)</span>
@@ -1864,7 +1965,7 @@
         <div class="chart-grid">
           <div class="chart-card" style="grid-column:span 2">
             <div class="data-table-wrap" style="max-height:600px;overflow-y:auto"><table class="data-table" style="font-size:.8rem">
-              <thead><tr><th>Alert</th><th>Created At</th><th>Incident #</th><th>Incident Created</th><th>Status</th><th>OpsGenie Status <span style="font-weight:400;color:var(--text-dim)">(at creation)</span></th><th>Closed By</th><th>MTTD</th><th>MTTA</th><th>MTTR</th></tr></thead>
+              <thead><tr><th>Alert</th><th>Created At</th><th>Incident #</th><th>Incident Created</th><th>Status</th><th>OpsGenie Status <span style="font-weight:400;color:var(--text-dim)">(at creation)</span></th><th>Resolved By</th><th>MTTD</th><th>MTTA</th><th>MTTR</th></tr></thead>
               <tbody>${rows}</tbody>
             </table></div>
             ${_paginationControls('resolved', incidents.length, _incPageState.resolved, _incPageSize)}
