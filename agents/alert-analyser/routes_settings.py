@@ -299,10 +299,68 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                             # known lag - not something this fix changes).
                             # Created directly as RESOLVED, not escalated, purely
                             # for audit visibility. Added 2026-09-09.
+                            from tools.dashboard_builder import parse_message_status as _pms_audit
+                            _audit_title = alert.get("message", alert.get("alias", ""))
+                            _title_says_resolved = _pms_audit(_audit_title) == "resolved"
+
+                            if _title_says_resolved:
+                                # Cross-alert correlation: this "closed" alert is
+                                # very likely a NEW alert_id from the source
+                                # announcing closure of a DIFFERENT, still-open
+                                # ESCALATED ticket - not an update to it. Sources
+                                # observed doing this: New Relic (shares a UUID
+                                # alias prefix between the pair), Zabbix (no
+                                # alias correlation at all, only same source +
+                                # same title). Resolve whatever we can find via
+                                # either signal, independent of this alert's own
+                                # classification. Added 2026-09-10.
+                                _corr_source = alert.get("source", "unknown")
+                                _corr_alias = alert.get("alias", "") or ""
+                                _corr_alias_prefix = _corr_alias[:36]
+                                _corr_matches = await session.execute(
+                                    text("""
+                                        SELECT id, alert_id FROM incident_management.incidents
+                                        WHERE status = 'ESCALATED'
+                                        AND source_tool = :source
+                                        AND (
+                                            (:alias_prefix != '' AND alert_id LIKE :alias_prefix_pattern)
+                                            OR title = :title
+                                        )
+                                        ORDER BY created_at DESC
+                                        LIMIT 1
+                                    """),
+                                    {
+                                        "source": _corr_source,
+                                        "alias_prefix": _corr_alias_prefix,
+                                        "alias_prefix_pattern": f"{_corr_alias_prefix}%",
+                                        "title": _audit_title[:200],
+                                    }
+                                )
+                                _corr_rows = _corr_matches.fetchall()
+                                for _corr_row in _corr_rows:
+                                    await session.execute(
+                                        text("""
+                                            UPDATE incident_management.incidents
+                                            SET status = 'RESOLVED', resolved_at = now(),
+                                                resolution_type = 'closure_alert_correlation',
+                                                detected_via = 'message_parse', updated_at = now()
+                                            WHERE id = :id
+                                        """),
+                                        {"id": _corr_row.id}
+                                    )
+                                    await session.execute(
+                                        text("""
+                                            INSERT INTO incident_management.incident_status_history
+                                            (incident_id, from_status, to_status, changed_at)
+                                            VALUES (:incident_id, 'ESCALATED', 'RESOLVED', now())
+                                        """),
+                                        {"incident_id": _corr_row.id}
+                                    )
+                                if _corr_rows:
+                                    await session.commit()
+
                             if alert.get("classification") == "noise-suspect":
-                                from tools.dashboard_builder import parse_message_status as _pms_audit
-                                _audit_title = alert.get("message", alert.get("alias", ""))
-                                if _pms_audit(_audit_title) == "resolved":
+                                if _title_says_resolved:
                                     _audit_alert_id = alert.get("id")
                                     _existing_audit = await session.execute(
                                         text("SELECT id FROM incident_management.incidents WHERE alert_id = :alert_id LIMIT 1"),
