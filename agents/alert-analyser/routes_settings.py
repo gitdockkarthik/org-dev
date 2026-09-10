@@ -303,40 +303,65 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                             _audit_title = alert.get("message", alert.get("alias", ""))
                             _title_says_resolved = _pms_audit(_audit_title) == "resolved"
 
-                            if _title_says_resolved:
+                            _corr_source_check = alert.get("source", "unknown")
+                            if _title_says_resolved and _corr_source_check == "Email":
                                 # Cross-alert correlation: this "closed" alert is
                                 # very likely a NEW alert_id from the source
                                 # announcing closure of a DIFFERENT, still-open
-                                # ESCALATED ticket - not an update to it. Sources
-                                # observed doing this: New Relic (shares a UUID
-                                # alias prefix between the pair), Zabbix (no
-                                # alias correlation at all, only same source +
-                                # same title). Resolve whatever we can find via
-                                # either signal, independent of this alert's own
-                                # classification. Added 2026-09-10.
+                                # ESCALATED ticket - not an update to it.
+                                # RESTRICTED TO source='Email' (Zabbix) ONLY as of
+                                # 2026-09-10, urgent fix: New Relic titles are too
+                                # generic/non-unique (e.g. "Lambda Latency" recurs
+                                # identically across many open tickets for the
+                                # same service) - normalized-title matching picked
+                                # an ARBITRARY open ticket among many, not the
+                                # genuinely corresponding one. This created ~900+
+                                # incorrect resolutions before being caught and
+                                # disabled for New Relic. Zabbix/Email titles
+                                # include a specific hostname and are effectively
+                                # unique per real incident, so that path is safe.
+                                # New Relic needs a different mechanism (e.g. the
+                                # original alias-UUID-prefix approach) - deferred,
+                                # not solved in this fix.
+                                import re as _corr_re
+
+                                def _normalize_title_for_correlation(t: str) -> str:
+                                    # Strip status/severity bracket tags and stray
+                                    # colons/whitespace, keeping only the
+                                    # identifying host+check portion of the title.
+                                    # Open/closed titles for the SAME underlying
+                                    # alert are never identical strings (e.g.
+                                    # "[Open] [Critical]" vs ": [Closed] :" for
+                                    # Zabbix, or spacing differences for New
+                                    # Relic) - exact match never fired for these,
+                                    # a real bug found via dry-run 2026-09-10.
+                                    # Scope: covers bracket-tagged sources
+                                    # (New Relic, Zabbix/Email, ~94% of volume).
+                                    # LightStep/Stackdriver/CloudWatch/Grafana use
+                                    # different conventions and are not covered -
+                                    # a known, separate gap for future work.
+                                    t = _corr_re.sub(r"\[(open|closed|critical|warning|severe|maintenance)\]", "", t, flags=_corr_re.IGNORECASE)
+                                    t = _corr_re.sub(r"\s*:\s*", " ", t)
+                                    t = _corr_re.sub(r"\s+", " ", t).strip()
+                                    return t
+
                                 _corr_source = alert.get("source", "unknown")
-                                _corr_alias = alert.get("alias", "") or ""
-                                _corr_alias_prefix = _corr_alias[:36]
-                                _corr_matches = await session.execute(
+                                _corr_normalized_title = _normalize_title_for_correlation(_audit_title)
+                                _corr_candidates = await session.execute(
                                     text("""
-                                        SELECT id, alert_id FROM incident_management.incidents
+                                        SELECT id, alert_id, title FROM incident_management.incidents
                                         WHERE status = 'ESCALATED'
                                         AND source_tool = :source
-                                        AND (
-                                            (:alias_prefix != '' AND alert_id LIKE :alias_prefix_pattern)
-                                            OR title = :title
-                                        )
                                         ORDER BY created_at DESC
-                                        LIMIT 1
                                     """),
-                                    {
-                                        "source": _corr_source,
-                                        "alias_prefix": _corr_alias_prefix,
-                                        "alias_prefix_pattern": f"{_corr_alias_prefix}%",
-                                        "title": _audit_title[:200],
-                                    }
+                                    {"source": _corr_source}
                                 )
-                                _corr_rows = _corr_matches.fetchall()
+                                _corr_title_hit = next(
+                                    (r for r in _corr_candidates.fetchall()
+                                     if _normalize_title_for_correlation(r.title) == _corr_normalized_title),
+                                    None
+                                )
+                                _corr_rows = [_corr_title_hit] if _corr_title_hit else []
                                 for _corr_row in _corr_rows:
                                     await session.execute(
                                         text("""
