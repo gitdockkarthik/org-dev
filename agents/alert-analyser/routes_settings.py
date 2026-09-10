@@ -304,6 +304,58 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                             _title_says_resolved = _pms_audit(_audit_title) == "resolved"
 
                             _corr_source_check = alert.get("source", "unknown")
+
+                            if _title_says_resolved and _corr_source_check == "New Relic":
+                                # New Relic closure correlation via alias-UUID-
+                                # prefix matching (NOT title matching - New Relic
+                                # titles like "Lambda Latency" repeat identically
+                                # across many open tickets for the same service,
+                                # which caused 1035 incorrect resolutions when
+                                # title-matched on 2026-09-10, since reverted).
+                                # New Relic's alias shares a 36-char UUID prefix
+                                # between an alert and its later closure
+                                # notification - a precise, source-generated
+                                # identifier safe to match on even when titles
+                                # collide. Added 2026-09-10 as a separate,
+                                # independent path from the Zabbix/Email
+                                # title-based correlation below, so a bug in one
+                                # mechanism can never affect the other.
+                                _nr_alias = alert.get("alias", "") or ""
+                                _nr_alias_prefix = _nr_alias[:36]
+                                if _nr_alias_prefix:
+                                    _nr_matches = await session.execute(
+                                        text("""
+                                            SELECT id, alert_id FROM incident_management.incidents
+                                            WHERE status = 'ESCALATED'
+                                            AND source_tool = 'New Relic'
+                                            AND alert_id LIKE :prefix_pattern
+                                            ORDER BY created_at DESC
+                                            LIMIT 1
+                                        """),
+                                        {"prefix_pattern": f"{_nr_alias_prefix}%"}
+                                    )
+                                    _nr_row = _nr_matches.fetchone()
+                                    if _nr_row:
+                                        await session.execute(
+                                            text("""
+                                                UPDATE incident_management.incidents
+                                                SET status = 'RESOLVED', resolved_at = now(),
+                                                    resolution_type = 'closure_alert_correlation_alias',
+                                                    detected_via = 'message_parse', updated_at = now()
+                                                WHERE id = :id
+                                            """),
+                                            {"id": _nr_row.id}
+                                        )
+                                        await session.execute(
+                                            text("""
+                                                INSERT INTO incident_management.incident_status_history
+                                                (incident_id, from_status, to_status, changed_at)
+                                                VALUES (:incident_id, 'ESCALATED', 'RESOLVED', now())
+                                            """),
+                                            {"incident_id": _nr_row.id}
+                                        )
+                                        await session.commit()
+
                             if _title_says_resolved and _corr_source_check == "Email":
                                 # Cross-alert correlation: this "closed" alert is
                                 # very likely a NEW alert_id from the source
