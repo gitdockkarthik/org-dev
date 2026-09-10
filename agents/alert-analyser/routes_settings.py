@@ -415,12 +415,34 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                                 )
                                 _corr_rows = [_corr_title_hit] if _corr_title_hit else []
                                 for _corr_row in _corr_rows:
+                                    # Live-status guard: title-based correlation can
+                                    # match a stale "closed" alert (from an earlier,
+                                    # already-resolved occurrence) to the CURRENT
+                                    # still-open ticket, when the same alert flaps
+                                    # faster than the recreation cooldown. Found live
+                                    # 2026-09-10: a genuinely still-open Zabbix alert
+                                    # got resolved 3x in one hour this way. Require a
+                                    # positive live OpsGenie confirmation on the
+                                    # CANDIDATE TICKET's own alert_id before
+                                    # resolving - never resolve on title-match alone,
+                                    # and never resolve if the live check fails/errors
+                                    # (fail-safe default: leave it open).
+                                    try:
+                                        _corr_live_status = await source.get_alert_status(_corr_row.alert_id)
+                                    except Exception:
+                                        _corr_live_status = None
+                                    if _corr_live_status is None or _corr_live_status.lower() != "closed":
+                                        logger.info(
+                                            "Correlation skip: candidate %s (alert_id=%s) title-matched but live status=%s - not resolving",
+                                            _corr_row.id, _corr_row.alert_id, _corr_live_status,
+                                        )
+                                        continue
                                     await session.execute(
                                         text("""
                                             UPDATE incident_management.incidents
                                             SET status = 'RESOLVED', resolved_at = now(),
                                                 resolution_type = 'closure_alert_correlation',
-                                                detected_via = 'message_parse', updated_at = now()
+                                                detected_via = 'opsgenie_live', updated_at = now()
                                             WHERE id = :id
                                         """),
                                         {"id": _corr_row.id}
