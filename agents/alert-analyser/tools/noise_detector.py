@@ -78,6 +78,11 @@ def classify_alerts(alerts: list[dict]) -> list[dict]:
         priority = alert.get("priority", "P5")
         status = alert.get("status", "")
 
+        message_text = alert.get("message", "")
+        if src == "GoogleStackdriver" and "Healthy for" in message_text and "Cloud Composer Environment" in message_text:
+            noise_score += 5
+            noise_reasons.append("Stackdriver informational 'Healthy' notification")
+
         if alias in frequent_aliases:
             noise_score += 2
             noise_reasons.append(f"fires >{repeat_threshold}x within 1 hour")
