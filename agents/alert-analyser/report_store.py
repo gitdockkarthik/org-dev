@@ -225,15 +225,14 @@ async def store_report(classified: list[dict], meta: dict) -> None:
                 )
                 _prev_stats_row = _prev_stats_result.fetchone()
                 if _prev_row:
-                    new_alerts  = max(0, total - (_prev_row.total_alerts or 0))
                     new_genuine = max(0, genuine - (_prev_row.genuine_count or 0))
                     new_noise   = max(0, noise - (_prev_row.noise_count or 0))
                     new_suspect = max(0, suspect - (_prev_row.suspect_count or 0))
                 else:
-                    new_alerts  = total
                     new_genuine = genuine
                     new_noise   = noise
                     new_suspect = suspect
+                new_alerts = new_genuine + new_noise + new_suspect
 
                 # Extract previous deduplicated counts from stats_data JSON
                 prev_dedup_total = 0
@@ -251,10 +250,10 @@ async def store_report(classified: list[dict], meta: dict) -> None:
                         pass  # If parse fails, treat as no previous dedup data (zeros)
 
                 # Compute deduplicated deltas using current stats
-                new_alerts_dedup = max(0, stats.get("total", 0) - prev_dedup_total)
                 new_genuine_dedup = max(0, stats.get("genuine_count", 0) - prev_dedup_genuine)
                 new_noise_dedup = max(0, stats.get("noise_count", 0) - prev_dedup_noise)
                 new_suspect_dedup = max(0, stats.get("suspect_count", 0) - prev_dedup_suspect)
+                new_alerts_dedup = new_genuine_dedup + new_noise_dedup + new_suspect_dedup
 
                 await _sum_sess.execute(
                     text("""

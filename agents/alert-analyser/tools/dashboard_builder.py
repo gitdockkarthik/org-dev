@@ -235,6 +235,7 @@ def compute_dashboard_stats(classified: list[dict]) -> dict:
 
     return {
         "total": total,
+        "total_alerts": total,
         "total_raw": len(classified),
         "duplicate_count": len(classified) - len(deduplicated),
         "noise_count": noise_count,
