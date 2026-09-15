@@ -336,6 +336,29 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                                     )
                                     _nr_row = _nr_matches.fetchone()
                                     if _nr_row:
+                                        # Live-status guard: alias-based correlation can
+                                        # match a stale "closed" alert (from an earlier,
+                                        # already-resolved occurrence) to the CURRENT
+                                        # still-open ticket, if the same alias flaps
+                                        # faster than the recreation cooldown. Same
+                                        # failure mode already found and fixed for the
+                                        # Zabbix/Email path on 2026-09-10 - porting the
+                                        # same fail-safe guard here now that this path's
+                                        # match can actually fire (see field-mismatch
+                                        # fix above). Never resolve on alias-match alone,
+                                        # and never resolve if the live check fails/errors
+                                        # (fail-safe default: leave it open).
+                                        try:
+                                            _nr_live_status = await source.get_alert_status(_nr_row.alert_id)
+                                        except Exception:
+                                            _nr_live_status = None
+                                        if _nr_live_status is None or _nr_live_status.lower() != "closed":
+                                            logger.info(
+                                                "Correlation skip: candidate %s (alert_id=%s) alias-matched but live status=%s - not resolving",
+                                                _nr_row.id, _nr_row.alert_id, _nr_live_status,
+                                            )
+                                            _nr_row = None
+                                    if _nr_row:
                                         await session.execute(
                                             text("""
                                                 UPDATE incident_management.incidents
