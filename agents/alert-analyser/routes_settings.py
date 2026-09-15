@@ -328,7 +328,7 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                                             SELECT id, alert_id FROM incident_management.incidents
                                             WHERE status = 'ESCALATED'
                                             AND source_tool = 'New Relic'
-                                            AND alert_id LIKE :prefix_pattern
+                                            AND alert_payload->>'alias' LIKE :prefix_pattern
                                             ORDER BY created_at DESC
                                             LIMIT 1
                                         """),
