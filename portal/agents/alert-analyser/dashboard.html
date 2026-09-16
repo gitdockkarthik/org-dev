@@ -2077,7 +2077,7 @@
         const resolutionRing = data.resolution_ring || {};
         const recurrenceSignal = data.recurrence_signal || [];
 
-        const listData = await api('/dashboard/incidents/list?limit=200').catch(() => ({ tickets: [], total: 0 }));
+        const listData = await api('/dashboard/incidents/list?status=ESCALATED,INVESTIGATING,RCA_COMPLETE,REMEDIATING&limit=200').catch(() => ({ tickets: [], total: 0 }));
         const tickets = listData.tickets || [];
         const totalTickets = listData.total || tickets.length;
 

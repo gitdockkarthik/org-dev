@@ -1091,8 +1091,13 @@ async def get_incidents_list(
             params = {}
 
             if status:
-                sql += " AND status = :status"
-                params["status"] = status
+                status_list = [s.strip() for s in status.split(",") if s.strip()]
+                if len(status_list) == 1:
+                    sql += " AND status = :status"
+                    params["status"] = status_list[0]
+                else:
+                    sql += " AND status = ANY(:status_list)"
+                    params["status_list"] = status_list
 
             if priority:
                 sql += " AND priority = :priority"
@@ -1110,8 +1115,13 @@ async def get_incidents_list(
         count_sql = "SELECT COUNT(*) FROM incident_management.incidents WHERE status != 'PURGED'"
         count_params = {}
         if status:
-            count_sql += " AND status = :status"
-            count_params["status"] = status
+            count_status_list = [s.strip() for s in status.split(",") if s.strip()]
+            if len(count_status_list) == 1:
+                count_sql += " AND status = :status"
+                count_params["status"] = count_status_list[0]
+            else:
+                count_sql += " AND status = ANY(:status_list)"
+                count_params["status_list"] = count_status_list
         if priority:
             count_sql += " AND priority = :priority"
             count_params["priority"] = priority
