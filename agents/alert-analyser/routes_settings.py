@@ -689,8 +689,17 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                     try:
                         import asyncio as _asyncio
 
-                        RECONCILE_BATCH_SIZE = 250
-                        RECONCILE_CONCURRENCY = 15
+                        # Increased from 250/15 on 2026-09-16 - the full sync
+                        # (including reconciliation) was completing in ~15-17s
+                        # out of a 120s cycle window (~85% headroom unused),
+                        # while a ~9500-ticket backlog (mostly New Relic) meant
+                        # any single ticket was only re-checked once every
+                        # ~76 minutes at the old throughput - effectively
+                        # unable to keep pace with new ticket creation. Scaled
+                        # up 4x; still well within the 120s cycle budget based
+                        # on observed timing at the old settings.
+                        RECONCILE_BATCH_SIZE = 1000
+                        RECONCILE_CONCURRENCY = 40
 
                         result = await session.execute(
                             text("""
