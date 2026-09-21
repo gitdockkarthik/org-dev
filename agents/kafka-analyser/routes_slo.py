@@ -204,6 +204,28 @@ async def get_slo_dashboard(cluster_id: str, hours: int = 24) -> dict:
             if pct >= target * 0.8: return "amber"
             return "red"
 
+        # Live overall compliance -- same 6-metric average as the hourly
+        # compute_slo_compliance job (kept in sync deliberately; broker_availability
+        # is excluded from the average here too, matching that job).
+        lag_compliance_pct = (
+            100.0 if lag_target <= 0 and current_lag == 0 else
+            0.0 if lag_target <= 0 else
+            100.0 if current_lag <= lag_target else
+            max(0.0, round((1 - (current_lag - lag_target) / lag_target) * 100, 1))
+        )
+        urp_compliance_pct = 100.0 if current_urp <= urp_target else 0.0
+        cpu_compliance_pct = 100.0 if avg_cpu <= cpu_target else max(0.0, round((1 - (avg_cpu - cpu_target) / cpu_target) * 100, 1))
+        heap_compliance_pct = 100.0 if avg_heap <= heap_target else max(0.0, round((1 - (avg_heap - heap_target) / heap_target) * 100, 1))
+        overall_metrics = [m for m in [
+            conn_avail_pct if conn_total_all > 0 else None,
+            lag_compliance_pct,
+            urp_compliance_pct,
+            cpu_compliance_pct,
+            heap_compliance_pct,
+            task_health_pct,
+        ] if m is not None]
+        overall_pct = round(sum(overall_metrics) / len(overall_metrics), 1) if overall_metrics else None
+
         return {
             "cluster_id": cluster_id,
             "hours": hours,
@@ -241,6 +263,7 @@ async def get_slo_dashboard(cluster_id: str, hours: int = 24) -> dict:
                 "cpu_status": "green" if avg_cpu <= cpu_target else ("amber" if avg_cpu <= cpu_target * 1.1 else "red") if avg_cpu > 0 else "unknown",
                 "heap_status": "green" if avg_heap <= heap_target else ("amber" if avg_heap <= heap_target * 1.1 else "red") if avg_heap > 0 else "unknown",
                 "task_status": "na" if conn_total_all == 0 else (("green" if task_health_pct >= task_target else ("amber" if task_health_pct >= task_target * 0.9 else "red")) if task_health_pct is not None else "unknown"),
+                "overall_pct": overall_pct,
             },
             "trend": [
                 {

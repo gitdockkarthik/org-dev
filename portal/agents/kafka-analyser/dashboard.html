@@ -3723,7 +3723,7 @@
       const col = s => s==='green'?'#4CAF50':s==='amber'?'#FF9800':s==='red'?'#F44336':'#666';
       const icon = s => s==='green'?'✅':s==='amber'?'⚠️':s==='red'?'🔴':'—';
       const badge = (s,l) => { const _s=s||'unknown'; return `<span style="background:${col(_s)}22;color:${col(_s)};padding:2px 8px;border-radius:12px;font-size:.75rem;font-weight:700">${icon(_s)} ${l}</span>`; };
-      const overallPct = data.trend&&data.trend.length>0?(data.trend[data.trend.length-1].overall_pct||0):(c.connector_availability_pct||0);
+      const overallPct = c.overall_pct!=null?c.overall_pct:(data.trend&&data.trend.length>0?(data.trend[data.trend.length-1].overall_pct||0):(c.connector_availability_pct||0));
       const overallStatus = overallPct>=95?'green':overallPct>=80?'amber':'red';
 
       // ── 1. SLO Compliance (top) ──────────────────────────────────────────
