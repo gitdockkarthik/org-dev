@@ -929,10 +929,14 @@ async def collect_sr_subjects(cluster_id: str = ""):
         sr_username = c.get("schema_registry_username")
         sr_password = c.get("schema_registry_password")
         auth = httpx.BasicAuth(sr_username, sr_password) if sr_username and sr_password else None
+        # sr_url may be a comma-joined list of nodes (HA multi-node SR) -- use
+        # the first reachable node for this single-node-style probe, matching
+        # the pattern SchemaRegistryCollector already uses elsewhere.
+        sr_probe_url = sr_url.split(",")[0].strip()
 
         # Step 1: Try /subjects — if works, cluster is not restricted, clear flag
         async with httpx.AsyncClient(timeout=10.0, auth=auth) as client:
-            resp = await client.get(f"{sr_url}/subjects")
+            resp = await client.get(f"{sr_probe_url}/subjects")
             if resp.status_code == 200:
                 # Not restricted — clear sr_restricted flag and exit
                 from database import SessionLocal
