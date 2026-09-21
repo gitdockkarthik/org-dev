@@ -898,7 +898,12 @@ async def compute_slo_compliance(cluster_id: str = ""):
                   "ct": conn_total, "cr": conn_running, "cf": conn_failed,
                   "cc": cpu_compliance_pct, "hc": heap_compliance_pct, "tc": task_health_pct})
             await sess.commit()
-        compute_slo_compliance._last_result = f"SLO computed: overall={overall:.1f}% conn={conn_avail_pct:.1f}% cpu={cpu_compliance_pct:.1f}%" if overall else "SLO computed (no data)"
+        def _fmt(v):
+            return f"{v:.1f}" if v is not None else "N/A"
+        compute_slo_compliance._last_result = (
+            f"SLO computed: overall={_fmt(overall)}% conn={_fmt(conn_avail_pct)}% cpu={_fmt(cpu_compliance_pct)}%"
+            if overall is not None else "SLO computed (no data)"
+        )
     except Exception as e:
         logger.error("compute_slo_compliance failed: %s", e)
         compute_slo_compliance._last_result = f"Error: {e}"
