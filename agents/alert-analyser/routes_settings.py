@@ -157,7 +157,6 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
         last_synced = _config.get("last_synced")
         if last_synced and not full_sync:
             try:
-                from datetime import timedelta
                 _ls_dt = datetime.fromisoformat(last_synced.replace("Z", "+00:00"))
                 _fetch_from = (_ls_dt - timedelta(minutes=5)).isoformat()
             except Exception:
@@ -166,7 +165,6 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
         else:
             sync_window_days = _config.get("sync_window_days", 7)
             alerts = await source.load_alerts(sync_window_days=sync_window_days)
-        from datetime import datetime, timezone, timedelta
         filename = f"opsgenie-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.json"
         from database import SessionLocal
         from sqlalchemy import text
@@ -962,7 +960,31 @@ async def backfill_check_incidents(hours: float = 24, dry_run: bool = True) -> d
 
     sync_window_days = max(hours / 24, 0.01)
     alerts = await source.load_alerts(sync_window_days=sync_window_days)
-    classified = classify_alerts(alerts)
+
+    # Blend in recent history (same pattern as the regular sync pipeline)
+    # so repeat-firing/noise detection has the same context here as it
+    # does in production - otherwise this tool's narrower window can
+    # under-count repeats and misclassify a noise-suspect alert as
+    # genuine, reporting a false 'missing' ticket. 2026-09-21.
+    window_mins = _config.get("noise_threshold_window_mins", 60)
+    history_cutoff = datetime.now(timezone.utc) - timedelta(minutes=window_mins * 4)
+    history_alerts = []
+    try:
+        async with SessionLocal() as _hist_sess:
+            _hist_result = await _hist_sess.execute(
+                text("SELECT alert_data FROM alert_sync_history WHERE alert_created_at >= :cutoff"),
+                {"cutoff": history_cutoff}
+            )
+            history_alerts = [r.alert_data for r in _hist_result.fetchall() if r.alert_data]
+    except Exception as _hist_exc:
+        logger.error("backfill_check_incidents: failed to load alert history from Postgres: %s", _hist_exc)
+        history_alerts = []
+
+    fetched_ids = {a.get("id") for a in alerts}
+    history_ids = {h.get("id") for h in history_alerts}
+    combined_for_classification = history_alerts + [a for a in alerts if a.get("id") not in history_ids]
+    classified_combined = classify_alerts(combined_for_classification)
+    classified = [a for a in classified_combined if a.get("id") in fetched_ids]
 
     async with SessionLocal() as sess:
         existing_result = await sess.execute(text("SELECT alert_id FROM incident_management.incidents"))
