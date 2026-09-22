@@ -167,6 +167,9 @@
       <button class="btn" id="filter-reset-btn"
         onclick="resetDateFilter()"
         style="padding:4px 14px;font-size:.82rem;background:var(--navy-2)">Reset</button>
+      <button class="btn" id="filter-lifetime-btn"
+        onclick="setLifetimeView()"
+        style="padding:4px 14px;font-size:.82rem;background:var(--navy-2)">Lifetime</button>
       <span id="filter-badge" style="display:none;
         background:#1e40af;color:#fff;font-size:.75rem;
         padding:2px 10px;border-radius:12px"></span>
@@ -364,8 +367,26 @@
     // ── Date filter helpers ──────────────────────────────────────────
     let _activeFromDate = null;
     let _activeToDate = null;
+    let _isLifetimeView = false;
+
+    function _buildDateParams() {
+      const p = new URLSearchParams();
+      if (!_isLifetimeView) {
+        if (_activeFromDate) p.set('from_date', _activeFromDate);
+        if (_activeToDate) p.set('to_date', _activeToDate);
+      }
+      return p;
+    }
+
+    function _refreshIncidentsTab() {
+      if (typeof renderMttxKpis === 'function') renderMttxKpis();
+      if (typeof renderPipelineSummary === 'function') renderPipelineSummary();
+      if (typeof renderOpenIncidentsSection === 'function') renderOpenIncidentsSection();
+      if (typeof renderResolvedIncidentsSection === 'function') renderResolvedIncidentsSection();
+    }
 
     function _initDefaultDateRange() {
+      _isLifetimeView = false;
       const now = new Date();
       const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
       const fmt = d => d.toISOString().slice(0, 16);
@@ -389,6 +410,14 @@
       toggleCompare(false);
       const _fv = document.getElementById('filter-from').value;
       const _tv = document.getElementById('filter-to').value;
+      if (_fv && _tv) {
+        const _spanDays = (new Date(_tv.replace('T', 'T') + ':00Z') - new Date(_fv.replace('T', 'T') + ':00Z')) / (1000 * 60 * 60 * 24);
+        if (_spanDays > 90) {
+          alert('Date range too wide - maximum 90 days (about 3 months).');
+          return;
+        }
+      }
+      _isLifetimeView = false;
       _activeFromDate = _fv ? _fv.replace('T', ' ') : null;
       _activeToDate = _tv ? _tv.replace('T', ' ') : null;
       const badge = document.getElementById('filter-badge');
@@ -401,9 +430,11 @@
         badge.style.display = 'none';
       }
       loadDashboard();
+      _refreshIncidentsTab();
     }
 
     function resetDateFilter() {
+      _isLifetimeView = false;
       _activeFromDate = null;
       _activeToDate = null;
       _initDefaultDateRange();
@@ -415,6 +446,25 @@
       document.getElementById('filter-apply-btn').disabled = false;
       document.getElementById('filter-apply-btn').style.opacity = '1';
       loadDashboard();
+      _refreshIncidentsTab();
+    }
+
+    function setLifetimeView() {
+      _isLifetimeView = true;
+      _activeFromDate = null;
+      _activeToDate = null;
+      document.getElementById('filter-from').value = '';
+      document.getElementById('filter-to').value = '';
+      window._compareActive = false;
+      window._compareDataA = null;
+      window._compareDataB = null;
+      document.getElementById('compare-toggle').checked = false;
+      toggleCompare(false);
+      const badge = document.getElementById('filter-badge');
+      badge.style.display = 'inline';
+      badge.textContent = 'Lifetime';
+      loadDashboard();
+      _refreshIncidentsTab();
     }
 
     function toggleCompare(enabled) {
@@ -1714,7 +1764,8 @@
     }
 
     async function renderPipelineSummary() {
-      const data = await api('/dashboard/incidents').catch(() => ({}));
+      const _qs = _buildDateParams().toString();
+      const data = await api('/dashboard/incidents' + (_qs ? '?' + _qs : '')).catch(() => ({}));
       const ring = data.resolution_ring || {};
       const el = document.getElementById('pipeline-summary-container');
       if (!el) return;
@@ -1867,7 +1918,8 @@
     }
 
     async function renderMttxKpis() {
-      const mttx = await api('/dashboard/incidents/mttx-summary').catch(() => ({ mttd: null, mtta: null, mttr: null }));
+      const _qs = _buildDateParams().toString();
+      const mttx = await api('/dashboard/incidents/mttx-summary' + (_qs ? '?' + _qs : '')).catch(() => ({ mttd: null, mtta: null, mttr: null }));
       const fmtMetric = (m, label) => {
         if (!m || m.sample_size === 0) {
           return `<div class="kpi"><div class="kpi__label">${label}</div><div class="kpi__value" style="color:var(--text-dim)">No data</div></div>`;
@@ -1892,7 +1944,10 @@
       if (!container) return;
       const search = document.getElementById('openIncSearch')?.value || '';
       const statusFilter = document.getElementById('openIncStatusFilter')?.value || '';
-      const params = new URLSearchParams({ hours: '24' });
+      const params = _buildDateParams();
+      if (!params.has('from_date') && !params.has('to_date')) {
+        params.set('hours', _isLifetimeView ? '0' : '24');
+      }
       if (search) params.set('search', search);
       if (statusFilter) params.set('status', statusFilter);
       const data = await api('/dashboard/incidents/open-list?' + params.toString()).catch(() => ({ incidents: [], total: 0 }));
@@ -1951,7 +2006,10 @@
       if (!container) return;
       const search = document.getElementById('resIncSearch')?.value || '';
       const closedByFilter = document.getElementById('resIncClosedByFilter')?.value || '';
-      const params = new URLSearchParams({ hours: '24' });
+      const params = _buildDateParams();
+      if (!params.has('from_date') && !params.has('to_date')) {
+        params.set('hours', _isLifetimeView ? '0' : '24');
+      }
       if (search) params.set('search', search);
       if (closedByFilter) params.set('closed_by', closedByFilter);
       const data = await api('/dashboard/incidents/resolved-list?' + params.toString()).catch(() => ({ incidents: [], total: 0 }));
