@@ -23,8 +23,15 @@ class SchemaRegistryCollector:
         self._sr_restricted = sr_restricted
         self._cluster_id = cluster_id
 
-    async def collect(self) -> dict[str, Any]:
-        """Fetch schema registry data and return structured dict."""
+    async def collect(self, offset: int = 0, limit: int | None = None) -> dict[str, Any]:
+        """Fetch schema registry data and return structured dict.
+
+        offset/limit page into the full sorted subject list before the
+        (expensive) per-subject detail fetch. Omitting both preserves the
+        exact original behavior: the first _MAX_SUBJECTS subjects, no
+        offset. subject_count in the response is always the TRUE full
+        registry count, unaffected by pagination.
+        """
         try:
             # Fast path: read from postgres for known restricted clusters
             if self._sr_restricted and self._cluster_id:
@@ -58,9 +65,15 @@ class SchemaRegistryCollector:
                     except Exception:
                         pass
 
-                # Cap subjects for performance on large registries
-                if len(subjects) > _MAX_SUBJECTS:
-                    subjects = sorted(subjects)[:_MAX_SUBJECTS]
+                # Page into the subject list. Only force alphabetical order when
+                # pagination actually changes what's returned (i.e. the full list
+                # doesn't already fit within offset+limit) -- this preserves the
+                # original unsorted API order for small registries that fit
+                # entirely within one page, matching pre-pagination behavior
+                # exactly for the common (offset=0, limit=None) case.
+                effective_limit = limit if limit is not None else _MAX_SUBJECTS
+                if offset > 0 or len(subjects) > effective_limit:
+                    subjects = sorted(subjects)[offset:offset + effective_limit]
 
                 # Fetch global compatibility first
                 global_compat = await self._get_global_compatibility(client)

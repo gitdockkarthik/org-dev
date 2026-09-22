@@ -722,7 +722,14 @@
             break;
           }
           case 'schema-registry': {
-            const d = await api('/dashboard/schema-registry');
+            const _srCid = _currentClusterId || document.getElementById('ctrl-cluster')?.value || '';
+            const _srRes = await fetch(`${PROXY}/dashboard/schema-registry?cluster_id=${_srCid}&limit=20`,
+              { headers: _authHeaders(), cache: 'no-store' });
+            if (!_srRes.ok) {
+              const _srErr = await _srRes.json().catch(() => ({ detail: _srRes.statusText }));
+              throw new Error(_srErr.detail || `HTTP ${_srRes.status}`);
+            }
+            const d = await _srRes.json();
             if (_tabGen !== window._loadGeneration) return;
             renderSchemaRegistry(d);
             break;
@@ -3608,20 +3615,55 @@
         </div>`;
 
       const SR_PAGE = 20;
-      window._srView = { visible: SR_PAGE };
+      const trueTotal = data.subject_count ?? subjects.length;
+      window._srView = { loaded: subjects.slice(), loading: false };
       window._srApplyView = function () {
-        const shown = subjects.slice(0, window._srView.visible);
+        const shown = window._srView.loaded;
         const tbody = document.getElementById('sr-tbody');
         if (tbody) {
           tbody.innerHTML = shown.map(srRowHtml).join('') ||
             `<tr><td colspan="4" class="data-table__empty">No subjects registered — publish schemas to see them here</td></tr>`;
         }
         const label = document.getElementById('sr-count-label');
-        if (label) label.textContent = `Showing ${shown.length} of ${(data.subject_count ?? subjects.length).toLocaleString()} subjects`;
+        if (label) label.textContent = `Showing ${shown.length} of ${trueTotal.toLocaleString()} subjects`;
         const moreBtn = document.getElementById('sr-show-more');
-        if (moreBtn) moreBtn.style.display = shown.length < subjects.length ? '' : 'none';
+        if (moreBtn) {
+          if (window._srView.loading) {
+            moreBtn.disabled = true;
+            moreBtn.textContent = 'Loading…';
+            moreBtn.style.display = '';
+          } else {
+            moreBtn.disabled = false;
+            moreBtn.textContent = 'Show More';
+            moreBtn.style.display = (!window._srView.exhausted && shown.length < trueTotal) ? '' : 'none';
+          }
+        }
       };
-      window._srShowMore = function () { window._srView.visible += SR_PAGE; window._srApplyView(); };
+      window._srShowMore = async function () {
+        if (window._srView.loading) return;
+        window._srView.loading = true;
+        window._srApplyView();
+        try {
+          const cid = _currentClusterId || document.getElementById('ctrl-cluster')?.value || '';
+          const offset = window._srView.loaded.length;
+          const res = await fetch(`${PROXY}/dashboard/schema-registry?cluster_id=${cid}&offset=${offset}&limit=${SR_PAGE}`,
+            { headers: _authHeaders(), cache: 'no-store' });
+          const page = await res.json();
+          const newSubjects = page.subjects || [];
+          window._srView.loaded = window._srView.loaded.concat(newSubjects);
+          if (newSubjects.length === 0) {
+            // Nothing more came back -- stop offering more even if the
+            // count label suggests otherwise, to avoid a click-to-refetch-
+            // nothing loop.
+            window._srView.exhausted = true;
+          }
+        } catch (e) {
+          console.error('Show More failed:', e);
+        } finally {
+          window._srView.loading = false;
+          window._srApplyView();
+        }
+      };
       window._srApplyView();
 
       if (hasTypes) {

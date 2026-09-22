@@ -734,7 +734,7 @@ async def get_insights(cluster_id: str | None = None, hours: int | None = None) 
 
 
 @router.get("/dashboard/schema-registry")
-async def get_schema_registry(cluster_id: str | None = None) -> dict:
+async def get_schema_registry(cluster_id: str | None = None, offset: int = 0, limit: int | None = None) -> dict:
     """Fetch Schema Registry subjects, versions and compatibility."""
     from storage import get_backend
 
@@ -780,7 +780,7 @@ async def get_schema_registry(cluster_id: str | None = None) -> dict:
         sr_restricted=cluster.get("sr_restricted"),
         cluster_id=int(cluster_id) if cluster_id else None,
     )
-    return await collector.collect()
+    return await collector.collect(offset=offset, limit=limit)
 
 
 @router.get("/dashboard/zookeeper")
@@ -2832,7 +2832,10 @@ async def search_connectors(cluster_id: str, q: str = ""):
 
 @router.get("/dashboard/schemas/search")
 async def search_schemas(cluster_id: str, q: str = ""):
-    """Search schema subjects by name."""
+    """Search schema subjects by name. Searches the FULL subject name list
+    (cheap -- names only, no per-subject detail fetch), not the
+    detail-capped list collect() returns by default, so this correctly
+    finds subjects beyond the first _MAX_SUBJECTS."""
     if not q or len(q) < 2:
         return {"subjects": [], "query": q}
     from tools.schema_registry import SchemaRegistryCollector
@@ -2844,10 +2847,27 @@ async def search_schemas(cluster_id: str, q: str = ""):
         password=cluster.get("schema_registry_password"),
         topics=[])
     try:
-        result = await sr.collect()
+        auth = httpx.BasicAuth(sr._auth[0], sr._auth[1]) if sr._auth else None
+        async with httpx.AsyncClient(timeout=10.0, auth=auth) as client:
+            urls = [u.strip() for u in sr._url.split(",") if u.strip()] if "," in sr._url else [sr._url]
+            all_subjects = []
+            for _url in urls:
+                try:
+                    sr._url = _url
+                    all_subjects = await sr._get_subjects(client)
+                    break
+                except Exception:
+                    continue
         ql = q.lower()
-        matched = [s for s in result.get("subjects", []) if ql in s.get("subject", "").lower()][:50]
-        return {"subjects": matched, "query": q}
+        matched_names = [s for s in all_subjects if ql in s.lower()][:50]
+        if not matched_names:
+            return {"subjects": [], "query": q}
+        async with httpx.AsyncClient(timeout=10.0, auth=auth) as client:
+            details = await asyncio.gather(
+                *[sr._get_subject_detail(client, s) for s in matched_names],
+                return_exceptions=False
+            )
+        return {"subjects": [d for d in details if d], "query": q}
     except Exception as exc:
         return {"subjects": [], "query": q, "error": str(exc)}
 
