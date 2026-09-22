@@ -125,8 +125,7 @@ async def _execute_job(job: dict, run: KafkaJobRun) -> None:
         await asyncio.wait_for(job["handler"](), timeout=timeout)
         ended = datetime.now(timezone.utc)
         duration = (ended - started).total_seconds()
-        result_note = getattr(job["handler"], '_last_result', None)
-        log_msg = f"{result_note} (completed in {duration:.1f}s)" if result_note else f"Completed in {duration:.1f}s"
+        log_msg = f"Completed in {duration:.1f}s"
         await _update_run(run.id, status="success", ended_at=ended, duration_seconds=duration, logs=log_msg)
         logger.info("Job %s completed in %.1fs", job["id"], duration)
     except asyncio.TimeoutError:
@@ -137,13 +136,7 @@ async def _execute_job(job: dict, run: KafkaJobRun) -> None:
             ended = datetime.now(timezone.utc)
             duration = (ended - started).total_seconds()
             retry_duration = (ended - retry_started).total_seconds()
-            result_note = getattr(job["handler"], '_last_result', None)
-            log_msg = (
-                f"{result_note} (retry succeeded in {retry_duration:.1f}s, "
-                f"total since first attempt: {duration:.1f}s)"
-                if result_note else
-                f"Retry succeeded in {retry_duration:.1f}s (total since first attempt: {duration:.1f}s)"
-            )
+            log_msg = f"Retry succeeded in {retry_duration:.1f}s (total since first attempt: {duration:.1f}s)"
             await _update_run(run.id, status="success", ended_at=ended, duration_seconds=duration, logs=log_msg)
             logger.info("Job %s retry succeeded in %.1fs (total since first attempt: %.1fs)", job["id"], retry_duration, duration)
         except Exception as retry_exc:
