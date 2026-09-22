@@ -1725,16 +1725,71 @@
       el.innerHTML = `
         <div class="chart-card" style="margin-bottom:20px">
           <div class="chart-card__title">Resolution Summary — How Incidents Get Closed</div>
-          <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:10px">
-            <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#16a34a;margin-right:6px"></span>Self-Healed: <strong>${ring.auto_resolved_pct}%</strong></div>
-            <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#a855f7;margin-right:6px"></span>RCA-Assisted: <strong>${ring.rca_assisted_pct}%</strong></div>
-            <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#0EA5E9;margin-right:6px"></span>Action-Resolved (App Support Agent): <strong>${ring.action_resolved_pct}%</strong></div>
-            <div><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#dc2626;margin-right:6px"></span>Manual: <strong>${ring.manual_pct}%</strong></div>
+          <div style="display:grid;grid-template-columns:220px 1fr;gap:24px;align-items:start;margin-top:10px">
+            <div style="background:rgba(14,165,233,.1);border:1px solid #0EA5E9;border-radius:var(--r);padding:1rem 1.1rem">
+              <div style="font-size:.75rem;color:#0EA5E9;margin-bottom:4px">Action-Resolved (App Support Agent)</div>
+              <div style="font-size:2.2rem;font-weight:700;color:#0EA5E9;line-height:1">${ring.action_resolved_pct}%</div>
+              <div style="font-size:.7rem;color:#0EA5E9;margin-top:6px;line-height:1.4">${ring.action_resolved_count} of ${ring.total_resolved} verified resolutions — expect this share to grow as the direct-fix workflow scales</div>
+            </div>
+            <div>
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">
+                <div style="background:var(--navy-2);border-radius:var(--r-sm);padding:.75rem">
+                  <div style="font-size:.72rem;color:var(--text-muted)">Self-Healed</div>
+                  <div style="font-size:1.2rem;font-weight:700">${ring.auto_resolved_pct}%</div>
+                </div>
+                <div style="background:var(--navy-2);border-radius:var(--r-sm);padding:.75rem">
+                  <div style="font-size:.72rem;color:var(--text-muted)">RCA-Assisted</div>
+                  <div style="font-size:1.2rem;font-weight:700">${ring.rca_assisted_pct}%</div>
+                </div>
+                <div style="background:var(--navy-2);border-radius:var(--r-sm);padding:.75rem">
+                  <div style="font-size:.72rem;color:var(--text-muted)">Manual</div>
+                  <div style="font-size:1.2rem;font-weight:700">${ring.manual_pct}%</div>
+                </div>
+              </div>
+              <div class="chart-wrap" style="height:240px"><canvas id="resolutionRingChart"></canvas></div>
+            </div>
           </div>
-          <div style="margin-top:12px;font-size:.78rem;color:var(--text-muted)">
+          <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);font-size:.78rem;color:var(--text-muted)">
             Detection method: <strong>${ring.detected_via_message_count || 0}</strong> resolved via alert message parsing (fast, no manual OpsGenie action needed) · <strong>${ring.detected_via_opsgenie_count || 0}</strong> via live OpsGenie status check · ${ring.total_resolved} total verified resolutions
           </div>
         </div>`;
+
+      setTimeout(() => {
+        destroyChart('resolutionRing');
+        const c = document.getElementById('resolutionRingChart')?.getContext('2d');
+        const _ringAllLabels = ['Self-Healed', 'RCA-Assisted', 'Manual', 'Action-Resolved'];
+        const _ringAllCounts = [ring.auto_resolved_count, ring.rca_assisted_count, ring.manual_count, ring.action_resolved_count];
+        const _ringAllColors = ['#64748b', '#64748b', '#64748b', '#0EA5E9'];
+        const _ringActiveIdx = _ringAllCounts.map((v, i) => i).filter(i => _ringAllCounts[i] > 0);
+        const _ringLabels = _ringActiveIdx.map(i => _ringAllLabels[i]);
+        const _ringRawCounts = _ringActiveIdx.map(i => _ringAllCounts[i]);
+        const _ringColors = _ringActiveIdx.map(i => _ringAllColors[i]);
+        if (c) charts['resolutionRing'] = new Chart(c, {
+          type: 'bar',
+          data: {
+            labels: _ringLabels,
+            datasets: [{
+              data: _ringRawCounts,
+              backgroundColor: _ringColors,
+              borderRadius: 4
+            }]
+          },
+          options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              x: { type: 'logarithmic', display: false },
+              y: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 11 } } }
+            },
+            plugins: {
+              legend: { display: false },
+              tooltip: { callbacks: { label: (ctx) => (_ringRawCounts[ctx.dataIndex] || 0).toLocaleString() } },
+              datalabels: { display: false }
+            }
+          }
+        });
+      }, 50);
     }
 
     async function renderReconciliationCheck() {
@@ -1880,32 +1935,15 @@
           <button class="btn btn--primary" onclick="renderOpenIncidentsSection()" style="padding:6px 14px">Search</button>
           <span style="font-size:.78rem;color:var(--text-muted)">${data.total} open (last 24h)</span>
         </div>
-        <div class="chart-grid">
-          <div class="chart-card" style="grid-column:span 2">
-            <div class="data-table-wrap" style="max-height:600px;overflow-y:auto"><table class="data-table" style="font-size:.8rem">
-              <thead><tr><th>Alert</th><th>Created At</th><th>Incident #</th><th>Incident Created</th><th>Status</th><th>OpsGenie Status <span style="font-weight:400;color:var(--text-dim)">(at creation)</span></th><th>MTTD</th><th>MTTA</th><th>MTTR (Elapsed)</th></tr></thead>
-              <tbody>${rows}</tbody>
-            </table></div>
-            ${_paginationControls('open', incidents.length, _incPageState.open, _incPageSize)}
-          </div>
-          <div class="chart-card">
-            <div class="chart-card__title">Open Incidents by Status</div>
-            <div class="chart-wrap"><canvas id="openStatusChart"></canvas></div>
-          </div>
+        <div class="chart-card">
+          <div class="data-table-wrap" style="max-height:600px;overflow-y:auto"><table class="data-table" style="font-size:.8rem">
+            <thead><tr><th>Alert</th><th>Created At</th><th>Incident #</th><th>Incident Created</th><th>Status</th><th>OpsGenie Status <span style="font-weight:400;color:var(--text-dim)">(at creation)</span></th><th>MTTD</th><th>MTTA</th><th>MTTR (Elapsed)</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table></div>
+          ${_paginationControls('open', incidents.length, _incPageState.open, _incPageSize)}
         </div>`;
 
-      setTimeout(() => {
-        destroyChart('openStatus');
-        const c = document.getElementById('openStatusChart')?.getContext('2d');
-        if (c) charts['openStatus'] = new Chart(c, {
-          type: 'doughnut',
-          data: {
-            labels: Object.keys(statusCounts),
-            datasets: [{ data: Object.values(statusCounts), backgroundColor: Object.keys(statusCounts).map(s => statusColors[s] || '#64748b'), borderWidth: 0 }]
-          },
-          options: { responsive: true, cutout: '60%', plugins: { legend: { position: 'bottom' } } }
-        });
-      }, 50);
+      destroyChart('openStatus');
     }
 
     async function renderResolvedIncidentsSection() {
