@@ -825,7 +825,7 @@ async def get_period_summary(
 
 
 @router.get("/dashboard/incidents")
-async def get_incidents() -> dict:
+async def get_incidents(from_date: str | None = None, to_date: str | None = None) -> dict:
     """Return incident pipeline flow, aging analysis, resolution metrics, and recurrence signal."""
     from database import SessionLocal
     from sqlalchemy import text
@@ -991,7 +991,7 @@ async def get_incidents() -> dict:
             # 4. Resolution ring: self-healed vs RCA-assisted vs action-resolved vs manual
             # Uses resolution_type (new, accurate) with fallback to resolved_externally/status
             # for historical tickets resolved before resolution_type was introduced.
-            result = await sess.execute(text("""
+            ring_sql = """
                 SELECT
                     SUM(CASE WHEN resolution_type = 'self_healed' THEN 1
                              WHEN resolution_type IS NULL AND status = 'RESOLVED' AND (resolved_externally IS NULL OR resolved_externally = FALSE) THEN 1
@@ -1007,7 +1007,31 @@ async def get_incidents() -> dict:
                     SUM(CASE WHEN detected_via = 'opsgenie_live' THEN 1 ELSE 0 END) as detected_via_opsgenie_count
                 FROM incident_management.incidents
                 WHERE status IN ('RESOLVED', 'MANUAL')
-            """))
+            """
+            ring_params = {}
+            if from_date:
+                ring_sql += " AND COALESCE(resolved_at, created_at) >= :from_date"
+                try:
+                    dt_from = datetime.strptime(
+                        from_date, '%Y-%m-%d %H:%M'
+                    ).replace(tzinfo=timezone.utc)
+                except ValueError:
+                    dt_from = datetime.strptime(
+                        from_date, '%Y-%m-%d'
+                    ).replace(tzinfo=timezone.utc)
+                ring_params["from_date"] = dt_from
+            if to_date:
+                ring_sql += " AND COALESCE(resolved_at, created_at) <= :to_date"
+                try:
+                    dt_to = datetime.strptime(
+                        to_date, '%Y-%m-%d %H:%M'
+                    ).replace(tzinfo=timezone.utc)
+                except ValueError:
+                    dt_to = datetime.strptime(
+                        to_date + ' 23:59:59', '%Y-%m-%d %H:%M:%S'
+                    ).replace(tzinfo=timezone.utc)
+                ring_params["to_date"] = dt_to
+            result = await sess.execute(text(ring_sql), ring_params)
             ring_row = result.fetchone()
             auto_resolved_count = ring_row.auto_resolved_count or 0
             rca_assisted_count = ring_row.rca_assisted_count or 0
@@ -1523,7 +1547,7 @@ async def correct_false_resolutions(batch_size: int = 100, dry_run: bool = True)
 
 
 @router.get("/dashboard/incidents/mttx-summary")
-async def get_mttx_summary() -> dict:
+async def get_mttx_summary(from_date: str | None = None, to_date: str | None = None) -> dict:
     """Return MTTD/MTTA/MTTR min/max/avg across verified tickets.
 
     MTTD (Mean Time To Detect): alert's real OpsGenie createdAt (from
@@ -1541,14 +1565,43 @@ async def get_mttx_summary() -> dict:
     if SessionLocal is None:
         return {"mttd": None, "mtta": None, "mttr": None}
 
+    from datetime import datetime, timezone
+
+    def _parse_from(d):
+        try:
+            return datetime.strptime(d, '%Y-%m-%d %H:%M').replace(tzinfo=timezone.utc)
+        except ValueError:
+            return datetime.strptime(d, '%Y-%m-%d').replace(tzinfo=timezone.utc)
+
+    def _parse_to(d):
+        try:
+            return datetime.strptime(d, '%Y-%m-%d %H:%M').replace(tzinfo=timezone.utc)
+        except ValueError:
+            return datetime.strptime(d + ' 23:59:59', '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+
+    _has_filter = bool(from_date and to_date)
+
+    if from_date and to_date:
+        try:
+            _span_check = (_parse_to(to_date) - _parse_from(from_date)).days
+        except ValueError:
+            _span_check = 0
+        if _span_check > 90:
+            return {"mttd": None, "mtta": None, "mttr": None, "error": "Date range too wide - maximum 90 days"}
+
     try:
         async with SessionLocal() as sess:
             # MTTD: alert_payload's createdAt -> incidents.created_at
-            mttd_result = await sess.execute(text("""
-                SELECT alert_payload, created_at FROM incident_management.incidents
-                WHERE alert_payload IS NOT NULL
-                ORDER BY created_at DESC LIMIT 5000
-            """))
+            mttd_sql = "SELECT alert_payload, created_at FROM incident_management.incidents WHERE alert_payload IS NOT NULL"
+            mttd_params = {}
+            if from_date:
+                mttd_sql += " AND created_at >= :from_date"
+                mttd_params["from_date"] = _parse_from(from_date)
+            if to_date:
+                mttd_sql += " AND created_at <= :to_date"
+                mttd_params["to_date"] = _parse_to(to_date)
+            mttd_sql += " ORDER BY created_at DESC" + ("" if _has_filter else " LIMIT 5000")
+            mttd_result = await sess.execute(text(mttd_sql), mttd_params)
             mttd_values = []
             for row in mttd_result.fetchall():
                 try:
@@ -1565,13 +1618,19 @@ async def get_mttx_summary() -> dict:
                     continue
 
             # MTTA: alert_payload's createdAt -> first status_history change away from ESCALATED
-            mtta_result = await sess.execute(text("""
-                SELECT i.alert_payload, h.changed_at
-                FROM incident_management.incident_status_history h
-                JOIN incident_management.incidents i ON i.id = h.incident_id
-                WHERE h.from_status = 'ESCALATED'
-                ORDER BY h.changed_at DESC LIMIT 5000
-            """))
+            mtta_sql = ("SELECT i.alert_payload, h.changed_at"
+                        " FROM incident_management.incident_status_history h"
+                        " JOIN incident_management.incidents i ON i.id = h.incident_id"
+                        " WHERE h.from_status = 'ESCALATED'")
+            mtta_params = {}
+            if from_date:
+                mtta_sql += " AND h.changed_at >= :from_date"
+                mtta_params["from_date"] = _parse_from(from_date)
+            if to_date:
+                mtta_sql += " AND h.changed_at <= :to_date"
+                mtta_params["to_date"] = _parse_to(to_date)
+            mtta_sql += " ORDER BY h.changed_at DESC" + ("" if _has_filter else " LIMIT 5000")
+            mtta_result = await sess.execute(text(mtta_sql), mtta_params)
             mtta_values = []
             for row in mtta_result.fetchall():
                 try:
@@ -1587,12 +1646,19 @@ async def get_mttx_summary() -> dict:
                     continue
 
             # MTTR: created_at -> resolved_at, verified resolutions only
-            mttr_result = await sess.execute(text("""
-                SELECT EXTRACT(EPOCH FROM (resolved_at - created_at))/60 as mttr_minutes
-                FROM incident_management.incidents
-                WHERE resolution_type IS NOT NULL AND resolved_at IS NOT NULL
-                LIMIT 5000
-            """))
+            mttr_sql = ("SELECT EXTRACT(EPOCH FROM (resolved_at - created_at))/60 as mttr_minutes"
+                        " FROM incident_management.incidents"
+                        " WHERE resolution_type IS NOT NULL AND resolved_at IS NOT NULL")
+            mttr_params = {}
+            if from_date:
+                mttr_sql += " AND resolved_at >= :from_date"
+                mttr_params["from_date"] = _parse_from(from_date)
+            if to_date:
+                mttr_sql += " AND resolved_at <= :to_date"
+                mttr_params["to_date"] = _parse_to(to_date)
+            if not _has_filter:
+                mttr_sql += " LIMIT 5000"
+            mttr_result = await sess.execute(text(mttr_sql), mttr_params)
             mttr_values = [r.mttr_minutes for r in mttr_result.fetchall() if r.mttr_minutes is not None and r.mttr_minutes >= 0]
 
         def _summarize(values):
@@ -1620,9 +1686,12 @@ async def get_open_incidents_list(
     search: str | None = None,
     status: str | None = None,
     hours: int = 24,
+    from_date: str | None = None,
+    to_date: str | None = None,
 ) -> dict:
     """List open (non-resolved, non-manual) incidents with per-row MTTD/MTTA/MTTR-elapsed.
-    Default: all open incidents from the last 24 hours (by created_at)."""
+    Default: all open incidents from the last 24 hours (by created_at).
+    If from_date/to_date given, they take precedence over hours."""
     from database import SessionLocal
     from sqlalchemy import text
     import logging, json
@@ -1632,10 +1701,37 @@ async def get_open_incidents_list(
     if SessionLocal is None:
         return {"incidents": [], "total": 0}
 
+    def _parse_from(d):
+        try:
+            return datetime.strptime(d, '%Y-%m-%d %H:%M').replace(tzinfo=timezone.utc)
+        except ValueError:
+            return datetime.strptime(d, '%Y-%m-%d').replace(tzinfo=timezone.utc)
+
+    def _parse_to(d):
+        try:
+            return datetime.strptime(d, '%Y-%m-%d %H:%M').replace(tzinfo=timezone.utc)
+        except ValueError:
+            return datetime.strptime(d + ' 23:59:59', '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+
+    if from_date and to_date:
+        try:
+            _span_check = (_parse_to(to_date) - _parse_from(from_date)).days
+        except ValueError:
+            _span_check = 0
+        if _span_check > 90:
+            return {"incidents": [], "total": 0, "error": "Date range too wide - maximum 90 days"}
+
     try:
         conditions = ["status NOT IN ('RESOLVED', 'MANUAL')"]
         params = {}
-        if hours and hours > 0:
+        if from_date or to_date:
+            if from_date:
+                conditions.append("created_at >= :from_date")
+                params["from_date"] = _parse_from(from_date)
+            if to_date:
+                conditions.append("created_at <= :to_date")
+                params["to_date"] = _parse_to(to_date)
+        elif hours and hours > 0:
             conditions.append("created_at >= now() - (:hours || ' hours')::interval")
             params["hours"] = str(hours)
         if status:
@@ -1720,23 +1816,54 @@ async def get_resolved_incidents_list(
     search: str | None = None,
     closed_by: str | None = None,
     hours: int = 24,
+    from_date: str | None = None,
+    to_date: str | None = None,
 ) -> dict:
     """List resolved/manual incidents with per-row MTTD/MTTA/MTTR.
-    Default: all resolved incidents from the last 24 hours (by resolved_at)."""
+    Default: all resolved incidents from the last 24 hours (by resolved_at,
+    falling back to created_at for MANUAL tickets which have no resolved_at).
+    If from_date/to_date given, they take precedence over hours."""
     from database import SessionLocal
     from sqlalchemy import text
     import logging, json
-    from datetime import datetime
+    from datetime import datetime, timezone
     _log = logging.getLogger(__name__)
 
     if SessionLocal is None:
         return {"incidents": [], "total": 0}
 
+    def _parse_from(d):
+        try:
+            return datetime.strptime(d, '%Y-%m-%d %H:%M').replace(tzinfo=timezone.utc)
+        except ValueError:
+            return datetime.strptime(d, '%Y-%m-%d').replace(tzinfo=timezone.utc)
+
+    def _parse_to(d):
+        try:
+            return datetime.strptime(d, '%Y-%m-%d %H:%M').replace(tzinfo=timezone.utc)
+        except ValueError:
+            return datetime.strptime(d + ' 23:59:59', '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+
+    if from_date and to_date:
+        try:
+            _span_check = (_parse_to(to_date) - _parse_from(from_date)).days
+        except ValueError:
+            _span_check = 0
+        if _span_check > 90:
+            return {"incidents": [], "total": 0, "error": "Date range too wide - maximum 90 days"}
+
     try:
         conditions = ["status IN ('RESOLVED', 'MANUAL')"]
         params = {}
-        if hours and hours > 0:
-            conditions.append("resolved_at >= now() - (:hours || ' hours')::interval")
+        if from_date or to_date:
+            if from_date:
+                conditions.append("COALESCE(resolved_at, created_at) >= :from_date")
+                params["from_date"] = _parse_from(from_date)
+            if to_date:
+                conditions.append("COALESCE(resolved_at, created_at) <= :to_date")
+                params["to_date"] = _parse_to(to_date)
+        elif hours and hours > 0:
+            conditions.append("COALESCE(resolved_at, created_at) >= now() - (:hours || ' hours')::interval")
             params["hours"] = str(hours)
         if closed_by:
             if closed_by == "self_healed":
@@ -1760,7 +1887,7 @@ async def get_resolved_incidents_list(
                            resolution_type, resolved_externally, alert_payload
                     FROM incident_management.incidents
                     WHERE {where_clause}
-                    ORDER BY resolved_at DESC
+                    ORDER BY COALESCE(resolved_at, created_at) DESC
                     LIMIT 500
                 """),
                 params
