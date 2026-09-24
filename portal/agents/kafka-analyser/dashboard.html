@@ -869,6 +869,18 @@
     function renderBreakerStatus(data) {
       const el = document.getElementById('tab-breaker-status');
       if (!el) return;
+      // Temporarily hidden (2026-09-24): the Created/Closed/Net summary and
+      // its drill-down can't see connections that go idle and get closed by
+      // the broker's own timeout without ever being reused by our code (a
+      // real, confirmed gap -- our create/close logging is reactive, only
+      // firing when we actively try to use a connection and it fails).
+      // Numbers here can look like large ongoing accumulation when the real
+      // cause is unrelated restart bursts, which risks users misreading
+      // this as the agent creating excessive connections. Re-enable once a
+      // proactive connection-refresh fix closes this gap. The on-demand
+      // live checker (reads real OS socket state directly) is unaffected
+      // and stays visible.
+      const SHOW_CONNECTION_AUDIT_LOG = false;
       const clusters = data.clusters || [];
       const events = data.recent_events || [];
       const failures = data.recent_failures || [];
@@ -1043,6 +1055,7 @@
           <span style="color:var(--text-muted);font-size:.76rem">Real-time, not cached — safe to run anytime, including during an incident.</span>
         </div>
 
+        ${SHOW_CONNECTION_AUDIT_LOG ? `
         <div class="chart-card__title" style="margin-bottom:8px">Connection Audit Log</div>
         <div style="color:var(--text-muted);font-size:.82rem;margin-bottom:14px;max-width:760px;line-height:1.5">
           Our agent keeps one persistent connection per cluster per worker, reused across many collection cycles — it does not open and close a fresh connection for every job run. <b>Created</b> means a brand-new connection was opened (expected mainly right after a restart, or occasionally later). <b>Closed</b> means a connection was deliberately discarded — this normally only happens after a real, rare communication blip, so this number should stay small and should not climb steadily over time. <b>Net</b> (Created minus Closed) is the running balance for this window; a healthy cluster settles to a small, stable number after its startup burst rather than continuing to grow.
@@ -1061,7 +1074,7 @@
               <tbody>${connEventRows}</tbody>
             </table>
           </div>
-        </details>`;
+        </details>` : ''}`;
     }
 
     // ── Generate & reload ────────────────────────────────────────────────────
