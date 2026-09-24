@@ -147,3 +147,74 @@ def invalidate_client(cluster_id: str) -> None:
             logger.warning("Invalidated shared AdminClient for cluster %s -- will recreate on next use", cluster_id)
     if old:
         _log_connection_event(bootstrap_servers, "closed", "admin")
+
+
+def refresh_all_shared_clients() -> dict:
+    """Unconditionally refreshes every cached shared (main-process) admin
+    client, on the same principle as kafka_process_pool.py's
+    refresh_all_worker_clients_isolated -- proactive, not a health-test (a
+    health-test approach was tried and empirically proven not to work this
+    same session: describe_cluster() can succeed via a different healthy
+    connection while the actual stale one is left untouched). Unlike the
+    worker-process cache, this one is a single dict in the main process
+    with an associated threading.Lock per cluster already used to guard
+    concurrent access -- so before discarding a cluster's client, this
+    tries a NON-BLOCKING lock acquisition first (lock.acquire(blocking=False)).
+    If acquired, the client is genuinely idle right now and safe to
+    discard; the lock is released immediately after. If NOT acquired, some
+    other caller is actively using that client at this exact moment --
+    skip it this cycle rather than disrupt in-flight work; it will be
+    considered again on the next cycle (this function runs every 5 minutes
+    via the existing kafka-breaker-recovery-check job). Returns
+    {"refreshed": [...cluster_ids...], "skipped_busy": [...cluster_ids...]}
+    for observability.
+
+    Known, accepted trade-off (found during review, 2026-09-24): callers
+    fetch (admin, admin_lock) via get_shared_admin_client(), THEN acquire
+    admin_lock -- there's a narrow window between those two steps where
+    this function could acquire the same (still-technically-free) lock
+    first and discard that client. The caller would then acquire its own
+    already-held reference to the old lock, use the now-closed client, and
+    fail once. Its own exception handler (e.g. tools/real_kafka.py) calls
+    invalidate_client immediately on that failure, not on a later retry --
+    which can itself discard a fresh client a DIFFERENT caller has since
+    created in the meantime, costing one extra close/create cycle beyond
+    the minimum. Still self-healing (the next real attempt gets a working
+    client either way), consistent with every other transient failure this
+    system already tolerates and recovers from. Not fixed here (would
+    require every caller to re-validate _clients.get(cluster_id) is admin
+    after acquiring the lock, a broader change across every call site) --
+    accepted as a rare, bounded, self-healing cost given the alternative
+    (never proactively refreshing) is the actual problem being solved.
+
+    CALLER REQUIREMENT: this function does blocking I/O (old.close(),
+    plus invalidate_client's own audit-log DB write) while holding a
+    per-cluster lock. It must be called via run_in_executor from a
+    background thread, never directly on the asyncio event loop. This
+    module's functions were confirmed to warn/fail when called directly on
+    an already-running loop (asyncio.run() cannot be nested): a manual
+    diagnostic script (2026-09-24, testing describe_cluster() against
+    cluster 4's shared client) produced
+    "RuntimeWarning: coroutine 'wait_for' was never awaited" and
+    "RuntimeWarning: coroutine '_log_connection_event.<locals>._write' was
+    never awaited" when get_shared_admin_client() was called directly
+    inside an existing asyncio.run() block, rather than via a background
+    thread."""
+    results: dict = {"refreshed": [], "skipped_busy": []}
+    with _registry_lock:
+        cluster_ids = list(_clients.keys())
+    for cluster_id in cluster_ids:
+        with _registry_lock:
+            lock = _locks.get(cluster_id)
+        if lock is None:
+            continue
+        acquired = lock.acquire(blocking=False)
+        if not acquired:
+            results["skipped_busy"].append(cluster_id)
+            continue
+        try:
+            invalidate_client(cluster_id)
+            results["refreshed"].append(cluster_id)
+        finally:
+            lock.release()
+    return results

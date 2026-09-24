@@ -1640,16 +1640,29 @@ def _breaker_tcp_check_sync(host: str, port: int, timeout: float = 5.0) -> bool:
 
 
 async def check_breaker_recovery() -> dict:
-    """Cluster-agnostic maintenance job (every 5 min). For each cluster
-    currently paused by the circuit breaker (kafka_cluster_breaker_state),
-    attempts a lightweight, protocol-free TCP connect+close to every broker
-    in that cluster's bootstrap_servers. ALL brokers must succeed for that
-    check to count as a success. After _BREAKER_RECOVERY_THRESHOLD (5)
-    CONSECUTIVE successful checks, clears the pause -- the cluster's regular
-    jobs then resume automatically on their own next normal cron tick, no
-    restart involved. Any single failed check resets the consecutive-success
-    counter to 0, so recovery requires sustained reachability, not a single
-    lucky ping."""
+    """Cluster-agnostic maintenance job (every 5 min). Does two things,
+    unconditionally every cycle, in this order:
+
+    1. BREAKER RECOVERY (paused clusters only, runs FIRST -- priority over
+    the refresh below): for each cluster currently paused by the circuit
+    breaker (kafka_cluster_breaker_state), attempts a lightweight,
+    protocol-free TCP connect+close to every broker in that cluster's
+    bootstrap_servers. ALL brokers must succeed for that check to count as
+    a success. After _BREAKER_RECOVERY_THRESHOLD (5) CONSECUTIVE successful
+    checks, clears the pause -- the cluster's regular jobs then resume
+    automatically on their own next normal cron tick, no restart involved.
+    Any single failed check resets the consecutive-success counter to 0,
+    so recovery requires sustained reachability, not a single lucky ping.
+
+    2. PROACTIVE CONNECTION REFRESH (all clusters, regardless of breaker
+    state, runs SECOND, best-effort with whatever time remains):
+    unconditionally discards and lets recreate every cached persistent
+    Kafka client (worker-process and main-process shared), keeping every
+    connection's age well under the broker's confirmed
+    connections.max.idle.ms default (10 minutes) -- built following a real
+    incident (2026-09-24) where idle-closed connections went undetected
+    until randomly reused. Deliberately runs after step 1, not before, so
+    a slow refresh can never delay resuming an actually-paused cluster."""
     from database import SessionLocal
     from sqlalchemy import select as _bsel
     from models import KafkaClusterBreakerState, KafkaClusterBreakerEvent
@@ -1663,8 +1676,6 @@ async def check_breaker_recovery() -> dict:
         paused_rows = (await session.execute(
             _bsel(KafkaClusterBreakerState).where(KafkaClusterBreakerState.paused == True)
         )).scalars().all()
-    if not paused_rows:
-        return results
     all_clusters = await _bgb().get_clusters(_bsettings.agent_slug)
     cluster_by_id = {int(c["id"]): c for c in all_clusters if c.get("id") is not None}
     loop = asyncio.get_event_loop()
@@ -1730,6 +1741,39 @@ async def check_breaker_recovery() -> dict:
                 )
                 results[cid] = "still unreachable"
             await session.commit()
+
+    # Proactive connection refresh -- runs every cycle (5 min), AFTER the
+    # breaker-recovery logic above so a slow refresh can never delay
+    # resuming an actually-paused cluster (moved here during review,
+    # 2026-09-24 -- originally ran first, which risked eating into this
+    # job's timeout budget before the higher-priority recovery check even
+    # ran). Best-effort: if this step is cut short by the job's own
+    # timeout, it simply refreshes fewer connections this cycle -- caught
+    # again next cycle, same class of bounded, self-healing gap already
+    # accepted elsewhere in this design. Built following a real incident
+    # (2026-09-24): connections idled-closed by the broker's own timeout
+    # (confirmed default: 10 minutes) could sit undetected in CLOSE_WAIT
+    # until randomly reused, since normal cleanup is reactive. This closes
+    # that gap unconditionally, on a cycle well under the broker's
+    # timeout, rather than trying to detect staleness (a health-test
+    # approach was tried and empirically proven NOT to work this same
+    # session -- describe_cluster() can succeed via a different healthy
+    # connection while the actual stale one is left untouched).
+    try:
+        from kafka_process_pool import refresh_all_worker_clients_isolated
+        _worker_refresh = await refresh_all_worker_clients_isolated()
+        logger.info("Proactive refresh: worker-process clients -> %s", _worker_refresh)
+    except Exception as _wre:
+        logger.warning("Proactive refresh (worker-process clients) failed: %s", _wre)
+
+    try:
+        import shared_kafka_clients as _skc
+        _loop = asyncio.get_event_loop()
+        _shared_refresh = await _loop.run_in_executor(None, _skc.refresh_all_shared_clients)
+        logger.info("Proactive refresh: shared clients -> %s", _shared_refresh)
+    except Exception as _sre:
+        logger.warning("Proactive refresh (shared clients) failed: %s", _sre)
+
     return results
 
 

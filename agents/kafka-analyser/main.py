@@ -692,9 +692,9 @@ async def lifespan(app: FastAPI):
     _jobs_module.register_job(
         _breaker_job_id,
         "Circuit Breaker Recovery Check",
-        "Lightweight TCP-only connectivity check for circuit-breaker-paused clusters; auto-resumes a cluster after 5 consecutive successful checks",
+        "Runs breaker-resume checks for paused clusters first, then proactively refreshes every cached Kafka connection (prevents broker-side idle-timeout CLOSE_WAIT accumulation)",
         check_breaker_recovery,
-        default_timeout_secs=60,
+        default_timeout_secs=90,
     )
     async with SessionLocal() as _sess:
         existing = await _sess.execute(
@@ -702,7 +702,7 @@ async def lifespan(app: FastAPI):
         )
         if not existing.scalar_one_or_none():
             await _jobs_module.create_schedule(
-                _breaker_job_id, "*/5 * * * *", enabled=True, timeout_secs=60
+                _breaker_job_id, "*/5 * * * *", enabled=True, timeout_secs=90
             )
             logger.info("Created schedule for %s: every 5 minutes", _breaker_job_id)
 

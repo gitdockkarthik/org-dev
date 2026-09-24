@@ -114,6 +114,94 @@ def _discard_worker_client(key: str) -> None:
         _log_connection_event(bootstrap_servers, "closed", client_type)
 
 
+def _refresh_all_worker_clients() -> tuple[int, int]:
+    """Runs inside a worker PROCESS. Unconditionally discards EVERY cached
+    client (admin and consumer) in THIS worker's own _worker_clients cache,
+    via the existing _discard_worker_client (proper close + audit log).
+    Deliberately unconditional, not a health-test -- a prior same-session
+    attempt tested cached admin clients via describe_cluster() and only
+    discarded on failure, but was empirically proven not to work:
+    describe_cluster() can succeed using a DIFFERENT healthy per-broker
+    connection while the actual stale one is left completely untouched
+    (confirmed live via /proc/net/tcp before and after, 2026-09-24). This
+    function makes no such assumption -- it simply closes everything on a
+    cycle short enough that no connection can realistically reach the
+    broker's own connections.max.idle.ms (confirmed default: 10 minutes)
+    before being refreshed. The next real job that needs a discarded
+    client creates a fresh one naturally, exactly as already happens on
+    any other discard -- already proven safe and correct all session.
+
+    Returns (pid, count) instead of just count, so the caller can log
+    which distinct worker processes were actually reached each cycle --
+    real observable coverage, not assumed. Sleeps briefly (0.5s) before
+    returning: this task completes near-instantly (no network calls), so
+    without a small deliberate pause, the same fast worker could grab a
+    second submitted task from the shared queue before another idle
+    worker wakes up to claim its first -- ProcessPoolExecutor has no
+    concept of "one task per worker", it's a shared queue, so nothing
+    stops one worker taking two while another gets none (caught during
+    review, 2026-09-24). This pause gives other idle workers a real
+    chance to pick up their own task first."""
+    import os
+    import time
+    keys = list(_worker_clients.keys())
+    for key in keys:
+        _discard_worker_client(key)
+    time.sleep(0.5)
+    return (os.getpid(), len(keys))
+
+
+async def refresh_all_worker_clients_isolated(timeout: float = 30.0) -> list[tuple[int, int]]:
+    """Main-process-side entry point. Submits the refresh task to the
+    worker pool once per configured worker (6), ALL AT ONCE via
+    asyncio.gather -- not sequentially, and each task itself sleeps briefly
+    before returning (see _refresh_all_worker_clients) so a fast idle
+    worker can't grab a second task before other idle workers claim their
+    first. Even so, this is NOT a guarantee of exactly-one-per-worker --
+    ProcessPoolExecutor's shared queue means coverage is a strong practical
+    likelihood, not a mathematical certainty. Returns each worker's
+    (pid, count) so the caller can log the number of DISTINCT pids actually
+    reached this cycle -- real observed coverage, not assumed. A worker
+    that's busy with a genuinely long-running real job at the exact moment
+    of submission may still miss this specific cycle; given real job
+    durations here are almost always well under a minute and this refresh
+    runs every 5 minutes via the existing kafka-breaker-recovery-check job,
+    a worker that misses one cycle should very likely be caught on the
+    next -- well within the broker's confirmed 10-minute idle margin. Uses
+    the same timeout pattern as describe_cluster_isolated
+    (run_in_executor(None, future.result, timeout), catching
+    FutureTimeoutError, calling future.cancel() on timeout) -- NOT
+    asyncio.wait_for wrapping an untimed future.result, which does not
+    actually bound the call (a real bug caught during this same session's
+    earlier attempt)."""
+    import asyncio
+    loop = asyncio.get_event_loop()
+
+    async def _one() -> tuple[int, int] | None:
+        try:
+            future = _process_pool.submit(_refresh_all_worker_clients)
+            return await loop.run_in_executor(None, future.result, timeout)
+        except FutureTimeoutError:
+            logger.warning(
+                "refresh_all_worker_clients_isolated: a worker did not "
+                "respond within %ss -- skipping this cycle for it", timeout,
+            )
+            future.cancel()
+            return None
+        except Exception as exc:
+            logger.warning("refresh_all_worker_clients_isolated: a submission failed: %s", exc)
+            return None
+
+    outcomes = await asyncio.gather(*[_one() for _ in range(6)])
+    valid = [o for o in outcomes if o is not None]
+    distinct_pids = len(set(pid for pid, _count in valid))
+    logger.info(
+        "refresh_all_worker_clients_isolated: %d/6 submissions succeeded, "
+        "reaching %d distinct worker process(es)", len(valid), distinct_pids,
+    )
+    return valid
+
+
 def _build_security_kwargs(cluster_config: dict) -> dict:
     """Build kafka-python security kwargs -- including the ssl.SSLContext object
     -- ENTIRELY INSIDE the worker process. SSLContext objects cannot be pickled,
