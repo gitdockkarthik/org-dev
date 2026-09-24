@@ -1956,6 +1956,28 @@
           </div>
         </div>`;
 
+      const rfBreakdown = data.rf_breakdown || [];
+      const rfTotal = rfBreakdown.reduce((s, r) => s + r.topic_count, 0);
+      const rfRowHtml = r => {
+        const rf = r.replication_factor ?? 0;
+        const pct = rfTotal > 0 ? (r.topic_count / rfTotal * 100).toFixed(1) : '0.0';
+        const isRisk = rf === 1;
+        return `<tr>
+          <td style="font-weight:600${isRisk ? ';color:#F44336' : ''}">RF=${rf}${isRisk ? ' ⚠️' : ''}</td>
+          <td style="text-align:right">${r.topic_count.toLocaleString()}</td>
+          <td style="text-align:right">${pct}%</td>
+        </tr>`;
+      };
+      const rfTableHtml = rfBreakdown.length
+        ? `<div class="chart-card__title" style="margin-bottom:8px">Topics by Replication Factor</div>
+           <div class="data-table-wrap" style="margin-bottom:22px;max-width:420px">
+             <table class="data-table">
+               <thead><tr><th>Replication Factor</th><th style="text-align:right">Topics</th><th style="text-align:right">% of Total</th></tr></thead>
+               <tbody>${rfBreakdown.map(rfRowHtml).join('')}</tbody>
+             </table>
+           </div>`
+        : '';
+
       const topByMsgs = [...allTopics].sort((a, b) => msgRate(b) - msgRate(a)).slice(0, 10);
       const topBySize = (window._clusterCounts && window._clusterCounts.top_topics_by_size && window._clusterCounts.top_topics_by_size.length > 0)
         ? window._clusterCounts.top_topics_by_size.slice(0, 10).map(t => ({ name: t.name, size_bytes: t.size_bytes }))
@@ -1993,7 +2015,7 @@
           </div>
         </div>`;
 
-      document.getElementById('tab-topics').innerHTML = '<div style="display:flex;justify-content:flex-end;margin-bottom:6px"><button id="topic-analyse-btn" style="background:var(--navy-1);color:var(--accent);border:1px solid var(--accent);border-radius:20px;padding:8px 16px;font-size:.82rem;font-weight:600;cursor:pointer">🤖 Analyse</button></div>' + topicKpis + topicBarCharts + topicFilters + `
+      document.getElementById('tab-topics').innerHTML = '<div style="display:flex;justify-content:flex-end;margin-bottom:6px"><button id="topic-analyse-btn" style="background:var(--navy-1);color:var(--accent);border:1px solid var(--accent);border-radius:20px;padding:8px 16px;font-size:.82rem;font-weight:600;cursor:pointer">🤖 Analyse</button></div>' + topicKpis + rfTableHtml + topicBarCharts + topicFilters + `
         <div class="chart-card__title" style="margin-bottom:8px">Topics by Log Size</div>
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">Sorted by storage consumed · click row to see details</div>
         <div class="data-table-wrap">

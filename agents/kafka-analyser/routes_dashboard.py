@@ -548,6 +548,18 @@ async def get_topics(cluster_id: str | None = None, hours: int | None = None,
                 (" AND topic ILIKE :search" if search else "")
             ), {"cid": int(cid), "search": f"%{search}%"} if search else {"cid": int(cid)})
             total = count_result.scalar()
+            # Replication-factor breakdown -- always over the FULL cluster (not
+            # search-filtered, not paginated), since this is a whole-cluster
+            # summary, not a view into the current page of results.
+            rf_result = await sess.execute(text(
+                "SELECT replication_factor, COUNT(*) as topic_count "
+                "FROM kafka_topic_metrics WHERE cluster_id = :cid "
+                "GROUP BY replication_factor ORDER BY replication_factor"
+            ), {"cid": int(cid)})
+            rf_breakdown = [
+                {"replication_factor": r.replication_factor, "topic_count": r.topic_count}
+                for r in rf_result.fetchall()
+            ]
             # Paginated topics
             query = """
                 SELECT topic, size_bytes, partition_count, replication_factor,
@@ -582,7 +594,7 @@ async def get_topics(cluster_id: str | None = None, hours: int | None = None,
                 "status": status,
                 "last_seen": r.last_seen.isoformat() if r.last_seen else None,
             })
-        return {"topics": topics, "total": total, "limit": limit, "offset": offset}
+        return {"topics": topics, "total": total, "limit": limit, "offset": offset, "rf_breakdown": rf_breakdown}
     except Exception as e:
         logger.error("get_topics failed: %s", e)
         return {"empty": True}
