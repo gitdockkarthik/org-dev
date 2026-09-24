@@ -794,6 +794,78 @@
       renderBreakerStatus(d);
     };
 
+    window._showBrokerConnectionsPopup = async function() {
+      const sel = document.getElementById('broker-check-cluster-select');
+      const clusterId = sel ? sel.value : '';
+      if (!clusterId) {
+        showToast('Select a cluster first', 'error');
+        return;
+      }
+      const existing = document.getElementById('broker-conn-popup');
+      if (existing) existing.remove();
+      const existingOverlay = document.getElementById('broker-conn-overlay');
+      if (existingOverlay) existingOverlay.remove();
+
+      const popup = document.createElement('div');
+      popup.id = 'broker-conn-popup';
+      popup.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--navy-2);border:1px solid var(--border);border-radius:12px;padding:24px;min-width:420px;max-width:640px;max-height:70vh;overflow-y:auto;z-index:1000;box-shadow:0 8px 32px rgba(0,0,0,.4)';
+      popup.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><span style="font-weight:700;font-size:.9rem">⟳ Checking live connections…</span><button onclick="document.getElementById(\'broker-conn-popup\').remove();document.getElementById(\'broker-conn-overlay\')?.remove()" style="background:none;border:none;cursor:pointer;font-size:1.2rem;color:var(--text-muted)">×</button></div>';
+      const overlay = document.createElement('div');
+      overlay.id = 'broker-conn-overlay';
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:999';
+      overlay.onclick = () => { popup.remove(); overlay.remove(); };
+      document.body.appendChild(overlay);
+      document.body.appendChild(popup);
+
+      try {
+        const res = await fetch(`${PROXY}/dashboard/broker-connections?cluster_id=${clusterId}`, { headers: _authHeaders(), cache: 'no-store' });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: res.statusText }));
+          throw new Error(err.detail || `HTTP ${res.status}`);
+        }
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+
+        const brokers = d.brokers || [];
+        const anyCloseWait = brokers.some(b => b.close_wait > 0);
+        const rows = brokers.map(b => {
+          if (b.resolve_failed) {
+            return `<tr><td style="font-size:.82rem">${b.host}</td><td colspan="3" style="color:#F44336;font-size:.8rem">Could not resolve hostname</td></tr>`;
+          }
+          const rowStyle = b.close_wait > 0 ? 'background:#F4433611' : '';
+          return `<tr style="${rowStyle}">
+            <td style="font-size:.82rem">${b.host}<br><span style="color:var(--text-muted);font-size:.72rem">${b.ip || ''}</span></td>
+            <td style="text-align:right;color:#4CAF50;font-weight:600">${b.established}</td>
+            <td style="text-align:right;color:${b.close_wait>0?'#F44336':'inherit'};font-weight:600">${b.close_wait}${b.close_wait>0?' ⚠️':''}</td>
+            <td style="text-align:right;font-size:.78rem;color:var(--text-muted)">${Object.entries(b.other_states||{}).map(([k,v])=>`${k}:${v}`).join(', ') || '—'}</td>
+          </tr>`;
+        }).join('') || '<tr><td colspan="4" class="data-table__empty">No brokers found</td></tr>';
+
+        const summaryLine = anyCloseWait
+          ? '<div style="background:#F4433622;color:#F44336;padding:8px 12px;border-radius:6px;font-size:.82rem;font-weight:600;margin-bottom:12px">⚠️ CLOSE_WAIT connections found — a small, non-growing number can be transient. Re-check in a few minutes; if it is climbing, investigate.</div>'
+          : '<div style="background:#4CAF5022;color:#4CAF50;padding:8px 12px;border-radius:6px;font-size:.82rem;font-weight:600;margin-bottom:12px">✅ Clean — no CLOSE_WAIT connections to any broker in this cluster right now.</div>';
+
+        popup.innerHTML = `
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <span style="font-weight:700;font-size:.95rem">🔌 ${d.cluster_name} — Live Broker Connections</span>
+            <button onclick="document.getElementById('broker-conn-popup').remove();document.getElementById('broker-conn-overlay')?.remove()" style="background:none;border:none;cursor:pointer;font-size:1.2rem;color:var(--text-muted)">×</button>
+          </div>
+          <div style="color:var(--text-muted);font-size:.78rem;margin-bottom:12px">
+            Checked just now, live from the agent's own connection table — not cached, not scheduled.
+          </div>
+          ${summaryLine}
+          <div class="data-table-wrap">
+            <table class="data-table">
+              <thead><tr><th>Broker</th><th style="text-align:right">Established</th><th style="text-align:right">Close_Wait</th><th style="text-align:right">Other States</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+          <button onclick="window._showBrokerConnectionsPopup()" class="btn btn--secondary btn--sm" style="margin-top:12px">🔄 Re-check now</button>`;
+      } catch (e) {
+        popup.innerHTML = `<div style="color:#F44336">Failed to check connections: ${e.message}</div>`;
+      }
+    };
+
     function renderBreakerStatus(data) {
       const el = document.getElementById('tab-breaker-status');
       if (!el) return;
@@ -960,6 +1032,15 @@
             <thead><tr><th>Time</th><th>Job</th><th>Outcome</th><th>Reason</th></tr></thead>
             <tbody>${failureRows}</tbody>
           </table>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;padding:12px;background:var(--navy-1);border-radius:8px">
+          <span style="font-size:.82rem;font-weight:600">🔌 On-demand check:</span>
+          <select id="broker-check-cluster-select" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--navy-2);color:var(--text);font-size:.82rem">
+            ${clusters.map(c => `<option value="${c.cluster_id}">${c.name}</option>`).join('')}
+          </select>
+          <button onclick="window._showBrokerConnectionsPopup()" class="btn btn--secondary btn--sm">Check Live Broker Connections</button>
+          <span style="color:var(--text-muted);font-size:.76rem">Real-time, not cached — safe to run anytime, including during an incident.</span>
         </div>
 
         <div class="chart-card__title" style="margin-bottom:8px">Connection Audit Log</div>

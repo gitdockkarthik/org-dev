@@ -1029,6 +1029,159 @@ async def get_breaker_status(cluster_id: str | None = None, hours: int = 24) -> 
         return {"clusters": [], "brokers": [], "recent_events": [], "recent_failures": [], "connection_events": [], "connection_summary": {}, "error": str(exc)}
 
 
+@router.get("/dashboard/broker-connections")
+async def get_broker_connections(cluster_id: str) -> dict:
+    """On-demand, read-only check of this container's live TCP connections
+    (covers the main process and all worker processes, since /proc/net/tcp
+    reflects the whole network namespace) to one cluster's brokers, broken
+    down by state (ESTABLISHED, CLOSE_WAIT, etc.) -- NOT a scheduled job,
+    only runs when explicitly called. Built following a real
+    connection-leak incident (2026-09-24) to give fast, on-demand
+    per-broker visibility during any future incident, directly from the
+    UI, without needing terminal/docker access.
+
+    Deliberately isolated from the shared default thread pool used
+    elsewhere in this app (13+ other run_in_executor(None, ...) call
+    sites): DNS lookups use their own small dedicated executor, and
+    /proc/net/tcp is read directly (synchronously, in-line) rather than
+    via any executor, since it's an in-memory kernel pseudo-file and
+    reading it is effectively instant -- not real blocking I/O. This
+    matters because the whole point of this tool is to stay reliable
+    during exactly the kind of resource contention it exists to diagnose;
+    sharing a pool that could itself be starved during an incident would
+    make the tool's own output misleading at the worst possible time.
+
+    Known scope limitation: only checks the brokers explicitly listed in
+    the cluster's bootstrap_servers config (confirmed: every cluster
+    currently configured here lists all 3 of its real brokers). If a
+    cluster's client ever discovers additional brokers dynamically that
+    aren't in that list, connections to those brokers won't be counted.
+    IPv6 connections are also not counted (only /proc/net/tcp is read, not
+    tcp6, and only AF_INET addresses are kept from DNS resolution). Whether
+    every broker here is genuinely IPv4-only is assumed, not verified."""
+    import asyncio
+    import socket
+    import struct
+    from collections import defaultdict
+    from concurrent.futures import ThreadPoolExecutor
+    from storage import get_backend
+
+    result: dict = {"cluster_name": None, "brokers": [], "error": None}
+    try:
+        cluster = await get_backend().get_cluster(int(cluster_id))
+        if not cluster or not cluster.get("bootstrap_servers"):
+            result["error"] = "Cluster not found or has no bootstrap_servers configured"
+            return result
+        result["cluster_name"] = cluster.get("name", f"Cluster {cluster_id}")
+
+        host_port_pairs: list[tuple[str, int]] = []
+        for hostport in cluster["bootstrap_servers"].split(","):
+            hostport = hostport.strip()
+            if not hostport:
+                continue
+            host, _, port_str = hostport.rpartition(":")
+            if not host or not port_str.isdigit():
+                logger.warning("get_broker_connections: could not parse host:port from %r", hostport)
+                continue
+            host_port_pairs.append((host, int(port_str)))
+
+        # Small, dedicated, one-off executor for DNS resolution only -- NOT
+        # the shared default pool (asyncio's own loop.getaddrinfo delegates
+        # to that shared pool internally), so a slow lookup here can never
+        # queue behind unrelated work from elsewhere in the app, and vice
+        # versa. Deliberately NOT used as a context manager: `with
+        # ThreadPoolExecutor(...)` calls shutdown(wait=True) on exit, which
+        # blocks the EVENT LOOP ITSELF until every submitted task finishes,
+        # regardless of the wait_for timeout below (wait_for only stops
+        # this route from awaiting a hung future -- it cannot forcibly stop
+        # the underlying OS thread still running socket.getaddrinfo). Using
+        # shutdown(wait=False) instead lets a hung DNS thread finish in the
+        # background without blocking the whole app -- the exact opposite
+        # of what a tool meant to survive resource-contention incidents
+        # should ever do.
+        dns_executor = ThreadPoolExecutor(max_workers=max(1, len(host_port_pairs)), thread_name_prefix="broker-check-dns")
+        loop = asyncio.get_event_loop()
+
+        def _resolve_sync(host: str) -> list[str]:
+            try:
+                infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+                return sorted({info[4][0] for info in infos if info[0] == socket.AF_INET})
+            except Exception as dns_exc:
+                logger.warning("get_broker_connections: could not resolve %s: %s", host, dns_exc)
+                return []
+
+        async def _resolve(host: str) -> list[str]:
+            try:
+                return await asyncio.wait_for(
+                    loop.run_in_executor(dns_executor, _resolve_sync, host), timeout=3
+                )
+            except Exception:
+                return []
+
+        try:
+            resolved = await asyncio.gather(*[_resolve(h) for h, _p in host_port_pairs])
+        finally:
+            dns_executor.shutdown(wait=False)
+
+        # Key primarily by HOST (not IP) so two hosts sharing an IP never
+        # overwrite each other's entry -- each host keeps its own full list
+        # of resolved IPs, and is checked against all of them.
+        ips_by_host: dict[str, list[str]] = {h: ips for (h, _p), ips in zip(host_port_pairs, resolved)}
+        wanted_ports = {p for _h, p in host_port_pairs}
+
+        STATES = {
+            "01": "ESTABLISHED", "02": "SYN_SENT", "03": "SYN_RECV",
+            "04": "FIN_WAIT1", "05": "FIN_WAIT2", "06": "TIME_WAIT",
+            "07": "CLOSE", "08": "CLOSE_WAIT", "09": "LAST_ACK",
+            "0A": "LISTEN", "0B": "CLOSING",
+        }
+
+        def _parse_addr(hexaddr: str) -> tuple[str, int]:
+            ip_hex, port_hex = hexaddr.split(":")
+            ip = socket.inet_ntoa(struct.pack("<I", int(ip_hex, 16)))
+            return ip, int(port_hex, 16)
+
+        # Direct, synchronous, in-line read -- NOT via any executor.
+        # /proc/net/tcp is an in-memory kernel pseudo-file; reading it is
+        # effectively instant, not real blocking I/O, so this cannot itself
+        # cause meaningful event-loop delay, and deliberately avoids waiting
+        # on the shared default pool at all.
+        ip_state_counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        with open("/proc/net/tcp") as f:
+            lines = f.readlines()[1:]
+        for line in lines:
+            parts = line.split()
+            rem_ip, rem_port = _parse_addr(parts[2])
+            state = STATES.get(parts[3], parts[3])
+            if rem_port in wanted_ports:
+                ip_state_counts[rem_ip][state] += 1
+
+        for host, _port in host_port_pairs:
+            ips = ips_by_host.get(host, [])
+            if not ips:
+                result["brokers"].append({
+                    "host": host, "ip": None, "established": 0, "close_wait": 0,
+                    "other_states": {}, "resolve_failed": True,
+                })
+                continue
+            merged: dict[str, int] = defaultdict(int)
+            for ip in ips:
+                for state, cnt in ip_state_counts.get(ip, {}).items():
+                    merged[state] += cnt
+            result["brokers"].append({
+                "host": host,
+                "ip": ", ".join(ips),
+                "established": merged.get("ESTABLISHED", 0),
+                "close_wait": merged.get("CLOSE_WAIT", 0),
+                "other_states": {k: v for k, v in merged.items() if k not in ("ESTABLISHED", "CLOSE_WAIT")},
+            })
+        return result
+    except Exception as exc:
+        logger.warning("get_broker_connections failed: %s", exc)
+        result["error"] = str(exc)
+        return result
+
+
 @router.get("/dashboard/zookeeper")
 async def get_zookeeper(cluster_id: str | None = None) -> dict:
     """Fetch ZooKeeper stats or detect KRaft mode."""
