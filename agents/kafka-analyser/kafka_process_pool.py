@@ -29,6 +29,21 @@ _process_pool = ProcessPoolExecutor(max_workers=4)
 _worker_clients: dict[str, "KafkaAdminClient"] = {}
 
 
+def _discard_worker_client(key: str) -> None:
+    """Remove a worker-process client from the cache AND close it, so its
+    underlying socket(s) are cleanly shut down instead of abandoned. A bare
+    dict.pop() alone leaves the connection in CLOSE_WAIT on the broker side --
+    confirmed root cause of a real connection-leak incident (cluster 4,
+    2026-09-24) that also starved the shared executor pool used by every
+    other cluster's collectors."""
+    client = _worker_clients.pop(key, None)
+    if client is not None:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
 def _build_security_kwargs(cluster_config: dict) -> dict:
     """Build kafka-python security kwargs -- including the ssl.SSLContext object
     -- ENTIRELY INSIDE the worker process. SSLContext objects cannot be pickled,
@@ -94,7 +109,7 @@ def _describe_log_dirs_worker(bootstrap_servers: str, cluster_config: dict) -> d
         # This worker's connection may be in a bad state -- drop it so the next
         # task on this worker builds a fresh one, rather than reusing a possibly
         # broken connection.
-        _worker_clients.pop(bootstrap_servers, None)
+        _discard_worker_client(bootstrap_servers)
         return {"ok": False, "error": str(exc)}
 
 
@@ -195,7 +210,7 @@ def _fetch_consumer_lag_worker(bootstrap_servers: str, cluster_config: dict) -> 
                     break
                 except Exception as e:
                     _seek_last_exc = e
-                    _worker_clients.pop(f"consumer:{bootstrap_servers}", None)
+                    _discard_worker_client(f"consumer:{bootstrap_servers}")
                     end_offsets.clear()
                     if _attempt < _SEEK_MAX_ATTEMPTS:
                         import time as _time
@@ -245,7 +260,7 @@ def _fetch_consumer_lag_worker(bootstrap_servers: str, cluster_config: dict) -> 
             "group_partition_lag": group_partition_lag,
         }
     except Exception as exc:
-        _worker_clients.pop(bootstrap_servers, None)
+        _discard_worker_client(bootstrap_servers)
         return {"ok": False, "error": str(exc)}
 
 
@@ -283,7 +298,7 @@ def _describe_cluster_worker(bootstrap_servers: str, cluster_config: dict) -> di
         cluster_info = admin.describe_cluster()
         return {"ok": True, "cluster_info": cluster_info}
     except Exception as exc:
-        _worker_clients.pop(bootstrap_servers, None)
+        _discard_worker_client(bootstrap_servers)
         return {"ok": False, "error": str(exc)}
 
 
@@ -349,7 +364,7 @@ def _describe_broker_log_dirs_worker(bootstrap_servers: str, cluster_config: dic
             },
         }
     except Exception as exc:
-        _worker_clients.pop(bootstrap_servers, None)
+        _discard_worker_client(bootstrap_servers)
         return {"ok": False, "error": str(exc)}
 
 
@@ -419,7 +434,7 @@ def _describe_topics_chunk_worker(bootstrap_servers: str, cluster_config: dict, 
             })
         return {"ok": True, "topics": topics}
     except Exception as exc:
-        _worker_clients.pop(bootstrap_servers, None)
+        _discard_worker_client(bootstrap_servers)
         return {"ok": False, "error": str(exc)}
 
 
@@ -515,8 +530,8 @@ def _fetch_group_lags_worker(bootstrap_servers: str, cluster_config: dict, group
                 })
         return {"ok": True, "groups": groups}
     except Exception as exc:
-        _worker_clients.pop(bootstrap_servers, None)
-        _worker_clients.pop(f"consumer:{bootstrap_servers}", None)
+        _discard_worker_client(bootstrap_servers)
+        _discard_worker_client(f"consumer:{bootstrap_servers}")
         return {"ok": False, "error": str(exc)}
 
 
@@ -565,7 +580,7 @@ def _describe_group_worker(bootstrap_servers: str, cluster_config: dict, group_i
                 continue
         return {"ok": True, "state": g.state, "member_count": len(g.members), "subscribed_topics": sorted(topics)}
     except Exception as exc:
-        _worker_clients.pop(bootstrap_servers, None)
+        _discard_worker_client(bootstrap_servers)
         return {"ok": False, "error": str(exc)}
 
 
@@ -610,7 +625,7 @@ def _seek_to_end_worker(bootstrap_servers: str, cluster_config: dict, partitions
                 end_offsets[(tp.topic, tp.partition)] = consumer.position(tp)
         return {"ok": True, "end_offsets": end_offsets}
     except Exception as exc:
-        _worker_clients.pop(f"consumer:{bootstrap_servers}", None)
+        _discard_worker_client(f"consumer:{bootstrap_servers}")
         return {"ok": False, "error": str(exc)}
 
 
@@ -649,7 +664,7 @@ def _list_topics_worker(bootstrap_servers: str, cluster_config: dict) -> dict:
         names = [t for t in admin.list_topics() if not _is_internal_topic(t)]
         return {"ok": True, "topics": names}
     except Exception as exc:
-        _worker_clients.pop(bootstrap_servers, None)
+        _discard_worker_client(bootstrap_servers)
         return {"ok": False, "error": str(exc)}
 
 
@@ -713,7 +728,7 @@ def _describe_broker_distribution_worker(bootstrap_servers: str, cluster_config:
             "partition_leaders": partition_leaders,
         }
     except Exception as exc:
-        _worker_clients.pop(bootstrap_servers, None)
+        _discard_worker_client(bootstrap_servers)
         return {"ok": False, "error": str(exc)}
 
 
