@@ -214,3 +214,18 @@ class KafkaClusterBreakerState(Base):
     recovery_successes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_recovery_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class KafkaClusterBreakerEvent(Base):
+    """Append-only audit log of circuit-breaker trip/resume events, one row
+    per event (not overwritten, unlike kafka_cluster_breaker_state which only
+    holds current state). Source of truth for the breaker-status dashboard
+    tab and future Teams/email alerting on trip/resume events."""
+    __tablename__ = "kafka_cluster_breaker_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    cluster_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(16), nullable=False)  # "tripped" | "resumed"
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    consecutive_failures: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

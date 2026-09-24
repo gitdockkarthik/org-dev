@@ -783,6 +783,189 @@ async def get_schema_registry(cluster_id: str | None = None, offset: int = 0, li
     return await collector.collect(offset=offset, limit=limit)
 
 
+@router.get("/dashboard/breaker-status")
+async def get_breaker_status(cluster_id: str | None = None, hours: int = 24) -> dict:
+    """Cross-cluster circuit-breaker overview for the Breaker Status tab.
+    Returns every cluster by default (not scoped to a single cluster_id
+    unless the cluster_id filter is passed), each with its current breaker
+    state, recent trip/resume events, recent job failures/skips, and a
+    failure-rate summary over the requested window -- giving Kafka admins a
+    single place to spot trouble before it escalates into a paused cluster.
+    hours controls the failures list and the rate summary window (default
+    24h, clamped to a sane 1-720h range); cluster_id, when given, filters
+    the events and failures lists to that one cluster (the per-cluster
+    status table itself always lists every cluster regardless, so a
+    cluster filter doesn't hide it from the top summary). The breaker
+    events list uses a fixed, longer 7-day lookback regardless of hours --
+    it's a longer-horizon audit trail, not meant to shrink with a short
+    time-range selection."""
+    from storage import get_backend
+    from config import settings
+    from database import DashboardSessionLocal as SessionLocal
+    from sqlalchemy import text as _bst
+    result: dict = {"clusters": [], "recent_events": [], "recent_failures": []}
+    if not SessionLocal:
+        return result
+    hours = max(1, min(hours, 720))
+    _cid_filter = None
+    if cluster_id:
+        try:
+            _cid_filter = int(cluster_id)
+        except ValueError:
+            _cid_filter = None
+    try:
+        all_clusters = await get_backend().get_clusters(settings.agent_slug)
+        cluster_meta = {int(c["id"]): c.get("name", f"Cluster {c['id']}") for c in all_clusters if c.get("id") is not None}
+
+        async with SessionLocal() as sess:
+            # Current state per cluster
+            state_rows = (await sess.execute(_bst(
+                "SELECT cluster_id, consecutive_failures, paused, paused_at, "
+                "paused_reason, recovery_successes, last_recovery_check_at, updated_at "
+                "FROM kafka_cluster_breaker_state ORDER BY cluster_id"
+            ))).fetchall()
+            state_by_cid = {r.cluster_id: r for r in state_rows}
+
+            # Recent trip/resume events, fixed 7-day lookback regardless of the
+            # hours filter (see docstring), optionally scoped to one cluster.
+            _events_sql = (
+                "SELECT id, cluster_id, event_type, reason, consecutive_failures, created_at "
+                "FROM kafka_cluster_breaker_events "
+                "WHERE created_at > now() - interval '7 days' "
+            )
+            _events_params: dict = {}
+            if _cid_filter is not None:
+                _events_sql += "AND cluster_id = :cid "
+                _events_params["cid"] = _cid_filter
+            _events_sql += "ORDER BY created_at DESC LIMIT 100"
+            event_rows = (await sess.execute(_bst(_events_sql), _events_params)).fetchall()
+
+            # Recent failed/skipped job runs, over the requested window,
+            # optionally scoped to one cluster via a job_id suffix match.
+            _fail_sql = (
+                "SELECT id, job_id, status, started_at, ended_at, error_message, logs "
+                "FROM kafka_job_runs "
+                "WHERE status IN ('failed', 'skipped') "
+                "AND started_at > now() - (interval '1 hour' * :hours) "
+            )
+            _fail_params: dict = {"hours": hours}
+            if _cid_filter is not None:
+                _fail_sql += "AND job_id ~ ('-' || :cid_suffix || '$') "
+                _fail_params["cid_suffix"] = str(_cid_filter)
+            _fail_sql += "ORDER BY started_at DESC LIMIT 100"
+            failure_rows = (await sess.execute(_bst(_fail_sql), _fail_params)).fetchall()
+
+            # Success/failure/skip counts per cluster over the requested window,
+            # from job_id suffix.
+            rate_rows = (await sess.execute(_bst(
+                "SELECT job_id, status, count(*) as cnt "
+                "FROM kafka_job_runs "
+                "WHERE started_at > now() - (interval '1 hour' * :hours) "
+                "GROUP BY job_id, status"
+            ), {"hours": hours})).fetchall()
+
+            # Latest per-broker health across ALL clusters at once -- same
+            # reachability rule as GET /dashboard/brokers (data_gb_true
+            # IS NOT NULL AND fresh within 6 minutes), reused here so this
+            # tab's broker health agrees with the per-cluster Brokers tab.
+            broker_rows = (await sess.execute(_bst(
+                "SELECT cluster_id, broker_id, heap_pct, cpu_pct, urp_count, "
+                "data_gb_true, time "
+                "FROM kafka_broker_metrics km "
+                "WHERE time = (SELECT MAX(time) FROM kafka_broker_metrics km2 "
+                "WHERE km2.cluster_id = km.cluster_id AND km2.broker_id = km.broker_id) "
+                "ORDER BY cluster_id, broker_id"
+            ))).fetchall()
+
+        # Build per-cluster failure-rate summary by parsing job_id suffixes.
+        # Only matches the 9 known per-cluster job-type prefixes, so a
+        # cluster-agnostic job (kafka-snapshot-rollup, kafka-vacuum-full,
+        # kafka-breaker-recovery-check) can never be miscounted against a
+        # cluster even if a future one happens to end in digits.
+        _PER_CLUSTER_JOB_PREFIXES = (
+            "kafka-broker-health-", "kafka-consumer-lag-", "kafka-topic-sizes-",
+            "kafka-topic-structure-", "kafka-msg-rate-", "kafka-topic-inflow-",
+            "kafka-connector-snapshots-", "kafka-sr-sync-", "kafka-slo-compliance-",
+        )
+        rate_by_cid: dict[int, dict[str, int]] = {}
+        for r in rate_rows:
+            for _prefix in _PER_CLUSTER_JOB_PREFIXES:
+                if r.job_id.startswith(_prefix):
+                    _suffix = r.job_id[len(_prefix):]
+                    if _suffix.isdigit():
+                        cid = int(_suffix)
+                        bucket = rate_by_cid.setdefault(cid, {"success": 0, "failed": 0, "skipped": 0})
+                        if r.status in bucket:
+                            bucket[r.status] += r.cnt
+                    break
+
+        clusters_out = []
+        for cid, name in sorted(cluster_meta.items()):
+            st = state_by_cid.get(cid)
+            rates = rate_by_cid.get(cid, {"success": 0, "failed": 0, "skipped": 0})
+            clusters_out.append({
+                "cluster_id": cid,
+                "name": name,
+                "paused": bool(st.paused) if st else False,
+                "consecutive_failures": st.consecutive_failures if st else 0,
+                "paused_at": st.paused_at.isoformat() if st and st.paused_at else None,
+                "paused_reason": st.paused_reason if st else None,
+                "recovery_successes": st.recovery_successes if st else 0,
+                "last_recovery_check_at": st.last_recovery_check_at.isoformat() if st and st.last_recovery_check_at else None,
+                "last_updated_at": st.updated_at.isoformat() if st and st.updated_at else None,
+                "success_count": rates["success"],
+                "failed_count": rates["failed"],
+                "skipped_count": rates["skipped"],
+            })
+
+        events_out = [{
+            "id": r.id,
+            "cluster_id": r.cluster_id,
+            "cluster_name": cluster_meta.get(r.cluster_id, f"Cluster {r.cluster_id}"),
+            "event_type": r.event_type,
+            "reason": r.reason,
+            "consecutive_failures": r.consecutive_failures,
+            "created_at": r.created_at.isoformat(),
+        } for r in event_rows]
+
+        failures_out = [{
+            "id": r.id,
+            "job_id": r.job_id,
+            "status": r.status,
+            "started_at": r.started_at.isoformat() if r.started_at else None,
+            "ended_at": r.ended_at.isoformat() if r.ended_at else None,
+            "error_message": r.error_message,
+            "logs": r.logs,
+        } for r in failure_rows]
+
+        from datetime import datetime as _bdt2, timezone as _btz2
+        _now2 = _bdt2.now(_btz2.utc)
+        brokers_out = []
+        for r in broker_rows:
+            _row_time = r.time
+            if _row_time is not None and _row_time.tzinfo is None:
+                _row_time = _row_time.replace(tzinfo=_btz2.utc)
+            _is_stale = _row_time is None or (_now2 - _row_time).total_seconds() > 360
+            _is_unreachable = r.data_gb_true is None or _is_stale
+            _b_status = "unreachable" if _is_unreachable else ("degraded" if r.urp_count and r.urp_count > 0 else "healthy")
+            brokers_out.append({
+                "cluster_id": r.cluster_id,
+                "cluster_name": cluster_meta.get(r.cluster_id, f"Cluster {r.cluster_id}"),
+                "broker_id": r.broker_id,
+                "reachable": not _is_unreachable,
+                "status": _b_status,
+                "heap_pct": r.heap_pct,
+                "cpu_pct": r.cpu_pct,
+                "urp_count": r.urp_count,
+                "last_seen": r.time.isoformat() if r.time else None,
+            })
+
+        return {"clusters": clusters_out, "brokers": brokers_out, "recent_events": events_out, "recent_failures": failures_out, "window_hours": hours}
+    except Exception as exc:
+        logger.warning("get_breaker_status failed: %s", exc)
+        return {"clusters": [], "brokers": [], "recent_events": [], "recent_failures": [], "error": str(exc)}
+
+
 @router.get("/dashboard/zookeeper")
 async def get_zookeeper(cluster_id: str | None = None) -> dict:
     """Fetch ZooKeeper stats or detect KRaft mode."""

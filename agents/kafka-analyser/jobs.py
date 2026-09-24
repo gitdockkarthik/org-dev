@@ -11,7 +11,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select, desc, update
 
 from database import SessionLocal
-from models import KafkaJobRun, KafkaJobSchedule, KafkaClusterBreakerState
+from models import KafkaJobRun, KafkaJobSchedule, KafkaClusterBreakerState, KafkaClusterBreakerEvent
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +128,13 @@ async def _record_breaker_outcome(job_id: str, success: bool, error: str | None)
                     state.paused = True
                     state.paused_at = now
                     state.paused_reason = (error or "unknown error")[:2000]
+                    session.add(KafkaClusterBreakerEvent(
+                        cluster_id=cluster_id,
+                        event_type="tripped",
+                        reason=state.paused_reason,
+                        consecutive_failures=state.consecutive_failures,
+                        created_at=now,
+                    ))
                     logger.warning(
                         "Circuit breaker TRIPPED for cluster %s after %d consecutive "
                         "broker-connection failures (last: %s) — pausing all job "

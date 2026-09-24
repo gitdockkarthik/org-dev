@@ -211,10 +211,12 @@
       <button class="tab-btn"                 data-tab="schema-registry" onclick="switchTab('schema-registry',this)">Schema Registry</button>
       <button class="tab-btn"                 data-tab="mirrormaker"     onclick="switchTab('mirrormaker',this)">MirrorMaker</button>
       <button class="tab-btn"                 data-tab="slo"             onclick="switchTab('slo',this)">🎯 SLI/SLO</button>
-      <button class="tab-btn"                 data-tab="insights"        onclick="switchTab('insights',this)">AI Insights</button>
+      <button class="tab-btn" style="display:none" data-tab="insights"        onclick="switchTab('insights',this)">AI Insights</button>
+      <button class="tab-btn"                 data-tab="breaker-status"  onclick="switchTab('breaker-status',this)">🛡️ Breaker Status</button>
     </div>
 
     <div id="tab-overview"        class="tab-panel tab-panel--active"></div>
+    <div id="tab-breaker-status"  class="tab-panel"></div>
     <div id="tab-consumer-groups" class="tab-panel"></div>
     <div id="tab-topics"          class="tab-panel"></div>
     <div id="tab-brokers"         class="tab-panel"></div>
@@ -721,6 +723,14 @@
             renderInsights(d);
             break;
           }
+          case 'breaker-status': {
+            window._bsFilter = window._bsFilter || { clusterId: '', hours: 1 };
+            const d = await window._fetchBreakerStatus();
+            if (_tabGen !== window._loadGeneration) return;
+            _loaded.add(name);
+            renderBreakerStatus(d);
+            break;
+          }
           case 'schema-registry': {
             const _srCid = _currentClusterId || document.getElementById('ctrl-cluster')?.value || '';
             const _srRes = await fetch(`${PROXY}/dashboard/schema-registry?cluster_id=${_srCid}&limit=20`,
@@ -762,6 +772,150 @@
         document.getElementById('tab-' + name).innerHTML =
           emptyState('⚠', 'Failed to load', e.message);
       }
+    }
+
+    window._fetchBreakerStatus = async function () {
+      const qs = new URLSearchParams();
+      if (window._bsFilter.clusterId) qs.set('cluster_id', window._bsFilter.clusterId);
+      qs.set('hours', window._bsFilter.hours);
+      const res = await fetch(`${PROXY}/dashboard/breaker-status?${qs.toString()}`, { headers: _authHeaders(), cache: 'no-store' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      return res.json();
+    };
+
+    window._bsSetFilter = async function (patch) {
+      window._bsFilter = Object.assign({}, window._bsFilter, patch);
+      const _bsGen = window._loadGeneration;
+      const d = await window._fetchBreakerStatus();
+      if (_bsGen !== window._loadGeneration) return;
+      renderBreakerStatus(d);
+    };
+
+    function renderBreakerStatus(data) {
+      const el = document.getElementById('tab-breaker-status');
+      if (!el) return;
+      const clusters = data.clusters || [];
+      const events = data.recent_events || [];
+      const failures = data.recent_failures || [];
+      const windowHours = data.window_hours || window._bsFilter.hours || 24;
+      const windowLabel = windowHours === 1 ? '1h' : windowHours === 6 ? '6h' : windowHours === 24 ? '24h' : windowHours === 168 ? '7d' : `${windowHours}h`;
+
+      const fmtTime = iso => iso ? new Date(iso).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+
+      const filterClusterOpts = clusters.map(c =>
+        `<option value="${c.cluster_id}" ${String(window._bsFilter.clusterId) === String(c.cluster_id) ? 'selected' : ''}>${c.name}</option>`
+      ).join('');
+      const timeRangeBtn = (hrs, label) => `<button onclick="window._bsSetFilter({hours:${hrs}})"
+        style="padding:4px 12px;border:none;border-radius:6px;cursor:pointer;font-size:.8rem;font-weight:600;
+        background:${windowHours===hrs?'var(--accent)':'transparent'};color:${windowHours===hrs?'#fff':'var(--text-muted)'}">${label}</button>`;
+      const filterBar = `
+        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:16px">
+          <select onchange="window._bsSetFilter({clusterId:this.value})"
+            style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--navy-1);color:var(--text);font-size:.82rem">
+            <option value="" ${!window._bsFilter.clusterId ? 'selected' : ''}>All Clusters</option>
+            ${filterClusterOpts}
+          </select>
+          <div style="display:flex;gap:4px;background:var(--navy-1);border-radius:8px;padding:4px">
+            ${timeRangeBtn(1,'1h')}${timeRangeBtn(6,'6h')}${timeRangeBtn(24,'24h')}${timeRangeBtn(168,'7d')}
+          </div>
+        </div>`;
+
+      const brokers = data.brokers || [];
+      const brokersByCluster = {};
+      brokers.forEach(b => {
+        (brokersByCluster[b.cluster_id] = brokersByCluster[b.cluster_id] || []).push(b);
+      });
+
+      const brokerChip = b => {
+        const color = !b.reachable ? '#F44336' : (b.status === 'degraded' ? '#FF9800' : '#4CAF50');
+        const icon = !b.reachable ? '🔴' : (b.status === 'degraded' ? '⚠️' : '🟢');
+        const heap = b.heap_pct != null ? `H:${b.heap_pct.toFixed(0)}%` : '';
+        const cpu = b.cpu_pct != null ? `C:${b.cpu_pct.toFixed(0)}%` : '';
+        const urp = b.urp_count > 0 ? ` URP:${b.urp_count}` : '';
+        const title = !b.reachable
+          ? `Broker ${b.broker_id}: unreachable (last seen ${fmtTime(b.last_seen)})`
+          : `Broker ${b.broker_id}: ${heap} ${cpu}${urp}`.trim();
+        return `<span title="${title.replace(/"/g,'&quot;')}" style="display:inline-block;background:${color}22;color:${color};padding:1px 6px;border-radius:4px;font-size:.72rem;font-weight:600;margin:1px 3px 1px 0;white-space:nowrap">${icon} B${b.broker_id}${b.reachable ? ` ${heap} ${cpu}${urp}` : ''}</span>`;
+      };
+
+      const statusRows = clusters.map(c => {
+        const stateLabel = c.paused
+          ? `<span style="color:#F44336;font-weight:700">🔴 PAUSED</span>`
+          : (c.consecutive_failures > 0
+              ? `<span style="color:#FF9800;font-weight:700">⚠️ ${c.consecutive_failures} recent failure(s)</span>`
+              : `<span style="color:#4CAF50;font-weight:700">✅ Healthy</span>`);
+        const detail = c.paused
+          ? `Paused since ${fmtTime(c.paused_at)}<br><span style="color:var(--text-muted);font-size:.78rem">${c.paused_reason || ''}</span><br>Recovery: ${c.recovery_successes}/5 consecutive checks`
+          : (c.last_recovery_check_at ? `Last recovery check: ${fmtTime(c.last_recovery_check_at)}` : '—');
+        const clusterBrokers = brokersByCluster[c.cluster_id] || [];
+        const brokerRow = clusterBrokers.length
+          ? clusterBrokers.map(brokerChip).join('')
+          : `<span style="color:var(--text-muted);font-size:.78rem">No broker data yet</span>`;
+        return `<tr>
+          <td style="font-weight:600">${c.name}</td>
+          <td>${stateLabel}</td>
+          <td style="font-size:.82rem">${detail}</td>
+        </tr>
+        <tr>
+          <td colspan="3" style="padding:4px 8px 10px 24px;border-top:none">${brokerRow}</td>
+        </tr>`;
+      }).join('') || `<tr><td colspan="3" class="data-table__empty">No clusters found</td></tr>`;
+
+      const eventRows = events.slice(0, 30).map(e => {
+        const icon = e.event_type === 'tripped' ? '🔴' : '✅';
+        const label = e.event_type === 'tripped' ? 'TRIPPED (paused)' : 'RESUMED';
+        return `<tr>
+          <td style="white-space:nowrap">${fmtTime(e.created_at)}</td>
+          <td style="font-weight:600">${e.cluster_name}</td>
+          <td>${icon} ${label}</td>
+          <td style="font-size:.82rem;color:var(--text-muted)">${e.reason || '—'}</td>
+        </tr>`;
+      }).join('') || `<tr><td colspan="4" class="data-table__empty">No breaker events in the last 7 days</td></tr>`;
+
+      const failureRows = failures.slice(0, 30).map(f => {
+        const reasonText = f.error_message || f.logs || '—';
+        return `<tr>
+          <td style="white-space:nowrap">${fmtTime(f.started_at)}</td>
+          <td style="font-weight:600"><code style="font-size:.8rem">${f.job_id}</code></td>
+          <td>${f.status === 'failed' ? '❌ Failed' : '⏭️ Skipped'}</td>
+          <td style="font-size:.8rem;color:var(--text-muted);max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(reasonText+'').replace(/"/g,'&quot;')}">${reasonText}</td>
+        </tr>`;
+      }).join('') || `<tr><td colspan="4" class="data-table__empty">No failures or skips in the last ${windowLabel}</td></tr>`;
+
+      el.innerHTML = `
+        <div class="chart-card__title" style="margin-bottom:8px">Cluster Health &amp; Circuit Breaker Status</div>
+        <div style="color:var(--text-muted);font-size:.82rem;margin-bottom:16px">
+          The status table and broker health below always show every cluster's current state, regardless of the filters below. Auto-pauses a cluster after 5 consecutive broker-connection failures; auto-resumes after 5 consecutive successful connectivity checks (checked every 5 min).
+        </div>
+        <div class="data-table-wrap" style="margin-bottom:24px">
+          <table class="data-table">
+            <thead><tr>
+              <th>Cluster</th><th>Status</th><th>Detail</th>
+            </tr></thead>
+            <tbody>${statusRows}</tbody>
+          </table>
+        </div>
+        <div style="color:var(--text-muted);font-size:.78rem;margin-bottom:8px">Filters below apply to the event and failure tables further down:</div>
+        ${filterBar}
+
+        <div class="chart-card__title" style="margin-bottom:8px">Recent Breaker Events (last 7 days)</div>
+        <div class="data-table-wrap" style="margin-bottom:24px">
+          <table class="data-table">
+            <thead><tr><th>Time</th><th>Cluster</th><th>Event</th><th>Reason</th></tr></thead>
+            <tbody>${eventRows}</tbody>
+          </table>
+        </div>
+
+        <div class="chart-card__title" style="margin-bottom:8px">Recent Failures &amp; Skips (last ${windowLabel}${window._bsFilter.clusterId ? ', selected cluster' : ', all clusters'})</div>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead><tr><th>Time</th><th>Job</th><th>Outcome</th><th>Reason</th></tr></thead>
+            <tbody>${failureRows}</tbody>
+          </table>
+        </div>`;
     }
 
     // ── Generate & reload ────────────────────────────────────────────────────

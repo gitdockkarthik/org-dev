@@ -557,21 +557,46 @@ async def collect_topic_structure(cluster_id: str = ""):
                 from sqlalchemy import text as _pct
                 async with SessionLocal() as sess:
                     described_topics_sorted = sorted(described_topics, key=lambda t: t['name'])
-                    values = ",".join(
-                        f"('{t['name'].replace(chr(39), chr(39)*2)}', {t.get('partition_count',0)}, {t.get('replication_factor',0)}, {t.get('under_replicated',0)})"
-                        for t in described_topics_sorted
-                    )
-                    if values:
-                        await sess.execute(_pct(f"""
-                            UPDATE kafka_topic_metrics SET
-                                partition_count = v.pc,
-                                replication_factor = v.rf,
-                                urp_count = v.urp
-                            FROM (VALUES {values}) AS v(topic, pc, rf, urp)
-                            WHERE kafka_topic_metrics.cluster_id = {int(cid)}
-                            AND kafka_topic_metrics.topic = v.topic
-                        """))
-                        await sess.commit()
+                    # Batched in chunks of 1000, WITH a commit after each batch --
+                    # confirmed root cause of a real deadlock incident
+                    # (2026-09-24): this was previously a single, unbatched
+                    # statement covering every topic (up to ~25,000 rows on the
+                    # largest cluster) in one transaction, held open for the
+                    # entire update's duration. Committing per batch (not once at
+                    # the end) is what actually shrinks the lock-holding window --
+                    # batching alone without per-batch commits leaves all rows
+                    # locked for the same overall duration as a single unbatched
+                    # statement. An overlapping run of a different job touching
+                    # this table (collect_msg_rate, whose two UPDATE loops now
+                    # also commit per batch for the same reason -- see below --
+                    # shares a cron-collision tick with this job every 10 minutes
+                    # on every cluster; a /5 schedule cannot avoid this via
+                    # re-staggering alone, since it mathematically alternates
+                    # parity across its cycle) now has a much smaller window in
+                    # which to collide on both sides.
+                    # Trade-off: non-atomic (a concurrent reader could see a
+                    # partially updated cluster mid-run; a failure partway leaves
+                    # earlier batches committed) -- accepted here: this is a
+                    # periodic metrics refresh, not a transaction needing
+                    # all-or-nothing guarantees.
+                    _TS_BULK = 1000
+                    for _tsi in range(0, len(described_topics_sorted), _TS_BULK):
+                        _tsbatch = described_topics_sorted[_tsi:_tsi + _TS_BULK]
+                        values = ",".join(
+                            f"('{t['name'].replace(chr(39), chr(39)*2)}', {t.get('partition_count',0)}, {t.get('replication_factor',0)}, {t.get('under_replicated',0)})"
+                            for t in _tsbatch
+                        )
+                        if values:
+                            await sess.execute(_pct(f"""
+                                UPDATE kafka_topic_metrics SET
+                                    partition_count = v.pc,
+                                    replication_factor = v.rf,
+                                    urp_count = v.urp
+                                FROM (VALUES {values}) AS v(topic, pc, rf, urp)
+                                WHERE kafka_topic_metrics.cluster_id = {int(cid)}
+                                AND kafka_topic_metrics.topic = v.topic
+                            """))
+                            await sess.commit()
                 logger.info("Updated partition counts for %d topics in %s", len(described_topics), c["name"])
             except Exception as _pe:
                 logger.warning("partition count update failed: %s", _pe)
@@ -1131,7 +1156,10 @@ async def collect_msg_rate(cluster_id: str = ""):
                         AND kafka_topic_metrics.topic = v.topic
                         AND kafka_topic_metrics.bytes_in_per_sec != 0
                     """))
-                await _sess_zr.commit()
+                    # Per-batch commit (not one commit after the loop) -- shrinks
+                    # this update's lock-holding window against the same
+                    # deadlock risk fixed in collect_topic_structure.
+                    await _sess_zr.commit()
         if active_topics:
             from database import SessionLocal
             from sqlalchemy import text
@@ -1150,7 +1178,10 @@ async def collect_msg_rate(cluster_id: str = ""):
                         WHERE kafka_topic_metrics.cluster_id = v.cid
                         AND kafka_topic_metrics.topic = v.topic
                     """))
-                await sess.commit()
+                    # Per-batch commit (not one commit after the loop) -- shrinks
+                    # this update's lock-holding window against the same
+                    # deadlock risk fixed in collect_topic_structure.
+                    await sess.commit()
         # Raw bytes-in snapshot for the Bytes In chart's 5-min granularity (1h view) --
         # bulk insert, all active topics, mirrors the message-rate snapshot pattern.
         if active_topics:
@@ -1621,7 +1652,7 @@ async def check_breaker_recovery() -> dict:
     lucky ping."""
     from database import SessionLocal
     from sqlalchemy import select as _bsel
-    from models import KafkaClusterBreakerState
+    from models import KafkaClusterBreakerState, KafkaClusterBreakerEvent
     from storage import get_backend as _bgb
     from config import settings as _bsettings
     from datetime import datetime as _bdt, timezone as _btz
@@ -1675,6 +1706,13 @@ async def check_breaker_recovery() -> dict:
                     row.paused_reason = None
                     row.consecutive_failures = 0
                     row.recovery_successes = 0
+                    session.add(KafkaClusterBreakerEvent(
+                        cluster_id=cid,
+                        event_type="resumed",
+                        reason=f"{_BREAKER_RECOVERY_THRESHOLD} consecutive successful connectivity checks",
+                        consecutive_failures=0,
+                        created_at=now,
+                    ))
                     logger.warning(
                         "Circuit breaker RESET for cluster %s — %d consecutive successful "
                         "connectivity checks, resuming normal job scheduling",
