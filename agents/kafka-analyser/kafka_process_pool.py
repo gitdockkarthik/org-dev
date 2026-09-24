@@ -55,6 +55,49 @@ _process_pool = ProcessPoolExecutor(max_workers=6)
 # needed within a single worker (each worker handles one task at a time).
 _worker_clients: dict[str, "KafkaAdminClient"] = {}
 
+# Second, independent layer of proactive connection refresh -- see
+# _refresh_if_stale's docstring for why this exists alongside the
+# separate dedicated refresh task rather than replacing it. 5 minutes
+# gives comfortable margin under the broker's confirmed
+# connections.max.idle.ms default (10 minutes). Tracks each cached
+# client's own creation time individually (NOT a single global
+# "last refreshed" timestamp) -- a blanket whole-cache wipe was tried
+# first and found, during review, to risk invalidating a DIFFERENT
+# client (e.g. a job's already-fetched admin client) purely because a
+# LATER call in that same job's execution (e.g. fetching a consumer
+# client) happened to cross the staleness threshold. Per-key tracking
+# means fetching one key can only ever refresh that same key, never a
+# different one some caller might already be holding a reference to.
+_SELF_REFRESH_INTERVAL_SECS = 300
+_worker_client_created_at: dict[str, float] = {}
+
+
+def _refresh_if_stale(key: str) -> None:
+    """Called at the start of _get_worker_client and
+    _get_worker_consumer_client, with the SPECIFIC key about to be
+    fetched -- not a blanket check of the whole cache. If that one key's
+    cached client is older than _SELF_REFRESH_INTERVAL_SECS, discards
+    JUST that entry (via the existing _discard_worker_client) before the
+    caller's normal create-if-missing logic runs. Every other cached key
+    is left completely untouched, so a job that already holds a
+    reference to a DIFFERENT cached client from earlier in its own
+    execution can never have that reference invalidated by this check.
+
+    Built following empirical evidence (2026-09-24) that the separate
+    dedicated refresh task (refresh_all_worker_clients_isolated, run via
+    check_breaker_recovery every 5 minutes) does not reliably reach every
+    worker every cycle -- ProcessPoolExecutor's shared task queue gives no
+    guarantee of hitting a specific worker, confirmed live: only 2-4 of 6
+    workers were reached in individual observed cycles. This ties refresh
+    instead to activity that IS guaranteed: any worker handling ANY real
+    job already calls one of the two functions this is embedded in, for
+    the specific key that job actually needs. Kept alongside, not instead
+    of, the dedicated task -- two independent, differently-triggered
+    layers are more robust than relying on either alone."""
+    created_at = _worker_client_created_at.get(key)
+    if created_at is not None and (time.time() - created_at) >= _SELF_REFRESH_INTERVAL_SECS:
+        _discard_worker_client(key)
+
 
 def _log_connection_event(bootstrap_servers: str, event_type: str, client_type: str) -> None:
     """Best-effort audit log write for a connection create/close event.
@@ -104,6 +147,7 @@ def _discard_worker_client(key: str) -> None:
     2026-09-24) that also starved the shared executor pool used by every
     other cluster's collectors."""
     client = _worker_clients.pop(key, None)
+    _worker_client_created_at.pop(key, None)
     if client is not None:
         try:
             client.close()
@@ -231,6 +275,7 @@ def _get_worker_client(bootstrap_servers: str, cluster_config: dict):
     cluster. Runs inside the worker process, not the main process. Builds
     security kwargs (including any ssl_context) locally -- never pickled."""
     from kafka import KafkaAdminClient
+    _refresh_if_stale(bootstrap_servers)
     if bootstrap_servers not in _worker_clients:
         security = _build_security_kwargs(cluster_config)
         _worker_clients[bootstrap_servers] = KafkaAdminClient(
@@ -238,6 +283,7 @@ def _get_worker_client(bootstrap_servers: str, cluster_config: dict):
             request_timeout_ms=15000,
             **security,
         )
+        _worker_client_created_at[bootstrap_servers] = time.time()
         _log_connection_event(bootstrap_servers, "created", "admin")
     return _worker_clients[bootstrap_servers]
 
@@ -310,6 +356,7 @@ def _get_worker_consumer_client(bootstrap_servers: str, cluster_config: dict):
     list_consumer_groups/list_consumer_group_offsets."""
     from kafka import KafkaConsumer
     key = f"consumer:{bootstrap_servers}"
+    _refresh_if_stale(key)
     if key not in _worker_clients:
         security = _build_security_kwargs(cluster_config)
         _worker_clients[key] = KafkaConsumer(
@@ -317,6 +364,7 @@ def _get_worker_consumer_client(bootstrap_servers: str, cluster_config: dict):
             request_timeout_ms=10000,
             **security,
         )
+        _worker_client_created_at[key] = time.time()
         _log_connection_event(bootstrap_servers, "created", "consumer")
     return _worker_clients[key]
 

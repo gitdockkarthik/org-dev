@@ -1777,6 +1777,203 @@ async def check_breaker_recovery() -> dict:
     return results
 
 
+_cw_recycle_in_progress = False
+_cw_last_detection: dict | None = None
+# Holds a strong reference to the in-flight drain task -- asyncio's own
+# docs warn that a task created via asyncio.create_task() with no
+# reference kept anywhere can be garbage-collected before it completes.
+# add_done_callback removes it from this set once finished either way.
+_cw_background_tasks: set = set()
+
+
+async def check_and_recycle_close_wait() -> dict:
+    """Cluster-agnostic maintenance job (every 2 min). Checks REAL
+    CLOSE_WAIT connection state via /proc/net/tcp -- ground truth, the
+    same method used throughout this session's live incident
+    investigation (2026-09-24), never inferred and never a health-test
+    (describe_cluster() was tried as a health-test and empirically proven
+    NOT to reliably detect a stale per-broker connection). Checks every
+    enabled cluster's brokers in one pass. DNS resolution runs on its own
+    dedicated executor (matching the same fix already proven in the
+    on-demand broker-connections route), never directly on the event
+    loop -- a slow lookup here must not stall every other request this
+    app is serving.
+
+    Requires CLOSE_WAIT to be detected on two CONSECUTIVE checks (2
+    minutes apart, matching this job's own schedule) before acting --
+    this reduces, but does not guarantee against, reacting to two
+    unrelated, independently brief CLOSE_WAIT occurrences rather than one
+    persisting connection; a precise identity check across checks (same
+    exact socket, not just the same cluster) is a reasonable future
+    refinement, not attempted here. Will not start a new recycle while a
+    previous one is still draining (_cw_recycle_in_progress) -- both
+    guards added after review flagged that recycling the pool itself
+    starts 6 more worker processes while old ones may still be alive, and
+    nothing was otherwise stopping repeated recycles from a still-draining
+    pool, a genuinely still-running old-pool task, a shared client
+    skipped as busy, or an ordinary brief CLOSE_WAIT during a normal
+    close -- any of which could otherwise trigger another unnecessary
+    recycle before the previous one even finished.
+
+    Once confirmed, gracefully recycles the entire worker-process pool:
+    swaps the module-level _process_pool (in kafka_process_pool.py) to a
+    brand-new, empty ProcessPoolExecutor IMMEDIATELY, so every job
+    submitted from that instant on goes straight to the fresh pool with
+    zero delay -- no other job's data collection is blocked or delayed.
+    The OLD pool's currently-running tasks are never killed; they finish
+    naturally, tracked via an independent background asyncio task (not
+    awaited here) that shuts the old pool down fully once genuinely
+    empty, then clears the in-progress guard. A brand-new worker process
+    has nothing cached by definition -- no scheduling luck required,
+    unlike the two prior approaches this adds to (kept as additional,
+    redundant layers, not removed): refresh_all_worker_clients_isolated
+    and the per-key self-refresh in _get_worker_client/
+    _get_worker_consumer_client, both confirmed via live testing to
+    sometimes miss coverage due to unpredictable task scheduling.
+
+    Also refreshes the main-process shared client cache in the same pass.
+
+    Known, accepted simplification (not fixed tonight): this cannot tell
+    whether a given CLOSE_WAIT belongs to a worker-pool connection or the
+    shared client -- /proc/net/tcp shows the socket but not its owning
+    process without a separate inode-to-pid mapping. So this may
+    occasionally recycle the whole worker pool when only the shared
+    client actually needed refreshing. Safe, just sometimes more than
+    strictly necessary -- a precise ownership check is a reasonable
+    future refinement, not attempted here given the scope already
+    involved in tonight's fix.
+
+    Known, accepted detection scope (same as the on-demand broker-
+    connections route): port hardcoded to 9091 (verified directly against
+    every enabled cluster's bootstrap_servers, 2026-09-24), only
+    bootstrap-listed brokers are checked, only one resolved IP per
+    hostname is kept."""
+    import struct
+    from collections import defaultdict
+    from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+    from storage import get_backend as _cwgb
+    from config import settings as _cwsettings
+    global _cw_recycle_in_progress, _cw_last_detection
+
+    if _cw_recycle_in_progress:
+        return {"action": "skipped_recycle_already_in_progress"}
+
+    all_clusters = await _cwgb().get_clusters(_cwsettings.agent_slug)
+    enabled = [c for c in all_clusters if c.get("enabled") and c.get("bootstrap_servers")]
+
+    host_list: list[tuple[str, str]] = []
+    for c in enabled:
+        for hostport in c["bootstrap_servers"].split(","):
+            hostport = hostport.strip()
+            if hostport:
+                host_list.append((hostport.rsplit(":", 1)[0], c.get("name", str(c.get("id")))))
+
+    loop = asyncio.get_event_loop()
+    ip_to_cluster: dict[str, str] = {}
+    dns_executor = ThreadPoolExecutor(max_workers=max(1, len(host_list)), thread_name_prefix="cw-check-dns")
+
+    def _resolve_sync(host: str) -> str | None:
+        import socket
+        try:
+            return socket.gethostbyname(host)
+        except Exception:
+            return None
+
+    async def _resolve(host: str, cluster_name: str) -> None:
+        try:
+            ip = await asyncio.wait_for(loop.run_in_executor(dns_executor, _resolve_sync, host), timeout=3)
+            if ip:
+                ip_to_cluster[ip] = cluster_name
+        except Exception:
+            pass
+
+    try:
+        await asyncio.gather(*[_resolve(h, n) for h, n in host_list])
+    finally:
+        dns_executor.shutdown(wait=False)
+
+    def _check_close_wait() -> dict:
+        import socket
+        counts: dict = defaultdict(int)
+        try:
+            with open("/proc/net/tcp") as f:
+                lines = f.readlines()[1:]
+        except Exception:
+            return {}
+        for line in lines:
+            parts = line.split()
+            ip_hex, port_hex = parts[2].split(":")
+            rem_ip = socket.inet_ntoa(struct.pack("<I", int(ip_hex, 16)))
+            rem_port = int(port_hex, 16)
+            state = parts[3]
+            if rem_port == 9091 and state == "08" and rem_ip in ip_to_cluster:
+                counts[ip_to_cluster[rem_ip]] += 1
+        return dict(counts)
+
+    close_wait_by_cluster = await loop.run_in_executor(None, _check_close_wait)
+
+    if not close_wait_by_cluster:
+        _cw_last_detection = None
+        return {"action": "none", "close_wait_found": {}}
+
+    if _cw_last_detection is None:
+        _cw_last_detection = close_wait_by_cluster
+        logger.info(
+            "check_and_recycle_close_wait: CLOSE_WAIT detected -> %s -- awaiting confirmation next cycle",
+            close_wait_by_cluster,
+        )
+        return {"action": "detected_awaiting_confirmation", "close_wait_found": close_wait_by_cluster}
+
+    logger.warning(
+        "check_and_recycle_close_wait: CLOSE_WAIT seen on two consecutive checks -> %s -- recycling worker pool",
+        close_wait_by_cluster,
+    )
+    _cw_last_detection = None
+    _cw_recycle_in_progress = True
+
+    import kafka_process_pool as _cwkpp
+    old_pool = _cwkpp._process_pool
+    _cwkpp._process_pool = ProcessPoolExecutor(max_workers=6)
+
+    async def _drain_old_pool_task(pool):
+        global _cw_recycle_in_progress
+        _drain_start = loop.time()
+        try:
+            await asyncio.wait_for(loop.run_in_executor(None, pool.shutdown, True), timeout=120)
+            logger.info(
+                "check_and_recycle_close_wait: old worker pool fully drained and shut down in %.1fs",
+                loop.time() - _drain_start,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "check_and_recycle_close_wait: old worker pool still draining after 120s -- "
+                "recycling stays paused until it finishes (shutdown(wait=True) cannot be "
+                "forcibly abandoned without risking an orphaned process)"
+            )
+            try:
+                await loop.run_in_executor(None, pool.shutdown, True)
+                logger.info("check_and_recycle_close_wait: old worker pool fully drained (after the 120s warning)")
+            except Exception as _drain_exc2:
+                logger.warning("check_and_recycle_close_wait: draining old pool failed: %s", _drain_exc2)
+        except Exception as _drain_exc:
+            logger.warning("check_and_recycle_close_wait: draining old pool failed: %s", _drain_exc)
+        finally:
+            _cw_recycle_in_progress = False
+
+    _cw_drain_task = asyncio.create_task(_drain_old_pool_task(old_pool))
+    _cw_background_tasks.add(_cw_drain_task)
+    _cw_drain_task.add_done_callback(_cw_background_tasks.discard)
+
+    try:
+        import shared_kafka_clients as _cwskc
+        shared_result = await loop.run_in_executor(None, _cwskc.refresh_all_shared_clients)
+    except Exception as _cwe:
+        logger.warning("check_and_recycle_close_wait: shared refresh failed: %s", _cwe)
+        shared_result = None
+
+    return {"action": "recycled", "close_wait_found": close_wait_by_cluster, "shared_refresh": shared_result}
+
+
 # ── Maintenance: Scheduled VACUUM FULL ────────────────────────────────────────
 _VACUUM_FULL_TABLES = [
     "kafka_topic_metrics",

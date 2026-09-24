@@ -794,6 +794,120 @@
       renderBreakerStatus(d);
     };
 
+    // Shared by both the standalone "Clear Stale Connections (All
+    // Clusters)" button and the in-popup "Clear Stale Connections" button.
+    // Parses the JSON body, not just HTTP status -- the trigger endpoint
+    // can return 200 with {"ok": false, "error": "..."} when a job is
+    // already running (plausible here: DNS resolution alone can take up
+    // to 3s per host). Retries for a few seconds specifically on an
+    // "already running" collision, rather than giving up on one attempt.
+    // Triggers TWICE (a few seconds apart), satisfying the underlying
+    // job's own "two consecutive detections" requirement in one call, so
+    // neither caller needs to know that mechanism.
+    window._runCloseWaitCheckTwice = async function(onStatus) {
+      const triggerWithRetry = async (maxWaitMs) => {
+        const deadline = Date.now() + maxWaitMs;
+        while (true) {
+          const res = await fetch(`${PROXY}/jobs/kafka-close-wait-check/trigger`, { method: 'POST', headers: _authHeaders() });
+          let data;
+          try { data = await res.json(); } catch { data = {}; }
+          if (res.ok && data.ok) return data;
+          const isAlreadyRunning = (data.error || '').toLowerCase().includes('already running');
+          if (isAlreadyRunning && Date.now() < deadline) {
+            await new Promise(r => setTimeout(r, 1500));
+            continue;
+          }
+          throw new Error(data.error || `HTTP ${res.status}`);
+        }
+      };
+      if (onStatus) onStatus('Checking (1/2)…');
+      await triggerWithRetry(8000);
+      await new Promise(r => setTimeout(r, 4000));
+      if (onStatus) onStatus('Checking (2/2)…');
+      await triggerWithRetry(8000);
+    };
+
+    window._checkClustersCloseWait = async function(clusterList) {
+      // Returns a map: cluster_id -> 'clean' | 'has_close_wait' | 'unverified'.
+      // Unverified is its own category, never silently folded into
+      // 'clean' -- a route error, every broker failing to resolve, or a
+      // failed fetch means we genuinely don't know, not that it's fine.
+      const out = {};
+      for (const c of clusterList) {
+        try {
+          const res = await fetch(`${PROXY}/dashboard/broker-connections?cluster_id=${c.cluster_id}`, { headers: _authHeaders(), cache: 'no-store' });
+          const d = await res.json();
+          if (d.error) { out[c.cluster_id] = 'unverified'; continue; }
+          const resolvedBrokers = (d.brokers || []).filter(b => !b.resolve_failed);
+          if (resolvedBrokers.length === 0) { out[c.cluster_id] = 'unverified'; continue; }
+          out[c.cluster_id] = resolvedBrokers.some(b => b.close_wait > 0) ? 'has_close_wait' : 'clean';
+        } catch (e) {
+          out[c.cluster_id] = 'unverified';
+        }
+      }
+      return out;
+    };
+
+    window._clearStaleConnections = async function() {
+      const btn = document.getElementById('clear-stale-conn-btn');
+      if (!btn) return;
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      try {
+        const clusterList = window._bsLastClusters || [];
+
+        // Baseline BEFORE triggering -- needed to tell "found and cleared"
+        // apart from "was already clean the whole time", since checking
+        // only after triggering can't distinguish those (a recycle that
+        // finished fast enough would look identical to nothing having
+        // been wrong in the first place).
+        btn.textContent = 'Checking current state…';
+        const before = await window._checkClustersCloseWait(clusterList);
+
+        await window._runCloseWaitCheckTwice(text => { btn.textContent = text; });
+
+        btn.textContent = 'Verifying…';
+        const after = await window._checkClustersCloseWait(clusterList);
+
+        const cleared = [], currentlyAffected = [], unverified = [];
+        for (const c of clusterList) {
+          const b = before[c.cluster_id], a = after[c.cluster_id];
+          if (b === 'unverified' || a === 'unverified') { unverified.push(c.name); continue; }
+          // AFTER is what's true right now -- prioritize it. This also
+          // correctly catches a cluster that was clean at the start but
+          // developed CLOSE_WAIT during the check window (before='clean',
+          // after='has_close_wait'), which the previous version silently
+          // missed entirely (found during review, 2026-09-24).
+          if (a === 'has_close_wait') {
+            currentlyAffected.push(c.name);
+          } else if (b === 'has_close_wait') {
+            cleared.push(c.name);
+          }
+        }
+
+        // Wording deliberately does not claim a recycle definitely
+        // happened -- we can only observe connection state before/after,
+        // not the job's own internal result. A recycle always restarts
+        // the WHOLE worker pool (never scoped to one cluster), so naming
+        // clusters here describes where CLOSE_WAIT was seen, not what was
+        // acted on.
+        const parts = [];
+        if (cleared.length === 0 && currentlyAffected.length === 0 && unverified.length === 0) {
+          parts.push('✅ No CLOSE_WAIT found anywhere — nothing needed clearing.');
+        } else {
+          if (cleared.length) parts.push(`🧹 Cleared on: ${cleared.join(', ')}.`);
+          if (currentlyAffected.length) parts.push(`⚠️ Currently showing CLOSE_WAIT on: ${currentlyAffected.join(', ')} — may take longer to fully drain; check again shortly.`);
+        }
+        if (unverified.length) parts.push(`❓ Could not verify: ${unverified.join(', ')}.`);
+        showToast(parts.join(' ') || 'Check complete.', currentlyAffected.length || unverified.length ? 'error' : 'success');
+      } catch (e) {
+        showToast(`Failed to trigger check: ${e.message}`, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    };
+
     window._showBrokerConnectionsPopup = async function() {
       const sel = document.getElementById('broker-check-cluster-select');
       const clusterId = sel ? sel.value : '';
@@ -828,18 +942,22 @@
 
         const brokers = d.brokers || [];
         const anyCloseWait = brokers.some(b => b.close_wait > 0);
+        const totalOtherStates = b => Object.values(b.other_states || {}).reduce((s, v) => s + v, 0);
         const rows = brokers.map(b => {
           if (b.resolve_failed) {
-            return `<tr><td style="font-size:.82rem">${b.host}</td><td colspan="3" style="color:#F44336;font-size:.8rem">Could not resolve hostname</td></tr>`;
+            return `<tr><td style="font-size:.82rem">${b.host}</td><td colspan="4" style="color:#F44336;font-size:.8rem">Could not resolve hostname</td></tr>`;
           }
           const rowStyle = b.close_wait > 0 ? 'background:#F4433611' : '';
+          const total = b.established + b.close_wait + totalOtherStates(b);
           return `<tr style="${rowStyle}">
             <td style="font-size:.82rem">${b.host}<br><span style="color:var(--text-muted);font-size:.72rem">${b.ip || ''}</span></td>
             <td style="text-align:right;color:#4CAF50;font-weight:600">${b.established}</td>
             <td style="text-align:right;color:${b.close_wait>0?'#F44336':'inherit'};font-weight:600">${b.close_wait}${b.close_wait>0?' ⚠️':''}</td>
             <td style="text-align:right;font-size:.78rem;color:var(--text-muted)">${Object.entries(b.other_states||{}).map(([k,v])=>`${k}:${v}`).join(', ') || '—'}</td>
+            <td style="text-align:right;font-weight:700">${total}</td>
           </tr>`;
-        }).join('') || '<tr><td colspan="4" class="data-table__empty">No brokers found</td></tr>';
+        }).join('') || '<tr><td colspan="5" class="data-table__empty">No brokers found</td></tr>';
+        const grandTotal = brokers.filter(b => !b.resolve_failed).reduce((s, b) => s + b.established + b.close_wait + totalOtherStates(b), 0);
 
         const summaryLine = anyCloseWait
           ? '<div style="background:#F4433622;color:#F44336;padding:8px 12px;border-radius:6px;font-size:.82rem;font-weight:600;margin-bottom:12px">⚠️ CLOSE_WAIT connections found — a small, non-growing number can be transient. Re-check in a few minutes; if it is climbing, investigate.</div>'
@@ -856,13 +974,82 @@
           ${summaryLine}
           <div class="data-table-wrap">
             <table class="data-table">
-              <thead><tr><th>Broker</th><th style="text-align:right">Established</th><th style="text-align:right">Close_Wait</th><th style="text-align:right">Other States</th></tr></thead>
+              <thead><tr><th>Broker</th><th style="text-align:right">Established</th><th style="text-align:right">Close_Wait</th><th style="text-align:right">Other States</th><th style="text-align:right">Total</th></tr></thead>
               <tbody>${rows}</tbody>
             </table>
           </div>
-          <button onclick="window._showBrokerConnectionsPopup()" class="btn btn--secondary btn--sm" style="margin-top:12px">🔄 Re-check now</button>`;
+          <div style="color:var(--text-muted);font-size:.78rem;margin-top:8px">
+            Total across all brokers: <b style="color:var(--text)">${grandTotal}</b>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <button onclick="window._showBrokerConnectionsPopup()" class="btn btn--secondary btn--sm">🔄 Re-check now</button>
+            ${anyCloseWait ? `<button id="popup-clear-stale-btn" onclick="window._clearStaleFromPopup()" class="btn btn--secondary btn--sm">🧹 Clear Stale Connections</button>` : ''}
+          </div>`;
       } catch (e) {
         popup.innerHTML = `<div style="color:#F44336">Failed to check connections: ${e.message}</div>`;
+      }
+    };
+
+    window._clearStaleFromPopup = async function() {
+      const btn = document.getElementById('popup-clear-stale-btn');
+      if (!btn) return;
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      try {
+        await window._runCloseWaitCheckTwice(text => { btn.textContent = text; });
+
+        // The recycle has only just started here -- the actual pool drain
+        // (old worker processes finishing their in-flight work, then
+        // exiting and releasing their sockets) can take anywhere from
+        // seconds to as long as the slowest in-flight task. Refreshing the
+        // popup immediately would very likely still show CLOSE_WAIT,
+        // making a working fix look like it did nothing. Poll instead.
+        const clusterId = document.getElementById('broker-check-cluster-select')?.value;
+        btn.textContent = 'Draining old connections…';
+        const pollDeadline = Date.now() + 60000;
+        let outcome = 'unverified'; // 'clean' | 'still_close_wait' | 'unverified'
+        if (!clusterId) {
+          outcome = 'unverified';
+        } else {
+          while (Date.now() < pollDeadline) {
+            await new Promise(r => setTimeout(r, 5000));
+            try {
+              const res = await fetch(`${PROXY}/dashboard/broker-connections?cluster_id=${clusterId}`, { headers: _authHeaders(), cache: 'no-store' });
+              const d = await res.json();
+              // A genuine "clean" result requires: no route-level error, at
+              // least one broker actually resolved (not all resolve_failed),
+              // and none of the resolved brokers show close_wait > 0. A
+              // resolve_failed broker reports close_wait: 0 by construction,
+              // which would otherwise look identical to "genuinely clean".
+              if (d.error) continue;
+              const resolvedBrokers = (d.brokers || []).filter(b => !b.resolve_failed);
+              if (resolvedBrokers.length === 0) continue;
+              const anyLeft = resolvedBrokers.some(b => b.close_wait > 0);
+              if (!anyLeft) { outcome = 'clean'; break; }
+              outcome = 'still_close_wait';
+              const secsLeft = Math.max(0, Math.round((pollDeadline - Date.now()) / 1000));
+              btn.textContent = `Draining… (up to ${secsLeft}s left)`;
+            } catch (e) {
+              // Transient poll failure -- retry within the same deadline
+              // rather than concluding "still present" from a check that
+              // never actually succeeded.
+              continue;
+            }
+          }
+        }
+
+        const toastMap = {
+          clean: ['Cleared — this cluster shows no CLOSE_WAIT now.', 'success'],
+          still_close_wait: ['Recycle triggered, but CLOSE_WAIT is still present after 60s — the old pool may still be finishing a slow job. Try "Re-check now" again shortly.', 'error'],
+          unverified: ['Recycle triggered, but the result could not be verified — check manually with "Re-check now".', 'error'],
+        };
+        const [toastMsg, toastKind] = toastMap[outcome];
+        showToast(toastMsg, toastKind);
+        await window._showBrokerConnectionsPopup();
+      } catch (e) {
+        showToast(`Failed to clear: ${e.message}`, 'error');
+        btn.disabled = false;
+        btn.textContent = originalText;
       }
     };
 
@@ -882,6 +1069,7 @@
       // and stays visible.
       const SHOW_CONNECTION_AUDIT_LOG = false;
       const clusters = data.clusters || [];
+      window._bsLastClusters = clusters;
       const events = data.recent_events || [];
       const failures = data.recent_failures || [];
       const windowHours = data.window_hours || window._bsFilter.hours || 24;
@@ -1052,7 +1240,8 @@
             ${clusters.map(c => `<option value="${c.cluster_id}">${c.name}</option>`).join('')}
           </select>
           <button onclick="window._showBrokerConnectionsPopup()" class="btn btn--secondary btn--sm">Check Live Broker Connections</button>
-          <span style="color:var(--text-muted);font-size:.76rem">Real-time, not cached — safe to run anytime, including during an incident.</span>
+          <button id="clear-stale-conn-btn" onclick="window._clearStaleConnections()" class="btn btn--secondary btn--sm">🔄 Clear Stale Connections (All Clusters)</button>
+          <span style="color:var(--text-muted);font-size:.76rem">Real-time, not cached — safe to run anytime, including during an incident. Clear does a graceful worker-pool recycle only if CLOSE_WAIT is confirmed — no risk to in-flight jobs.</span>
         </div>
 
         ${SHOW_CONNECTION_AUDIT_LOG ? `

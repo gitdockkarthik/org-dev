@@ -706,6 +706,46 @@ async def lifespan(app: FastAPI):
             )
             logger.info("Created schedule for %s: every 5 minutes", _breaker_job_id)
 
+    # Register the CLOSE_WAIT ground-truth check + worker-pool recycle job --
+    # a single job, cluster-agnostic (checks every enabled cluster's brokers
+    # in one pass), not one job per cluster. Every 2 minutes: the detection
+    # itself is cheap (a local file read + fresh DNS resolution each run --
+    # not cached -- both off the event loop), so frequent checking costs
+    # little; the (rare, two-consecutive-checks-required) pool recycle is
+    # the more involved path, and runs as an independent background task
+    # not awaited by this job. Timeout set to 60s, not 30s: the job itself
+    # does wait for refresh_all_shared_clients to finish (unlike the pool
+    # drain), which processes clusters one at a time and can genuinely take
+    # 10s+ with several clusters and a slow database -- 60s gives
+    # comfortable margin above that realistic worst case. Built following
+    # extensive same-session investigation (2026-09-24) into a real
+    # incident -- see the function's own docstring for the full history of
+    # prior approaches tried and superseded.
+    from collectors import check_and_recycle_close_wait
+    _closewait_job_id = "kafka-close-wait-check"
+    _jobs_module.register_job(
+        _closewait_job_id,
+        "CLOSE_WAIT Ground-Truth Check",
+        "Checks real CLOSE_WAIT connection state (all enabled clusters, one pass) via /proc/net/tcp; gracefully recycles the worker pool if confirmed on two consecutive checks",
+        check_and_recycle_close_wait,
+        default_timeout_secs=60,
+    )
+    async with SessionLocal() as _sess:
+        existing = await _sess.execute(
+            _sel(KafkaJobSchedule).where(KafkaJobSchedule.job_id == _closewait_job_id)
+        )
+        if not existing.scalar_one_or_none():
+            # Created DISABLED, not enabled=True -- per explicit instruction:
+            # the Kafka team asked for no new automatically-running jobs.
+            # Registered and fully available to trigger on-demand (same
+            # /jobs/{job_id}/trigger endpoint used throughout this session,
+            # and exposed as a button on the Breaker Status tab), just not
+            # running on its own schedule unless explicitly enabled later.
+            await _jobs_module.create_schedule(
+                _closewait_job_id, "*/2 * * * *", enabled=False, timeout_secs=60
+            )
+            logger.info("Created schedule for %s (disabled by default -- trigger on demand): every 2 minutes", _closewait_job_id)
+
     # Register the VACUUM FULL maintenance job -- standalone, cluster-agnostic
     # (processes all known bloat-prone tables in one pass). Weekly, Sunday 03:00 UTC
     # -- a low-traffic window, since VACUUM FULL takes a brief exclusive lock per table.
