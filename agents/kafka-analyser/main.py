@@ -614,7 +614,7 @@ async def lifespan(app: FastAPI):
         collect_broker_health, collect_consumer_lag_active, collect_topic_sizes,
         collect_topic_structure, collect_msg_rate, collect_topic_message_inflow,
         collect_connector_snapshots, collect_sr_subjects, compute_slo_compliance,
-        run_snapshot_rollups, vacuum_kafka_tables,
+        run_snapshot_rollups, vacuum_kafka_tables, check_breaker_recovery,
     )
     from storage import get_backend as _gb
     _clusters = await _gb().get_clusters(settings.agent_slug)
@@ -684,6 +684,27 @@ async def lifespan(app: FastAPI):
                 _rollup_job_id, "0 * * * *", enabled=True, timeout_secs=300
             )
             logger.info("Created schedule for %s: hourly", _rollup_job_id)
+
+    # Register the circuit-breaker recovery-check job -- standalone,
+    # cluster-agnostic (checks every currently-paused cluster in one pass).
+    # Every 5 minutes, matching the agreed recovery-check interval.
+    _breaker_job_id = "kafka-breaker-recovery-check"
+    _jobs_module.register_job(
+        _breaker_job_id,
+        "Circuit Breaker Recovery Check",
+        "Lightweight TCP-only connectivity check for circuit-breaker-paused clusters; auto-resumes a cluster after 5 consecutive successful checks",
+        check_breaker_recovery,
+        default_timeout_secs=60,
+    )
+    async with SessionLocal() as _sess:
+        existing = await _sess.execute(
+            _sel(KafkaJobSchedule).where(KafkaJobSchedule.job_id == _breaker_job_id)
+        )
+        if not existing.scalar_one_or_none():
+            await _jobs_module.create_schedule(
+                _breaker_job_id, "*/5 * * * *", enabled=True, timeout_secs=60
+            )
+            logger.info("Created schedule for %s: every 5 minutes", _breaker_job_id)
 
     # Register the VACUUM FULL maintenance job -- standalone, cluster-agnostic
     # (processes all known bloat-prone tables in one pass). Weekly, Sunday 03:00 UTC

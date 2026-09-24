@@ -24,6 +24,14 @@ logger = logging.getLogger(__name__)
 # multiple jobs ran concurrently.
 _kafka_io_executor = ThreadPoolExecutor(max_workers=12, thread_name_prefix="kafka-io")
 
+# Small, DEDICATED pool for the circuit-breaker recovery check only -- kept
+# fully separate from _kafka_io_executor so a paused cluster's recovery
+# checks can never contend with (or be starved by) active clusters' real
+# collection work.
+_breaker_recovery_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="breaker-recovery")
+
+_BREAKER_RECOVERY_THRESHOLD = 5
+
 
 async def _get_enabled_clusters() -> list[dict]:
     """Get enabled clusters from storage."""
@@ -1584,6 +1592,106 @@ async def run_snapshot_rollups() -> dict:
     results["topic_message_rates"] = await rollup_topic_message_rates(retention_hours=2)
     results["hourly_to_daily"] = await rollup_hourly_to_daily(retention_days=7)
     run_snapshot_rollups._last_result = f"Rollup pass: {results}"
+    return results
+
+
+def _breaker_tcp_check_sync(host: str, port: int, timeout: float = 5.0) -> bool:
+    """Raw TCP connect + immediate close -- no Kafka protocol handshake at
+    all, so this can never itself leak a connection or add meaningful load.
+    Used only to test whether a circuit-breaker-paused cluster's brokers are
+    reachable again."""
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+
+async def check_breaker_recovery() -> dict:
+    """Cluster-agnostic maintenance job (every 5 min). For each cluster
+    currently paused by the circuit breaker (kafka_cluster_breaker_state),
+    attempts a lightweight, protocol-free TCP connect+close to every broker
+    in that cluster's bootstrap_servers. ALL brokers must succeed for that
+    check to count as a success. After _BREAKER_RECOVERY_THRESHOLD (5)
+    CONSECUTIVE successful checks, clears the pause -- the cluster's regular
+    jobs then resume automatically on their own next normal cron tick, no
+    restart involved. Any single failed check resets the consecutive-success
+    counter to 0, so recovery requires sustained reachability, not a single
+    lucky ping."""
+    from database import SessionLocal
+    from sqlalchemy import select as _bsel
+    from models import KafkaClusterBreakerState
+    from storage import get_backend as _bgb
+    from config import settings as _bsettings
+    from datetime import datetime as _bdt, timezone as _btz
+    results: dict = {}
+    if SessionLocal is None:
+        return results
+    async with SessionLocal() as session:
+        paused_rows = (await session.execute(
+            _bsel(KafkaClusterBreakerState).where(KafkaClusterBreakerState.paused == True)
+        )).scalars().all()
+    if not paused_rows:
+        return results
+    all_clusters = await _bgb().get_clusters(_bsettings.agent_slug)
+    cluster_by_id = {int(c["id"]): c for c in all_clusters if c.get("id") is not None}
+    loop = asyncio.get_event_loop()
+    now = _bdt.now(_btz.utc)
+    for state in paused_rows:
+        cid = state.cluster_id
+        c = cluster_by_id.get(cid)
+        if not c or not c.get("bootstrap_servers"):
+            results[cid] = "cluster not found or no bootstrap_servers"
+            continue
+        brokers = [b.strip() for b in c["bootstrap_servers"].split(",") if b.strip()]
+        all_ok = bool(brokers)
+        for b in brokers:
+            try:
+                host, port_str = b.rsplit(":", 1)
+                port = int(port_str)
+            except Exception:
+                all_ok = False
+                continue
+            ok = await loop.run_in_executor(_breaker_recovery_executor, _breaker_tcp_check_sync, host, port)
+            if not ok:
+                all_ok = False
+        async with SessionLocal() as session:
+            row = (await session.execute(
+                _bsel(KafkaClusterBreakerState).where(KafkaClusterBreakerState.cluster_id == cid)
+            )).scalar_one_or_none()
+            if row is None or not row.paused:
+                continue
+            row.last_recovery_check_at = now
+            if all_ok:
+                row.recovery_successes += 1
+                logger.info(
+                    "Recovery check for cluster %s: all brokers reachable (%d/%d consecutive)",
+                    cid, row.recovery_successes, _BREAKER_RECOVERY_THRESHOLD,
+                )
+                if row.recovery_successes >= _BREAKER_RECOVERY_THRESHOLD:
+                    row.paused = False
+                    row.paused_at = None
+                    row.paused_reason = None
+                    row.consecutive_failures = 0
+                    row.recovery_successes = 0
+                    logger.warning(
+                        "Circuit breaker RESET for cluster %s — %d consecutive successful "
+                        "connectivity checks, resuming normal job scheduling",
+                        cid, _BREAKER_RECOVERY_THRESHOLD,
+                    )
+                    results[cid] = "resumed"
+                else:
+                    results[cid] = f"recovering ({row.recovery_successes}/{_BREAKER_RECOVERY_THRESHOLD})"
+            else:
+                if row.recovery_successes != 0:
+                    row.recovery_successes = 0
+                logger.info(
+                    "Recovery check for cluster %s: not all brokers reachable, "
+                    "resetting recovery counter", cid,
+                )
+                results[cid] = "still unreachable"
+            await session.commit()
     return results
 
 

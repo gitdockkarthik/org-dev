@@ -189,3 +189,28 @@ class KafkaJobRun(Base):
     logs: Mapped[str] = mapped_column(Text, nullable=False, default="")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class KafkaClusterBreakerState(Base):
+    """Per-cluster circuit-breaker state. Tracks consecutive broker-connection
+    job failures (broker-health, consumer-lag, topic-structure, msg-rate,
+    topic-inflow -- the job types that make raw Kafka-protocol connections via
+    the worker-process pool, as opposed to REST-based or DB-only job types).
+    After enough consecutive failures, the cluster's job dispatch is paused
+    (kafka_job_schedules stays untouched -- pausing happens at dispatch time,
+    not by disabling schedules) to stop contributing further connections while
+    the broker is struggling. A separate, lightweight TCP-only recovery check
+    (no Kafka protocol handshake, cannot itself leak or add load) resumes
+    dispatch automatically after enough consecutive successful checks.
+    Persisted (not in-memory) so a container restart cannot silently
+    un-pause a cluster that is still genuinely unreachable."""
+    __tablename__ = "kafka_cluster_breaker_state"
+
+    cluster_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    consecutive_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    paused_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recovery_successes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_recovery_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
