@@ -828,6 +828,7 @@ async def get_breaker_status(cluster_id: str | None = None, hours: int = 24) -> 
     try:
         all_clusters = await get_backend().get_clusters(settings.agent_slug)
         cluster_meta = {int(c["id"]): c.get("name", f"Cluster {c['id']}") for c in all_clusters if c.get("id") is not None}
+        cluster_bootstrap = {int(c["id"]): c.get("bootstrap_servers", "") for c in all_clusters if c.get("id") is not None}
 
         async with SessionLocal() as sess:
             # Current state per cluster
@@ -889,6 +890,39 @@ async def get_breaker_status(cluster_id: str | None = None, hours: int = 24) -> 
                 "ORDER BY cluster_id, broker_id"
             ))).fetchall()
 
+            # Recent connection create/close audit events -- respects the
+            # same hours and cluster_id filters as the failures table.
+            # Capped at 50 -- this is now only used for the individual-event
+            # drill-down list; the summary totals come from a separate,
+            # uncapped GROUP BY query below, so a busy window can't silently
+            # undercount.
+            _conn_sql = (
+                "SELECT id, bootstrap_servers, event_type, client_type, source, context, created_at "
+                "FROM kafka_connection_events "
+                "WHERE created_at > now() - (interval '1 hour' * :hours) "
+            )
+            _conn_params: dict = {"hours": hours}
+            if _cid_filter is not None:
+                _conn_sql += "AND bootstrap_servers = :bs "
+                _conn_params["bs"] = cluster_bootstrap.get(_cid_filter, "")
+            _conn_sql += "ORDER BY created_at DESC LIMIT 50"
+            conn_event_rows = (await sess.execute(_bst(_conn_sql), _conn_params)).fetchall()
+
+            # Accurate, uncapped per-cluster Created/Closed totals for the
+            # summary table -- a GROUP BY over the full matching set, not
+            # subject to the drill-down list's row limit.
+            _conn_agg_sql = (
+                "SELECT bootstrap_servers, event_type, count(*) as cnt "
+                "FROM kafka_connection_events "
+                "WHERE created_at > now() - (interval '1 hour' * :hours) "
+            )
+            _conn_agg_params: dict = {"hours": hours}
+            if _cid_filter is not None:
+                _conn_agg_sql += "AND bootstrap_servers = :bs "
+                _conn_agg_params["bs"] = cluster_bootstrap.get(_cid_filter, "")
+            _conn_agg_sql += "GROUP BY bootstrap_servers, event_type"
+            conn_agg_rows = (await sess.execute(_bst(_conn_agg_sql), _conn_agg_params)).fetchall()
+
         # Build per-cluster failure-rate summary by parsing job_id suffixes.
         # Only matches the 9 known per-cluster job-type prefixes, so a
         # cluster-agnostic job (kafka-snapshot-rollup, kafka-vacuum-full,
@@ -918,6 +952,7 @@ async def get_breaker_status(cluster_id: str | None = None, hours: int = 24) -> 
             clusters_out.append({
                 "cluster_id": cid,
                 "name": name,
+                "bootstrap_servers": cluster_bootstrap.get(cid, ""),
                 "paused": bool(st.paused) if st else False,
                 "consecutive_failures": st.consecutive_failures if st else 0,
                 "paused_at": st.paused_at.isoformat() if st and st.paused_at else None,
@@ -972,10 +1007,26 @@ async def get_breaker_status(cluster_id: str | None = None, hours: int = 24) -> 
                 "last_seen": r.time.isoformat() if r.time else None,
             })
 
-        return {"clusters": clusters_out, "brokers": brokers_out, "recent_events": events_out, "recent_failures": failures_out, "window_hours": hours}
+        connection_events_out = [{
+            "id": r.id,
+            "bootstrap_servers": r.bootstrap_servers,
+            "event_type": r.event_type,
+            "client_type": r.client_type,
+            "source": r.source,
+            "context": r.context,
+            "created_at": r.created_at.isoformat(),
+        } for r in conn_event_rows]
+
+        connection_summary_out: dict = {}
+        for r in conn_agg_rows:
+            bucket = connection_summary_out.setdefault(r.bootstrap_servers, {"created": 0, "closed": 0})
+            if r.event_type in bucket:
+                bucket[r.event_type] = r.cnt
+
+        return {"clusters": clusters_out, "brokers": brokers_out, "recent_events": events_out, "recent_failures": failures_out, "window_hours": hours, "connection_events": connection_events_out, "connection_summary": connection_summary_out}
     except Exception as exc:
         logger.warning("get_breaker_status failed: %s", exc)
-        return {"clusters": [], "brokers": [], "recent_events": [], "recent_failures": [], "error": str(exc)}
+        return {"clusters": [], "brokers": [], "recent_events": [], "recent_failures": [], "connection_events": [], "connection_summary": {}, "error": str(exc)}
 
 
 @router.get("/dashboard/zookeeper")

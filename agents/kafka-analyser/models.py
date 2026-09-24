@@ -229,3 +229,24 @@ class KafkaClusterBreakerEvent(Base):
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     consecutive_failures: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class KafkaConnectionEvent(Base):
+    """Audit log of persistent Kafka client lifecycle events (create/close),
+    across both the main-process shared client cache (shared_kafka_clients.py)
+    and the worker-process pool cache (kafka_process_pool.py). Built in
+    response to a real connection-leak incident (2026-09-24) to give
+    provable, queryable evidence that connections are being closed
+    correctly going forward -- not just point-in-time spot checks.
+    context='startup' marks events from the first few minutes after a
+    process/worker started (likely warm-up activity); 'normal' marks
+    everything after."""
+    __tablename__ = "kafka_connection_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    bootstrap_servers: Mapped[str] = mapped_column(Text, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(16), nullable=False)  # "created" | "closed"
+    client_type: Mapped[str] = mapped_column(String(16), nullable=False)  # "admin" | "consumer"
+    source: Mapped[str] = mapped_column(String(16), nullable=False)  # "shared" (main process) | "worker" (process pool)
+    context: Mapped[str] = mapped_column(String(16), nullable=False, default="normal")  # "startup" | "normal"
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

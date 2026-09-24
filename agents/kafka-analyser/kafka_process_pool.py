@@ -8,9 +8,19 @@ small, dedicated pool for specific CRITICAL operations only -- NOT a wholesale
 replacement of the main thread pool used by everything else, to protect the
 memory headroom gained from the recent infrastructure upgrade."""
 import logging
+import time
 from concurrent.futures import ProcessPoolExecutor, TimeoutError as FutureTimeoutError
 
 logger = logging.getLogger(__name__)
+
+# Set once, at module import time, in the PARENT process (before
+# ProcessPoolExecutor forks its workers). Since the default multiprocessing
+# start method on Linux is 'fork', each worker process inherits this exact
+# value via copy-on-write -- giving every worker a shared, accurate
+# reference for "when did this process/pool start" without any explicit
+# coordination. Used to tag early connection events as context='startup'.
+_MODULE_LOAD_TIME = time.time()
+_STARTUP_WINDOW_SECS = 300  # first 5 minutes after load = "startup" context
 
 # Sized to the KPI box's current 8 vCPU capacity (m5.2xlarge, upgraded
 # 2026-08-04 from the original 4-core t3.xlarge this pool was last sized
@@ -46,6 +56,46 @@ _process_pool = ProcessPoolExecutor(max_workers=6)
 _worker_clients: dict[str, "KafkaAdminClient"] = {}
 
 
+def _log_connection_event(bootstrap_servers: str, event_type: str, client_type: str) -> None:
+    """Best-effort audit log write for a connection create/close event.
+    Runs inside a worker PROCESS (not the main asyncio event loop), so this
+    uses a one-off asyncio.run() + a raw asyncpg connection rather than the
+    app's normal SQLAlchemy async session. NEVER allowed to affect the
+    calling job: any failure here (DB unreachable, slow, whatever) is
+    caught and silently ignored, and the entire operation (connect + insert
+    + close) is hard-capped at 3 seconds via asyncio.wait_for -- this is
+    instrumentation, not connection-management logic, and must not become
+    a new failure mode or a new source of delay in the exact code path
+    that caused a real incident (2026-09-24)."""
+    try:
+        import asyncio
+        import asyncpg
+        from config import settings
+        if not settings.database_url:
+            return
+        # asyncpg needs a plain postgresql:// DSN, not the SQLAlchemy
+        # postgresql+asyncpg:// form used elsewhere in this app -- same
+        # conversion main.py already does before its own raw asyncpg calls.
+        dsn = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
+        context = "startup" if (time.time() - _MODULE_LOAD_TIME) < _STARTUP_WINDOW_SECS else "normal"
+
+        async def _write():
+            conn = await asyncpg.connect(dsn, timeout=2)
+            try:
+                await conn.execute(
+                    "INSERT INTO kafka_connection_events "
+                    "(bootstrap_servers, event_type, client_type, source, context, created_at) "
+                    "VALUES ($1, $2, $3, 'worker', $4, now())",
+                    bootstrap_servers, event_type, client_type, context,
+                )
+            finally:
+                conn.terminate()
+
+        asyncio.run(asyncio.wait_for(_write(), timeout=3))
+    except Exception:
+        pass
+
+
 def _discard_worker_client(key: str) -> None:
     """Remove a worker-process client from the cache AND close it, so its
     underlying socket(s) are cleanly shut down instead of abandoned. A bare
@@ -59,6 +109,9 @@ def _discard_worker_client(key: str) -> None:
             client.close()
         except Exception:
             pass
+        bootstrap_servers = key[len("consumer:"):] if key.startswith("consumer:") else key
+        client_type = "consumer" if key.startswith("consumer:") else "admin"
+        _log_connection_event(bootstrap_servers, "closed", client_type)
 
 
 def _build_security_kwargs(cluster_config: dict) -> dict:
@@ -97,6 +150,7 @@ def _get_worker_client(bootstrap_servers: str, cluster_config: dict):
             request_timeout_ms=15000,
             **security,
         )
+        _log_connection_event(bootstrap_servers, "created", "admin")
     return _worker_clients[bootstrap_servers]
 
 
@@ -175,6 +229,7 @@ def _get_worker_consumer_client(bootstrap_servers: str, cluster_config: dict):
             request_timeout_ms=10000,
             **security,
         )
+        _log_connection_event(bootstrap_servers, "created", "consumer")
     return _worker_clients[key]
 
 

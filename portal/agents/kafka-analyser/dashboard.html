@@ -885,6 +885,51 @@
         </tr>`;
       }).join('') || `<tr><td colspan="4" class="data-table__empty">No failures or skips in the last ${windowLabel}</td></tr>`;
 
+      const connectionEvents = data.connection_events || [];
+      const connectionSummary = data.connection_summary || {};
+      const bsToClusterName = {};
+      clusters.forEach(c => { if (c.bootstrap_servers) bsToClusterName[c.bootstrap_servers] = c.name; });
+      const clusterNameFor = bs => bsToClusterName[bs] || bs;
+
+      // Accurate, uncapped totals from the backend's GROUP BY -- NOT counted
+      // from connectionEvents, which is now capped at 50 rows for the
+      // drill-down list only and would silently undercount on a busy window.
+      const connSummaryByName = {};
+      Object.keys(connectionSummary).forEach(bs => {
+        const name = clusterNameFor(bs);
+        const existing = connSummaryByName[name] || { created: 0, closed: 0 };
+        connSummaryByName[name] = {
+          created: existing.created + (connectionSummary[bs].created || 0),
+          closed: existing.closed + (connectionSummary[bs].closed || 0),
+        };
+      });
+      const connSummaryRows = Object.keys(connSummaryByName).sort().map(name => {
+        const s = connSummaryByName[name];
+        const net = s.created - s.closed;
+        return `<tr>
+          <td style="font-weight:600">${name}</td>
+          <td style="text-align:right;color:#4CAF50">${s.created}</td>
+          <td style="text-align:right;color:${s.closed>0?'#FF9800':'inherit'}">${s.closed}</td>
+          <td style="text-align:right;font-weight:600">${net >= 0 ? '+' : ''}${net}</td>
+        </tr>`;
+      }).join('') || `<tr><td colspan="4" class="data-table__empty">No connection events in the last ${windowLabel}</td></tr>`;
+
+      const connEventRows = connectionEvents.slice(0, 15).map(e => {
+        const isCreate = e.event_type === 'created';
+        const icon = isCreate ? '🔌' : '🔒';
+        const label = isCreate ? 'Created' : 'Closed';
+        const color = isCreate ? '#4CAF50' : '#666';
+        const startupBadge = e.context === 'startup'
+          ? `<span style="background:#2196F322;color:#2196F3;padding:1px 6px;border-radius:4px;font-size:.7rem;font-weight:700;margin-left:6px">STARTUP</span>`
+          : '';
+        return `<tr>
+          <td style="white-space:nowrap">${fmtTime(e.created_at)}</td>
+          <td style="font-weight:600">${clusterNameFor(e.bootstrap_servers)}</td>
+          <td style="color:${color};font-weight:600">${icon} ${label}${startupBadge}</td>
+          <td style="font-size:.8rem;color:var(--text-muted)">${e.client_type} / ${e.source}</td>
+        </tr>`;
+      }).join('') || `<tr><td colspan="4" class="data-table__empty">No connection events in the last ${windowLabel}</td></tr>`;
+
       el.innerHTML = `
         <div class="chart-card__title" style="margin-bottom:8px">Cluster Health &amp; Circuit Breaker Status</div>
         <div style="color:var(--text-muted);font-size:.82rem;margin-bottom:16px">
@@ -910,12 +955,32 @@
         </div>
 
         <div class="chart-card__title" style="margin-bottom:8px">Recent Failures &amp; Skips (last ${windowLabel}${window._bsFilter.clusterId ? ', selected cluster' : ', all clusters'})</div>
-        <div class="data-table-wrap">
+        <div class="data-table-wrap" style="margin-bottom:24px">
           <table class="data-table">
             <thead><tr><th>Time</th><th>Job</th><th>Outcome</th><th>Reason</th></tr></thead>
             <tbody>${failureRows}</tbody>
           </table>
-        </div>`;
+        </div>
+
+        <div class="chart-card__title" style="margin-bottom:8px">Connection Audit Log</div>
+        <div style="color:var(--text-muted);font-size:.82rem;margin-bottom:14px;max-width:760px;line-height:1.5">
+          Our agent keeps one persistent connection per cluster per worker, reused across many collection cycles — it does not open and close a fresh connection for every job run. <b>Created</b> means a brand-new connection was opened (expected mainly right after a restart, or occasionally later). <b>Closed</b> means a connection was deliberately discarded — this normally only happens after a real, rare communication blip, so this number should stay small and should not climb steadily over time. <b>Net</b> (Created minus Closed) is the running balance for this window; a healthy cluster settles to a small, stable number after its startup burst rather than continuing to grow.
+        </div>
+        <div class="data-table-wrap" style="margin-bottom:20px;max-width:560px">
+          <table class="data-table">
+            <thead><tr><th>Cluster</th><th style="text-align:right">Created</th><th style="text-align:right">Closed</th><th style="text-align:right">Net</th></tr></thead>
+            <tbody>${connSummaryRows}</tbody>
+          </table>
+        </div>
+        <details>
+          <summary style="cursor:pointer;color:var(--text-muted);font-size:.8rem;margin-bottom:8px">Show individual events (last 15, this window)</summary>
+          <div class="data-table-wrap">
+            <table class="data-table">
+              <thead><tr><th>Time</th><th>Cluster</th><th>Event</th><th>Detail</th></tr></thead>
+              <tbody>${connEventRows}</tbody>
+            </table>
+          </div>
+        </details>`;
     }
 
     // ── Generate & reload ────────────────────────────────────────────────────
