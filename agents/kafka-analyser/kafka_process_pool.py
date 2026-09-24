@@ -12,16 +12,33 @@ from concurrent.futures import ProcessPoolExecutor, TimeoutError as FutureTimeou
 
 logger = logging.getLogger(__name__)
 
-# Small, dedicated pool for CRITICAL, lock-blocking-prone operations only.
-# Reverted to 4 (2026-08-08): initially increased to 6 based on apparent pool
-# contention, but further investigation found the real root cause of the same
-# symptom (consumer-lag-8 intermittent timeouts) was host-wide CPU starvation
-# from an unrelated ClickHouse internal-log accumulation issue (see
-# SESSION_RECONCILIATION.md, 2026-08-08), not this pool's size. Reverted per the
-# principle of minimal, evidence-justified changes -- job-schedule staggering
-# (kafka_job_schedules) plus the ClickHouse fix fully resolved the observed
-# failures; this pool size increase was not actually needed.
-_process_pool = ProcessPoolExecutor(max_workers=4)
+# Sized to the KPI box's current 8 vCPU capacity (m5.2xlarge, upgraded
+# 2026-08-04 from the original 4-core t3.xlarge this pool was last sized
+# for). Raised from 4 to 6 (2026-09-24), leaving 2 cores of headroom for
+# the main process (uvicorn event loop + the 12-thread _kafka_io_executor).
+#
+# Evidence: with 4 active clusters (kafka_clusters.enabled=true -- cluster
+# 3 remains disabled), schedule analysis shows up to 10 of the 20
+# tracked-job-type instances (5 job types x 4 clusters) can land in the
+# same minute, all competing for this pool. consumer-lag job runs showed
+# a bimodal duration pattern (avg 2-10s, max 80-150+s) consistent with
+# queueing contention, and a chronic ~40-50% consumer-lag failure rate
+# platform-wide over 24+ hours -- uniform across every cluster, including
+# plaintext-internal ones with no connectivity issues, ruling out a
+# per-cluster network cause.
+#
+# This pool was previously raised 4->6 on 2026-08-08, then reverted back
+# to 4 the same day: that incident's real root cause turned out to be
+# host-wide CPU starvation from an unrelated ClickHouse internal-log
+# accumulation issue (see SESSION_RECONCILIATION.md, 2026-08-08), not this
+# pool's size -- at the time, staggering job schedules plus the ClickHouse
+# fix fully resolved it with only 3-4 clusters onboarded, so the size
+# increase wasn't needed and was reverted per the principle of minimal,
+# evidence-justified changes. This is not a blind repeat of that reverted
+# attempt: it's a fresh, independently-evidenced sizing change, backed by
+# real, current contention data with the box confirmed (via nproc and
+# os.cpu_count(), not assumed) to have 8 real cores today.
+_process_pool = ProcessPoolExecutor(max_workers=6)
 
 # Per-worker-process persistent connections. Each worker process has its own
 # separate memory space, so this dict is naturally process-local -- no locking
