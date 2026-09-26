@@ -102,8 +102,10 @@ def _refresh_if_stale(key: str) -> None:
 def _log_connection_event(bootstrap_servers: str, event_type: str, client_type: str) -> None:
     """Best-effort audit log write for a connection create/close event.
     Runs inside a worker PROCESS (not the main asyncio event loop), so this
-    uses a one-off asyncio.run() + a raw asyncpg connection rather than the
-    app's normal SQLAlchemy async session. NEVER allowed to affect the
+    uses a one-off manually-managed event loop + a raw asyncpg connection
+    rather than the app's normal SQLAlchemy async session (NOT
+    asyncio.run() -- see the loop.close() comment below for why). NEVER
+    allowed to affect the
     calling job: any failure here (DB unreachable, slow, whatever) is
     caught and silently ignored, and the entire operation (connect + insert
     + close) is hard-capped at 3 seconds via asyncio.wait_for -- this is
@@ -134,7 +136,17 @@ def _log_connection_event(bootstrap_servers: str, event_type: str, client_type: 
             finally:
                 conn.terminate()
 
-        asyncio.run(asyncio.wait_for(_write(), timeout=3))
+        # NOT asyncio.run() -- confirmed via live py-spy stack traces
+        # (2026-09-26) that asyncio.run()'s own cleanup (Runner.close(),
+        # specifically its shutdown_default_executor() wait) can hang
+        # indefinitely in this exact pattern, permanently freezing the
+        # entire worker process on what should be a bounded, best-effort
+        # logging call. A bare loop.close() does not include that wait.
+        _log_loop = asyncio.new_event_loop()
+        try:
+            _log_loop.run_until_complete(asyncio.wait_for(_write(), timeout=3))
+        finally:
+            _log_loop.close()
     except Exception:
         pass
 
