@@ -960,7 +960,7 @@
         const grandTotal = brokers.filter(b => !b.resolve_failed).reduce((s, b) => s + b.established + b.close_wait + totalOtherStates(b), 0);
 
         const summaryLine = anyCloseWait
-          ? '<div style="background:#F4433622;color:#F44336;padding:8px 12px;border-radius:6px;font-size:.82rem;font-weight:600;margin-bottom:12px">⚠️ CLOSE_WAIT connections found — a small, non-growing number can be transient. Re-check in a few minutes; if it is climbing, investigate.</div>'
+          ? '<div style="background:#F4433622;color:#F44336;padding:8px 12px;border-radius:6px;font-size:.82rem;font-weight:600;margin-bottom:12px">⚠️ CLOSE_WAIT connections found. This should clear on its own within about 5 minutes — the agent checks every 2 minutes and confirms before acting. Use "Clear Stale Connections" below if you want it resolved right now, or re-check in a bit to see it clear automatically. If it keeps climbing rather than clearing, investigate.</div>'
           : '<div style="background:#4CAF5022;color:#4CAF50;padding:8px 12px;border-radius:6px;font-size:.82rem;font-weight:600;margin-bottom:12px">✅ Clean — no CLOSE_WAIT connections to any broker in this cluster right now.</div>';
 
         popup.innerHTML = `
@@ -1203,6 +1203,16 @@
       }).join('') || `<tr><td colspan="4" class="data-table__empty">No connection events in the last ${windowLabel}</td></tr>`;
 
       el.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:20px;padding:12px;background:var(--navy-1);border-radius:8px">
+          <span style="font-size:.82rem;font-weight:600">🔌 On-demand check:</span>
+          <select id="broker-check-cluster-select" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--navy-2);color:var(--text);font-size:.82rem">
+            ${clusters.map(c => `<option value="${c.cluster_id}">${c.name}</option>`).join('')}
+          </select>
+          <button onclick="window._showBrokerConnectionsPopup()" class="btn btn--secondary btn--sm">Check Live Broker Connections</button>
+          <button id="clear-stale-conn-btn" onclick="window._clearStaleConnections()" class="btn btn--secondary btn--sm">🔄 Clear Stale Connections (All Clusters)</button>
+          <span style="color:var(--text-muted);font-size:.76rem">Real-time, not cached — safe to run anytime, including during an incident. Clear does a graceful worker-pool recycle only if CLOSE_WAIT is confirmed — no risk to in-flight jobs.</span>
+        </div>
+
         <div class="chart-card__title" style="margin-bottom:8px">Cluster Health &amp; Circuit Breaker Status</div>
         <div style="color:var(--text-muted);font-size:.82rem;margin-bottom:16px">
           The status table and broker health below always show every cluster's current state, regardless of the filters below. Auto-pauses a cluster after 5 consecutive broker-connection failures; auto-resumes after 5 consecutive successful connectivity checks (checked every 5 min).
@@ -1232,16 +1242,6 @@
             <thead><tr><th>Time</th><th>Job</th><th>Outcome</th><th>Reason</th></tr></thead>
             <tbody>${failureRows}</tbody>
           </table>
-        </div>
-
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;padding:12px;background:var(--navy-1);border-radius:8px">
-          <span style="font-size:.82rem;font-weight:600">🔌 On-demand check:</span>
-          <select id="broker-check-cluster-select" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--navy-2);color:var(--text);font-size:.82rem">
-            ${clusters.map(c => `<option value="${c.cluster_id}">${c.name}</option>`).join('')}
-          </select>
-          <button onclick="window._showBrokerConnectionsPopup()" class="btn btn--secondary btn--sm">Check Live Broker Connections</button>
-          <button id="clear-stale-conn-btn" onclick="window._clearStaleConnections()" class="btn btn--secondary btn--sm">🔄 Clear Stale Connections (All Clusters)</button>
-          <span style="color:var(--text-muted);font-size:.76rem">Real-time, not cached — safe to run anytime, including during an incident. Clear does a graceful worker-pool recycle only if CLOSE_WAIT is confirmed — no risk to in-flight jobs.</span>
         </div>
 
         ${SHOW_CONNECTION_AUDIT_LOG ? `

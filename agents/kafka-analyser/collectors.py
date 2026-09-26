@@ -1938,23 +1938,37 @@ async def check_and_recycle_close_wait() -> dict:
     async def _drain_old_pool_task(pool):
         global _cw_recycle_in_progress
         _drain_start = loop.time()
+        # Single bounded wait, not the previous timeout-then-unbounded-retry
+        # structure -- that retry had no timeout of its own, so a genuine
+        # hang there left this coroutine permanently stuck mid-await,
+        # meaning finally below could never run and the guard could never
+        # reset. Confirmed live (2026-09-26): this silently disabled the
+        # entire mechanism for an extended period while real, growing
+        # CLOSE_WAIT sat unaddressed on a live cluster -- every subsequent
+        # job run short-circuited via the guard in ~0.001-0.1s, doing no
+        # real checking at all, with no error logged anywhere.
+        #
+        # If this timeout fires, we give up waiting and release the guard
+        # anyway -- accepting that the old pool's underlying OS processes
+        # might still genuinely be alive in the background (a known,
+        # already-accepted limitation elsewhere in this codebase: a
+        # ProcessPoolExecutor's shutdown(wait=True) cannot be forcibly
+        # abandoned without risking an orphaned process). That's a far
+        # better outcome than this mechanism becoming permanently,
+        # silently non-functional.
         try:
-            await asyncio.wait_for(loop.run_in_executor(None, pool.shutdown, True), timeout=120)
+            await asyncio.wait_for(loop.run_in_executor(None, pool.shutdown, True), timeout=180)
             logger.info(
                 "check_and_recycle_close_wait: old worker pool fully drained and shut down in %.1fs",
                 loop.time() - _drain_start,
             )
         except asyncio.TimeoutError:
             logger.warning(
-                "check_and_recycle_close_wait: old worker pool still draining after 120s -- "
-                "recycling stays paused until it finishes (shutdown(wait=True) cannot be "
-                "forcibly abandoned without risking an orphaned process)"
+                "check_and_recycle_close_wait: old worker pool did not finish draining within "
+                "180s -- giving up waiting and releasing the recycle guard anyway, so future "
+                "checks are never blocked by this. Its processes may still be running in the "
+                "background if genuinely stuck; this does not retry or escalate further."
             )
-            try:
-                await loop.run_in_executor(None, pool.shutdown, True)
-                logger.info("check_and_recycle_close_wait: old worker pool fully drained (after the 120s warning)")
-            except Exception as _drain_exc2:
-                logger.warning("check_and_recycle_close_wait: draining old pool failed: %s", _drain_exc2)
         except Exception as _drain_exc:
             logger.warning("check_and_recycle_close_wait: draining old pool failed: %s", _drain_exc)
         finally:
