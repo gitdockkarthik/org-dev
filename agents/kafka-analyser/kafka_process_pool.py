@@ -293,6 +293,21 @@ def _get_worker_client(bootstrap_servers: str, cluster_config: dict):
         _worker_clients[bootstrap_servers] = KafkaAdminClient(
             bootstrap_servers=bootstrap_servers,
             request_timeout_ms=15000,
+            # api_version alone does NOT skip KafkaAdminClient's own
+            # version-probe (confirmed against kafka-python-ng 2.2.3
+            # source, 2026-09-28) -- it always calls check_version() in
+            # __init__ regardless, since describe_log_dirs needs the full
+            # supported-versions map this probe fills in. Setting
+            # api_version here only pins the recorded version string, not
+            # which request versions get used. The actual bound on the
+            # probe itself is api_version_auto_timeout_ms below, set
+            # explicitly to the library's own current default (2000ms) --
+            # documenting intent and guarding against a future default
+            # change, not a behavior change. Every broker across all 4
+            # clusters has consistently identified as 2.3.0 in this
+            # session's own logs.
+            api_version=(2, 3, 0),
+            api_version_auto_timeout_ms=2000,
             **security,
         )
         _worker_client_created_at[bootstrap_servers] = time.time()
@@ -374,6 +389,12 @@ def _get_worker_consumer_client(bootstrap_servers: str, cluster_config: dict):
         _worker_clients[key] = KafkaConsumer(
             bootstrap_servers=bootstrap_servers,
             request_timeout_ms=10000,
+            # Unlike KafkaAdminClient, setting api_version here genuinely
+            # skips KafkaConsumer's version-probe entirely (confirmed
+            # against kafka-python-ng 2.2.3 source, 2026-09-28) -- the
+            # underlying client only probes when api_version is None, and
+            # this consumer never uses the discovered-versions map anyway.
+            api_version=(2, 3, 0),
             **security,
         )
         _worker_client_created_at[key] = time.time()

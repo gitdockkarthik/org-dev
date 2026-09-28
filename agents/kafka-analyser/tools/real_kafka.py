@@ -887,6 +887,10 @@ class RealKafkaCollector(KafkaCollector):
                         bootstrap_servers=self._bootstrap_list,
                         enable_auto_commit=False,
                         group_id=None,
+                        # Genuinely skips this client's version-probe --
+                        # see kafka_process_pool.py's Consumer
+                        # construction for the full reasoning.
+                        api_version=(2, 3, 0),
                         **security,
                     )
 

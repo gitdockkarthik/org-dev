@@ -808,7 +808,15 @@ async def lifespan(app: FastAPI):
                     loop = asyncio.get_event_loop()
                     def _connect(bs):
                         from kafka import KafkaAdminClient
-                        a = KafkaAdminClient(bootstrap_servers=bs, request_timeout_ms=10000)
+                        # api_version_auto_timeout_ms bounds this client's
+                        # own version-probe, set explicitly to the library's
+                        # current default (2000ms) -- not a behavior change.
+                        # See kafka_process_pool.py's AdminClient
+                        # construction for the full reasoning.
+                        a = KafkaAdminClient(
+                            bootstrap_servers=bs, request_timeout_ms=10000,
+                            api_version=(2, 3, 0), api_version_auto_timeout_ms=2000,
+                        )
                         a.close()
                     await loop.run_in_executor(None, functools.partial(_connect, _wc["bootstrap_servers"]))
                     logger.info("Warm-up connection OK for cluster %s", _wc["name"])

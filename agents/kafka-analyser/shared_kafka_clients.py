@@ -101,6 +101,14 @@ def get_shared_admin_client(cluster_id: str, cluster_config: dict) -> tuple[Kafk
             _clients[cluster_id] = KafkaAdminClient(
                 bootstrap_servers=cluster_config["bootstrap_servers"],
                 request_timeout_ms=15000,
+                # See kafka_process_pool.py's matching AdminClient
+                # construction for the full reasoning -- api_version
+                # alone does not skip this client's own probe;
+                # api_version_auto_timeout_ms is the actual bound on it,
+                # set explicitly to the library's current default (2000ms)
+                # -- not a behavior change.
+                api_version=(2, 3, 0),
+                api_version_auto_timeout_ms=2000,
                 **security,
             )
             _locks[cluster_id] = threading.Lock()
