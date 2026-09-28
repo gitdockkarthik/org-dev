@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, Integer, String, Text, UniqueConstraint, ForeignKey
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -250,3 +251,69 @@ class KafkaConnectionEvent(Base):
     source: Mapped[str] = mapped_column(String(16), nullable=False)  # "shared" (main process) | "worker" (process pool)
     context: Mapped[str] = mapped_column(String(16), nullable=False, default="normal")  # "startup" | "normal"
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class KafkaAlertConfig(Base):
+    """Condition-based alert rule backing the "Alert Configuration and
+    Reporting" Teams tab. Each rule is evaluated periodically and notifies
+    only when its condition is true -- not a fixed-schedule message (see
+    kafka_teams_reminders for those). cluster_id NULL means the rule applies
+    to all clusters. webhook_url NULL falls back to the agent-level default
+    Teams webhook. Replaces the old global Teams severity filter/cooldown
+    settings, which are now per-rule (severity, cooldown_minutes)."""
+    __tablename__ = "kafka_alert_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    alert_type: Mapped[str] = mapped_column(Text, nullable=False)  # rule kind; values not yet defined in code
+    cluster_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    severity: Mapped[str] = mapped_column(Text, nullable=False, default="warning")  # "critical" | "warning" | "info"
+    config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    webhook_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cooldown_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class KafkaAlertTrigger(Base):
+    """Firing/resolution history for kafka_alert_configs, one row per firing
+    -- backs the tab's "last 10 + show more" view. Also drives the
+    notification model agreed 2026-09-28: an immediate Teams card on firing,
+    only if no other trigger for the same alert_config_id + cluster_id is
+    already open (resolved_at NULL); no immediate card on resolution --
+    instead a separate periodic digest covers Resolved/Pending/Recurrence.
+    is_recurrence=True marks a trigger that fired again shortly after the
+    same alert+cluster's previous trigger had resolved (flapping signal)."""
+    __tablename__ = "kafka_alert_triggers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    alert_config_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("kafka_alert_configs.id", ondelete="CASCADE"), nullable=False
+    )
+    cluster_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    triggered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    metric_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    message_sent: Mapped[str | None] = mapped_column(Text, nullable=True)
+    teams_post_success: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)  # NULL = still open/firing
+    is_recurrence: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class KafkaTeamsReminder(Base):
+    """Message content for the "Schedules and Reminders" Teams tab. Deliberately
+    reuses kafka_job_schedules/kafka_job_runs (linked via job_id) for the actual
+    cron expression, enable/disable and run history rather than duplicating
+    that scheduling logic -- this table only holds what to send (message
+    template and optional webhook override; webhook_url NULL falls back to the
+    agent-level default)."""
+    __tablename__ = "kafka_teams_reminders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True)  # kafka_job_schedules.job_id
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    message_template: Mapped[str] = mapped_column(Text, nullable=False)
+    webhook_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
