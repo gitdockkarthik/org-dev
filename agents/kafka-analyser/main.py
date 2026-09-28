@@ -695,7 +695,7 @@ async def lifespan(app: FastAPI):
         "Circuit Breaker Recovery Check",
         "Runs breaker-resume checks for paused clusters first, then proactively refreshes every cached Kafka connection (prevents broker-side idle-timeout CLOSE_WAIT accumulation)",
         check_breaker_recovery,
-        default_timeout_secs=90,
+        default_timeout_secs=150,
     )
     async with SessionLocal() as _sess:
         existing = await _sess.execute(

@@ -1680,12 +1680,26 @@ async def check_breaker_recovery() -> dict:
     cluster_by_id = {int(c["id"]): c for c in all_clusters if c.get("id") is not None}
     loop = asyncio.get_event_loop()
     now = _bdt.now(_btz.utc)
+    from jobs import _BREAKER_TRIP_THRESHOLD
+    _CONSUMER_LAG_CHECK_TIMEOUT = 60.0  # 2x the highest observed p95
+    # (~30s across all 4 real clusters, confirmed via kafka_job_runs,
+    # 2026-09-28) -- generous enough that a genuinely healthy cluster's
+    # own consumer-lag workflow, which can legitimately take this long,
+    # is never mistaken for still-broken.
+
+    # Phase 1: sequential TCP checks (ms-level when reachable), collecting
+    # which clusters also need a real consumer-lag validation check.
+    _tcp_results: dict[int, bool] = {}
+    _needs_consumer_check: dict[int, dict] = {}  # cid -> cluster_config
+    _cluster_for_cid: dict[int, dict] = {}
+
     for state in paused_rows:
         cid = state.cluster_id
         c = cluster_by_id.get(cid)
         if not c or not c.get("bootstrap_servers"):
             results[cid] = "cluster not found or no bootstrap_servers"
             continue
+        _cluster_for_cid[cid] = c
         brokers = [b.strip() for b in c["bootstrap_servers"].split(",") if b.strip()]
         all_ok = bool(brokers)
         for b in brokers:
@@ -1698,6 +1712,78 @@ async def check_breaker_recovery() -> dict:
             ok = await loop.run_in_executor(_breaker_recovery_executor, _breaker_tcp_check_sync, host, port)
             if not ok:
                 all_ok = False
+        _tcp_results[cid] = all_ok
+
+        # TCP reachability alone is not sufficient -- confirmed live
+        # tonight (2026-09-28): brokers were never actually unreachable,
+        # so this check alone kept passing quickly while the real,
+        # specific operation that tripped the breaker (a stale
+        # worker-pool client) was still genuinely broken, causing a
+        # premature resume that immediately re-failed on the very next
+        # real attempt. If consumer-lag specifically contributed to
+        # this cluster's trip, queue it for a real, concurrent
+        # validation check below -- this exercises the exact same
+        # worker-pool code path the real job uses, so it genuinely
+        # validates whether the underlying issue has resolved, not
+        # just whether the network path is open. per_job_failures is
+        # preserved while paused (only cleared on resume below), so it
+        # still reflects what caused the trip.
+        if all_ok and (state.per_job_failures or {}).get("consumer-lag", 0) >= _BREAKER_TRIP_THRESHOLD:
+            _needs_consumer_check[cid] = {
+                "bootstrap_servers": c["bootstrap_servers"],
+                "auth_type": c.get("auth_type"),
+                "sasl_username": c.get("sasl_username"),
+                "sasl_password": c.get("sasl_password"),
+                "sasl_mechanism": c.get("sasl_mechanism"),
+                "tls_enabled": c.get("tls_enabled"),
+            }
+
+    # Phase 2: every needed consumer-lag validation check runs
+    # concurrently, bounding total time to roughly
+    # _CONSUMER_LAG_CHECK_TIMEOUT regardless of how many clusters need it.
+    _consumer_check_results: dict[int, bool] = {}
+    if _needs_consumer_check:
+        from kafka_process_pool import fetch_consumer_lag_isolated
+
+        async def _validate_one(cid: int, cluster_config: dict) -> tuple[int, bool, str]:
+            try:
+                result = await fetch_consumer_lag_isolated(
+                    cluster_config["bootstrap_servers"], cluster_config,
+                    timeout=_CONSUMER_LAG_CHECK_TIMEOUT,
+                )
+                return (cid, bool(result.get("ok")), str(result.get("error") or ""))
+            except Exception as _cl_exc:
+                return (cid, False, str(_cl_exc))
+
+        _gather_results = await asyncio.gather(
+            *[_validate_one(cid, cfg) for cid, cfg in _needs_consumer_check.items()],
+            return_exceptions=True,
+        )
+        # Zipped with the input keys (gather preserves order) so a task
+        # that raised is still attributed to its cluster and recorded as
+        # a failure -- never silently left out and treated as passing.
+        for _v_cid, _gr in zip(_needs_consumer_check.keys(), _gather_results):
+            if isinstance(_gr, BaseException):
+                _consumer_check_results[_v_cid] = False
+                logger.warning(
+                    "Recovery check for cluster %s: consumer-lag validation task itself "
+                    "raised: %s -- not counting this cycle as recovered",
+                    _v_cid, _gr,
+                )
+                continue
+            _, _v_ok, _v_error = _gr
+            _consumer_check_results[_v_cid] = _v_ok
+            if not _v_ok:
+                logger.info(
+                    "Recovery check for cluster %s: TCP reachable but real consumer-lag "
+                    "check still failing (%s) -- not counting this cycle as recovered",
+                    _v_cid, _v_error,
+                )
+
+    # Phase 3: combine results and update each cluster's breaker row.
+    for cid, _tcp_ok in _tcp_results.items():
+        _consumer_ok = _consumer_check_results.get(cid, False) if cid in _needs_consumer_check else True
+        all_ok = _tcp_ok and _consumer_ok
         async with SessionLocal() as session:
             row = (await session.execute(
                 _bsel(KafkaClusterBreakerState).where(KafkaClusterBreakerState.cluster_id == cid)
@@ -1733,7 +1819,8 @@ async def check_breaker_recovery() -> dict:
                     results[cid] = "resumed"
                 else:
                     results[cid] = f"recovering ({row.recovery_successes}/{_BREAKER_RECOVERY_THRESHOLD})"
-            else:
+            elif not _tcp_ok:
+                # TCP-only failure path -- unchanged from before.
                 if row.recovery_successes != 0:
                     row.recovery_successes = 0
                 logger.info(
@@ -1741,6 +1828,12 @@ async def check_breaker_recovery() -> dict:
                     "resetting recovery counter", cid,
                 )
                 results[cid] = "still unreachable"
+            else:
+                # TCP passed but the consumer-lag validation failed (already
+                # logged in phase 2).
+                if row.recovery_successes != 0:
+                    row.recovery_successes = 0
+                results[cid] = "reachable, consumer-lag still failing"
             await session.commit()
 
     # Proactive connection refresh -- runs every cycle (5 min), AFTER the
@@ -2267,6 +2360,11 @@ async def check_process_count_watchdog() -> dict:
 
 
 _DATA_FRESHNESS_THRESHOLD_MINUTES = 5
+_STUCK_PAUSED_THRESHOLD_MINUTES = 45
+# A healthy recovery needs 5 consecutive successful checks at 5-minute
+# intervals -- at least 25 minutes even in the best case. 45 minutes
+# gives substantial margin above that before treating a paused cluster
+# as genuinely stuck rather than still legitimately recovering.
 # Set at import time; the watchdog stays hands-off until the container has
 # been up for a full threshold window. Without this, the restart this
 # watchdog itself forces would be followed by another one, since the
@@ -2327,7 +2425,8 @@ async def check_data_freshness_watchdog() -> dict:
                        (SELECT max(time) FROM kafka_broker_metrics WHERE cluster_id = c.id) as latest_data,
                        (SELECT max(created_at) FROM kafka_cluster_breaker_events
                          WHERE cluster_id = c.id AND event_type = 'resumed') as last_resumed_at,
-                       COALESCE(b.paused, false) as paused
+                       COALESCE(b.paused, false) as paused,
+                       b.paused_at
                 FROM kafka_clusters c
                 LEFT JOIN kafka_cluster_breaker_state b ON b.cluster_id = c.id
                 WHERE c.enabled = true
@@ -2338,9 +2437,38 @@ async def check_data_freshness_watchdog() -> dict:
         return {"action": "ok", "reason": f"query failed: {_query_exc}"}
 
     stale_clusters = []
+    stuck_paused_clusters = []
     now = datetime.now(timezone.utc)
+    _container_started_at = datetime.fromtimestamp(_DATA_FRESHNESS_MODULE_LOAD_TIME, timezone.utc)
     for row in rows:
         if row.paused:
+            # Not skipped outright -- a paused cluster's data IS expected
+            # to be stale (that part is fine), but if it has been paused
+            # for far longer than a healthy recovery could ever take,
+            # something is genuinely stuck (e.g. its consumer-lag
+            # validation check keeps failing every 5-minute cycle) and
+            # this is the only mechanism that will ever notice, since
+            # this cluster is otherwise invisible to every other check.
+            if row.paused_at is not None:
+                paused_minutes = (now - row.paused_at).total_seconds() / 60
+                if paused_minutes > _STUCK_PAUSED_THRESHOLD_MINUTES:
+                    # At most one restart per pause episode: the pause is
+                    # persisted, so a restart does not clear paused_at. If
+                    # this container started after the pause began, a
+                    # restart has already been tried during this episode
+                    # and did not help -- restarting again would just loop
+                    # (every ~threshold+grace minutes, forever, e.g. through
+                    # a genuine long network outage), disrupting every
+                    # healthy cluster for nothing.
+                    if row.paused_at >= _container_started_at:
+                        stuck_paused_clusters.append((row.name, round(paused_minutes, 1)))
+                    else:
+                        logger.warning(
+                            "check_data_freshness_watchdog: cluster %s has been breaker-paused "
+                            "for %.1f min, but a restart already occurred during this pause "
+                            "episode -- not restarting again, needs investigation",
+                            row.name, paused_minutes,
+                        )
             continue
         if row.latest_data is None:
             continue
@@ -2353,13 +2481,14 @@ async def check_data_freshness_watchdog() -> dict:
         if age_minutes > _DATA_FRESHNESS_THRESHOLD_MINUTES:
             stale_clusters.append((row.name, round(age_minutes, 1)))
 
-    if stale_clusters:
+    if stale_clusters or stuck_paused_clusters:
         logger.critical(
-            "check_data_freshness_watchdog: %d active cluster(s) have not written fresh "
-            "broker metrics in over %d minutes despite not being breaker-paused -- %s -- "
-            "forcing immediate restart (Docker's restart policy will bring the container "
-            "back up automatically, clean and fresh)",
+            "check_data_freshness_watchdog: %d active cluster(s) stale beyond %d min (%s), "
+            "%d cluster(s) stuck breaker-paused beyond %d min (%s) -- forcing immediate "
+            "restart (Docker's restart policy will bring the container back up "
+            "automatically, clean and fresh)",
             len(stale_clusters), _DATA_FRESHNESS_THRESHOLD_MINUTES, stale_clusters,
+            len(stuck_paused_clusters), _STUCK_PAUSED_THRESHOLD_MINUTES, stuck_paused_clusters,
         )
         try:
             await asyncio.wait_for(
