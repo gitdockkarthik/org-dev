@@ -160,8 +160,41 @@ def invalidate_client(cluster_id: str) -> None:
         _locks.pop(cluster_id, None)
         bootstrap_servers = _bootstrap_by_cluster.pop(cluster_id, cluster_id)
         if old:
+            # Bounded, not old.close() directly -- a synchronous call
+            # with no way to interrupt it if it hangs (Python threads,
+            # unlike processes, cannot be forcibly killed). Run it in a
+            # single-use daemon thread with a bounded join: if it times
+            # out, we give up waiting rather than block whatever called
+            # invalidate_client (including acquire_admin_lock's own
+            # timeout-handling path, which exists specifically to
+            # prevent indefinite blocking -- an unbounded close() here
+            # would defeat that guarantee). The underlying thread may
+            # still linger in that case; accepted, matching the same
+            # trade-off already made for the worker-pool drain timeout
+            # elsewhere in this codebase. Deliberately a plain daemon
+            # thread, not a ThreadPoolExecutor: the executor's `with`
+            # exit calls shutdown(wait=True), which blocks on the hung
+            # close() anyway, and even shutdown(wait=False) leaves its
+            # worker thread joined at interpreter exit, so a hung close()
+            # would also block process shutdown.
+            def _close_old():
+                try:
+                    old.close()
+                except Exception:
+                    pass
             try:
-                old.close()
+                _close_thread = threading.Thread(
+                    target=_close_old, name=f"shared-admin-close-{cluster_id}", daemon=True,
+                )
+                _close_thread.start()
+                _close_thread.join(timeout=5)
+                if _close_thread.is_alive():
+                    logger.warning(
+                        "Invalidated shared AdminClient for cluster %s -- close() did not "
+                        "complete within 5s, giving up waiting rather than blocking "
+                        "indefinitely; underlying thread may still be running",
+                        cluster_id,
+                    )
             except Exception:
                 pass
             logger.warning("Invalidated shared AdminClient for cluster %s -- will recreate on next use", cluster_id)
