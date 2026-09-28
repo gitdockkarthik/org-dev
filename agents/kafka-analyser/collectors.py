@@ -1779,6 +1779,17 @@ async def check_breaker_recovery() -> dict:
 
 _cw_recycle_in_progress = False
 _cw_last_detection: dict | None = None
+# Temporary kill-switch (2026-09-28) -- disables the entire Teams alert
+# integration (resolve_cleared_close_wait_triggers, fire_close_wait_alerts,
+# maybe_send_digest) following a severe production incident where this
+# integration is suspected as a possible contributing factor (DB
+# connection pool pressure from many sessions per cycle -- since
+# addressed by consolidating to ~3 sessions, but not yet validated
+# reliable over time). The close-wait detection/recycle mechanism itself
+# is completely unaffected by this flag and continues running normally.
+# Flip to True only after a deliberate decision to re-enable, not as a
+# side effect of an unrelated change.
+_TEAMS_ALERTS_ENABLED = False
 # Holds a strong reference to the in-flight drain task -- asyncio's own
 # docs warn that a task created via asyncio.create_task() with no
 # reference kept anywhere can be garbage-collected before it completes.
@@ -1917,24 +1928,25 @@ async def check_and_recycle_close_wait() -> dict:
     # here, so neither a failure nor a slow Teams webhook post can affect
     # or delay this check/recycle.
     close_wait_by_cluster_id: dict[int, int] = {}
-    try:
-        import teams_alerts
-        _cw_name_to_id = {c.get("name", str(c.get("id"))): int(c["id"]) for c in enabled}
-        close_wait_by_cluster_id = {
-            _cw_name_to_id[name]: count
-            for name, count in close_wait_by_cluster.items()
-            if name in _cw_name_to_id
-        }
+    if _TEAMS_ALERTS_ENABLED:
+        try:
+            import teams_alerts
+            _cw_name_to_id = {c.get("name", str(c.get("id"))): int(c["id"]) for c in enabled}
+            close_wait_by_cluster_id = {
+                _cw_name_to_id[name]: count
+                for name, count in close_wait_by_cluster.items()
+                if name in _cw_name_to_id
+            }
 
-        async def _cw_resolve_and_digest(counts_by_id: dict[int, int]) -> None:
-            await teams_alerts.resolve_cleared_close_wait_triggers(counts_by_id)
-            await teams_alerts.maybe_send_digest()
+            async def _cw_resolve_and_digest(counts_by_id: dict[int, int]) -> None:
+                await teams_alerts.resolve_cleared_close_wait_triggers(counts_by_id)
+                await teams_alerts.maybe_send_digest()
 
-        _cw_alert_task = asyncio.create_task(_cw_resolve_and_digest(close_wait_by_cluster_id))
-        _cw_background_tasks.add(_cw_alert_task)
-        _cw_alert_task.add_done_callback(_cw_background_tasks.discard)
-    except Exception as _cwae:
-        logger.warning("check_and_recycle_close_wait: Teams resolve/digest scheduling failed: %s", _cwae)
+            _cw_alert_task = asyncio.create_task(_cw_resolve_and_digest(close_wait_by_cluster_id))
+            _cw_background_tasks.add(_cw_alert_task)
+            _cw_alert_task.add_done_callback(_cw_background_tasks.discard)
+        except Exception as _cwae:
+            logger.warning("check_and_recycle_close_wait: Teams resolve/digest scheduling failed: %s", _cwae)
 
     if not close_wait_by_cluster:
         _cw_last_detection = None
@@ -1952,13 +1964,14 @@ async def check_and_recycle_close_wait() -> dict:
         "check_and_recycle_close_wait: CLOSE_WAIT seen on two consecutive checks -> %s -- recycling worker pool",
         close_wait_by_cluster,
     )
-    try:
-        import teams_alerts
-        _cw_fire_task = asyncio.create_task(teams_alerts.fire_close_wait_alerts(close_wait_by_cluster_id))
-        _cw_background_tasks.add(_cw_fire_task)
-        _cw_fire_task.add_done_callback(_cw_background_tasks.discard)
-    except Exception as _cwfe:
-        logger.warning("check_and_recycle_close_wait: Teams alert firing scheduling failed: %s", _cwfe)
+    if _TEAMS_ALERTS_ENABLED:
+        try:
+            import teams_alerts
+            _cw_fire_task = asyncio.create_task(teams_alerts.fire_close_wait_alerts(close_wait_by_cluster_id))
+            _cw_background_tasks.add(_cw_fire_task)
+            _cw_fire_task.add_done_callback(_cw_background_tasks.discard)
+        except Exception as _cwfe:
+            logger.warning("check_and_recycle_close_wait: Teams alert firing scheduling failed: %s", _cwfe)
     _cw_last_detection = None
     _cw_recycle_in_progress = True
 
@@ -1979,13 +1992,14 @@ async def check_and_recycle_close_wait() -> dict:
         # job run short-circuited via the guard in ~0.001-0.1s, doing no
         # real checking at all, with no error logged anywhere.
         #
-        # If this timeout fires, we give up waiting and release the guard
-        # anyway -- accepting that the old pool's underlying OS processes
-        # might still genuinely be alive in the background (a known,
-        # already-accepted limitation elsewhere in this codebase: a
-        # ProcessPoolExecutor's shutdown(wait=True) cannot be forcibly
-        # abandoned without risking an orphaned process). That's a far
-        # better outcome than this mechanism becoming permanently,
+        # If this timeout fires, we stop waiting, force-kill (SIGKILL) any of
+        # the old pool's worker processes still alive, and release the guard
+        # -- rather than leaving them running unattended in the background,
+        # where a worker stuck mid-request could keep talking to a broker
+        # indefinitely (changed 2026-09-28; previously they were simply left
+        # alive, since a ProcessPoolExecutor's shutdown(wait=True) cannot
+        # itself be forcibly abandoned). Either way, releasing the guard is
+        # a far better outcome than this mechanism becoming permanently,
         # silently non-functional.
         try:
             await asyncio.wait_for(loop.run_in_executor(None, pool.shutdown, True), timeout=180)
@@ -1996,10 +2010,36 @@ async def check_and_recycle_close_wait() -> dict:
         except asyncio.TimeoutError:
             logger.warning(
                 "check_and_recycle_close_wait: old worker pool did not finish draining within "
-                "180s -- giving up waiting and releasing the recycle guard anyway, so future "
-                "checks are never blocked by this. Its processes may still be running in the "
-                "background if genuinely stuck; this does not retry or escalate further."
+                "180s -- forcibly terminating any worker processes still alive, rather than "
+                "leaving them running unattended in the background. A worker stuck mid-request "
+                "to a broker could otherwise keep communicating with it indefinitely, invisible "
+                "to this application -- direct action here is a real safety measure for the "
+                "broker, not just internal cleanup. SIGKILL cannot be caught, ignored, or "
+                "delayed by the process, and the OS closes all of its open sockets as part of "
+                "killing it, which properly terminates any connections it was still holding."
             )
+            try:
+                killed_count = 0
+                for pid, proc in list((pool._processes or {}).items()):
+                    try:
+                        if proc.is_alive():
+                            proc.kill()
+                            killed_count += 1
+                    except Exception as _kill_one_exc:
+                        logger.warning(
+                            "check_and_recycle_close_wait: failed to force-kill worker pid=%s: %s",
+                            pid, _kill_one_exc,
+                        )
+                logger.warning(
+                    "check_and_recycle_close_wait: force-killed %d worker process(es) still alive "
+                    "after the drain timeout",
+                    killed_count,
+                )
+            except Exception as _kill_all_exc:
+                logger.warning(
+                    "check_and_recycle_close_wait: force-kill sweep failed entirely: %s",
+                    _kill_all_exc,
+                )
         except Exception as _drain_exc:
             logger.warning("check_and_recycle_close_wait: draining old pool failed: %s", _drain_exc)
         finally:
@@ -2017,6 +2057,49 @@ async def check_and_recycle_close_wait() -> dict:
         shared_result = None
 
     return {"action": "recycled", "close_wait_found": close_wait_by_cluster, "shared_refresh": shared_result}
+
+
+async def check_process_count_watchdog() -> dict:
+    """Independent safety-net check, completely separate from
+    check_and_recycle_close_wait -- reads ONLY the OS process count via
+    /proc (no Kafka, no DB, no HTTP), so it can never itself hang or
+    time out, and keeps working even if check_and_recycle_close_wait is
+    stuck or failing. Built 2026-09-28 following a severe incident where
+    the close-wait-check job itself timed out repeatedly (and so did the
+    manual on-demand trigger for it, since it shares the same code path),
+    leaving accumulated orphaned worker processes (confirmed: 51 vs. the
+    normal healthy baseline of ~9) with no independent backstop.
+
+    Each failed pool-recycle generation adds exactly 6 more processes (one
+    worker pool's worth), so the sequence from baseline is
+    9 -> 15 -> 21 -> 27 and so on. A threshold of 20 catches this after
+    just 1-2 failed generations -- well above normal variance, but early
+    enough to never approach anything like the 51 seen in the incident.
+    Deliberately chosen to be safe for unattended weekends/holidays where
+    nobody is watching live.
+
+    If the threshold is exceeded, forces an immediate, hard process exit
+    (os._exit) rather than attempting a graceful shutdown -- deliberate,
+    since a graceful shutdown could itself hang for the same underlying
+    reason the process count is already elevated (this is exactly the
+    failure mode being guarded against). Docker's own
+    restart: unless-stopped policy (confirmed in docker-compose.yml)
+    brings the container back up cleanly and automatically -- this
+    mirrors the same safe restart mechanism already proven throughout
+    this session, just triggered by a real, independent condition
+    instead of a blind schedule."""
+    import os as _os
+    PROCESS_COUNT_THRESHOLD = 20
+    count = sum(1 for pid in _os.listdir("/proc") if pid.isdigit())
+    if count > PROCESS_COUNT_THRESHOLD:
+        logger.critical(
+            "check_process_count_watchdog: process count %d exceeds threshold %d -- "
+            "forcing immediate restart (Docker's restart policy will bring the "
+            "container back up automatically, clean and fresh)",
+            count, PROCESS_COUNT_THRESHOLD,
+        )
+        _os._exit(1)
+    return {"action": "ok", "process_count": count}
 
 
 # ── Maintenance: Scheduled VACUUM FULL ────────────────────────────────────────

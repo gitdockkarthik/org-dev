@@ -10,7 +10,7 @@ never raises, so it can never break the caller's own check/recycle logic.
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from database import SessionLocal
 from models import KafkaAlertConfig, KafkaAlertTrigger
@@ -76,13 +76,26 @@ async def resolve_cleared_close_wait_triggers(close_wait_by_cluster_id: dict[int
 async def fire_close_wait_alerts(close_wait_by_cluster_id: dict[int, int]) -> None:
     """Fire close_wait_spike alerts for confirmed CLOSE_WAIT clusters: one
     immediate Teams card per (alert config, cluster) only when no trigger
-    for that pair is already open and the pair is out of cooldown."""
+    for that pair is already open and the pair is out of cooldown.
+
+    Reworked 2026-09-28 to use three DB sessions total regardless of how
+    many clusters fire at once -- two SessionLocal sessions (one for all
+    reads, one for all writes) plus one opened internally by
+    _get_cluster_names() via the storage backend -- never more than one
+    open at a time. The previous per-cluster-session design could open ~11
+    sessions in a single call with all 4 clusters firing simultaneously,
+    identified as a likely contributor to a severe production incident
+    (DB connection pool pressure indirectly affecting the pool-recycle
+    drain task). No DB session is held open during the Teams HTTP calls,
+    which can take up to ~10s each."""
     if not close_wait_by_cluster_id or SessionLocal is None:
         return
     try:
         from routes_settings import _config
         if not _config.get("teams_enabled"):
             return
+
+        # ---- Single read session: configs + every relevant trigger ----
         async with SessionLocal() as session:
             configs = (await session.execute(
                 select(KafkaAlertConfig).where(
@@ -90,101 +103,127 @@ async def fire_close_wait_alerts(close_wait_by_cluster_id: dict[int, int]) -> No
                     KafkaAlertConfig.enabled == True,
                 )
             )).scalars().all()
-        if not configs:
-            return
+            if not configs:
+                return
+            config_ids = [c.id for c in configs]
+
+            open_rows = (await session.execute(
+                select(KafkaAlertTrigger.alert_config_id, KafkaAlertTrigger.cluster_id).where(
+                    KafkaAlertTrigger.alert_config_id.in_(config_ids),
+                    KafkaAlertTrigger.resolved_at.is_(None),
+                )
+            )).all()
+            open_pairs = {(r.alert_config_id, r.cluster_id) for r in open_rows}
+
+            # Most recent resolved_at per (config, cluster), computed by the DB.
+            resolved_rows = (await session.execute(
+                select(
+                    KafkaAlertTrigger.alert_config_id,
+                    KafkaAlertTrigger.cluster_id,
+                    func.max(KafkaAlertTrigger.resolved_at).label("last_resolved_at"),
+                ).where(
+                    KafkaAlertTrigger.alert_config_id.in_(config_ids),
+                    KafkaAlertTrigger.resolved_at.is_not(None),
+                ).group_by(KafkaAlertTrigger.alert_config_id, KafkaAlertTrigger.cluster_id)
+            )).all()
+        last_resolved: dict[tuple[int, int], datetime] = {
+            (r.alert_config_id, r.cluster_id): r.last_resolved_at for r in resolved_rows
+        }
+
         cluster_names = await _get_cluster_names()
     except Exception as exc:
         logger.warning("fire_close_wait_alerts: setup failed: %s", exc)
         return
 
+    # ---- Decide who fires, entirely in memory, no DB session open ----
+    now = datetime.now(timezone.utc)
+    to_insert: list[KafkaAlertTrigger] = []
+
     for config in configs:
         for cluster_id, count in close_wait_by_cluster_id.items():
             if config.cluster_id is not None and config.cluster_id != cluster_id:
                 continue
-            # Isolated per (config, cluster): one pair's failure never rolls
-            # back or blocks another's already-successful send+log.
             try:
-                await _fire_one(config, cluster_id, count, cluster_names, _config)
+                threshold = int((config.config or {}).get("threshold", 1))
+                if count < threshold:
+                    continue
+                if (config.id, cluster_id) in open_pairs:
+                    continue  # already firing, avoid duplicate spam
+
+                last_resolved_at = last_resolved.get((config.id, cluster_id))
+                since_resolved = (now - last_resolved_at) if last_resolved_at is not None else None
+                if since_resolved is not None and since_resolved < timedelta(minutes=config.cooldown_minutes):
+                    continue  # still in cooldown
+                is_recurrence = (
+                    since_resolved is not None
+                    and since_resolved <= timedelta(hours=RECURRENCE_LOOKBACK_HOURS)
+                )
+
+                description = f"{count} CLOSE_WAIT connection(s) detected" + (
+                    " -- RECURRING: this same issue resolved recently and has now fired again"
+                    if is_recurrence else ""
+                )
+                card = build_adaptive_card(
+                    agent_name="Kafka Analyser",
+                    cluster_name=cluster_names.get(cluster_id, str(cluster_id)),
+                    anomaly={
+                        "severity": config.severity,
+                        "category": CLOSE_WAIT_ALERT_TYPE,
+                        "description": description,
+                        "recommended_action": "Use the Breaker Status tab's Clear Stale "
+                                              "Connections button, or wait roughly 5 minutes "
+                                              "for this to clear automatically.",
+                    },
+                )
+
+                webhook_url = config.webhook_url or _config.get("teams_webhook_url", "")
+                if webhook_url:
+                    # Isolated per (config, cluster): one pair's slow/failed
+                    # post never blocks or is rolled back by another's.
+                    success = await send_to_teams(webhook_url=webhook_url, card=card)
+                    error_detail = None
+                else:
+                    success = False
+                    error_detail = "No webhook URL configured (per-alert or agent-level)"
+
+                to_insert.append(KafkaAlertTrigger(
+                    alert_config_id=config.id,
+                    cluster_id=cluster_id,
+                    triggered_at=now,
+                    metric_value=str(count),
+                    message_sent=description,
+                    teams_post_success=success,
+                    error_detail=error_detail,
+                    resolved_at=None,
+                    is_recurrence=is_recurrence,
+                ))
             except Exception as exc:
                 logger.warning(
                     "fire_close_wait_alerts: alert_config_id=%s cluster_id=%s failed: %s",
                     config.id, cluster_id, exc,
                 )
 
-
-async def _fire_one(
-    config: KafkaAlertConfig,
-    cluster_id: int,
-    count: int,
-    cluster_names: dict[int, str],
-    agent_config: dict,
-) -> None:
-    threshold = int((config.config or {}).get("threshold", 1))
-    if count < threshold:
+    if not to_insert:
         return
 
-    async with SessionLocal() as session:
-        already_open = (await session.execute(
-            select(KafkaAlertTrigger.id).where(
-                KafkaAlertTrigger.alert_config_id == config.id,
-                KafkaAlertTrigger.cluster_id == cluster_id,
-                KafkaAlertTrigger.resolved_at.is_(None),
-            ).limit(1)
-        )).scalar_one_or_none()
-        if already_open is not None:
-            return
-        last_resolved = (await session.execute(
-            select(KafkaAlertTrigger).where(
-                KafkaAlertTrigger.alert_config_id == config.id,
-                KafkaAlertTrigger.cluster_id == cluster_id,
-                KafkaAlertTrigger.resolved_at.is_not(None),
-            ).order_by(KafkaAlertTrigger.resolved_at.desc()).limit(1)
-        )).scalar_one_or_none()
-
-    now = datetime.now(timezone.utc)
-    since_resolved = (now - last_resolved.resolved_at) if last_resolved is not None else None
-    if since_resolved is not None and since_resolved < timedelta(minutes=config.cooldown_minutes):
-        return
-    is_recurrence = since_resolved is not None and since_resolved <= timedelta(hours=RECURRENCE_LOOKBACK_HOURS)
-
-    description = f"{count} CLOSE_WAIT connection(s) detected" + (
-        " -- RECURRING: this same issue resolved recently and has now fired again" if is_recurrence else ""
-    )
-    card = build_adaptive_card(
-        agent_name="Kafka Analyser",
-        cluster_name=cluster_names.get(cluster_id, str(cluster_id)),
-        anomaly={
-            "severity": config.severity,
-            "category": CLOSE_WAIT_ALERT_TYPE,
-            "description": description,
-            "recommended_action": "Use the Breaker Status tab's Clear Stale Connections button, "
-                                  "or wait roughly 5 minutes for this to clear automatically.",
-        },
-    )
-
-    webhook_url = config.webhook_url or agent_config.get("teams_webhook_url", "")
-    if webhook_url:
-        success = await send_to_teams(webhook_url=webhook_url, card=card)
-        error_detail = None
-    else:
-        success = False
-        error_detail = "No webhook URL configured (per-alert or agent-level)"
-
-    # Separate session from the reads above so no DB transaction is held
-    # open across the Teams HTTP post.
-    async with SessionLocal() as session:
-        session.add(KafkaAlertTrigger(
-            alert_config_id=config.id,
-            cluster_id=cluster_id,
-            triggered_at=now,
-            metric_value=str(count),
-            message_sent=description,
-            teams_post_success=success,
-            error_detail=error_detail,
-            resolved_at=None,
-            is_recurrence=is_recurrence,
-        ))
-        await session.commit()
+    # ---- Single write session: each trigger row in its own savepoint ----
+    try:
+        async with SessionLocal() as session:
+            for trigger in to_insert:
+                try:
+                    async with session.begin_nested():
+                        session.add(trigger)
+                    await session.commit()
+                except Exception as exc:
+                    await session.rollback()
+                    logger.warning(
+                        "fire_close_wait_alerts: failed to record trigger for "
+                        "alert_config_id=%s cluster_id=%s (card was already sent -- "
+                        "this cluster will likely be re-alerted next cycle): %s",
+                        trigger.alert_config_id, trigger.cluster_id, exc,
+                    )
+    except Exception as exc:
+        logger.warning("fire_close_wait_alerts: write session failed entirely: %s", exc)
 
 
 async def maybe_send_digest() -> None:

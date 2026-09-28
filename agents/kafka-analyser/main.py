@@ -747,6 +747,30 @@ async def lifespan(app: FastAPI):
             )
             logger.info("Created schedule for %s (disabled by default -- trigger on demand): every 2 minutes", _closewait_job_id)
 
+    from collectors import check_process_count_watchdog
+    _watchdog_job_id = "kafka-process-count-watchdog"
+    _jobs_module.register_job(
+        _watchdog_job_id,
+        "Process Count Watchdog",
+        "Independent safety net (no Kafka/DB/HTTP -- cannot itself hang): forces an immediate container restart if OS process count exceeds a hard threshold, catching accumulated orphaned worker processes even if the close-wait-check job itself is stuck",
+        check_process_count_watchdog,
+        default_timeout_secs=10,
+    )
+    async with SessionLocal() as _sess:
+        existing = await _sess.execute(
+            _sel(KafkaJobSchedule).where(KafkaJobSchedule.job_id == _watchdog_job_id)
+        )
+        if not existing.scalar_one_or_none():
+            # Enabled by default (unlike close-wait-check) -- this is a
+            # pure safety net with no operational risk: it only reads a
+            # process count and, in the rare case the threshold is
+            # crossed, forces a safe, Docker-managed restart. No reason
+            # to require manual enablement given what it protects against.
+            await _jobs_module.create_schedule(
+                _watchdog_job_id, "*/2 * * * *", enabled=True, timeout_secs=10
+            )
+            logger.info("Created schedule for %s (enabled by default -- pure safety net): every 2 minutes", _watchdog_job_id)
+
     # Register the VACUUM FULL maintenance job -- standalone, cluster-agnostic
     # (processes all known bloat-prone tables in one pass). Weekly, Sunday 03:00 UTC
     # -- a low-traffic window, since VACUUM FULL takes a brief exclusive lock per table.
