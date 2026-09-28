@@ -433,7 +433,24 @@ def _fetch_consumer_lag_worker(bootstrap_servers: str, cluster_config: dict) -> 
                         if (meta.offset if hasattr(meta, 'offset') else meta) >= 0
                     }
                 except Exception:
-                    group_committed[gid] = {}
+                    # Discard and re-raise, not silently record empty --
+                    # this client is now closed (per _discard_worker_client),
+                    # so continuing the loop on it risks every remaining
+                    # group failing the same way, or the underlying admin
+                    # client spinning indefinitely waiting on a closed
+                    # selector (identified via kafka-python-ng source review,
+                    # 2026-09-28). Failing this run honestly lets the
+                    # outer except return {"ok": False, ...} and the next
+                    # run get a genuinely fresh client, rather than silently
+                    # succeeding with incomplete/zero data -- the exact
+                    # pattern confirmed live during tonight's incident.
+                    # A group that persistently fails (e.g. an
+                    # authorization error, not a broken client) will
+                    # correctly trip the circuit breaker after repeated
+                    # runs, which now has a properly-validated recovery
+                    # check of its own -- not silently masked here.
+                    _discard_worker_client(bootstrap_servers)
+                    raise
         all_tps = list(set(tp for committed in group_committed.values() for tp in committed.keys()))
         if all_tps:
             _SEEK_MAX_ATTEMPTS = 3
