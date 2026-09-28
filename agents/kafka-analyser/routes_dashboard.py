@@ -1029,6 +1029,75 @@ async def get_breaker_status(cluster_id: str | None = None, hours: int = 24) -> 
         return {"clusters": [], "brokers": [], "recent_events": [], "recent_failures": [], "connection_events": [], "connection_summary": {}, "error": str(exc)}
 
 
+@router.get("/dashboard/broker-reachability")
+async def get_broker_reachability(cluster_id: str) -> dict:
+    """On-demand, read-only, FRESH TCP connect+close test (no Kafka
+    protocol handshake) against every broker in a cluster's
+    bootstrap_servers -- reuses the exact same, already-proven
+    _breaker_tcp_check_sync function the circuit breaker's own recovery
+    check uses. Distinct from /dashboard/broker-connections (which
+    inspects existing socket states, not fresh reachability) -- this
+    endpoint answers "are the brokers actually up right now", which is
+    the genuine, independent signal needed to cross-reference against
+    the collector-freshness-based "Broker Availability" metric.
+    Deliberately minimal: no Kafka protocol involved, so this can never
+    itself leak a connection or add meaningful load, matching the same
+    reasoning already established for _breaker_tcp_check_sync.
+
+    Uses its own small per-call executor rather than the shared default
+    one, for the same reason as /dashboard/broker-connections below: a
+    diagnostic tool must stay reliable during exactly the kind of
+    resource contention it exists to diagnose. All brokers are checked
+    concurrently, so worst case is one check's own 5s timeout."""
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    from storage import get_backend
+    from collectors import _breaker_tcp_check_sync
+
+    result: dict = {"cluster_name": None, "reachable_count": 0, "total": 0, "brokers": [], "error": None}
+    try:
+        cluster = await get_backend().get_cluster(int(cluster_id))
+        if not cluster or not cluster.get("bootstrap_servers"):
+            result["error"] = "Cluster not found or has no bootstrap_servers configured"
+            return result
+        result["cluster_name"] = cluster.get("name", f"Cluster {cluster_id}")
+
+        host_port_pairs: list[tuple[str, int]] = []
+        for hostport in cluster["bootstrap_servers"].split(","):
+            hostport = hostport.strip()
+            if not hostport:
+                continue
+            host, _, port_str = hostport.rpartition(":")
+            if not host or not port_str.isdigit():
+                continue
+            host_port_pairs.append((host, int(port_str)))
+
+        result["total"] = len(host_port_pairs)
+        if not host_port_pairs:
+            return result
+        loop = asyncio.get_event_loop()
+        # shutdown(wait=False), not a `with` block, for the same reason as
+        # the DNS executor in /dashboard/broker-connections: never block
+        # this response on a slow thread.
+        tcp_executor = ThreadPoolExecutor(max_workers=len(host_port_pairs), thread_name_prefix="broker-reachability")
+        try:
+            oks = await asyncio.gather(*[
+                loop.run_in_executor(tcp_executor, _breaker_tcp_check_sync, host, port)
+                for host, port in host_port_pairs
+            ])
+        finally:
+            tcp_executor.shutdown(wait=False)
+        for (host, port), ok in zip(host_port_pairs, oks):
+            if ok:
+                result["reachable_count"] += 1
+            result["brokers"].append({"host": host, "port": port, "reachable": ok})
+        return result
+    except Exception as exc:
+        logger.warning("get_broker_reachability failed: %s", exc)
+        result["error"] = str(exc)
+        return result
+
+
 @router.get("/dashboard/broker-connections")
 async def get_broker_connections(cluster_id: str) -> dict:
     """On-demand, read-only check of this container's live TCP connections

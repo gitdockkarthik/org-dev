@@ -4330,7 +4330,10 @@
                   <td style="text-align:center;padding:10px 4px;color:var(--text-muted);font-size:.8rem">${r.target}</td>
                   <td style="text-align:center;padding:10px 4px;font-weight:700;color:${col(r.status)}">${r.current}</td>
                   <td style="text-align:center;padding:10px 4px">${badge(r.status,r.status.toUpperCase())}</td>
-                </tr>`).join('')}
+                </tr>${r.label==='Broker Availability' && r.status && r.status!=='green' ? `
+                <tr style="border-top:none">
+                  <td colspan="4" style="padding:2px 4px 10px 4px;font-size:.78rem;color:var(--text-muted)" id="broker-live-crosscheck">🔍 Checking live broker reachability…</td>
+                </tr>` : ''}`).join('')}
               </tbody>
             </table>
           </div>
@@ -4486,6 +4489,41 @@
         _sloData = data;
         const el = document.getElementById('slo-sub-content');
         if (el && _sloSubTab === 'dashboard') el.innerHTML = renderSLODashboardHTML(data);
+        // Automatic cross-reference: whenever the collector-freshness-based
+        // "Broker Availability" metric isn't green, immediately run a real,
+        // independent TCP reachability test and show both signals together
+        // -- built following a real incident (2026-09-28) where this
+        // metric showed "0/3 online" for over an hour while the brokers
+        // themselves were, in fact, completely healthy and reachable the
+        // whole time. Resolves the ambiguity directly instead of just
+        // documenting it in a tooltip.
+        const _brokerStatusNow = (data.current || {}).broker_status;
+        if (_brokerStatusNow && _brokerStatusNow !== 'green') {
+          fetch(`${PROXY}/dashboard/broker-reachability?cluster_id=${cid}`, { headers: _authHeaders(), cache: 'no-store' })
+            .then(r => r.json())
+            .then(d => {
+              if (_tabGen !== window._loadGeneration) return;
+              const crossEl = document.getElementById('broker-live-crosscheck');
+              if (!crossEl) return;
+              if (d.error) {
+                crossEl.textContent = `⚠️ Live reachability check failed: ${d.error}`;
+                return;
+              }
+              const allUp = d.reachable_count === d.total && d.total > 0;
+              if (allUp) {
+                crossEl.innerHTML = `✅ <b>Live check just now: all ${d.total} broker(s) accept TCP connections</b> -- likely our own data collection rather than a broker outage.`;
+                crossEl.style.color = '#4CAF50';
+              } else {
+                crossEl.innerHTML = `🔴 <b>Live check just now: only ${d.reachable_count}/${d.total} broker(s) reachable</b> -- this may be a genuine broker-side issue, not just our own collection.`;
+                crossEl.style.color = '#F44336';
+              }
+            })
+            .catch(() => {
+              if (_tabGen !== window._loadGeneration) return;
+              const crossEl = document.getElementById('broker-live-crosscheck');
+              if (crossEl) crossEl.textContent = '⚠️ Live reachability check could not be completed';
+            });
+        }
         setTimeout(() => {
           const c = data.current || {};
           const trend = data.trend || [];
