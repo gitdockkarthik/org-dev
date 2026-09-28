@@ -2106,6 +2106,7 @@ async def check_process_count_watchdog() -> dict:
     global _last_watchdog_status_sent_at
     PROCESS_COUNT_THRESHOLD = 20
     count = sum(1 for pid in _os.listdir("/proc") if pid.isdigit())
+    logger.info("check_process_count_watchdog: process count = %d (threshold %d)", count, PROCESS_COUNT_THRESHOLD)
 
     async def _post_to_teams(severity: str, description: str) -> None:
         # Best-effort, never allowed to affect this function's own
