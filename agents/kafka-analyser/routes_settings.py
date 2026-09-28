@@ -56,6 +56,7 @@ _DEFAULTS: dict = {
     # Teams escalation
     "teams_enabled": False,
     "teams_webhook_url": "",
+    "teams_digest_interval_minutes": 5,
 }
 
 # Write-through in-memory cache; populated from DB on startup.
@@ -135,6 +136,7 @@ class SettingsPayload(BaseModel):
     # Teams escalation
     teams_enabled: bool = False
     teams_webhook_url: str = ""
+    teams_digest_interval_minutes: int = 5
 
 
 class TestConnectionPayload(BaseModel):
