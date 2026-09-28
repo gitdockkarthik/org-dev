@@ -1791,7 +1791,7 @@ _cw_last_detection: dict | None = None
 # Flip to True only after a deliberate decision to re-enable, not as a
 # side effect of an unrelated change.
 _TEAMS_ALERTS_ENABLED = False
-_WATCHDOG_STATUS_INTERVAL_MINUTES = 30
+_WATCHDOG_STATUS_INTERVAL_MINUTES = 10
 # In-memory, resets on restart -- same pattern as other in-memory state
 # in this codebase (e.g. teams_alerts.py's own digest-interval gate).
 _last_watchdog_status_sent_at: float | None = None
@@ -2099,6 +2099,85 @@ async def _post_to_teams(
         logger.warning("%s: Teams post failed: %s", source, _notify_exc)
 
 
+async def _send_health_summary_to_teams(process_count: int) -> None:
+    """Gathers per-cluster data freshness (same signal
+    check_data_freshness_watchdog uses) and recent job success/failure
+    counts, then sends a single multi-cluster health summary table card
+    -- built per explicit request (2026-09-28) so the periodic routine
+    status update actually shows enough to spot a problem developing
+    (data going stale, jobs starting to fail) without needing to check
+    the dashboard directly. Best-effort throughout -- never allowed to
+    raise, since this must never affect the caller's own timing/exit
+    behavior."""
+    try:
+        from database import SessionLocal
+        from sqlalchemy import text as _hs_text
+        from datetime import datetime, timezone, timedelta
+        from routes_settings import _config
+        from shared.escalation.notifier import build_health_summary_card, send_to_teams
+        from jobs import _parse_any_cluster_job_id
+
+        webhook_url = _config.get("teams_webhook_url", "")
+        if not _config.get("teams_enabled") or not webhook_url:
+            return
+
+        if SessionLocal is None:
+            return
+
+        now = datetime.now(timezone.utc)
+        # Window matches the status-post cadence, so each card covers
+        # exactly the runs since the previous one. Bound as a timestamp
+        # cutoff (same :cutoff style as the retention/rollup queries in
+        # this file) rather than interpolated into an interval literal.
+        since = now - timedelta(minutes=_WATCHDOG_STATUS_INTERVAL_MINUTES)
+        async with SessionLocal() as session:
+            clusters_result = await session.execute(_hs_text(
+                "SELECT id, name FROM kafka_clusters WHERE enabled = true ORDER BY id"
+            ))
+            clusters = clusters_result.fetchall()
+
+            freshness_result = await session.execute(_hs_text(
+                "SELECT cluster_id, max(time) as latest FROM kafka_broker_metrics "
+                "WHERE cluster_id = ANY(:ids) GROUP BY cluster_id"
+            ), {"ids": [c.id for c in clusters]})
+            freshness_by_cluster = {r.cluster_id: r.latest for r in freshness_result.fetchall()}
+
+            # 'failed' already includes timeouts (jobs.py records a
+            # timed-out-then-failed-retry run as status='failed');
+            # 'skipped' (breaker-paused) and in-flight runs are excluded.
+            jobs_result = await session.execute(_hs_text(
+                "SELECT job_id, status FROM kafka_job_runs "
+                "WHERE started_at > :since "
+                "AND status IN ('success', 'failed')"
+            ), {"since": since})
+            job_rows = jobs_result.fetchall()
+
+        counts_by_cluster: dict[int, dict[str, int]] = {}
+        for jr in job_rows:
+            cid = _parse_any_cluster_job_id(jr.job_id)
+            if cid is None:
+                continue
+            bucket = counts_by_cluster.setdefault(cid, {"success": 0, "failed": 0})
+            bucket[jr.status] += 1
+
+        rows = []
+        for c in clusters:
+            latest = freshness_by_cluster.get(c.id)
+            age_minutes = (now - latest).total_seconds() / 60 if latest else None
+            counts = counts_by_cluster.get(c.id, {"success": 0, "failed": 0})
+            rows.append({
+                "name": c.name,
+                "data_age_minutes": age_minutes,
+                "success_count": counts["success"],
+                "failed_count": counts["failed"],
+            })
+
+        card = build_health_summary_card("Kafka Analyser", process_count, rows)
+        await send_to_teams(webhook_url, card)
+    except Exception as _hs_exc:
+        logger.warning("_send_health_summary_to_teams failed: %s", _hs_exc)
+
+
 async def check_process_count_watchdog() -> dict:
     """Independent safety-net check, completely separate from
     check_and_recycle_close_wait -- reads ONLY the OS process count via
@@ -2179,15 +2258,15 @@ async def check_process_count_watchdog() -> dict:
         or (now - _last_watchdog_status_sent_at) >= _WATCHDOG_STATUS_INTERVAL_MINUTES * 60
     ):
         _last_watchdog_status_sent_at = now
-        await _post_to_teams(
-            "info",
-            f"Routine health check: process count is {count} (safety threshold {PROCESS_COUNT_THRESHOLD}).",
-        )
+        try:
+            await asyncio.wait_for(_send_health_summary_to_teams(count), timeout=5)
+        except Exception:
+            pass
 
     return {"action": "ok", "process_count": count}
 
 
-_DATA_FRESHNESS_THRESHOLD_MINUTES = 10
+_DATA_FRESHNESS_THRESHOLD_MINUTES = 5
 # Set at import time; the watchdog stays hands-off until the container has
 # been up for a full threshold window. Without this, the restart this
 # watchdog itself forces would be followed by another one, since the

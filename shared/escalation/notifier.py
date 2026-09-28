@@ -104,6 +104,113 @@ def build_adaptive_card(
     return card
 
 
+def build_health_summary_card(
+    agent_name: str,
+    process_count: int,
+    rows: list[dict],
+) -> dict:
+    """Builds a multi-cluster health summary table card -- a periodic
+    routine status card (distinct from build_adaptive_card's single-
+    anomaly cards), showing per-cluster data freshness and recent job
+    success/failure counts at a glance. Uses a ColumnSet-based table
+    layout (not the native Adaptive Card Table element) for reliable
+    rendering across both desktop and mobile Teams clients.
+
+    rows: one dict per cluster, each with keys:
+      - name: str (cluster display name)
+      - data_age_minutes: float | None (None if no data ever collected)
+      - success_count: int (recent window)
+      - failed_count: int (recent window)
+    """
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    def _age_text(age: float | None) -> tuple[str, str]:
+        # Returns (display_text, color) -- color follows the same
+        # SEVERITY_COLOUR palette used elsewhere in this file for
+        # visual consistency.
+        if age is None:
+            return ("no data", "warning")
+        if age < 5:
+            return (f"{age:.0f}m ago", "good")
+        if age < 10:
+            return (f"{age:.0f}m ago", "warning")
+        return (f"{age:.0f}m ago", "attention")
+
+    def _cell(text: str, color: str = "default", weight: str = "default") -> dict:
+        return {
+            "type": "Column",
+            "width": "stretch",
+            "items": [{
+                "type": "TextBlock",
+                "text": text,
+                "wrap": True,
+                "size": "Small",
+                "color": color,
+                "weight": weight,
+            }],
+        }
+
+    header_row = {
+        "type": "ColumnSet",
+        "columns": [
+            _cell("Cluster", weight="Bolder"),
+            _cell("Data Age", weight="Bolder"),
+            _cell("Jobs (recent)", weight="Bolder"),
+        ],
+        "separator": True,
+    }
+
+    data_rows = []
+    for r in rows:
+        age_text, age_color = _age_text(r.get("data_age_minutes"))
+        success_count = r.get("success_count", 0)
+        failed_count = r.get("failed_count", 0)
+        jobs_color = "attention" if failed_count > 0 else "good"
+        jobs_text = f"{success_count}✅ {failed_count}❌" if failed_count > 0 else f"{success_count}✅"
+        data_rows.append({
+            "type": "ColumnSet",
+            "columns": [
+                _cell(r.get("name", "Unknown")),
+                _cell(age_text, color=age_color),
+                _cell(jobs_text, color=jobs_color),
+            ],
+            "separator": True,
+        })
+
+    body = [
+        {
+            "type": "TextBlock",
+            "text": f"📊 Operative Intelligence — {agent_name} Health Summary",
+            "weight": "Bolder",
+            "size": "Medium",
+        },
+        {
+            "type": "FactSet",
+            "facts": [
+                {"title": "Time", "value": timestamp},
+                {"title": "Process Count", "value": str(process_count)},
+            ],
+        },
+        header_row,
+    ] + data_rows
+
+    return {
+        "type": "message",
+        "attachments": [
+            {
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": {
+                    "type": "AdaptiveCard",
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "version": "1.4",
+                    "body": body,
+                    "actions": [],
+                },
+            }
+        ],
+    }
+
+
 async def send_to_teams(webhook_url: str, card: dict) -> bool:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
