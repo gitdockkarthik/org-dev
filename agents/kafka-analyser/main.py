@@ -767,7 +767,7 @@ async def lifespan(app: FastAPI):
             # crossed, forces a safe, Docker-managed restart. No reason
             # to require manual enablement given what it protects against.
             await _jobs_module.create_schedule(
-                _watchdog_job_id, "*/2 * * * *", enabled=True, timeout_secs=10
+                _watchdog_job_id, "* * * * *", enabled=True, timeout_secs=10
             )
             logger.info("Created schedule for %s (enabled by default -- pure safety net): every 2 minutes", _watchdog_job_id)
 
@@ -790,7 +790,7 @@ async def lifespan(app: FastAPI):
             # real, confirmed production incident this exact mechanism
             # would have caught automatically.
             await _jobs_module.create_schedule(
-                _freshness_watchdog_job_id, "*/2 * * * *", enabled=True, timeout_secs=15
+                _freshness_watchdog_job_id, "* * * * *", enabled=True, timeout_secs=15
             )
             logger.info("Created schedule for %s (enabled by default -- pure safety net): every 2 minutes", _freshness_watchdog_job_id)
 
