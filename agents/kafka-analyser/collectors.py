@@ -2064,6 +2064,41 @@ async def check_and_recycle_close_wait() -> dict:
     return {"action": "recycled", "close_wait_found": close_wait_by_cluster, "shared_refresh": shared_result}
 
 
+async def _post_to_teams(
+    severity: str,
+    description: str,
+    category: str = "process_watchdog",
+    source: str = "check_process_count_watchdog",
+) -> None:
+    """Direct Teams post shared by the watchdogs (bypasses teams_alerts.py
+    and _TEAMS_ALERTS_ENABLED entirely). Extracted to module level from
+    check_process_count_watchdog so check_data_freshness_watchdog reuses
+    the exact same logic; the defaults preserve the original closure's
+    category and log prefix unchanged."""
+    # Best-effort, never allowed to affect the caller's own outcome --
+    # wrapped so a Teams/config failure can't prevent a watchdog's
+    # emergency exit path from running.
+    try:
+        from routes_settings import _config
+        webhook_url = _config.get("teams_webhook_url", "")
+        if not _config.get("teams_enabled") or not webhook_url:
+            return
+        from shared.escalation.notifier import build_adaptive_card, send_to_teams
+        card = build_adaptive_card(
+            agent_name="Kafka Analyser",
+            cluster_name="(agent-wide, not cluster-specific)",
+            anomaly={
+                "severity": severity,
+                "category": category,
+                "description": description,
+                "recommended_action": "",
+            },
+        )
+        await send_to_teams(webhook_url=webhook_url, card=card)
+    except Exception as _notify_exc:
+        logger.warning("%s: Teams post failed: %s", source, _notify_exc)
+
+
 async def check_process_count_watchdog() -> dict:
     """Independent safety-net check, completely separate from
     check_and_recycle_close_wait -- reads ONLY the OS process count via
@@ -2108,30 +2143,6 @@ async def check_process_count_watchdog() -> dict:
     count = sum(1 for pid in _os.listdir("/proc") if pid.isdigit())
     logger.info("check_process_count_watchdog: process count = %d (threshold %d)", count, PROCESS_COUNT_THRESHOLD)
 
-    async def _post_to_teams(severity: str, description: str) -> None:
-        # Best-effort, never allowed to affect this function's own
-        # outcome -- wrapped so a Teams/config failure can't prevent the
-        # emergency exit path below from running.
-        try:
-            from routes_settings import _config
-            webhook_url = _config.get("teams_webhook_url", "")
-            if not _config.get("teams_enabled") or not webhook_url:
-                return
-            from shared.escalation.notifier import build_adaptive_card, send_to_teams
-            card = build_adaptive_card(
-                agent_name="Kafka Analyser",
-                cluster_name="(agent-wide, not cluster-specific)",
-                anomaly={
-                    "severity": severity,
-                    "category": "process_watchdog",
-                    "description": description,
-                    "recommended_action": "",
-                },
-            )
-            await send_to_teams(webhook_url=webhook_url, card=card)
-        except Exception as _notify_exc:
-            logger.warning("check_process_count_watchdog: Teams post failed: %s", _notify_exc)
-
     if count > PROCESS_COUNT_THRESHOLD:
         logger.critical(
             "check_process_count_watchdog: process count %d exceeds threshold %d -- "
@@ -2174,6 +2185,124 @@ async def check_process_count_watchdog() -> dict:
         )
 
     return {"action": "ok", "process_count": count}
+
+
+_DATA_FRESHNESS_THRESHOLD_MINUTES = 10
+# Set at import time; the watchdog stays hands-off until the container has
+# been up for a full threshold window. Without this, the restart this
+# watchdog itself forces would be followed by another one, since the
+# newest row is still pre-restart until broker-health's first post-restart
+# write lands -- a restart loop.
+_DATA_FRESHNESS_MODULE_LOAD_TIME = time.time()
+
+
+async def check_data_freshness_watchdog() -> dict:
+    """Independent safety-net check, completely separate from
+    check_process_count_watchdog and check_and_recycle_close_wait --
+    detects a different failure mode than either: a job can report
+    "success" while its own worker-pool client has gone stale/dead,
+    silently writing ZERO fresh data, with process count remaining
+    completely normal throughout (confirmed live, 2026-09-28). Neither
+    the process-count watchdog nor close-wait-check would ever catch
+    this on their own.
+
+    For each cluster that is enabled AND not currently paused by the
+    circuit breaker (a legitimately paused cluster is EXPECTED to have
+    stale data by design -- this checks only clusters that should be
+    actively collecting right now), checks whether kafka_broker_metrics
+    has a row within the last _DATA_FRESHNESS_THRESHOLD_MINUTES minutes.
+    Only clusters with at least one existing row are checked (a
+    brand-new cluster with zero rows ever is a different, onboarding-
+    related scenario, not the "went stale" scenario this targets).
+
+    Two grace windows (each _DATA_FRESHNESS_THRESHOLD_MINUTES long) avoid
+    restarting on data that is stale by design rather than broken: the
+    first minutes after container start (see
+    _DATA_FRESHNESS_MODULE_LOAD_TIME), and the first minutes after a
+    cluster's breaker "resumed" event (its newest row still dates from
+    before the pause until the next broker-health write).
+
+    If ANY such cluster's data has gone stale beyond the threshold,
+    this is a clear, direct signal something is silently broken --
+    forces the exact same safe, already-proven fix as
+    check_process_count_watchdog: an immediate, unconditional
+    os._exit(1) (never blocked or delayed by the Teams notification
+    attempt, same reasoning as that function), letting Docker's
+    restart: unless-stopped policy bring the container back up cleanly.
+    """
+    from datetime import datetime, timezone
+    from database import SessionLocal
+    from sqlalchemy import text as _dfw_text
+
+    if SessionLocal is None:
+        return {"action": "ok", "reason": "no database configured"}
+
+    uptime_minutes = (time.time() - _DATA_FRESHNESS_MODULE_LOAD_TIME) / 60
+    if uptime_minutes < _DATA_FRESHNESS_THRESHOLD_MINUTES:
+        return {"action": "ok", "reason": f"startup grace ({uptime_minutes:.1f} min since start)"}
+
+    try:
+        async with SessionLocal() as session:
+            result = await session.execute(_dfw_text("""
+                SELECT c.id, c.name,
+                       (SELECT max(time) FROM kafka_broker_metrics WHERE cluster_id = c.id) as latest_data,
+                       (SELECT max(created_at) FROM kafka_cluster_breaker_events
+                         WHERE cluster_id = c.id AND event_type = 'resumed') as last_resumed_at,
+                       COALESCE(b.paused, false) as paused
+                FROM kafka_clusters c
+                LEFT JOIN kafka_cluster_breaker_state b ON b.cluster_id = c.id
+                WHERE c.enabled = true
+            """))
+            rows = result.fetchall()
+    except Exception as _query_exc:
+        logger.warning("check_data_freshness_watchdog: query failed: %s", _query_exc)
+        return {"action": "ok", "reason": f"query failed: {_query_exc}"}
+
+    stale_clusters = []
+    now = datetime.now(timezone.utc)
+    for row in rows:
+        if row.paused:
+            continue
+        if row.latest_data is None:
+            continue
+        if (
+            row.last_resumed_at is not None
+            and (now - row.last_resumed_at).total_seconds() / 60 < _DATA_FRESHNESS_THRESHOLD_MINUTES
+        ):
+            continue
+        age_minutes = (now - row.latest_data).total_seconds() / 60
+        if age_minutes > _DATA_FRESHNESS_THRESHOLD_MINUTES:
+            stale_clusters.append((row.name, round(age_minutes, 1)))
+
+    if stale_clusters:
+        logger.critical(
+            "check_data_freshness_watchdog: %d active cluster(s) have not written fresh "
+            "broker metrics in over %d minutes despite not being breaker-paused -- %s -- "
+            "forcing immediate restart (Docker's restart policy will bring the container "
+            "back up automatically, clean and fresh)",
+            len(stale_clusters), _DATA_FRESHNESS_THRESHOLD_MINUTES, stale_clusters,
+        )
+        try:
+            await asyncio.wait_for(
+                _post_to_teams(
+                    "critical",
+                    f"Data freshness check failed for {len(stale_clusters)} cluster(s): "
+                    f"{stale_clusters} -- broker metrics have gone stale despite active "
+                    "dispatch, indicating a stale worker-pool client. Forcing an immediate "
+                    "restart. No action needed, Docker will bring the container back up "
+                    "automatically. If this recurs frequently, investigate.",
+                    category="data_freshness_watchdog",
+                    source="check_data_freshness_watchdog",
+                ),
+                timeout=5,
+            )
+        except Exception:
+            pass
+        finally:
+            import os as _os
+            _os._exit(1)
+
+    return {"action": "ok", "stale_clusters_found": 0, "clusters_checked": len(rows)}
 
 
 # ── Maintenance: Scheduled VACUUM FULL ────────────────────────────────────────

@@ -771,6 +771,29 @@ async def lifespan(app: FastAPI):
             )
             logger.info("Created schedule for %s (enabled by default -- pure safety net): every 2 minutes", _watchdog_job_id)
 
+    from collectors import check_data_freshness_watchdog
+    _freshness_watchdog_job_id = "kafka-data-freshness-watchdog"
+    _jobs_module.register_job(
+        _freshness_watchdog_job_id,
+        "Data Freshness Watchdog",
+        "Independent safety net: detects a job reporting success while its worker-pool client has gone stale/dead, silently writing zero fresh broker metrics for an actively-dispatching (non-paused) cluster -- confirmed live in production 2026-09-28, invisible to both the process-count watchdog and close-wait-check. Forces an immediate container restart on detection.",
+        check_data_freshness_watchdog,
+        default_timeout_secs=15,
+    )
+    async with SessionLocal() as _sess:
+        existing = await _sess.execute(
+            _sel(KafkaJobSchedule).where(KafkaJobSchedule.job_id == _freshness_watchdog_job_id)
+        )
+        if not existing.scalar_one_or_none():
+            # Enabled by default, matching the process-count watchdog --
+            # pure safety net, built and enabled same-day following a
+            # real, confirmed production incident this exact mechanism
+            # would have caught automatically.
+            await _jobs_module.create_schedule(
+                _freshness_watchdog_job_id, "*/2 * * * *", enabled=True, timeout_secs=15
+            )
+            logger.info("Created schedule for %s (enabled by default -- pure safety net): every 2 minutes", _freshness_watchdog_job_id)
+
     # Register the VACUUM FULL maintenance job -- standalone, cluster-agnostic
     # (processes all known bloat-prone tables in one pass). Weekly, Sunday 03:00 UTC
     # -- a low-traffic window, since VACUUM FULL takes a brief exclusive lock per table.
