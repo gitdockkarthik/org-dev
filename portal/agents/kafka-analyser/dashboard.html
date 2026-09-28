@@ -1109,7 +1109,7 @@
         const cpu = b.cpu_pct != null ? `C:${b.cpu_pct.toFixed(0)}%` : '';
         const urp = b.urp_count > 0 ? ` URP:${b.urp_count}` : '';
         const title = !b.reachable
-          ? `Broker ${b.broker_id}: unreachable (last seen ${fmtTime(b.last_seen)})`
+          ? `Broker ${b.broker_id}: no fresh data collected in the last 6 min (last seen ${fmtTime(b.last_seen)}) -- this measures our own collection pipeline, not a direct broker health check; the broker itself may be completely healthy while our own metrics collection is what's struggling`
           : `Broker ${b.broker_id}: ${heap} ${cpu}${urp}`.trim();
         return `<span title="${title.replace(/"/g,'&quot;')}" style="display:inline-block;background:${color}22;color:${color};padding:1px 6px;border-radius:4px;font-size:.72rem;font-weight:600;margin:1px 3px 1px 0;white-space:nowrap">${icon} B${b.broker_id}${b.reachable ? ` ${heap} ${cpu}${urp}` : ''}</span>`;
       };
@@ -1331,7 +1331,7 @@
 
       const kpis = `
         <div class="kpi-grid">
-          <div class="kpi ${allBrokersHealthy ? 'kpi--success' : 'kpi--danger'}">
+          <div class="kpi ${allBrokersHealthy ? 'kpi--success' : 'kpi--danger'}"${allBrokersHealthy ? '' : ' title="Measures whether THIS AGENT collected fresh broker data in the last 6 minutes -- not a direct broker health check. A low value here can mean our own collection pipeline is struggling while the brokers themselves are completely healthy and reachable."'}>
             <div class="kpi__label">Brokers Online</div>
             <div class="kpi__value">${reachableBrokerCount}/${brokerCount}</div>
             <div class="kpi__sub">${cluster.name || 'cluster'}</div>
@@ -4293,7 +4293,7 @@
         {label:'Connector Availability', target:`>${t.connector_availability||99}%`, current:c.connector_status==='na' ? 'N/A' : `${c.connector_availability_pct||0}%`, status:c.connector_status},
         {label:'Task Health', target:`>${t.min_task_health_pct||95}%`, current:c.task_status==='na' ? 'N/A' : `${c.task_health_pct||0}%`, status:c.task_status||'unknown'},
         {label:'Consumer Lag', target:`<${(t.consumer_lag||10000).toLocaleString()}`, current:(c.consumer_lag||0) >= 1000000 ? `${((c.consumer_lag||0)/1000000).toFixed(1)}M` : (c.consumer_lag||0) >= 1000 ? `${((c.consumer_lag||0)/1000).toFixed(1)}K` : `${c.consumer_lag||0}`, status:c.lag_status},
-        {label:'Broker Availability', target:`${t.expected_brokers||3}/3`, current:`${c.broker_count||0}/${c.expected_brokers||3} online`, status:c.broker_status},
+        {label:'Broker Availability', target:`${t.expected_brokers||3}/3`, current:`${c.broker_count||0}/${c.expected_brokers||3} online`, status:c.broker_status, hint: c.broker_status !== 'green' ? 'Measures whether THIS AGENT successfully collected fresh broker data in the last 10 minutes -- not a direct broker health check. A low/red value here can mean our own collection pipeline is struggling (e.g. a metrics-scrape failure) while the brokers themselves are completely healthy and reachable. For a direct, real-time broker connectivity test, use "Check Live Broker Connections" on the Breaker Status tab.' : undefined},
         {label:'Under-replicated Partitions', target:`=${t.urp||0}`, current:`${c.urp||0}`, status:c.urp_status},
         {label:'Broker CPU', target:`<${t.max_broker_cpu_pct||85}%`, current:`${c.avg_cpu||0}%`, status:c.cpu_status||'unknown'},
         {label:'Broker Heap', target:`<${t.max_broker_heap_pct||80}%`, current:`${c.avg_heap||0}%`, status:c.heap_status||'unknown'},
@@ -4326,7 +4326,7 @@
               </tr></thead>
               <tbody>${sloRows.map(r=>`
                 <tr style="border-top:1px solid var(--border)">
-                  <td style="padding:10px 4px;font-weight:600">${r.label}</td>
+                  <td style="padding:10px 4px;font-weight:600">${r.label}${r.hint ? ` <span title="${r.hint.replace(/"/g, '&quot;')}" style="cursor:help;color:var(--text-muted);font-size:.75rem;font-weight:400">ⓘ</span>` : ''}</td>
                   <td style="text-align:center;padding:10px 4px;color:var(--text-muted);font-size:.8rem">${r.target}</td>
                   <td style="text-align:center;padding:10px 4px;font-weight:700;color:${col(r.status)}">${r.current}</td>
                   <td style="text-align:center;padding:10px 4px">${badge(r.status,r.status.toUpperCase())}</td>

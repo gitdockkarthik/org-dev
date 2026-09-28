@@ -1791,6 +1791,10 @@ _cw_last_detection: dict | None = None
 # Flip to True only after a deliberate decision to re-enable, not as a
 # side effect of an unrelated change.
 _TEAMS_ALERTS_ENABLED = False
+_WATCHDOG_STATUS_INTERVAL_MINUTES = 30
+# In-memory, resets on restart -- same pattern as other in-memory state
+# in this codebase (e.g. teams_alerts.py's own digest-interval gate).
+_last_watchdog_status_sent_at: float | None = None
 # Holds a strong reference to the in-flight drain task -- asyncio's own
 # docs warn that a task created via asyncio.create_task() with no
 # reference kept anywhere can be garbage-collected before it completes.
@@ -2088,10 +2092,45 @@ async def check_process_count_watchdog() -> dict:
     brings the container back up cleanly and automatically -- this
     mirrors the same safe restart mechanism already proven throughout
     this session, just triggered by a real, independent condition
-    instead of a blind schedule."""
+    instead of a blind schedule.
+
+    Also posts directly to Teams (bypassing teams_alerts.py entirely,
+    independent of _TEAMS_ALERTS_ENABLED, since this is a separate,
+    minimal safety mechanism): an immediate critical alert if the
+    threshold is breached, and a periodic (every
+    _WATCHDOG_STATUS_INTERVAL_MINUTES) routine status update showing the
+    current process count, for passive visibility during hours nobody is
+    actively watching (2026-09-28, per explicit request)."""
     import os as _os
+    import time as _time
+    global _last_watchdog_status_sent_at
     PROCESS_COUNT_THRESHOLD = 20
     count = sum(1 for pid in _os.listdir("/proc") if pid.isdigit())
+
+    async def _post_to_teams(severity: str, description: str) -> None:
+        # Best-effort, never allowed to affect this function's own
+        # outcome -- wrapped so a Teams/config failure can't prevent the
+        # emergency exit path below from running.
+        try:
+            from routes_settings import _config
+            webhook_url = _config.get("teams_webhook_url", "")
+            if not _config.get("teams_enabled") or not webhook_url:
+                return
+            from shared.escalation.notifier import build_adaptive_card, send_to_teams
+            card = build_adaptive_card(
+                agent_name="Kafka Analyser",
+                cluster_name="(agent-wide, not cluster-specific)",
+                anomaly={
+                    "severity": severity,
+                    "category": "process_watchdog",
+                    "description": description,
+                    "recommended_action": "",
+                },
+            )
+            await send_to_teams(webhook_url=webhook_url, card=card)
+        except Exception as _notify_exc:
+            logger.warning("check_process_count_watchdog: Teams post failed: %s", _notify_exc)
+
     if count > PROCESS_COUNT_THRESHOLD:
         logger.critical(
             "check_process_count_watchdog: process count %d exceeds threshold %d -- "
@@ -2099,7 +2138,40 @@ async def check_process_count_watchdog() -> dict:
             "container back up automatically, clean and fresh)",
             count, PROCESS_COUNT_THRESHOLD,
         )
-        _os._exit(1)
+        # The restart itself must be completely unconditional -- bounded,
+        # best-effort attempt to notify first, but os._exit(1) below runs
+        # in `finally` no matter what happens to the Teams post (success,
+        # failure, or timeout). Without this, a slow/unreachable Teams
+        # endpoint could let the job's own outer timeout cancel this
+        # coroutine before the restart ever happens -- silently disabling
+        # the watchdog's one essential function exactly when network
+        # trouble (a likely trigger condition) makes it most needed.
+        try:
+            await asyncio.wait_for(
+                _post_to_teams(
+                    "critical",
+                    f"Process count {count} exceeded the safety threshold of {PROCESS_COUNT_THRESHOLD} -- "
+                    "forcing an immediate restart. No action needed, Docker will bring the container "
+                    "back up automatically. If this recurs frequently, investigate.",
+                ),
+                timeout=5,
+            )
+        except Exception:
+            pass
+        finally:
+            _os._exit(1)
+
+    now = _time.time()
+    if (
+        _last_watchdog_status_sent_at is None
+        or (now - _last_watchdog_status_sent_at) >= _WATCHDOG_STATUS_INTERVAL_MINUTES * 60
+    ):
+        _last_watchdog_status_sent_at = now
+        await _post_to_teams(
+            "info",
+            f"Routine health check: process count is {count} (safety threshold {PROCESS_COUNT_THRESHOLD}).",
+        )
+
     return {"action": "ok", "process_count": count}
 
 
