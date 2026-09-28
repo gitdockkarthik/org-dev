@@ -1912,6 +1912,30 @@ async def check_and_recycle_close_wait() -> dict:
 
     close_wait_by_cluster = await loop.run_in_executor(None, _check_close_wait)
 
+    # Teams alerting (teams_alerts.py) -- best-effort notification riding
+    # along on this job. Runs as a tracked background task, never awaited
+    # here, so neither a failure nor a slow Teams webhook post can affect
+    # or delay this check/recycle.
+    close_wait_by_cluster_id: dict[int, int] = {}
+    try:
+        import teams_alerts
+        _cw_name_to_id = {c.get("name", str(c.get("id"))): int(c["id"]) for c in enabled}
+        close_wait_by_cluster_id = {
+            _cw_name_to_id[name]: count
+            for name, count in close_wait_by_cluster.items()
+            if name in _cw_name_to_id
+        }
+
+        async def _cw_resolve_and_digest(counts_by_id: dict[int, int]) -> None:
+            await teams_alerts.resolve_cleared_close_wait_triggers(counts_by_id)
+            await teams_alerts.maybe_send_digest()
+
+        _cw_alert_task = asyncio.create_task(_cw_resolve_and_digest(close_wait_by_cluster_id))
+        _cw_background_tasks.add(_cw_alert_task)
+        _cw_alert_task.add_done_callback(_cw_background_tasks.discard)
+    except Exception as _cwae:
+        logger.warning("check_and_recycle_close_wait: Teams resolve/digest scheduling failed: %s", _cwae)
+
     if not close_wait_by_cluster:
         _cw_last_detection = None
         return {"action": "none", "close_wait_found": {}}
@@ -1928,6 +1952,13 @@ async def check_and_recycle_close_wait() -> dict:
         "check_and_recycle_close_wait: CLOSE_WAIT seen on two consecutive checks -> %s -- recycling worker pool",
         close_wait_by_cluster,
     )
+    try:
+        import teams_alerts
+        _cw_fire_task = asyncio.create_task(teams_alerts.fire_close_wait_alerts(close_wait_by_cluster_id))
+        _cw_background_tasks.add(_cw_fire_task)
+        _cw_fire_task.add_done_callback(_cw_background_tasks.discard)
+    except Exception as _cwfe:
+        logger.warning("check_and_recycle_close_wait: Teams alert firing scheduling failed: %s", _cwfe)
     _cw_last_detection = None
     _cw_recycle_in_progress = True
 
