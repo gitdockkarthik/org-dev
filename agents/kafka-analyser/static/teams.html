@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kafka Analyser — Teams — UAP</title>
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    .subnav { display: flex; background: var(--navy-1); border-bottom: 1px solid var(--border); padding: 0 40px; }
+    .subnav__link { display: inline-flex; align-items: center; gap: 6px; padding: 13px 16px; font-size: .85rem; color: var(--text-muted); border-bottom: 2px solid transparent; margin-bottom: -1px; text-decoration: none; transition: color var(--t), border-color var(--t); }
+    .subnav__link:hover { color: var(--text); }
+    .subnav__link--active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+    .content { padding: 1.5rem 2rem 3rem; max-width: none; }
+
+    /* ── Base UI — same as settings.html ── */
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body { background: #f1f5f9; color: #334155; }
+
+    /* Wider than settings.html's 720px -- this page is mostly tables. */
+    .container { max-width: 1100px; margin: 0 auto; }
+
+    .page-header { margin-bottom: 1.75rem; }
+    .page-header h1 { font-size: 1.5rem; font-weight: 700; color: #1e293b; }
+    .page-header p { margin-top: 0.25rem; font-size: 0.9375rem; color: #64748b; }
+
+    .tab-nav {
+      display: flex; border-bottom: 2px solid #e2e8f0;
+      margin-bottom: 1.5rem; overflow: hidden; flex-wrap: nowrap; white-space: nowrap; gap: 0;
+    }
+    .tab-btn {
+      display: flex; align-items: center; gap: 0.4rem;
+      padding: 0.4rem 0.6rem; font-size: 0.8rem; font-weight: 500;
+      color: #64748b; background: none; border: none;
+      border-bottom: 2px solid transparent; margin-bottom: -2px; flex-shrink: 0;
+      cursor: pointer; white-space: nowrap; transition: color 0.15s, border-color 0.15s;
+    }
+    .tab-btn:hover { color: #334155; }
+    .tab-btn.active { color: #FF6B35; border-bottom-color: #FF6B35; }
+
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    .card {
+      background: #ffffff; border: 1px solid #e2e8f0;
+      border-radius: 10px; padding: 1.5rem; margin-bottom: 1.25rem;
+    }
+    .card-title { font-size: 1rem; font-weight: 600; color: #1e293b; }
+    .card-subtitle { font-size: 0.8125rem; color: #64748b; margin-top: 0.25rem; margin-bottom: 1.25rem; }
+    .card-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1rem; }
+
+    .field { margin-bottom: 1rem; }
+    .field:last-child { margin-bottom: 0; }
+    .field > label { display: block; font-size: 0.875rem; font-weight: 500; color: #475569; margin-bottom: 0.375rem; }
+    .field input[type="text"],
+    .field input[type="number"],
+    .field select {
+      width: 100%; padding: 0.5rem 0.75rem; border: 1px solid #cbd5e1;
+      border-radius: 6px; font-size: 0.875rem; color: #1e293b;
+      background: #ffffff; outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .field input:focus, .field select:focus {
+      border-color: #FF6B35; box-shadow: 0 0 0 3px rgba(255,107,53,0.12);
+    }
+    .hint { margin-top: 0.3rem; font-size: 0.75rem; color: #94a3b8; }
+    .field-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0 1rem; }
+    .field-grid .field:last-child { margin-bottom: 1rem; }
+
+    .hidden { display: none; }
+
+    .checkbox-row { display: flex; align-items: center; gap: 0.5rem; }
+    .checkbox-row label { font-size: 0.875rem; color: #334155; cursor: pointer; }
+    .checkbox-row input[type="checkbox"] { accent-color: #FF6B35; }
+
+    .toggle-wrap { display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer; }
+    .toggle-input { display: none; }
+    .toggle-slider {
+      width: 38px; height: 20px; background: #cbd5e1; border-radius: 9999px;
+      position: relative; transition: background 0.2s; flex-shrink: 0; cursor: pointer;
+    }
+    .toggle-input:checked + .toggle-slider { background: #FF6B35; }
+    .toggle-slider::after {
+      content: ''; position: absolute; width: 14px; height: 14px;
+      border-radius: 50%; background: #fff; top: 3px; left: 3px;
+      transition: left 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+    .toggle-input:checked + .toggle-slider::after { left: 21px; }
+    .toggle-input:disabled + .toggle-slider { opacity: 0.5; cursor: wait; }
+    .toggle-text { font-size: 0.8rem; color: #475569; }
+
+    .btn {
+      padding: 0.5625rem 1.375rem; font-size: 0.875rem; font-weight: 500;
+      border: none; border-radius: 6px; cursor: pointer; transition: background 0.15s;
+    }
+    .btn:disabled { opacity: 0.6; cursor: wait; }
+    .btn-primary { background: #FF6B35; color: #fff; }
+    .btn-primary:hover { background: #e55c29; }
+    .btn-primary:active { background: #cc5122; }
+    .btn-secondary { background: #e2e8f0; color: #334155; }
+    .btn-secondary:hover { background: #cbd5e1; }
+    .btn-secondary:active { background: #94a3b8; }
+    .btn-danger { background: #fee2e2; color: #991b1b; }
+    .btn-danger:hover { background: #fecaca; }
+    .btn-sm { padding: 0.25rem 0.625rem; font-size: 0.8rem; }
+    .actions { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+
+    .action-msg { margin-top: 0.75rem; font-size: 0.875rem; min-height: 1.25rem; line-height: 1.4; }
+    .action-msg.ok   { color: #15803d; }
+    .action-msg.err  { color: #b91c1c; }
+    .action-msg.info { color: #FF6B35; }
+    .action-msg.hidden { visibility: hidden; }
+
+    /* ── Tables — same as dashboard.html ── */
+    .data-table-wrap { background: var(--navy-1); border: 1px solid var(--border); border-radius: var(--r); overflow-x: auto; }
+    .data-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+    .data-table th { padding: 10px 14px; text-align: left; font-size: .72rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-dim); background: var(--navy-2); border-bottom: 1px solid var(--border); white-space: nowrap; }
+    .data-table td { padding: 11px 14px; border-bottom: 1px solid var(--border); color: var(--text); vertical-align: middle; }
+    .data-table tr:last-child td { border-bottom: none; }
+    .data-table tr:hover td { background: var(--navy-3); }
+    .data-table__empty { padding: 32px; text-align: center; color: var(--text-dim); }
+    .data-table__loading { padding: 24px; text-align: center; color: #94a3b8; font-style: italic; }
+    .data-table__error { padding: 24px; text-align: center; color: #b91c1c; }
+    .nowrap { white-space: nowrap; }
+
+    /* Severity badges — same as dashboard.html, plus info */
+    .sev { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: .72rem; font-weight: 700; text-transform: uppercase; }
+    .sev--critical { background: rgba(220,38,38,.12); color: #dc2626; }
+    .sev--warning  { background: rgba(217,119,6,.12);  color: #d97706; }
+    .sev--info     { background: rgba(37,99,235,.1);   color: #2563eb; }
+
+    .status-open     { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: .75rem; font-weight: 700; background: rgba(220,38,38,.12); color: #dc2626; }
+    .status-resolved { font-size: .8rem; color: #16a34a; }
+    .open-count-warn { display: inline-flex; align-items: center; gap: 4px; font-weight: 700; color: #b45309; }
+    .recur-badge     { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 9999px; font-size: .72rem; font-weight: 700; background: rgba(147,51,234,.1); color: #7e22ce; }
+    .post-ok   { color: #16a34a; font-weight: 700; }
+    .post-fail { color: #dc2626; font-weight: 700; cursor: help; }
+
+    .show-more-row { display: flex; align-items: center; gap: 1rem; margin-top: 1rem; }
+    .show-more-count { font-size: 0.8125rem; color: #94a3b8; }
+
+    @media (max-width: 500px) {
+      .tab-btn { padding: 0.625rem 0.5rem; font-size: 0.75rem; }
+    }
+    @media (max-width: 768px) { .subnav { padding: 0 20px; } .content { padding: 1rem; } }
+  </style>
+</head>
+<body>
+
+  <header class="topbar">
+    <a href="/" class="topbar__brand">
+      <span style="font-size:1.1rem;
+      font-weight:700;color:#ffffff;
+      letter-spacing:1px;
+      font-family:inherit;">OPERATIVE</span>
+    </a>
+    <nav class="topbar__nav">
+      <a href="/" class="topbar__link">Agents</a>
+      <a href="/admin/" class="topbar__link">Admin</a>
+    </nav>
+    <div class="topbar__right" style="font-size:.85rem;color:var(--text-muted)">Kafka Analyser</div>
+  </header>
+
+  <nav class="subnav">
+    <span id="agent-label" style="display:none;position:absolute;right:1.5rem;font-size:.8rem;font-weight:600;color:var(--accent,#0891b2)">Kafka Analyser</span>
+    <a href="/chat?agent=kafka-analyser" data-standalone-href="chat.html" class="subnav__link">💬 Chat</a>
+    <a href="/agents/kafka-analyser/dashboard" data-standalone-href="dashboard.html" class="subnav__link">📊 Dashboard</a>
+    <a href="/agents/kafka-analyser/reports" data-standalone-href="reports.html" class="subnav__link">📁 Reports</a>
+    <a href="/agents/kafka-analyser/settings" data-standalone-href="settings.html" class="subnav__link">⚙ Settings</a>
+    <a href="/agents/kafka-analyser/teams" data-standalone-href="teams.html" class="subnav__link subnav__link--active">🔔 Teams</a>
+  </nav>
+
+  <div class="content">
+  <div class="container">
+
+    <div class="page-header">
+      <h1>Kafka Analyser — Teams</h1>
+      <p>Configure alert rules and scheduled reminders posted to Teams</p>
+    </div>
+
+    <nav class="tab-nav" role="tablist">
+      <button class="tab-btn active" data-tab="alerts" role="tab">Alert Configuration and Reporting</button>
+      <button class="tab-btn" data-tab="reminders" role="tab">Schedules and Reminders</button>
+    </nav>
+
+    <!-- TAB 1: Alert Configuration and Reporting -->
+    <div class="tab-panel active" id="panel-alerts">
+
+      <!-- New alert rule form (hidden by default) -->
+      <div class="card hidden" id="alert-form-card">
+        <div class="card-title">New Alert Rule</div>
+        <div class="card-subtitle">Evaluated on each CLOSE_WAIT check; posts to Teams only when the condition is met</div>
+
+        <div class="field-grid">
+          <div class="field">
+            <label for="af-name">Name</label>
+            <input type="text" id="af-name" placeholder="e.g. CLOSE_WAIT on production" />
+          </div>
+          <div class="field">
+            <label for="af-alert-type">Alert Type</label>
+            <select id="af-alert-type"></select>
+          </div>
+          <div class="field">
+            <label for="af-cluster">Cluster</label>
+            <select id="af-cluster">
+              <option value="">All clusters</option>
+            </select>
+            <div class="hint" id="af-cluster-hint"></div>
+          </div>
+          <div class="field">
+            <label for="af-severity">Severity</label>
+            <select id="af-severity">
+              <option value="critical">Critical</option>
+              <option value="warning" selected>Warning</option>
+              <option value="info">Info</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="af-threshold">Threshold</label>
+            <input type="number" id="af-threshold" min="1" value="1" />
+            <div class="hint">Fires when the count is at or above this value</div>
+          </div>
+          <div class="field">
+            <label for="af-cooldown">Cooldown Minutes</label>
+            <input type="number" id="af-cooldown" min="0" value="30" />
+            <div class="hint">Minimum minutes after resolving before this rule can fire again</div>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="af-webhook">Webhook URL Override</label>
+          <input type="text" id="af-webhook" placeholder="https://... (optional)" />
+          <div class="hint">Leave empty to use the agent-level webhook from Settings → Alert Thresholds → Teams Escalation</div>
+        </div>
+
+        <div class="field">
+          <div class="checkbox-row">
+            <input type="checkbox" id="af-enabled" checked />
+            <label for="af-enabled">Enabled</label>
+          </div>
+        </div>
+
+        <div class="actions" style="margin-top:1rem">
+          <button class="btn btn-primary" id="btn-save-alert">Save Rule</button>
+          <button class="btn btn-secondary" id="btn-cancel-alert">Cancel</button>
+        </div>
+        <div id="alert-form-msg" class="action-msg hidden"></div>
+      </div>
+
+      <!-- Alert rules list -->
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <div class="card-title">Alert Rules</div>
+          </div>
+          <button class="btn btn-primary" id="btn-new-alert" style="padding:0.375rem 0.875rem">+ New Alert Rule</button>
+        </div>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Cluster</th>
+                <th>Severity</th>
+                <th>Threshold</th>
+                <th>Cooldown (min)</th>
+                <th>Status</th>
+                <th>Open Triggers</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="configs-body">
+              <tr><td colspan="9" class="data-table__loading">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="configs-msg" class="action-msg hidden"></div>
+      </div>
+
+      <!-- Recent triggers -->
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <div class="card-title">Recent Triggers</div>
+            <div class="card-subtitle" style="margin-bottom:0">Alert firings from the last 3 days, newest first</div>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="btn-refresh-triggers">Refresh</button>
+        </div>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Alert</th>
+                <th>Cluster</th>
+                <th>Metric Value</th>
+                <th>Status</th>
+                <th>Recurrence</th>
+                <th>Teams Post</th>
+              </tr>
+            </thead>
+            <tbody id="triggers-body">
+              <tr><td colspan="7" class="data-table__loading">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="show-more-row">
+          <button class="btn btn-secondary btn-sm hidden" id="btn-show-more">Show More</button>
+          <span class="show-more-count" id="triggers-count"></span>
+        </div>
+      </div>
+
+    </div><!-- /#panel-alerts -->
+
+    <!-- TAB 2: Schedules and Reminders -->
+    <div class="tab-panel" id="panel-reminders">
+      <div class="card">
+        <div class="card-title">Schedules and Reminders</div>
+        <div class="card-subtitle" style="margin-bottom:0">Coming soon</div>
+      </div>
+    </div><!-- /#panel-reminders -->
+
+  </div><!-- /.container -->
+  </div><!-- /.content -->
+
+  <script>
+    // ── Standalone mode: stub portal dependencies ─────────────────────────
+    if (typeof window._authHeaders !== 'function') {
+      window.BACKEND_URL = '';
+      window._authHeaders = () => ({});
+      window.portalReady = Promise.resolve();
+      window.showToast = (msg, type) => console.log('[toast]', type || 'info', msg);
+    }
+  </script>
+  <script>
+    // ── Dual-mode detection: works inside Operative portal AND standalone ──
+    const _isPortalMode = (typeof window._isPortalEnv !== 'undefined' && window._isPortalEnv === true);
+  </script>
+  <script>
+    const SLUG  = 'kafka-analyser';
+    const PROXY = _isPortalMode ? `${BACKEND_URL}/api/agents/${SLUG}/proxy` : '';
+
+    const authHeaders = () => (typeof _authHeaders === 'function' ? _authHeaders() : {});
+
+    const $ = id => document.getElementById(id);
+
+    // Adding an alert type later is a one-line change here.
+    const ALERT_TYPES = [
+      { value: 'close_wait_spike', label: 'CLOSE_WAIT spike' },
+    ];
+
+    const TRIGGERS_PAGE_SIZE = 10;
+    let _triggersLimit = TRIGGERS_PAGE_SIZE;
+
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        $('panel-' + btn.dataset.tab).classList.add('active');
+      });
+    });
+
+    function showMsg(el, text, type, durationMs = 5000) {
+      el.textContent = text;
+      el.className = 'action-msg ' + type;
+      clearTimeout(el._t);
+      if (durationMs) {
+        el._t = setTimeout(() => { el.className = 'action-msg hidden'; el.textContent = ''; }, durationMs);
+      }
+    }
+
+    function hideMsg(el) {
+      clearTimeout(el._t);
+      el.className = 'action-msg hidden';
+      el.textContent = '';
+    }
+
+    function esc(s) {
+      return String(s ?? '').replace(/[&<>"']/g, ch => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]
+      ));
+    }
+
+    // API timestamps are UTC ISO strings -> "2026-09-28 06:38 UTC".
+    function fmtUtc(iso) {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return iso;
+      return d.toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+    }
+
+    function alertTypeLabel(value) {
+      const t = ALERT_TYPES.find(x => x.value === value);
+      return t ? t.label : value;
+    }
+
+    // FastAPI puts errors in `detail`: a string for HTTPException, or a list
+    // of {loc, msg} objects for request-validation (422) errors.
+    async function errorFromResponse(res) {
+      let body = null;
+      try { body = await res.json(); } catch (_) { /* non-JSON body */ }
+      const detail = body && body.detail;
+      if (Array.isArray(detail)) {
+        return detail.map(d => {
+          const field = Array.isArray(d.loc) ? d.loc.filter(p => p !== 'body').join('.') : '';
+          return (field ? field + ': ' : '') + (d.msg || JSON.stringify(d));
+        }).join('; ');
+      }
+      if (typeof detail === 'string' && detail) return detail;
+      return 'HTTP ' + res.status;
+    }
+
+    async function api(path, options = {}) {
+      await portalReady;
+      const headers = { ...authHeaders(), ...(options.body ? { 'Content-Type': 'application/json' } : {}) };
+      const res = await fetch(`${PROXY}${path}`, { ...options, headers });
+      if (!res.ok) throw new Error(await errorFromResponse(res));
+      return res.json();
+    }
+
+    // ── New alert rule form ──────────────────────────────────────────────
+    $('af-alert-type').innerHTML = ALERT_TYPES
+      .map(t => `<option value="${esc(t.value)}">${esc(t.value)} — ${esc(t.label)}</option>`)
+      .join('');
+
+    function resetAlertForm() {
+      $('af-name').value = '';
+      $('af-alert-type').value = ALERT_TYPES[0].value;
+      $('af-cluster').value = '';
+      $('af-severity').value = 'warning';
+      $('af-threshold').value = '1';
+      $('af-cooldown').value = '30';
+      $('af-webhook').value = '';
+      $('af-enabled').checked = true;
+      hideMsg($('alert-form-msg'));
+    }
+
+    async function loadClusterOptions() {
+      const sel = $('af-cluster');
+      const hint = $('af-cluster-hint');
+      hint.textContent = 'Loading clusters…';
+      try {
+        const d = await api('/settings/clusters');
+        const current = sel.value;
+        sel.innerHTML = '<option value="">All clusters</option>' + (d.clusters || []).map(c =>
+          `<option value="${esc(c.id)}">${esc(c.name)}${c.enabled ? '' : ' (disabled)'}</option>`
+        ).join('');
+        sel.value = current;
+        hint.textContent = '';
+      } catch (err) {
+        hint.textContent = 'Could not load clusters (' + err.message + ') — only "All clusters" is available.';
+      }
+    }
+
+    $('btn-new-alert').addEventListener('click', () => {
+      resetAlertForm();
+      $('alert-form-card').classList.remove('hidden');
+      $('alert-form-card').scrollIntoView({ behavior: 'smooth' });
+      $('af-name').focus();
+    });
+
+    $('btn-cancel-alert').addEventListener('click', () => {
+      $('alert-form-card').classList.add('hidden');
+      resetAlertForm();
+    });
+
+    $('btn-save-alert').addEventListener('click', async () => {
+      const msgEl = $('alert-form-msg');
+      const name = $('af-name').value.trim();
+      if (!name) { showMsg(msgEl, '✗ Name is required', 'err', 0); return; }
+      const clusterVal = $('af-cluster').value;
+      const payload = {
+        name,
+        alert_type: $('af-alert-type').value,
+        cluster_id: clusterVal ? parseInt(clusterVal, 10) : null,
+        severity: $('af-severity').value,
+        threshold: parseInt($('af-threshold').value, 10),
+        cooldown_minutes: parseInt($('af-cooldown').value, 10),
+        webhook_url: $('af-webhook').value.trim() || null,
+        enabled: $('af-enabled').checked,
+      };
+      if (!Number.isInteger(payload.threshold) || payload.threshold < 1) {
+        showMsg(msgEl, '✗ Threshold must be a whole number of at least 1', 'err', 0); return;
+      }
+      if (!Number.isInteger(payload.cooldown_minutes) || payload.cooldown_minutes < 0) {
+        showMsg(msgEl, '✗ Cooldown Minutes must be a whole number of 0 or more', 'err', 0); return;
+      }
+      const btn = $('btn-save-alert');
+      btn.disabled = true;
+      showMsg(msgEl, 'Saving…', 'info', 0);
+      try {
+        await api('/alerts/configs', { method: 'POST', body: JSON.stringify(payload) });
+        $('alert-form-card').classList.add('hidden');
+        resetAlertForm();
+        showMsg($('configs-msg'), '✓ Alert rule "' + name + '" created', 'ok');
+        await loadConfigs();
+      } catch (err) {
+        // Kept visible (no auto-hide) so validation errors can be read and fixed.
+        showMsg(msgEl, '✗ Save failed: ' + err.message, 'err', 0);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    // ── Alert rules table ────────────────────────────────────────────────
+    function renderConfigs(configs) {
+      const body = $('configs-body');
+      if (!configs.length) {
+        body.innerHTML = '<tr><td colspan="9" class="data-table__empty">No alert rules configured yet. Click "+ New Alert Rule" to create one.</td></tr>';
+        return;
+      }
+      body.innerHTML = configs.map(c => {
+        const openCell = c.open_trigger_count > 0
+          ? `<span class="open-count-warn" title="Currently unresolved">⚠ ${esc(c.open_trigger_count)}</span>`
+          : '0';
+        return `
+          <tr>
+            <td><strong>${esc(c.name)}</strong></td>
+            <td class="nowrap">${esc(alertTypeLabel(c.alert_type))}</td>
+            <td>${esc(c.cluster_name)}</td>
+            <td><span class="sev sev--${esc(c.severity)}">${esc(c.severity)}</span></td>
+            <td>${esc(c.threshold)}</td>
+            <td>${esc(c.cooldown_minutes)}</td>
+            <td class="nowrap">
+              <label class="toggle-wrap" title="Click to ${c.enabled ? 'disable' : 'enable'}">
+                <input type="checkbox" class="toggle-input config-enable-toggle" data-id="${esc(c.id)}" ${c.enabled ? 'checked' : ''} />
+                <span class="toggle-slider"></span>
+                <span class="toggle-text">${c.enabled ? 'Enabled' : 'Disabled'}</span>
+              </label>
+            </td>
+            <td>${openCell}</td>
+            <td><button class="btn btn-danger btn-sm config-delete" data-id="${esc(c.id)}" data-name="${esc(c.name)}">Delete</button></td>
+          </tr>`;
+      }).join('');
+
+      body.querySelectorAll('.config-enable-toggle').forEach(toggle => {
+        toggle.addEventListener('change', async function () {
+          const id = parseInt(this.dataset.id, 10);
+          const enabled = this.checked;
+          this.disabled = true;
+          try {
+            await api(`/alerts/configs/${id}`, { method: 'PUT', body: JSON.stringify({ enabled }) });
+            await loadConfigs();
+          } catch (err) {
+            this.checked = !enabled;
+            this.disabled = false;
+            showMsg($('configs-msg'), '✗ Could not ' + (enabled ? 'enable' : 'disable') + ' rule: ' + err.message, 'err', 10000);
+          }
+        });
+      });
+
+      body.querySelectorAll('.config-delete').forEach(btn => {
+        btn.addEventListener('click', async function () {
+          const id = parseInt(this.dataset.id, 10);
+          if (!confirm('Delete alert rule "' + this.dataset.name + '"? Its trigger history will also be deleted.')) return;
+          this.disabled = true;
+          try {
+            await api(`/alerts/configs/${id}`, { method: 'DELETE' });
+            showMsg($('configs-msg'), '✓ Alert rule deleted', 'ok');
+            // Its triggers cascade-delete, so refresh both tables.
+            await Promise.all([loadConfigs(), loadTriggers()]);
+          } catch (err) {
+            this.disabled = false;
+            showMsg($('configs-msg'), '✗ Delete failed: ' + err.message, 'err', 10000);
+          }
+        });
+      });
+    }
+
+    async function loadConfigs() {
+      try {
+        const d = await api('/alerts/configs');
+        renderConfigs(d.configs || []);
+      } catch (err) {
+        $('configs-body').innerHTML =
+          `<tr><td colspan="9" class="data-table__error">Failed to load alert rules: ${esc(err.message)}</td></tr>`;
+      }
+    }
+
+    // ── Recent triggers table ────────────────────────────────────────────
+    function renderTriggers(triggers, totalCount) {
+      const body = $('triggers-body');
+      if (!triggers.length) {
+        body.innerHTML = '<tr><td colspan="7" class="data-table__empty">No alerts have fired yet.</td></tr>';
+      } else {
+        body.innerHTML = triggers.map(t => {
+          const status = t.resolved_at
+            ? `<span class="status-resolved">✓ Resolved ${esc(fmtUtc(t.resolved_at))}</span>`
+            : '<span class="status-open">● Open</span>';
+          const recur = t.is_recurrence
+            ? '<span class="recur-badge" title="Fired again shortly after this alert last resolved (flapping)">↻ Recurring</span>'
+            : '';
+          let post;
+          if (t.teams_post_success) {
+            post = '<span class="post-ok" title="Posted to Teams">✓</span>';
+          } else {
+            const reason = t.error_detail || 'Teams post failed (see agent logs for details)';
+            post = `<span class="post-fail" title="${esc(reason)}">✗</span>`;
+          }
+          return `
+            <tr>
+              <td class="nowrap">${esc(fmtUtc(t.triggered_at))}</td>
+              <td>${esc(t.config_name)}</td>
+              <td>${esc(t.cluster_name)}</td>
+              <td>${t.metric_value != null ? esc(t.metric_value) : '—'}</td>
+              <td>${status}</td>
+              <td>${recur}</td>
+              <td>${post}</td>
+            </tr>`;
+        }).join('');
+      }
+      const showMore = $('btn-show-more');
+      showMore.classList.toggle('hidden', triggers.length >= totalCount);
+      $('triggers-count').textContent = totalCount
+        ? `Showing ${triggers.length} of ${totalCount}`
+        : '';
+    }
+
+    async function loadTriggers() {
+      try {
+        const d = await api(`/alerts/triggers?limit=${_triggersLimit}&offset=0`);
+        renderTriggers(d.triggers || [], d.total_count || 0);
+      } catch (err) {
+        $('triggers-body').innerHTML =
+          `<tr><td colspan="7" class="data-table__error">Failed to load recent triggers: ${esc(err.message)}</td></tr>`;
+        $('btn-show-more').classList.add('hidden');
+        $('triggers-count').textContent = '';
+      }
+    }
+
+    $('btn-show-more').addEventListener('click', async function () {
+      _triggersLimit += TRIGGERS_PAGE_SIZE;
+      this.disabled = true;
+      this.textContent = 'Loading…';
+      await loadTriggers();
+      this.disabled = false;
+      this.textContent = 'Show More';
+    });
+
+    $('btn-refresh-triggers').addEventListener('click', async function () {
+      this.disabled = true;
+      await Promise.all([loadConfigs(), loadTriggers()]);
+      this.disabled = false;
+    });
+
+    loadClusterOptions();
+    loadConfigs();
+    loadTriggers();
+  </script>
+  <script>
+    // ── Fix nav links and UI in standalone mode ───────────────────────────
+    if (!_isPortalMode) {
+      document.querySelectorAll('[data-standalone-href]').forEach(el => {
+        el.href = el.dataset.standaloneHref;
+      });
+      var topbar = document.querySelector('.topbar');
+      if (topbar) topbar.style.display = 'none';
+      var lbl = document.getElementById('agent-label');
+      if (lbl) lbl.style.display = 'inline';
+    }
+  </script>
+</body>
+</html>

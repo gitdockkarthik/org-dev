@@ -253,7 +253,7 @@
 
     <nav class="tab-nav" role="tablist">
       <button class="tab-btn active" data-tab="data-source" role="tab">Data Source</button>
-      <button class="tab-btn" data-tab="thresholds" role="tab">Alert Thresholds</button>
+      <button class="tab-btn" data-tab="thresholds" role="tab">Teams Connection</button>
       <button class="tab-btn" data-tab="enterprise" role="tab" style="display:none">
         Enterprise Kafka <span class="phase-badge">Phase 3</span>
       </button>
@@ -467,10 +467,10 @@
 
     </div><!-- /#panel-data-source -->
 
-    <!-- TAB 2: Alert Thresholds -->
+    <!-- TAB 2: Teams Connection (formerly Alert Thresholds; threshold cards hidden, see below) -->
     <div class="tab-panel" id="panel-thresholds">
 
-      <div class="card">
+      <div class="card" style="display:none">
         <div class="card-title">Consumer Lag</div>
         <div style="display:flex;flex-direction:column;gap:1rem;margin-top:0.75rem">
           <div class="field">
@@ -491,7 +491,7 @@
         </div>
       </div>
 
-      <div class="card">
+      <div class="card" style="display:none">
         <div class="card-title">Broker Health</div>
         <div style="display:flex;flex-direction:column;gap:1rem;margin-top:0.75rem">
           <div class="field">
@@ -526,7 +526,7 @@
         </div>
       </div>
 
-      <div class="card">
+      <div class="card" style="display:none">
         <div class="card-title">Connectors &amp; Topics</div>
         <div style="display:flex;flex-direction:column;gap:1rem;margin-top:0.75rem">
           <div class="field">
@@ -566,19 +566,10 @@
           </div>
 
           <div class="field">
-            <label>Severity Filter</label>
-            <div style="display:flex;gap:12px;margin-top:4px">
-              <label><input type="checkbox" id="teams-sev-critical" checked /> Critical</label>
-              <label><input type="checkbox" id="teams-sev-warning" checked /> Warning</label>
-              <label><input type="checkbox" id="teams-sev-info" /> Info</label>
-            </div>
-          </div>
-
-          <div class="field">
-            <label for="teams-cooldown">Cooldown (minutes)</label>
-            <input type="number" id="teams-cooldown" min="1" value="10"
+            <label for="teams-digest-interval">Digest Interval (minutes)</label>
+            <input type="number" id="teams-digest-interval" min="1" value="5"
                    style="max-width:120px" />
-            <div class="hint">Minimum minutes between repeat escalations for the same anomaly type</div>
+            <div class="hint">Minimum minutes between periodic Resolved/Pending/Recurrence summary cards. Piggybacked on the existing close-wait check cadence -- no extra broker connections.</div>
           </div>
 
           <div class="field">
@@ -776,27 +767,9 @@
 
     function buildThresholdPayload() {
       return {
-        lag_threshold:           parseInt($('lag-threshold').value, 10),
-        heap_threshold_pct:      parseInt($('heap-threshold').value, 10),
-        urp_threshold:           parseInt($('urp-threshold').value, 10),
-        connector_alert_enabled: $('connector-alert').checked,
-        retention_threshold_pct: parseInt($('retention-threshold').value, 10),
-        lag_warning_pct: parseInt($('lag-warning-pct').value, 10) || 60,
-        lag_critical_pct: parseInt($('lag-critical-pct').value, 10) || 80,
-        heap_warning_pct: parseInt($('heap-warning-pct').value, 10) || 70,
-        gc_warning_ms: parseInt($('gc-warning-ms').value, 10) || 500,
-        gc_critical_ms: parseInt($('gc-critical-ms').value, 10) || 1000,
-        fetch_latency_warning_ms: parseInt($('fetch-latency-warning-ms').value, 10) || 200,
-        fetch_latency_critical_ms: parseInt($('fetch-latency-critical-ms').value, 10) || 500,
-        retention_warning_pct: parseInt($('retention-warning-pct').value, 10) || 70,
         teams_enabled: $('teams-enabled').checked,
         teams_webhook_url: $('teams-webhook-url').value.trim(),
-        teams_severity_filter: [
-          ...($('teams-sev-critical').checked ? ['critical'] : []),
-          ...($('teams-sev-warning').checked ? ['warning'] : []),
-          ...($('teams-sev-info').checked ? ['info'] : []),
-        ],
-        teams_cooldown_mins: parseInt($('teams-cooldown').value, 10) || 10,
+        teams_digest_interval_minutes: parseInt($('teams-digest-interval').value, 10) || 5,
       };
     }
 
@@ -976,13 +949,7 @@
 
         if ($('teams-enabled')) $('teams-enabled').checked = cfg.teams_enabled || false;
         if ($('teams-webhook-url')) $('teams-webhook-url').value = cfg.teams_webhook_url || '';
-        if ($('teams-sev-critical')) $('teams-sev-critical').checked =
-          (cfg.teams_severity_filter || ['critical','warning']).includes('critical');
-        if ($('teams-sev-warning')) $('teams-sev-warning').checked =
-          (cfg.teams_severity_filter || ['critical','warning']).includes('warning');
-        if ($('teams-sev-info')) $('teams-sev-info').checked =
-          (cfg.teams_severity_filter || []).includes('info');
-        if ($('teams-cooldown')) $('teams-cooldown').value = cfg.teams_cooldown_mins || 10;
+        if ($('teams-digest-interval')) $('teams-digest-interval').value = cfg.teams_digest_interval_minutes || 5;
 
         $('sync-status').innerHTML = '';
         renderPerClusterSyncStatus();
