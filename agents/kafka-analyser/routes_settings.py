@@ -56,8 +56,6 @@ _DEFAULTS: dict = {
     # Teams escalation
     "teams_enabled": False,
     "teams_webhook_url": "",
-    "teams_severity_filter": ["critical", "warning"],
-    "teams_cooldown_mins": 10,
 }
 
 # Write-through in-memory cache; populated from DB on startup.
@@ -137,8 +135,6 @@ class SettingsPayload(BaseModel):
     # Teams escalation
     teams_enabled: bool = False
     teams_webhook_url: str = ""
-    teams_severity_filter: list[str] = ["critical", "warning"]
-    teams_cooldown_mins: int = 10
 
 
 class TestConnectionPayload(BaseModel):
@@ -422,9 +418,6 @@ async def sync_metrics() -> dict:
                 teams_cfg = {
                     "teams_enabled": _config.get("teams_enabled", False),
                     "teams_webhook_url": _config.get("teams_webhook_url", ""),
-                    "teams_severity_filter": _config.get("teams_severity_filter",
-                                                         ["critical", "warning"]),
-                    "teams_cooldown_mins": _config.get("teams_cooldown_mins", 10),
                 }
 
                 if anomalies:

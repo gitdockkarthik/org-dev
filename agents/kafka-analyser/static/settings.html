@@ -570,22 +570,6 @@
           </div>
 
           <div class="field">
-            <label>Severity Filter</label>
-            <div style="display:flex;gap:12px;margin-top:4px">
-              <label><input type="checkbox" id="teams-sev-critical" checked /> Critical</label>
-              <label><input type="checkbox" id="teams-sev-warning" checked /> Warning</label>
-              <label><input type="checkbox" id="teams-sev-info" /> Info</label>
-            </div>
-          </div>
-
-          <div class="field">
-            <label for="teams-cooldown">Cooldown (minutes)</label>
-            <input type="number" id="teams-cooldown" min="1" value="10"
-                   style="max-width:120px" />
-            <div class="hint">Minimum minutes between repeat escalations for the same anomaly type</div>
-          </div>
-
-          <div class="field">
             <button class="btn btn-secondary" id="btn-test-teams" type="button">
               Send Test Message
             </button>
@@ -799,12 +783,6 @@
         retention_warning_pct: parseInt($('retention-warning-pct').value, 10) || 70,
         teams_enabled: $('teams-enabled').checked,
         teams_webhook_url: $('teams-webhook-url').value.trim(),
-        teams_severity_filter: [
-          ...($('teams-sev-critical').checked ? ['critical'] : []),
-          ...($('teams-sev-warning').checked ? ['warning'] : []),
-          ...($('teams-sev-info').checked ? ['info'] : []),
-        ],
-        teams_cooldown_mins: parseInt($('teams-cooldown').value, 10) || 10,
       };
     }
 
@@ -984,13 +962,6 @@
 
         if ($('teams-enabled')) $('teams-enabled').checked = cfg.teams_enabled || false;
         if ($('teams-webhook-url')) $('teams-webhook-url').value = cfg.teams_webhook_url || '';
-        if ($('teams-sev-critical')) $('teams-sev-critical').checked =
-          (cfg.teams_severity_filter || ['critical','warning']).includes('critical');
-        if ($('teams-sev-warning')) $('teams-sev-warning').checked =
-          (cfg.teams_severity_filter || ['critical','warning']).includes('warning');
-        if ($('teams-sev-info')) $('teams-sev-info').checked =
-          (cfg.teams_severity_filter || []).includes('info');
-        if ($('teams-cooldown')) $('teams-cooldown').value = cfg.teams_cooldown_mins || 10;
 
         $('sync-status').innerHTML = '';
         renderPerClusterSyncStatus();
