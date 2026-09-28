@@ -1716,6 +1716,7 @@ async def check_breaker_recovery() -> dict:
                     row.paused_at = None
                     row.paused_reason = None
                     row.consecutive_failures = 0
+                    row.per_job_failures = {}
                     row.recovery_successes = 0
                     session.add(KafkaClusterBreakerEvent(
                         cluster_id=cid,

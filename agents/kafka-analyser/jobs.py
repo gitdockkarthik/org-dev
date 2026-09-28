@@ -24,6 +24,7 @@ _BREAKER_TRACKED_PREFIXES = (
     "kafka-topic-structure-",
     "kafka-msg-rate-",
     "kafka-topic-inflow-",
+    "kafka-topic-sizes-",
 )
 
 # All 9 per-cluster job-type prefixes -- broader than _BREAKER_TRACKED_PREFIXES.
@@ -31,10 +32,9 @@ _BREAKER_TRACKED_PREFIXES = (
 # paused (every per-cluster job type stops, so nothing computes from
 # increasingly stale data during an incident) -- NOT used for deciding
 # whether a job's outcome counts toward tripping or resetting the breaker
-# (that stays scoped to _BREAKER_TRACKED_PREFIXES, the 5 job types that
+# (that stays scoped to _BREAKER_TRACKED_PREFIXES, the 6 job types that
 # actually make raw broker-protocol connections).
 _ALL_PER_CLUSTER_PREFIXES = _BREAKER_TRACKED_PREFIXES + (
-    "kafka-topic-sizes-",
     "kafka-connector-snapshots-",
     "kafka-sr-sync-",
     "kafka-slo-compliance-",
@@ -45,7 +45,7 @@ _BREAKER_TRIP_THRESHOLD = 5
 
 def _parse_any_cluster_job_id(job_id: str) -> int | None:
     """Return the cluster_id if job_id matches ANY of the 9 per-cluster job
-    types (not just the 5 breaker-tracked ones). Used only to decide whether
+    types (not just the 6 breaker-tracked ones). Used only to decide whether
     a job should be skipped while its cluster is paused. Cluster-agnostic
     jobs (kafka-snapshot-rollup, kafka-vacuum-full,
     kafka-breaker-recovery-check) always return None here too, exactly as
@@ -59,19 +59,21 @@ def _parse_any_cluster_job_id(job_id: str) -> int | None:
     return None
 
 
-def _parse_breaker_cluster_id(job_id: str) -> int | None:
-    """Return the cluster_id if job_id matches one of the 5 breaker-tracked
-    job-type prefixes (broker-health, consumer-lag, topic-structure,
-    msg-rate, topic-inflow), else None. Cluster-agnostic jobs
-    (kafka-snapshot-rollup, kafka-vacuum-full, the future recovery-check
-    job) and non-tracked per-cluster job types (connector-snapshots,
-    sr-sync, slo-compliance) always return None and are never paused or
-    counted."""
+def _parse_breaker_cluster_id(job_id: str) -> tuple[int, str] | None:
+    """Return (cluster_id, job_type) if job_id matches one of the 6
+    breaker-tracked job-type prefixes (broker-health, consumer-lag,
+    topic-structure, msg-rate, topic-inflow, topic-sizes), else None.
+    job_type is the prefix without "kafka-" and the trailing "-" (e.g.
+    "consumer-lag"), used as the key into per_job_failures. Cluster-agnostic
+    jobs (kafka-snapshot-rollup, kafka-vacuum-full, the future
+    recovery-check job) and non-tracked per-cluster job types
+    (connector-snapshots, sr-sync, slo-compliance) always return None and
+    are never paused or counted."""
     for prefix in _BREAKER_TRACKED_PREFIXES:
         if job_id.startswith(prefix):
             suffix = job_id[len(prefix):]
             if suffix.isdigit():
-                return int(suffix)
+                return int(suffix), prefix[len("kafka-"):-1]
     return None
 
 
@@ -89,14 +91,22 @@ async def _get_breaker_state(cluster_id: int) -> KafkaClusterBreakerState | None
 
 async def _record_breaker_outcome(job_id: str, success: bool, error: str | None) -> None:
     """Update circuit-breaker state after a tracked job type's outcome. No-op
-    for job_id values that aren't one of the 5 tracked prefixes, and a no-op
+    for job_id values that aren't one of the 6 tracked prefixes, and a no-op
     (not a trip/reset) if the cluster is already paused -- once paused, only
     the future recovery-check job clears it, so outcomes while paused
     (which shouldn't normally occur, since trigger_job() intercepts them
-    first) don't further mutate consecutive_failures."""
-    cluster_id = _parse_breaker_cluster_id(job_id)
-    if cluster_id is None or SessionLocal is None:
+    first) don't further mutate consecutive_failures.
+
+    Failures are counted per job type (per_job_failures), so one job type
+    succeeding only resets its OWN count and can no longer mask another
+    job type's repeated failures (confirmed live 2026-09-28). The breaker
+    trips when any single job type reaches _BREAKER_TRIP_THRESHOLD.
+    consecutive_failures is kept as the max across job types for existing
+    dashboard/UI readers."""
+    parsed = _parse_breaker_cluster_id(job_id)
+    if parsed is None or SessionLocal is None:
         return
+    cluster_id, job_type = parsed
     try:
         async with SessionLocal() as session:
             result = await session.execute(
@@ -110,6 +120,9 @@ async def _record_breaker_outcome(job_id: str, success: bool, error: str | None)
                 state = KafkaClusterBreakerState(
                     cluster_id=cluster_id,
                     consecutive_failures=0,
+                    # Set explicitly: the column's default=dict only applies
+                    # at INSERT, so it would still read None below.
+                    per_job_failures={},
                     paused=False,
                     updated_at=now,
                 )
@@ -117,29 +130,44 @@ async def _record_breaker_outcome(job_id: str, success: bool, error: str | None)
             if state.paused:
                 # Already paused -- only the recovery-check job clears this.
                 return
+            current = state.per_job_failures or {}
             if success:
-                if state.consecutive_failures != 0:
-                    state.consecutive_failures = 0
+                # Reset only this job type's count. Reassign a new dict
+                # rather than mutating in place -- SQLAlchemy does not
+                # detect in-place changes to a plain JSONB column.
+                if current.get(job_type, 0) != 0:
+                    current = {**current, job_type: 0}
+                    state.per_job_failures = current
+                    state.updated_at = now
+                new_max = max(current.values(), default=0)
+                if state.consecutive_failures != new_max:
+                    state.consecutive_failures = new_max
                     state.updated_at = now
             else:
-                state.consecutive_failures += 1
+                job_failures = current.get(job_type, 0) + 1
+                current = {**current, job_type: job_failures}
+                state.per_job_failures = current
+                state.consecutive_failures = max(current.values(), default=0)
                 state.updated_at = now
-                if state.consecutive_failures >= _BREAKER_TRIP_THRESHOLD:
+                if job_failures >= _BREAKER_TRIP_THRESHOLD:
                     state.paused = True
                     state.paused_at = now
-                    state.paused_reason = (error or "unknown error")[:2000]
+                    state.paused_reason = (
+                        f"{job_type} failed {job_failures} consecutive times: "
+                        f"{error or 'unknown error'}"
+                    )[:2000]
                     session.add(KafkaClusterBreakerEvent(
                         cluster_id=cluster_id,
                         event_type="tripped",
                         reason=state.paused_reason,
-                        consecutive_failures=state.consecutive_failures,
+                        consecutive_failures=job_failures,
                         created_at=now,
                     ))
                     logger.warning(
                         "Circuit breaker TRIPPED for cluster %s after %d consecutive "
-                        "broker-connection failures (last: %s) — pausing all job "
+                        "%s broker-connection failures (last: %s) — pausing all job "
                         "dispatch for this cluster until connectivity recovers",
-                        cluster_id, state.consecutive_failures, state.paused_reason,
+                        cluster_id, job_failures, job_type, error or "unknown error",
                     )
             await session.commit()
     except Exception as exc:

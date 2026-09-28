@@ -195,7 +195,7 @@ class KafkaJobRun(Base):
 class KafkaClusterBreakerState(Base):
     """Per-cluster circuit-breaker state. Tracks consecutive broker-connection
     job failures (broker-health, consumer-lag, topic-structure, msg-rate,
-    topic-inflow -- the job types that make raw Kafka-protocol connections via
+    topic-inflow, topic-sizes -- the job types that make raw Kafka-protocol connections via
     the worker-process pool, as opposed to REST-based or DB-only job types).
     After enough consecutive failures, the cluster's job dispatch is paused
     (kafka_job_schedules stays untouched -- pausing happens at dispatch time,
@@ -209,6 +209,15 @@ class KafkaClusterBreakerState(Base):
 
     cluster_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     consecutive_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Consecutive failures tracked per job-type prefix independently (e.g.
+    # {"broker-health": 0, "consumer-lag": 3, ...}), added 2026-09-28 after
+    # a confirmed incident where the single shared consecutive_failures
+    # counter above let one job type succeeding reset the count, masking
+    # another job type's repeated failures from ever tripping the breaker.
+    # consecutive_failures is still updated (now as the max across all
+    # tracked job types) for backward compatibility with existing
+    # dashboard/UI code that reads it directly.
+    per_job_failures: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     paused_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
