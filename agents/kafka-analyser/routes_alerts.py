@@ -21,7 +21,7 @@ _SEVERITIES = ("critical", "warning", "info")
 
 # Fields that map to NOT NULL columns -- an explicit null for these in a PUT
 # body is rejected rather than written.
-_NON_NULLABLE_FIELDS = ("name", "alert_type", "severity", "threshold", "cooldown_minutes", "enabled")
+_NON_NULLABLE_FIELDS = ("name", "alert_type", "severity", "threshold", "cooldown_minutes", "enabled", "email_enabled")
 
 
 class AlertConfigPayload(BaseModel):
@@ -33,6 +33,7 @@ class AlertConfigPayload(BaseModel):
     webhook_url: str | None = None
     cooldown_minutes: int = Field(default=30, ge=0)
     enabled: bool = True
+    email_enabled: bool = False
 
     @field_validator("severity")
     @classmethod
@@ -51,6 +52,7 @@ class AlertConfigUpdatePayload(BaseModel):
     webhook_url: str | None = None
     cooldown_minutes: int | None = Field(default=None, ge=0)
     enabled: bool | None = None
+    email_enabled: bool | None = None
 
     @field_validator("severity")
     @classmethod
@@ -105,6 +107,7 @@ def _config_out(cfg: KafkaAlertConfig, cluster_names: dict[int, str], open_trigg
         "webhook_url": cfg.webhook_url,
         "cooldown_minutes": cfg.cooldown_minutes,
         "enabled": cfg.enabled,
+        "email_enabled": cfg.email_enabled,
         "open_trigger_count": open_trigger_count,
         "created_at": _iso(cfg.created_at),
         "updated_at": _iso(cfg.updated_at),
@@ -157,6 +160,7 @@ async def create_alert_config(payload: AlertConfigPayload) -> dict:
             webhook_url=payload.webhook_url or None,
             cooldown_minutes=payload.cooldown_minutes,
             enabled=payload.enabled,
+            email_enabled=payload.email_enabled,
             created_at=now,
             updated_at=now,
         )
