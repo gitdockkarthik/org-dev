@@ -4375,7 +4375,7 @@
             <div style="flex:1;min-width:100px;text-align:center;padding:12px;border-right:1px solid var(--border)"${c.broker_status && c.broker_status!=='green' ? ` title="Measures whether THIS AGENT collected fresh broker data in the last 10 minutes -- not a direct broker health check. A low value here can mean our own collection pipeline is struggling while the brokers themselves are completely healthy and reachable. See the Broker Availability row above for a live TCP cross-check."` : ''}>
               <div style="font-size:1.8rem;font-weight:700;color:${col(c.broker_status)}">${c.broker_count||0}</div>
               <div style="font-size:.72rem;color:var(--text-muted)">Brokers</div>
-              <div>${badge(c.broker_status,'OK')}</div>
+              <div>${badge(c.broker_status,({green:'OK',amber:'Stale',red:'No data'})[c.broker_status]||'Unknown')}</div>
             </div>
             <div style="flex:1;min-width:100px;text-align:center;padding:12px;border-right:1px solid var(--border)">
               <div style="font-size:1.8rem;font-weight:700;color:${col(c.urp_status)}">${c.urp||0}</div>

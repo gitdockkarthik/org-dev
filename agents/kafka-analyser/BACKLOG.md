@@ -1262,15 +1262,25 @@ open.
    overstate the total after deletions -- UNVERIFIED (tools/schema_registry.py
    ~218-221).
 6. PARTLY DONE -- label and threshold mismatches: MirrorMaker lag amber
-   above 1,000 vs status at 10,000; ZooKeeper latency 50/10 ms (front end)
-   vs 100 ms (back end); SLO Infra badge always "OK"; [DONE 2026-09-29: the
-   SLO overall donut label "24h window" now reads "current" (the value is
-   the live overall, not a window), and the Broker Availability target now
-   uses the payload's expected_brokers instead of a hard-coded "/3" --
-   verified on clusters 8 and 4, but all clusters have 3 brokers, so the
-   payload path was not distinguished from the fallback; expected_brokers
-   counts every broker id ever seen, so a removed broker would still be
-   expected (backend question)]; Brokers Avg Heap has no amber band.
+   above 1,000 vs status at 10,000 [DECIDED 2026-09-29: keep as it is for
+   now; MM1 runs as a consumer group and lag is expected on all clusters
+   except the light cluster 4]; ZooKeeper latency 50/10 ms (front end) vs
+   100 ms (back end) [OPEN: the back end sets status "warning" above 100 ms
+   average latency (tools/zookeeper.py:85); the front end colours the number
+   amber above 10 ms and red above 50 ms. Decision pending; the value is an
+   average since ZooKeeper start, so it moves slowly and can hide a recent
+   spike]; [DONE 2026-09-29: the SLO Infra tile's Brokers badge text now
+   follows broker_status: green "OK", amber "Stale", red "No data" (it
+   always said "OK"). Wording describes what is measured, fresh collected
+   broker data, not whether brokers are up. Green verified on the live tab;
+   amber and red covered by a stub test only.]; [DONE 2026-09-29: the SLO
+   overall donut label "24h window" now reads "current" (the value is the
+   live overall, not a window), and the Broker Availability target now uses
+   the payload's expected_brokers instead of a hard-coded "/3" -- verified
+   on clusters 8 and 4, but all clusters have 3 brokers, so the payload path
+   was not distinguished from the fallback; expected_brokers counts every
+   broker id ever seen, so a removed broker would still be expected (backend
+   question)]; Brokers Avg Heap has no amber band.
 7. Backend errors shown as normal data: Consumer Groups and Brokers show
    "No data", SLO shows 0.0% red, Breaker Status shows "No clusters found".
    Also stale SLO data after cluster or range changes.
