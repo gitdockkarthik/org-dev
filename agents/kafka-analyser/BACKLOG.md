@@ -1245,8 +1245,22 @@ open.
    and "Refresh now") still resolve last-wins, so a failed older call could
    blank counts a newer call had set until the next refresh. Consumer Groups
    still falls back to its own group list when counts are null.
-5. Schema Registry Total Versions counts only the first page
-   (tools/schema_registry.py:92).
+5. DONE (portal-only, 2026-09-29): the Schema Registry "Total Versions"
+   card summed version_count over only the subjects on the first page (82 for
+   20 subjects) while the Subjects card showed the full count (21,853), and
+   its sub-text said "across all subjects". The card is now labelled
+   "Versions (loaded subjects)" with a note such as "first 20 of 21,853
+   subjects" (or "all N subjects" when the registry fits on one page).
+   Verified on the live Internal Staging Schema Registry tab. Deliberately
+   NOT fixed: an exact full total needs one registry call per subject
+   (about 21,853), which is too much load for a display card. If ever
+   needed, compute it in a background job into a table the tab reads (no
+   in-memory cache). Follow-ups: (a) after "Show More" the card still shows
+   the first page's total while the table grows (the card needs an id and
+   _srApplyView must update it); (b) per-subject version_count may be the
+   latest version NUMBER rather than a count of versions, which would
+   overstate the total after deletions -- UNVERIFIED (tools/schema_registry.py
+   ~218-221).
 6. Label and threshold mismatches: MirrorMaker lag amber above 1,000 vs
    status at 10,000; ZooKeeper latency 50/10 ms (front end) vs 100 ms
    (back end); SLO "24h window" label and hard-coded "/3"; SLO Infra badge

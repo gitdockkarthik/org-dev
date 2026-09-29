@@ -4105,9 +4105,11 @@
             <div class="kpi__sub">registered schemas</div>
           </div>
           <div class="kpi kpi--orange">
-            <div class="kpi__label">Total Versions</div>
+            <div class="kpi__label">Versions (loaded subjects)</div>
             <div class="kpi__value">${data.total_versions || 0}</div>
-            <div class="kpi__sub">across all subjects</div>
+            <div class="kpi__sub">${data.subject_count != null
+              ? (subjects.length >= data.subject_count ? `all ${data.subject_count.toLocaleString()} subjects` : `first ${subjects.length.toLocaleString()} of ${data.subject_count.toLocaleString()} subjects`)
+              : `of ${subjects.length.toLocaleString()} subjects loaded`}</div>
           </div>
           <div class="kpi kpi--orange">
             <div class="kpi__label">Compatibility</div>
