@@ -551,9 +551,13 @@ async def get_topics(cluster_id: str | None = None, hours: int | None = None,
             # Replication-factor breakdown -- always over the FULL cluster (not
             # search-filtered, not paginated), since this is a whole-cluster
             # summary, not a view into the current page of results.
+            # partition_count > 0 excludes topics not yet described by the
+            # structure job (placeholder RF=0), same convention as the RF=1
+            # counts elsewhere in this file.
             rf_result = await sess.execute(text(
                 "SELECT replication_factor, COUNT(*) as topic_count "
                 "FROM kafka_topic_metrics WHERE cluster_id = :cid "
+                "AND partition_count > 0 "
                 "GROUP BY replication_factor ORDER BY replication_factor"
             ), {"cid": int(cid)})
             rf_breakdown = [
