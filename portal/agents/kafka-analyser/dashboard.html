@@ -669,13 +669,20 @@
       const el = document.getElementById('tab-' + name);
       el.innerHTML = skeletonHTML();
 
-      // Fetch real cluster counts for KPI cards — always refresh
+      // Read BEFORE the counts fetch: a cluster switch while it is in flight
+      // bumps the generation, and the late (old-cluster) response is dropped.
+      const _tabGen = window._loadGeneration;
+
+      // Fetch real cluster counts for KPI cards — always refresh. A failed or
+      // empty response clears them rather than keeping a previous value, which
+      // may be stale or belong to another cluster; the cards then show "—".
       try {
         const counts = await api('/dashboard/counts');
-        if (!counts.empty) window._clusterCounts = counts;
-      } catch(e) { console.warn('counts fetch failed', e); }
-
-      const _tabGen = window._loadGeneration;
+        if (_tabGen === window._loadGeneration) window._clusterCounts = counts.empty ? null : counts;
+      } catch(e) {
+        console.warn('counts fetch failed', e);
+        if (_tabGen === window._loadGeneration) window._clusterCounts = null;
+      }
 
       try {
         switch (name) {
@@ -1318,11 +1325,16 @@
       const brokerCount      = cluster.broker_count || brokers.length;
       const reachableBrokerCount = brokers.filter(b => b.reachable !== false).length;
       const allBrokersHealthy = brokers.length > 0 && brokers.every(b => b.status === 'healthy');
-      const topicCount       = (window._clusterCounts || {}).total_topics || topics.length || cluster.topic_count || 0;
-      const partitionCount   = (window._clusterCounts || {}).total_partitions || topics.reduce((s, t) => s + (t.partition_count || 0), 0);
+      // Counts unknown (fetch failed or empty): Topics and Partitions show "—"
+      // -- the topics list here is only the first page (50), so its length is
+      // not a cluster total. Consumer Groups keeps its fallback (that list is
+      // complete) but the active/stale split is unknown.
+      const _ovCounts = window._clusterCounts;
+      const topicCount       = _ovCounts ? (_ovCounts.total_topics || topics.length || cluster.topic_count || 0) : null;
+      const partitionCount   = _ovCounts ? (_ovCounts.total_partitions || topics.reduce((s, t) => s + (t.partition_count || 0), 0)) : null;
       const consumerGroupCount = (window._clusterCounts || {}).total_groups || groups.length;
-      const staleGroupCountOv = (window._clusterCounts || {}).stale_groups || 0;
-      const activeGroupCountOv = consumerGroupCount - staleGroupCountOv;
+      const staleGroupCountOv = _ovCounts ? (_ovCounts.stale_groups || 0) : null;
+      const activeGroupCountOv = staleGroupCountOv != null ? consumerGroupCount - staleGroupCountOv : null;
       const totalURPs        = brokers.reduce((s, b) => s + (b.urp_count || 0), 0);
       const healthScore      = cluster.health_score || 0;
       const criticalCount    = cluster.critical_count || 0;
@@ -1338,18 +1350,18 @@
           </div>
           <div class="kpi kpi--orange">
             <div class="kpi__label">Topics</div>
-            <div class="kpi__value">${topicCount.toLocaleString()}</div>
+            <div class="kpi__value">${topicCount != null ? topicCount.toLocaleString() : '—'}</div>
             <div class="kpi__sub">excl. system topics</div>
           </div>
           <div class="kpi kpi--orange">
             <div class="kpi__label">Partitions</div>
-            <div class="kpi__value">${partitionCount.toLocaleString()}</div>
+            <div class="kpi__value">${partitionCount != null ? partitionCount.toLocaleString() : '—'}</div>
             <div class="kpi__sub">across all topics</div>
           </div>
           <div class="kpi kpi--orange">
             <div class="kpi__label">Consumer Groups</div>
             <div class="kpi__value">${consumerGroupCount.toLocaleString()}</div>
-            <div class="kpi__sub">${activeGroupCountOv.toLocaleString()} active &middot; ${staleGroupCountOv.toLocaleString()} stale</div>
+            <div class="kpi__sub">${activeGroupCountOv != null ? activeGroupCountOv.toLocaleString() : '—'} active &middot; ${staleGroupCountOv != null ? staleGroupCountOv.toLocaleString() : '—'} stale</div>
           </div>
           <div class="kpi ${totalURPs > 0 ? 'kpi--danger' : 'kpi--success'}">
             <div class="kpi__label">Under-Replicated Partitions</div>
@@ -2271,31 +2283,37 @@
 
       const totalPartitions = allTopics.reduce((s, t) => s + (t.partition_count || 0), 0);
       const realTotal = (window._clusterCounts || {}).total_topics || totalTopics;
+      // Counts unknown (fetch failed or empty): every card shows "—" (the
+      // topics list is only the first page, so local counts are not totals)
+      // and the Under-replicated card is neither red nor green.
+      const _tc = window._clusterCounts;
+      const _tcVal = v => (_tc && v != null) ? v : '—';
+      const _urpKnown = !!_tc && _tc.total_urp != null;
       const topicKpis = `
         <div class="kpi-grid">
           <div class="kpi kpi--orange">
             <div class="kpi__label">Total Topics</div>
-            <div class="kpi__value" data-kpi="total">${realTotal.toLocaleString()}</div>
+            <div class="kpi__value" data-kpi="total">${_tc ? realTotal.toLocaleString() : '—'}</div>
             <div class="kpi__sub">topics</div>
           </div>
           <div class="kpi kpi--warn">
             <div class="kpi__label">Hot Topics</div>
-            <div class="kpi__value" data-kpi="hot">${(window._clusterCounts && window._clusterCounts.total_hot != null) ? window._clusterCounts.total_hot : highTraffic}</div>
+            <div class="kpi__value" data-kpi="hot">${_tcVal(_tc && _tc.total_hot)}</div>
             <div class="kpi__sub">&gt; 100 KB/s ingestion</div>
           </div>
           <div class="kpi kpi--orange">
             <div class="kpi__label">Large Topics</div>
-            <div class="kpi__value" data-kpi="large">${(window._clusterCounts && window._clusterCounts.large_topics_count) || 0}</div>
+            <div class="kpi__value" data-kpi="large">${_tcVal(_tc && _tc.large_topics_count)}</div>
             <div class="kpi__sub">&gt; 10GB storage</div>
           </div>
           <div class="kpi kpi--warn">
             <div class="kpi__label">Stale Topics</div>
-            <div class="kpi__value" data-kpi="stale">${(window._clusterCounts && window._clusterCounts.total_stale) || 0}</div>
+            <div class="kpi__value" data-kpi="stale">${_tcVal(_tc && _tc.total_stale)}</div>
             <div class="kpi__sub">no activity, has data</div>
           </div>
-          <div class="kpi ${(window._clusterCounts && window._clusterCounts.total_urp) > 0 ? 'kpi--danger' : 'kpi--success'}">
+          <div class="kpi ${!_urpKnown ? '' : _tc.total_urp > 0 ? 'kpi--danger' : 'kpi--success'}">
             <div class="kpi__label">Under-replicated</div>
-            <div class="kpi__value" data-kpi="urp">${(window._clusterCounts && window._clusterCounts.total_urp) || 0}</div>
+            <div class="kpi__value" data-kpi="urp">${_tcVal(_tc && _tc.total_urp)}</div>
             <div class="kpi__sub">partitions at risk</div>
           </div>
         </div>`;
@@ -5284,18 +5302,21 @@
         console.warn('_updateTopicKPIs: Topics KPI layout changed, card(s) not found:', missing.join(', '));
         return;
       }
+      // Unknown counts (null window._clusterCounts, or a missing field) show
+      // "—", never 0.
       const counts = window._clusterCounts || {};
-      const realTotal = counts.total_topics || topics.length;
-      const hotTopics = counts.total_hot != null ? counts.total_hot : 0;
-      const largeTopics = counts.large_topics_count != null ? counts.large_topics_count : 0;
-      const staleTopics = counts.total_stale != null ? counts.total_stale : 0;
-      const urpCount = counts.total_urp != null ? counts.total_urp : 0;
+      const realTotal = counts.total_topics || topics.length || null;
+      const hotTopics = counts.total_hot != null ? counts.total_hot : null;
+      const largeTopics = counts.large_topics_count != null ? counts.large_topics_count : null;
+      const staleTopics = counts.total_stale != null ? counts.total_stale : null;
+      const urpCount = counts.total_urp != null ? counts.total_urp : null;
+      const _dash = v => v != null ? v : '—';
       const values = {
-        total: realTotal.toLocaleString(),
-        hot: hotTopics,
-        large: largeTopics,
-        stale: staleTopics,
-        urp: urpCount,
+        total: realTotal != null ? realTotal.toLocaleString() : '—',
+        hot: _dash(hotTopics),
+        large: _dash(largeTopics),
+        stale: _dash(staleTopics),
+        urp: _dash(urpCount),
       };
       for (const [key, value] of Object.entries(values)) {
         kpi[key].textContent = value;
@@ -5303,11 +5324,11 @@
         else if (key !== 'total') kpi[key].classList.add('kpi-loading');
       }
       // Same rule as the template: the Under-replicated card is red when
-      // total_urp > 0, green otherwise.
+      // total_urp > 0, green when 0, and uncoloured when unknown.
       const urpCard = kpi.urp.closest('.kpi');
       if (urpCard) {
-        urpCard.classList.toggle('kpi--danger', urpCount > 0);
-        urpCard.classList.toggle('kpi--success', !(urpCount > 0));
+        urpCard.classList.toggle('kpi--danger', urpCount != null && urpCount > 0);
+        urpCard.classList.toggle('kpi--success', urpCount === 0);
       }
     }
     async function _streamTopicDetails() {

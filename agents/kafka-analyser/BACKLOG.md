@@ -1232,9 +1232,19 @@ open.
    on the live Internal Staging SLI/SLO tab, donut and text both 83.1%,
    amber. The card label still says '24h window' although the value is the
    live overall (item 6).
-4. Stale or wrong-cluster counts: a failed /dashboard/counts call keeps the
-   old window._clusterCounts (dashboard.html:673-676) and there is no
-   load-generation guard.
+4. DONE (portal-only, 2026-09-29): loadTab now reads window._loadGeneration
+   before the /dashboard/counts fetch and drops a response that arrives
+   after a cluster switch; a failed or empty response clears
+   window._clusterCounts (null) instead of keeping the old value, and the
+   Topics KPI cards and the Overview Topics, Partitions and active/stale
+   figures then show "—" (the Under-replicated card is not coloured) instead
+   of an old number, a false 0, or the first-50-topics fallback. Verified on
+   live clusters 8 and 4 (switching between them and back): every value
+   belonged to the selected cluster. Only a cluster switch bumps
+   _loadGeneration; two overlapping loads for the same cluster (auto-refresh
+   and "Refresh now") still resolve last-wins, so a failed older call could
+   blank counts a newer call had set until the next refresh. Consumer Groups
+   still falls back to its own group list when counts are null.
 5. Schema Registry Total Versions counts only the first page
    (tools/schema_registry.py:92).
 6. Label and threshold mismatches: MirrorMaker lag amber above 1,000 vs
