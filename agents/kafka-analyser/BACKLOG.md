@@ -1208,11 +1208,26 @@ open.
    run (the broker-distribution worker lists and describes all topics again);
    describe_topics also returns offline_replicas, unused, which could support
    a broker-offline signal.
-3. SLO hourly rollup writes wrong values (collectors.py:852-876 filters
-   kafka_broker_metrics by time, but it holds one current row per broker),
-   and the donut reads it (dashboard.html:4572) while the text reads live
-   data. Existing rows are wrong; whether kafka_slo_compliance has any
-   retention that removes them is UNVERIFIED.
+3. PART DONE (rollup deployed 2026-09-29; donut and old rows still open):
+   compute_slo_compliance filtered kafka_broker_metrics by the previous
+   hour, but that table keeps one current row per broker, so every hour
+   stored broker availability 0.0, URP NULL, and CPU and heap 100 (empty
+   averages defaulted to 0), giving a constant overall of 79.7 and a flat
+   trend. Now the broker values are read from the current rows written in
+   the last 6 minutes, excluding rows with cpu and heap both 0.0 (a failed
+   scrape is written as fresh zeros); no fresh rows gives URP, CPU and heap
+   NULL, not 100. Verified on cluster 8: the 12:00 row became availability
+   100, URP 100, CPU 100, heap 100, overall 83.1, matching the live SLO text;
+   regression clean (80 successes).
+   STILL OPEN: (a) the donut (dashboard.html ~4572) still reads the last
+   rollup hour, not the live overall value that the text uses; (b) rows for
+   earlier hours keep the wrong values (the trend chart steps from 79.7 to
+   83.1 at 12:00 on cluster 8) and cannot be recomputed; whether
+   kafka_slo_compliance has any retention is UNVERIFIED; (c) broker values
+   are point-in-time snapshots taken a few minutes into the hour, while the
+   connector, lag and task values cover the previous hour; (d) CPU compliance
+   uses the average across brokers, so one hot broker (e.g. 86.4% on cluster
+   8 against an 85% target) does not lower it.
 4. Stale or wrong-cluster counts: a failed /dashboard/counts call keeps the
    old window._clusterCounts (dashboard.html:673-676) and there is no
    load-generation guard.

@@ -840,7 +840,10 @@ async def collect_connector_snapshots(cluster_id: str = ""):
 
 # ── Job 7b: SLO Compliance Computation ────────────────────────────────────────
 async def compute_slo_compliance(cluster_id: str = ""):
-    """Compute hourly SLO compliance and save to kafka_slo_compliance."""
+    """Compute hourly SLO compliance and save to kafka_slo_compliance.
+    Broker values (availability, URP, CPU, heap) are point-in-time at the run:
+    kafka_broker_metrics keeps one current row per broker, with no hourly
+    history, so they are read from the fresh rows rather than an hour window."""
     c = await _get_cluster(cluster_id)
     if not c:
         compute_slo_compliance._last_result = f"Cluster {cluster_id} not found"
@@ -890,34 +893,29 @@ async def compute_slo_compliance(cluster_id: str = ""):
             """), {"cid": str(cid), "target": lag_target, "prev": prev_hour, "now": hour_bucket})
             ls = lag_stats.fetchone()
             lag_compliance_pct = (ls.compliant / ls.total * 100) if ls and ls.total > 0 else None
-            # Broker + URP compliance % in last hour
+            # Broker availability, URP, CPU and heap from the CURRENT rows:
+            # kafka_broker_metrics is one row per broker updated in place, so an
+            # hour-window filter never matched. Only rows written in the last 6
+            # minutes count (same freshness rule as the dashboard).
             broker_stats = await sess.execute(_slo("""
-                SELECT COUNT(*) as total,
+                SELECT COUNT(*) as fresh,
                        SUM(CASE WHEN urp_count <= :urp THEN 1 ELSE 0 END) as urp_ok,
-                       AVG(CASE WHEN cpu_pct IS NOT NULL THEN 1.0 ELSE 0 END) as broker_online_ratio
+                       AVG(cpu_pct) as avg_cpu, AVG(heap_pct) as avg_heap
                 FROM kafka_broker_metrics
-                WHERE cluster_id=:cid AND time >= :prev AND time < :now
-            """), {"cid": int(cid), "urp": urp_target, "prev": prev_hour, "now": hour_bucket})
+                WHERE cluster_id=:cid AND time > now() - interval '6 minutes'
+                  -- A failed Prometheus scrape is written as fresh zeros; treat it as not fresh.
+                  AND NOT (COALESCE(cpu_pct, 0) = 0 AND COALESCE(heap_pct, 0) = 0)
+            """), {"cid": int(cid), "urp": urp_target})
             bs = broker_stats.fetchone()
+            fresh_brokers = (bs.fresh or 0) if bs else 0
             # Broker availability: ratio of brokers reporting metrics (proxy for online)
             # Get expected broker count from max ever seen for this cluster
             max_brokers = await sess.execute(_slo(
                 "SELECT COUNT(DISTINCT broker_id) FROM kafka_broker_metrics WHERE cluster_id=:cid"
             ), {"cid": int(cid)})
             expected_brokers = max_brokers.scalar() or 1
-            actual_brokers = await sess.execute(_slo(
-                "SELECT COUNT(DISTINCT broker_id) FROM kafka_broker_metrics WHERE cluster_id=:cid AND time >= :prev AND time < :now"
-            ), {"cid": int(cid), "prev": prev_hour, "now": hour_bucket})
-            ab = actual_brokers.scalar() or 0
-            broker_avail_pct = round(ab / expected_brokers * 100, 1) if expected_brokers > 0 else None
-            urp_compliance_pct = (bs.urp_ok / bs.total * 100) if bs and bs.total > 0 else None
-            # Broker CPU/Heap compliance in last hour
-            br_stats = await sess.execute(_slo("""
-                SELECT AVG(cpu_pct) as avg_cpu, AVG(heap_pct) as avg_heap
-                FROM kafka_broker_metrics
-                WHERE cluster_id=:cid AND time >= :prev AND time < :now
-            """), {"cid": int(cid), "prev": prev_hour, "now": hour_bucket})
-            br = br_stats.fetchone()
+            broker_avail_pct = round(fresh_brokers / expected_brokers * 100, 1) if expected_brokers > 0 else None
+            urp_compliance_pct = (bs.urp_ok / fresh_brokers * 100) if fresh_brokers > 0 else None
             # Get targets
             tgt_row = await sess.execute(_slo(
                 "SELECT max_broker_cpu_pct, max_broker_heap_pct, min_task_health_pct FROM kafka_slo_targets WHERE cluster_id=:cid LIMIT 1"
@@ -925,10 +923,18 @@ async def compute_slo_compliance(cluster_id: str = ""):
             tgt = tgt_row.fetchone()
             cpu_target = float(tgt.max_broker_cpu_pct) if tgt and tgt.max_broker_cpu_pct else 85.0
             heap_target = float(tgt.max_broker_heap_pct) if tgt and tgt.max_broker_heap_pct else 80.0
-            avg_cpu = br.avg_cpu or 0 if br else 0
-            avg_heap = br.avg_heap or 0 if br else 0
-            cpu_compliance_pct = 100.0 if avg_cpu <= cpu_target else max(0, round((1 - (avg_cpu - cpu_target)/cpu_target) * 100, 1))
-            heap_compliance_pct = 100.0 if avg_heap <= heap_target else max(0, round((1 - (avg_heap - heap_target)/heap_target) * 100, 1))
+            # No fresh rows = unknown (None, dropped from the overall average),
+            # never a default 100.
+            avg_cpu = bs.avg_cpu if fresh_brokers > 0 else None
+            avg_heap = bs.avg_heap if fresh_brokers > 0 else None
+            if avg_cpu is None:
+                cpu_compliance_pct = None
+            else:
+                cpu_compliance_pct = 100.0 if avg_cpu <= cpu_target else max(0, round((1 - (avg_cpu - cpu_target)/cpu_target) * 100, 1))
+            if avg_heap is None:
+                heap_compliance_pct = None
+            else:
+                heap_compliance_pct = 100.0 if avg_heap <= heap_target else max(0, round((1 - (avg_heap - heap_target)/heap_target) * 100, 1))
             # Task health compliance from connector snapshots
             # Use latest snapshot only to avoid counting multiple snapshots per connector
             task_stats = await sess.execute(_slo("""
