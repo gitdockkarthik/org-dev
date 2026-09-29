@@ -1180,6 +1180,45 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Dashboard audit 2026-09-29 -- defects found, fix order (fix 1 done)
+Read-only audit of every KPI card found these defects. Fix one at a time,
+own commit, full regression after each. Fix 1 is done (below); the rest are
+open.
+1. DONE (verified on the live Internal Staging Topics tab 2026-09-29; portal-only change): Topics KPI cards each showed their left neighbour's value.
+   Cause: commit 3f9d2b2 (2026-09-24) removed the "RF=1 At Risk" card but
+   _updateTopicKPIs still wrote by position. Fix: cards addressed by
+   data-kpi id, with a console warning if the layout changes.
+2. Broker URP is always 0: tools/real_kafka.py:796 hardcodes "urp_count": 0;
+   the Prometheus scraper returns under_replicated_partitions;
+   collectors.py:150 reads urp_count. Affects Overview and Brokers URP
+   cards, broker "degraded" status and the Breaker Status chips. Verify the
+   key name against a live scrape before editing. Topic-level URP (Topics
+   tab) is computed correctly and is 0.
+3. SLO hourly rollup writes wrong values (collectors.py:852-876 filters
+   kafka_broker_metrics by time, but it holds one current row per broker),
+   and the donut reads it (dashboard.html:4572) while the text reads live
+   data. Existing rows are wrong; whether kafka_slo_compliance has any
+   retention that removes them is UNVERIFIED.
+4. Stale or wrong-cluster counts: a failed /dashboard/counts call keeps the
+   old window._clusterCounts (dashboard.html:673-676) and there is no
+   load-generation guard.
+5. Schema Registry Total Versions counts only the first page
+   (tools/schema_registry.py:92).
+6. Label and threshold mismatches: MirrorMaker lag amber above 1,000 vs
+   status at 10,000; ZooKeeper latency 50/10 ms (front end) vs 100 ms
+   (back end); SLO "24h window" label and hard-coded "/3"; SLO Infra badge
+   always "OK"; Brokers Avg Heap has no amber band.
+7. Backend errors shown as normal data: Consumer Groups and Brokers show
+   "No data", SLO shows 0.0% red, Breaker Status shows "No clusters found".
+   Also stale SLO data after cluster or range changes.
+8. Still positional (correct today, fragile): Consumer Groups KPI writes
+   (dashboard.html ~1913-1918 and _updateGroupKPIs); they also use the
+   undefined CSS variables var(--red), var(--orange) and var(--green).
+9. Partial sources: ZooKeeper cards come from the first node that answers
+   (zk01 only); Kafka Connect removes duplicate names across Connect
+   clusters; MirrorMaker ignores MM2 in "both" mode. The "Healthy" card on
+   the Brokers tab means "reachable", not "healthy".
+
 ### Alert rule form redesign -- design agreed, not built (2026-09-29)
 Flat "Alert type" dropdown does not scale. Agreed design: Category (Broker,
 Topic, Consumer group, Connector, SLO, ZooKeeper) -> Metric -> Simple or

@@ -2275,27 +2275,27 @@
         <div class="kpi-grid">
           <div class="kpi kpi--orange">
             <div class="kpi__label">Total Topics</div>
-            <div class="kpi__value">${realTotal.toLocaleString()}</div>
+            <div class="kpi__value" data-kpi="total">${realTotal.toLocaleString()}</div>
             <div class="kpi__sub">topics</div>
           </div>
           <div class="kpi kpi--warn">
             <div class="kpi__label">Hot Topics</div>
-            <div class="kpi__value">${(window._clusterCounts && window._clusterCounts.total_hot != null) ? window._clusterCounts.total_hot : highTraffic}</div>
+            <div class="kpi__value" data-kpi="hot">${(window._clusterCounts && window._clusterCounts.total_hot != null) ? window._clusterCounts.total_hot : highTraffic}</div>
             <div class="kpi__sub">&gt; 100 KB/s ingestion</div>
           </div>
           <div class="kpi kpi--orange">
             <div class="kpi__label">Large Topics</div>
-            <div class="kpi__value">${(window._clusterCounts && window._clusterCounts.large_topics_count) || 0}</div>
+            <div class="kpi__value" data-kpi="large">${(window._clusterCounts && window._clusterCounts.large_topics_count) || 0}</div>
             <div class="kpi__sub">&gt; 10GB storage</div>
           </div>
           <div class="kpi kpi--warn">
             <div class="kpi__label">Stale Topics</div>
-            <div class="kpi__value">${(window._clusterCounts && window._clusterCounts.total_stale) || 0}</div>
+            <div class="kpi__value" data-kpi="stale">${(window._clusterCounts && window._clusterCounts.total_stale) || 0}</div>
             <div class="kpi__sub">no activity, has data</div>
           </div>
           <div class="kpi ${(window._clusterCounts && window._clusterCounts.total_urp) > 0 ? 'kpi--danger' : 'kpi--success'}">
             <div class="kpi__label">Under-replicated</div>
-            <div class="kpi__value">${(window._clusterCounts && window._clusterCounts.total_urp) || 0}</div>
+            <div class="kpi__value" data-kpi="urp">${(window._clusterCounts && window._clusterCounts.total_urp) || 0}</div>
             <div class="kpi__sub">partitions at risk</div>
           </div>
         </div>`;
@@ -5270,38 +5270,44 @@
     function _updateTopicKPIs(topics, loaded, total, isDone) {
       const kpiEl = document.getElementById('tab-topics');
       if (!kpiEl) return;
-      const kpis = kpiEl.querySelectorAll('.kpi__value');
-      if (kpis.length < 4) return;
+      // No KPI grid at all (e.g. the "No data" empty state) -- nothing to update.
+      if (!kpiEl.querySelector('.kpi__value')) return;
+      // Cards are addressed by their data-kpi id (see renderTopics), never by
+      // position: removing the RF=1 card (3f9d2b2) shifted every later value
+      // onto its neighbour when this wrote querySelectorAll(...)[i].
+      const kpi = {};
+      for (const key of ['total', 'hot', 'large', 'stale', 'urp']) {
+        kpi[key] = kpiEl.querySelector(`.kpi__value[data-kpi="${key}"]`);
+      }
+      const missing = Object.keys(kpi).filter(key => !kpi[key]);
+      if (missing.length) {
+        console.warn('_updateTopicKPIs: Topics KPI layout changed, card(s) not found:', missing.join(', '));
+        return;
+      }
       const counts = window._clusterCounts || {};
       const realTotal = counts.total_topics || topics.length;
-      // Use accurate cluster-wide counts if available, otherwise compute from displayed topics
-      const lowRep = counts.total_rf1 != null ? counts.total_rf1 : topics.filter(t => t.replication_factor === 1 && t.partition_count > 0).length;
       const hotTopics = counts.total_hot != null ? counts.total_hot : 0;
       const largeTopics = counts.large_topics_count != null ? counts.large_topics_count : 0;
       const staleTopics = counts.total_stale != null ? counts.total_stale : 0;
       const urpCount = counts.total_urp != null ? counts.total_urp : 0;
-      if (isDone) {
-        kpis[0].textContent = realTotal.toLocaleString();
-        kpis[0].classList.remove('kpi-loading');
-        kpis[1].textContent = lowRep.toLocaleString();
-        kpis[1].style.color = lowRep > 0 ? 'var(--red)' : '';
-        kpis[1].classList.remove('kpi-loading');
-        kpis[2].textContent = hotTopics;
-        kpis[2].classList.remove('kpi-loading');
-        kpis[3].textContent = largeTopics;
-        kpis[3].classList.remove('kpi-loading');
-        if (kpis[4]) { kpis[4].textContent = staleTopics; kpis[4].classList.remove('kpi-loading'); }
-        if (kpis[5]) { kpis[5].textContent = urpCount; kpis[5].style.color = urpCount > 0 ? 'var(--red)' : ''; kpis[5].classList.remove('kpi-loading'); }
-      } else {
-        kpis[0].textContent = realTotal.toLocaleString();
-        kpis[1].textContent = lowRep.toLocaleString();
-        kpis[1].classList.add('kpi-loading');
-        kpis[2].textContent = hotTopics;
-        kpis[2].classList.add('kpi-loading');
-        kpis[3].textContent = largeTopics;
-        kpis[3].classList.add('kpi-loading');
-        if (kpis[4]) { kpis[4].textContent = staleTopics; kpis[4].classList.add('kpi-loading'); }
-        if (kpis[5]) { kpis[5].textContent = urpCount; kpis[5].classList.add('kpi-loading'); }
+      const values = {
+        total: realTotal.toLocaleString(),
+        hot: hotTopics,
+        large: largeTopics,
+        stale: staleTopics,
+        urp: urpCount,
+      };
+      for (const [key, value] of Object.entries(values)) {
+        kpi[key].textContent = value;
+        if (isDone) kpi[key].classList.remove('kpi-loading');
+        else if (key !== 'total') kpi[key].classList.add('kpi-loading');
+      }
+      // Same rule as the template: the Under-replicated card is red when
+      // total_urp > 0, green otherwise.
+      const urpCard = kpi.urp.closest('.kpi');
+      if (urpCard) {
+        urpCard.classList.toggle('kpi--danger', urpCount > 0);
+        urpCard.classList.toggle('kpi--success', !(urpCount > 0));
       }
     }
     async function _streamTopicDetails() {
