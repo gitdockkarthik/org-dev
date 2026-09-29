@@ -198,6 +198,13 @@ async def _init_config() -> None:
                 ))
             except Exception as _mig_exc_pl:
                 logger.warning("kafka_partition_leaders migration skipped: %s", _mig_exc_pl)
+            # NULL = unknown (not yet recorded, or describe returned no isr); True/False set by collect_topic_structure.
+            try:
+                await conn.execute(text(
+                    "ALTER TABLE kafka_partition_leaders ADD COLUMN IF NOT EXISTS under_replicated BOOLEAN"
+                ))
+            except Exception as _mig_exc_pl_urp:
+                logger.warning("kafka_partition_leaders under_replicated migration skipped: %s", _mig_exc_pl_urp)
             try:
                 await conn.execute(text(
                     "ALTER TABLE kafka_clusters ADD COLUMN IF NOT EXISTS sr_restricted BOOLEAN"
