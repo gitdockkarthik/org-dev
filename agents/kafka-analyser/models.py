@@ -313,6 +313,11 @@ class KafkaAlertTrigger(Base):
     # cluster (broker for reachability, topic for replication factor). NULL
     # means a cluster-level trigger -- every existing close_wait_spike row.
     subject: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Current tier of a threshold-based trigger ("info" | "warning" |
+    # "critical"), so a tier change on an open trigger can be detected and
+    # escalated in place. NULL = use the rule's own severity (every existing
+    # close_wait_spike and broker_unreachable row).
+    severity: Mapped[str | None] = mapped_column(Text, nullable=True)
     triggered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     metric_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     message_sent: Mapped[str | None] = mapped_column(Text, nullable=True)
