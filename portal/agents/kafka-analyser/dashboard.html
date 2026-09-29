@@ -4300,6 +4300,11 @@
 
     function renderSLODashboardHTML(data) {
       if (!data) return '<div style="text-align:center;padding:40px;color:var(--text-muted)">⟳ Loading SLO data...</div>';
+      // Backend error (HTTP 200 {"error": ...}, no data): show it instead of
+      // rendering empty cards. No HTML-escape helper exists on this page, so
+      // the error text is escaped locally.
+      if (!data.current && data.error) return emptyState('⚠', 'SLO data unavailable',
+        String(data.error).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch]));
       const c = data.current || {};
       const t = data.targets || {};
       const col = s => s==='green'?'#4CAF50':s==='amber'?'#FF9800':s==='red'?'#F44336':'#666';
@@ -4349,7 +4354,7 @@
                   <td style="padding:10px 4px;font-weight:600">${r.label}${r.hint ? ` <span title="${r.hint.replace(/"/g, '&quot;')}" style="cursor:help;color:var(--text-muted);font-size:.75rem;font-weight:400">ⓘ</span>` : ''}</td>
                   <td style="text-align:center;padding:10px 4px;color:var(--text-muted);font-size:.8rem">${r.target}</td>
                   <td style="text-align:center;padding:10px 4px;font-weight:700;color:${col(r.status)}">${r.current}</td>
-                  <td style="text-align:center;padding:10px 4px">${badge(r.status,r.status.toUpperCase())}</td>
+                  <td style="text-align:center;padding:10px 4px">${badge(r.status||'unknown',(r.status||'unknown').toUpperCase())}</td>
                 </tr>${r.label==='Broker Availability' && r.status && r.status!=='green' ? `
                 <tr style="border-top:none">
                   <td colspan="4" style="padding:2px 4px 10px 4px;font-size:.78rem;color:var(--text-muted)" id="broker-live-crosscheck">🔍 Checking live broker reachability…</td>
@@ -4509,6 +4514,8 @@
         _sloData = data;
         const el = document.getElementById('slo-sub-content');
         if (el && _sloSubTab === 'dashboard') el.innerHTML = renderSLODashboardHTML(data);
+        // Error state: the charts, gauges and extra fetches below have no targets.
+        if (!data.current && data.error) return;
         // Automatic cross-reference: whenever the collector-freshness-based
         // "Broker Availability" metric isn't green, immediately run a real,
         // independent TCP reachability test and show both signals together

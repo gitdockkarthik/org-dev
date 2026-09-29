@@ -1289,9 +1289,22 @@ open.
    average of 79.5 to 79.9 shows as 80% and turns the card red while a bar
    at the same value stays amber; the bars use a slightly lighter amber
    shade (#d97706) than the card (#b45309)].
-7. Backend errors shown as normal data: Consumer Groups and Brokers show
-   "No data", SLO shows 0.0% red, Breaker Status shows "No clusters found".
-   Also stale SLO data after cluster or range changes.
+7. Backend errors shown as normal data: Consumer Groups and Brokers show "No
+   data", SLO [DONE 2026-09-29 (SLO tab only): the audit's symptom was
+   wrong. An SLO error payload (HTTP 200 {"error": ...}) did not render 0.0%
+   red; renderSLODashboardHTML threw a TypeError (undefined r.status), so
+   users saw "Error loading SLO data: Cannot read properties of undefined"
+   and never the server's message, and after a range or sub-tab change the
+   throw was uncaught and the tab did not redraw. Now the tab shows "SLO
+   data unavailable" with the escaped error text; the status table uses
+   (r.status||'unknown') so a partial payload cannot throw. Verified on the
+   live tab: the normal render is unchanged (83.1%, all badges correct); the
+   error message itself is covered by a stub test only. NOT covered: an HTTP
+   500/422 with a {"detail": ...} body (no "error", no "current") would
+   still render empty cards], Breaker Status shows "No clusters found". Also
+   stale SLO data after cluster or range changes. Still open in this item:
+   Consumer Groups, Brokers, Breaker Status, and the stale SLO data after
+   cluster or range changes.
 8. Still positional (correct today, fragile): Consumer Groups KPI writes
    (dashboard.html ~1913-1918 and _updateGroupKPIs); they also use the
    undefined CSS variables var(--red), var(--orange) and var(--green).
