@@ -1216,7 +1216,7 @@
 
         <div class="chart-card__title" style="margin-bottom:8px">Cluster Health &amp; Circuit Breaker Status</div>
         <div style="color:var(--text-muted);font-size:.82rem;margin-bottom:16px">
-          The status table and broker health below always show every cluster's current state, regardless of the filters below. Auto-pauses a cluster after 5 consecutive broker-connection failures; auto-resumes after 5 consecutive successful connectivity checks (checked every 5 min).
+          The status table and broker health below always show every cluster's current state, regardless of the filters below. Auto-pauses a cluster after 5 consecutive broker-connection failures; auto-resumes after 5 consecutive successful recovery checks (TCP reachability, plus a real consumer-lag check too if that specifically was what tripped it) every 5 min.
         </div>
         <div class="data-table-wrap" style="margin-bottom:24px">
           <table class="data-table">

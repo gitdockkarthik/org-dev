@@ -1793,9 +1793,21 @@ async def check_breaker_recovery() -> dict:
             row.last_recovery_check_at = now
             if all_ok:
                 row.recovery_successes += 1
+                # Accurate wording -- a cluster whose recovery also
+                # required the real consumer-lag validation check (not
+                # just TCP) gets that reflected here, rather than always
+                # saying "all brokers reachable" regardless of which
+                # checks actually ran. Fixed 2026-09-29, noted as
+                # slightly inaccurate when the consumer-lag check itself
+                # first shipped.
+                _check_desc = (
+                    "all brokers reachable and consumer-lag validated"
+                    if cid in _needs_consumer_check
+                    else "all brokers reachable"
+                )
                 logger.info(
-                    "Recovery check for cluster %s: all brokers reachable (%d/%d consecutive)",
-                    cid, row.recovery_successes, _BREAKER_RECOVERY_THRESHOLD,
+                    "Recovery check for cluster %s: %s (%d/%d consecutive)",
+                    cid, _check_desc, row.recovery_successes, _BREAKER_RECOVERY_THRESHOLD,
                 )
                 if row.recovery_successes >= _BREAKER_RECOVERY_THRESHOLD:
                     row.paused = False
@@ -1807,14 +1819,14 @@ async def check_breaker_recovery() -> dict:
                     session.add(KafkaClusterBreakerEvent(
                         cluster_id=cid,
                         event_type="resumed",
-                        reason=f"{_BREAKER_RECOVERY_THRESHOLD} consecutive successful connectivity checks",
+                        reason=f"{_BREAKER_RECOVERY_THRESHOLD} consecutive successful checks ({_check_desc})",
                         consecutive_failures=0,
                         created_at=now,
                     ))
                     logger.warning(
                         "Circuit breaker RESET for cluster %s — %d consecutive successful "
-                        "connectivity checks, resuming normal job scheduling",
-                        cid, _BREAKER_RECOVERY_THRESHOLD,
+                        "checks (%s), resuming normal job scheduling",
+                        cid, _BREAKER_RECOVERY_THRESHOLD, _check_desc,
                     )
                     results[cid] = "resumed"
                 else:
