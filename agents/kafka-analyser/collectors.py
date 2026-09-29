@@ -621,18 +621,22 @@ async def collect_topic_structure(cluster_id: str = ""):
                     BULK = 1000
                     for _bi in range(0, len(partition_leaders), BULK):
                         batch = partition_leaders[_bi:_bi+BULK]
+                        # under_replicated: TRUE/FALSE as recorded by the worker,
+                        # NULL when unknown (no isr in the describe response).
                         pl_values = ", ".join(
-                            f"({int(cid)}, '{pl['topic'].replace(chr(39), chr(39)*2)}', {pl['partition']}, '{pl['leader']}')"
+                            f"({int(cid)}, '{pl['topic'].replace(chr(39), chr(39)*2)}', {pl['partition']}, '{pl['leader']}', "
+                            f"{'TRUE' if pl.get('under_replicated') is True else 'FALSE' if pl.get('under_replicated') is False else 'NULL'})"
                             for pl in batch
                         )
                         await _sess.execute(_st(f"""
                             INSERT INTO kafka_partition_leaders
-                            (cluster_id, topic, partition, leader_broker_id, updated_at)
-                            SELECT c, t, p, l, now()
-                            FROM (VALUES {pl_values}) AS v(c, t, p, l)
+                            (cluster_id, topic, partition, leader_broker_id, updated_at, under_replicated)
+                            SELECT c, t, p, l, now(), u::boolean
+                            FROM (VALUES {pl_values}) AS v(c, t, p, l, u)
                             ON CONFLICT (cluster_id, topic, partition) DO UPDATE SET
                                 leader_broker_id = EXCLUDED.leader_broker_id,
-                                updated_at = now()
+                                updated_at = now(),
+                                under_replicated = EXCLUDED.under_replicated
                         """))
                     # Cleanup: remove rows this run didn't touch (topic deleted from
                     # Kafka, or excluded by a filter change) -- safe only because every
