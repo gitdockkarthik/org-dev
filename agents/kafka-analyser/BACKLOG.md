@@ -1188,12 +1188,26 @@ open.
    Cause: commit 3f9d2b2 (2026-09-24) removed the "RF=1 At Risk" card but
    _updateTopicKPIs still wrote by position. Fix: cards addressed by
    data-kpi id, with a console warning if the layout changes.
-2. Broker URP is always 0: tools/real_kafka.py:796 hardcodes "urp_count": 0;
-   the Prometheus scraper returns under_replicated_partitions;
-   collectors.py:150 reads urp_count. Affects Overview and Brokers URP
-   cards, broker "degraded" status and the Breaker Status chips. Verify the
-   key name against a live scrape before editing. Topic-level URP (Topics
-   tab) is computed correctly and is 0.
+2. DONE (deployed 2026-09-29, commits 0bc818e, d62c1fc, 2f5e978, 0581616):
+   Broker URP was always 0: tools/real_kafka.py hardcodes "urp_count": 0
+   (since the original commit 3364756). The audit's proposed fix (read
+   under_replicated_partitions at collectors.py:150) would not have worked:
+   the Prometheus exporter on cluster 8 (checked on one broker,
+   aos-stg-kafka02) returns only CPU and JVM heap families, no kafka_server_*
+   lines, and the scraper's _get() returns 0.0 for absent metrics. Real fix:
+   collect_broker_health now writes urp_count as the number of partitions the
+   broker leads whose ISR is smaller than the replica list, from
+   kafka_partition_leaders.under_replicated (new column, written by
+   collect_topic_structure from the describe result; NULL = unknown).
+   Unknown keeps the stored value; the lookup is in its own savepoint so it
+   cannot block the broker write. Verified: 66,235 partitions flagged across
+   the 4 clusters, 0 under-replicated, all broker rows fresh, URP 0
+   (matches the topic-level 0). NOT verified: behaviour with a real non-zero
+   URP (none exists today); the Prometheus check covered one broker of one
+   cluster. Follow-ups: the structure job describes every topic twice per
+   run (the broker-distribution worker lists and describes all topics again);
+   describe_topics also returns offline_replicas, unused, which could support
+   a broker-offline signal.
 3. SLO hourly rollup writes wrong values (collectors.py:852-876 filters
    kafka_broker_metrics by time, but it holds one current row per broker),
    and the donut reads it (dashboard.html:4572) while the text reads live
