@@ -1180,6 +1180,95 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Alert rule form redesign -- design agreed, not built (2026-09-29)
+Flat "Alert type" dropdown does not scale. Agreed design: Category (Broker,
+Topic, Consumer group, Connector, SLO, ZooKeeper) -> Metric -> Simple or
+Comparison (vs rolling baseline) -> optional Info/Warning/Critical
+thresholds; binary metrics (broker reachability, connector FAILED, group
+DEAD, ZooKeeper quorum) skip thresholds. Metrics must map to collected
+data: kafka_broker_metrics (cpu_pct, heap_pct, gc_pause_ms,
+request_handler_idle_pct [lower is worse], disk_pct, urp_count,
+messages_in_per_sec), kafka_topic_metrics (size_bytes, retention_pct,
+messages_in_per_sec, bytes_in_per_sec/out, replication_factor),
+kafka_consumer_lag.lag, kafka_connector_status (state, failed_tasks),
+kafka_slo_compliance (overall, connector_availability, consumer_lag,
+urp compliance %). Replication factor is "RF below N" (lower is worse);
+the alert must exclude partition_count=0 and list affected topics. Open
+decisions: store new fields in the JSONB config vs columns; how a trigger
+records which severity tier fired and what happens on a tier change.
+kafka_alert_triggers.subject (migration 0054) already exists for per-item
+triggers. Status: mockup agreed, nothing built.
+
+### Ghost topic shows as RF=0 (ratecard-productprice-22-06, cluster 4) -- root cause not fixed (2026-09-29)
+collect_topic_sizes builds its list from describe_log_dirs, so an empty
+0-byte leftover log directory with no topic in cluster metadata is upserted
+at partition_count=0/RF=0 every run; last_seen keeps refreshing so the
+35-min stale cleanup never removes it. Broker confirms it does not exist:
+describe_topics returns error_code 3 with no partitions.
+_describe_topics_chunk_worker ignores error_code and stores 0/0 as
+"healthy"; a failed describe chunk likewise leaves real topics at 0/0, and
+new topics show RF=0 until the next structure run. Interim fix shipped
+(commit 3d40df1): Topics tab RF breakdown filters partition_count > 0.
+Proper fix: (1) sizes job drops log-dir topics missing from cluster
+metadata -- first check how it treats internal topics, (2) describe worker
+skips non-zero error_code, (3) treat partition_count=0 as "unknown"
+everywhere. Both jobs share kafka_topic_metrics (site of the 2026-09-24
+deadlock): needs a calm session and full regression.
+
+### Some client paths still probe the broker version (2026-09-29)
+Logs show "Probing node ... broker version" and "Set configuration
+api_version" for aos-prod-kafka02 (07:38), aos-stg-kafka01 and
+aos-sup-kafka03 (07:48), after commit 6cbe8d3 set explicit api_version.
+At least one client-creation path is missing it; each probe opens an extra
+connection. The path is not identified.
+
+### ZooKeeper failover not verified (2026-09-29)
+/dashboard/zookeeper tries each configured node in order and falls through
+on status "unreachable". Not verified: that ZooKeeperCollector.collect()
+reliably returns "unreachable" (and does not hang or return something else)
+when a node is down.
+
+### Alert evaluator follow-ups (2026-09-29)
+- Digest card lists triggers as rule/cluster/time only; add subject (broker).
+- Open broker_unreachable triggers never resolve if a broker is removed
+  from bootstrap_servers, or the rule is disabled or narrowed to another
+  cluster (only enabled rules are loaded).
+- The counters are in memory: after a restart an outage takes one extra
+  cycle to confirm.
+- Firing path tested with a simulated outage and Teams stubbed; cooldown,
+  recurrence and card text were not exercised, and the real TCP path was
+  not tested under an actual outage.
+
+### Alerting gates not visible in the UI (2026-09-29)
+_TEAMS_ALERTS_ENABLED (collectors.py) is a hardcoded False that silences the
+CLOSE_WAIT alert and the digest; nothing in the UI shows it, so every
+visible toggle can look enabled while nothing sends. Replace with a UI
+setting plus an "alerting paused" notice on the Notifications page when a
+gate blocks sends. The CLOSE_WAIT alert rule is intentionally left off:
+the health card already shows per-broker stale connections.
+
+### Schedules and Reminders tab: show watchdog escalations (2026-09-29)
+When the Schedules and Reminders sub-tab is built, escalations from the
+watchdog jobs (process-count, data-freshness, stall detection) must be
+visible and maintained there.
+
+### Pool worker socket fix -- untested paths (2026-09-29)
+Commit e303ab8 closes inherited TCP sockets in pool workers (fixed the
+recurring CLOSE_WAIT). Not verified: the replacement pool created by the
+CLOSE_WAIT recycle in collectors.py (same initializer, but no recycle has
+run since); IPv6 (/proc/net/tcp6 is not read); the Postgres socket a worker
+held earlier should be closed by the same initializer but was not checked
+separately.
+
+### Unexplained swap use (2026-09-29)
+Swap on the KPI box jumped from ~80Mi to ~1.4Gi twice during the day and
+fell back on its own. Cause not identified.
+
+### Reconcile older handoff documents against this file (2026-09-29)
+This file's newest entry before today was 2026-08-11. Compare the handoff
+documents (cluster 9 onboarding, governance, portal, RAG, TQA) with what is
+actually done, and record what is still pending here.
+
 ### Total Lag KPI card -- reverted, real bug found but not fully root-caused (2026-08-11)
 Attempted to add a Total Lag KPI card (sum across active/non-stale groups) to
 the Consumer Groups tab. Found and partially fixed one real bug: positional
