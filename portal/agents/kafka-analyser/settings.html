@@ -237,7 +237,7 @@
     <a href="/agents/kafka-analyser/dashboard" data-standalone-href="dashboard.html" class="subnav__link">📊 Dashboard</a>
     <a href="/agents/kafka-analyser/reports" data-standalone-href="reports.html" class="subnav__link">📁 Reports</a>
     <a href="/agents/kafka-analyser/settings" data-standalone-href="settings.html" class="subnav__link subnav__link--active">⚙ Settings</a>
-    <a href="/agents/kafka-analyser/teams" data-standalone-href="teams.html" class="subnav__link">🔔 Teams</a>
+    <a href="/agents/kafka-analyser/teams" data-standalone-href="teams.html" class="subnav__link">🔔 Notifications</a>
   </nav>
 
   <div class="content">
@@ -583,6 +583,52 @@
       </div>
 
       <div class="card">
+        <div class="card-section">
+          <div class="card-section-title">Email Escalation</div>
+          <div class="hint" style="margin-bottom:1rem">Configuration only -- not yet active. Fields can be filled in and saved now; sending will begin once real SMTP details are provided and this is explicitly enabled.</div>
+
+          <div class="field">
+            <label>
+              <input type="checkbox" id="email-enabled" />
+              Enable Email escalation notifications
+            </label>
+          </div>
+
+          <div class="field">
+            <label for="smtp-host">SMTP Host</label>
+            <input type="text" id="smtp-host" placeholder="smtp.example.com" style="max-width:320px" />
+          </div>
+
+          <div class="field">
+            <label for="smtp-port">SMTP Port</label>
+            <input type="number" id="smtp-port" min="1" value="587" style="max-width:120px" />
+          </div>
+
+          <div class="field">
+            <label for="smtp-username">SMTP Username</label>
+            <input type="text" id="smtp-username" placeholder="username" style="max-width:320px" />
+          </div>
+
+          <div class="field">
+            <label for="smtp-password">SMTP Password</label>
+            <input type="password" id="smtp-password" placeholder="••••••••" style="max-width:320px" autocomplete="new-password" />
+            <div class="hint">Stored encrypted at rest</div>
+          </div>
+
+          <div class="field">
+            <label for="smtp-from-address">From Address</label>
+            <input type="text" id="smtp-from-address" placeholder="alerts@example.com" style="max-width:320px" />
+          </div>
+
+          <div class="field">
+            <label for="email-recipients">Recipients</label>
+            <input type="text" id="email-recipients" placeholder="you@example.com, teammate@example.com" style="max-width:480px" />
+            <div class="hint">Comma-separated list</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
         <div class="actions">
           <button class="btn btn-primary" id="btn-save-thresholds">Save</button>
         </div>
@@ -771,6 +817,13 @@
         teams_enabled: $('teams-enabled').checked,
         teams_webhook_url: $('teams-webhook-url').value.trim(),
         teams_digest_interval_minutes: parseInt($('teams-digest-interval').value, 10) || 5,
+        email_enabled: $('email-enabled') ? $('email-enabled').checked : false,
+        smtp_host: $('smtp-host') ? $('smtp-host').value.trim() : '',
+        smtp_port: $('smtp-port') ? (parseInt($('smtp-port').value, 10) || 587) : 587,
+        smtp_username: $('smtp-username') ? $('smtp-username').value.trim() : '',
+        smtp_password: $('smtp-password') ? $('smtp-password').value : '',
+        smtp_from_address: $('smtp-from-address') ? $('smtp-from-address').value.trim() : '',
+        email_recipients: $('email-recipients') ? $('email-recipients').value.trim() : '',
       };
     }
 
@@ -951,6 +1004,16 @@
         if ($('teams-enabled')) $('teams-enabled').checked = cfg.teams_enabled || false;
         if ($('teams-webhook-url')) $('teams-webhook-url').value = cfg.teams_webhook_url || '';
         if ($('teams-digest-interval')) $('teams-digest-interval').value = cfg.teams_digest_interval_minutes || 5;
+        if ($('email-enabled')) $('email-enabled').checked = cfg.email_enabled || false;
+        if ($('smtp-host')) $('smtp-host').value = cfg.smtp_host || '';
+        if ($('smtp-port')) $('smtp-port').value = cfg.smtp_port || 587;
+        if ($('smtp-username')) $('smtp-username').value = cfg.smtp_username || '';
+        if ($('smtp-password')) {
+          $('smtp-password').value = '';
+          $('smtp-password').placeholder = cfg.smtp_password_configured ? '•••••••• (already set -- leave blank to keep)' : '••••••••';
+        }
+        if ($('smtp-from-address')) $('smtp-from-address').value = cfg.smtp_from_address || '';
+        if ($('email-recipients')) $('email-recipients').value = cfg.email_recipients || '';
 
         $('sync-status').innerHTML = '';
         renderPerClusterSyncStatus();

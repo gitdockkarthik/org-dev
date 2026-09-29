@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Kafka Analyser — Teams — UAP</title>
+  <title>Kafka Analyser — Notifications — UAP</title>
   <link rel="stylesheet" href="/css/style.css?v=3">
   <style>
     .subnav { display: flex; background: var(--navy-1); border-bottom: 1px solid var(--border); padding: 0 40px; }
@@ -171,15 +171,15 @@
     <a href="/agents/kafka-analyser/dashboard" data-standalone-href="dashboard.html" class="subnav__link">📊 Dashboard</a>
     <a href="/agents/kafka-analyser/reports" data-standalone-href="reports.html" class="subnav__link">📁 Reports</a>
     <a href="/agents/kafka-analyser/settings" data-standalone-href="settings.html" class="subnav__link">⚙ Settings</a>
-    <a href="/agents/kafka-analyser/teams" data-standalone-href="teams.html" class="subnav__link subnav__link--active">🔔 Teams</a>
+    <a href="/agents/kafka-analyser/teams" data-standalone-href="teams.html" class="subnav__link subnav__link--active">🔔 Notifications</a>
   </nav>
 
   <div class="content">
   <div class="container">
 
     <div class="page-header">
-      <h1>Kafka Analyser — Teams</h1>
-      <p>Configure alert rules and scheduled reminders posted to Teams</p>
+      <h1>Kafka Analyser — Notifications</h1>
+      <p>Configure alert rules and scheduled reminders across notification channels (Teams, and Email once configured)</p>
     </div>
 
     <nav class="tab-nav" role="tablist">
@@ -269,13 +269,14 @@
                 <th>Severity</th>
                 <th>Threshold</th>
                 <th>Cooldown (min)</th>
-                <th>Status</th>
+                <th>Teams</th>
+                <th>Email</th>
                 <th>Open Triggers</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody id="configs-body">
-              <tr><td colspan="9" class="data-table__loading">Loading…</td></tr>
+              <tr><td colspan="10" class="data-table__loading">Loading…</td></tr>
             </tbody>
           </table>
         </div>
@@ -511,7 +512,7 @@
     function renderConfigs(configs) {
       const body = $('configs-body');
       if (!configs.length) {
-        body.innerHTML = '<tr><td colspan="9" class="data-table__empty">No alert rules configured yet. Click "+ New Alert Rule" to create one.</td></tr>';
+        body.innerHTML = '<tr><td colspan="10" class="data-table__empty">No alert rules configured yet. Click "+ New Alert Rule" to create one.</td></tr>';
         return;
       }
       body.innerHTML = configs.map(c => {
@@ -533,6 +534,13 @@
                 <span class="toggle-text">${c.enabled ? 'Enabled' : 'Disabled'}</span>
               </label>
             </td>
+            <td class="nowrap">
+              <label class="toggle-wrap" style="opacity:0.65" title="Email sending is not yet configured (no SMTP details set up) -- this toggle is safe to set now and will take effect once it is.">
+                <input type="checkbox" class="toggle-input config-email-toggle" data-id="${esc(c.id)}" ${c.email_enabled ? 'checked' : ''} />
+                <span class="toggle-slider"></span>
+                <span class="toggle-text">${c.email_enabled ? 'Enabled' : 'Disabled'}</span>
+              </label>
+            </td>
             <td>${openCell}</td>
             <td><button class="btn btn-danger btn-sm config-delete" data-id="${esc(c.id)}" data-name="${esc(c.name)}">Delete</button></td>
           </tr>`;
@@ -550,6 +558,22 @@
             this.checked = !enabled;
             this.disabled = false;
             showMsg($('configs-msg'), '✗ Could not ' + (enabled ? 'enable' : 'disable') + ' rule: ' + err.message, 'err', 10000);
+          }
+        });
+      });
+
+      body.querySelectorAll('.config-email-toggle').forEach(toggle => {
+        toggle.addEventListener('change', async function () {
+          const id = parseInt(this.dataset.id, 10);
+          const email_enabled = this.checked;
+          this.disabled = true;
+          try {
+            await api(`/alerts/configs/${id}`, { method: 'PUT', body: JSON.stringify({ email_enabled }) });
+            await loadConfigs();
+          } catch (err) {
+            this.checked = !email_enabled;
+            this.disabled = false;
+            showMsg($('configs-msg'), '✗ Could not ' + (email_enabled ? 'enable' : 'disable') + ' email for rule: ' + err.message, 'err', 10000);
           }
         });
       });
@@ -578,7 +602,7 @@
         renderConfigs(d.configs || []);
       } catch (err) {
         $('configs-body').innerHTML =
-          `<tr><td colspan="9" class="data-table__error">Failed to load alert rules: ${esc(err.message)}</td></tr>`;
+          `<tr><td colspan="10" class="data-table__error">Failed to load alert rules: ${esc(err.message)}</td></tr>`;
       }
     }
 

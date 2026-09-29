@@ -205,6 +205,8 @@ async def get_settings() -> dict:
     cfg["api_key_last4"] = api_key[-4:] if api_key else ""
     cfg.pop("api_key", None)
     cfg.pop("sasl_password", None)
+    cfg["smtp_password_configured"] = bool(_config.get("smtp_password", ""))
+    cfg.pop("smtp_password", None)
     from config import settings as _settings
     cfg["model"] = _settings.model
     return cfg
@@ -213,6 +215,12 @@ async def get_settings() -> dict:
 @router.post("")
 async def save_settings(request: Request) -> dict:
     data = await request.json()
+    # A blank smtp_password means "leave it unchanged" -- the frontend
+    # never receives the real stored value (see get_settings above), so
+    # it cannot send it back, and a blank field must not be treated as
+    # "clear the password". Only a genuinely non-empty value updates it.
+    if "smtp_password" in data and not data["smtp_password"]:
+        data.pop("smtp_password")
     _config.update(data)
     for k, v in data.items():
         await _upsert(k, v)
