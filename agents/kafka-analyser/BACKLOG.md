@@ -1261,10 +1261,16 @@ open.
    latest version NUMBER rather than a count of versions, which would
    overstate the total after deletions -- UNVERIFIED (tools/schema_registry.py
    ~218-221).
-6. Label and threshold mismatches: MirrorMaker lag amber above 1,000 vs
-   status at 10,000; ZooKeeper latency 50/10 ms (front end) vs 100 ms
-   (back end); SLO "24h window" label and hard-coded "/3"; SLO Infra badge
-   always "OK"; Brokers Avg Heap has no amber band.
+6. PARTLY DONE -- label and threshold mismatches: MirrorMaker lag amber
+   above 1,000 vs status at 10,000; ZooKeeper latency 50/10 ms (front end)
+   vs 100 ms (back end); SLO Infra badge always "OK"; [DONE 2026-09-29: the
+   SLO overall donut label "24h window" now reads "current" (the value is
+   the live overall, not a window), and the Broker Availability target now
+   uses the payload's expected_brokers instead of a hard-coded "/3" --
+   verified on clusters 8 and 4, but all clusters have 3 brokers, so the
+   payload path was not distinguished from the fallback; expected_brokers
+   counts every broker id ever seen, so a removed broker would still be
+   expected (backend question)]; Brokers Avg Heap has no amber band.
 7. Backend errors shown as normal data: Consumer Groups and Brokers show
    "No data", SLO shows 0.0% red, Breaker Status shows "No clusters found".
    Also stale SLO data after cluster or range changes.

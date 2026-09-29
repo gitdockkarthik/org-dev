@@ -4313,7 +4313,7 @@
         {label:'Connector Availability', target:`>${t.connector_availability||99}%`, current:c.connector_status==='na' ? 'N/A' : `${c.connector_availability_pct||0}%`, status:c.connector_status},
         {label:'Task Health', target:`>${t.min_task_health_pct||95}%`, current:c.task_status==='na' ? 'N/A' : `${c.task_health_pct||0}%`, status:c.task_status||'unknown'},
         {label:'Consumer Lag', target:`<${(t.consumer_lag||10000).toLocaleString()}`, current:(c.consumer_lag||0) >= 1000000 ? `${((c.consumer_lag||0)/1000000).toFixed(1)}M` : (c.consumer_lag||0) >= 1000 ? `${((c.consumer_lag||0)/1000).toFixed(1)}K` : `${c.consumer_lag||0}`, status:c.lag_status},
-        {label:'Broker Availability', target:`${t.expected_brokers||3}/3`, current:`${c.broker_count||0}/${c.expected_brokers||3} online`, status:c.broker_status, hint: c.broker_status !== 'green' ? 'Measures whether THIS AGENT successfully collected fresh broker data in the last 10 minutes -- not a direct broker health check. A low/red value here can mean our own collection pipeline is struggling (e.g. a metrics-scrape failure) while the brokers themselves are completely healthy and reachable. For a direct, real-time broker connectivity test, use "Check Live Broker Connections" on the Breaker Status tab.' : undefined},
+        {label:'Broker Availability', target:`${t.expected_brokers||3}/${t.expected_brokers||3}`, current:`${c.broker_count||0}/${c.expected_brokers||3} online`, status:c.broker_status, hint: c.broker_status !== 'green' ? 'Measures whether THIS AGENT successfully collected fresh broker data in the last 10 minutes -- not a direct broker health check. A low/red value here can mean our own collection pipeline is struggling (e.g. a metrics-scrape failure) while the brokers themselves are completely healthy and reachable. For a direct, real-time broker connectivity test, use "Check Live Broker Connections" on the Breaker Status tab.' : undefined},
         {label:'Under-replicated Partitions', target:`=${t.urp||0}`, current:`${c.urp||0}`, status:c.urp_status},
         {label:'Broker CPU', target:`<${t.max_broker_cpu_pct||85}%`, current:`${c.avg_cpu||0}%`, status:c.cpu_status||'unknown'},
         {label:'Broker Heap', target:`<${t.max_broker_heap_pct||80}%`, current:`${c.avg_heap||0}%`, status:c.heap_status||'unknown'},
@@ -4326,7 +4326,7 @@
               <canvas id="slo-donut" width="160" height="160"></canvas>
               <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center">
                 <div style="font-size:1.8rem;font-weight:700;color:${col(overallStatus)}">${overallPct.toFixed(1)}%</div>
-                <div style="font-size:.7rem;color:var(--text-muted)">${_sloHours}h window</div>
+                <div style="font-size:.7rem;color:var(--text-muted)">current</div>
               </div>
             </div>
             <div style="margin-top:8px">${badge(overallStatus,overallStatus.toUpperCase())}</div>
