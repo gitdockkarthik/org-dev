@@ -57,6 +57,19 @@ _DEFAULTS: dict = {
     "teams_enabled": False,
     "teams_webhook_url": "",
     "teams_digest_interval_minutes": 5,
+
+    # Email escalation -- configuration scaffolding only (2026-09-29),
+    # not yet wired to any sending logic. All blank/disabled until real
+    # SMTP details are provided. Shares the same Notifications page as
+    # Teams; per-alert-rule enablement is independent (kafka_alert_configs
+    # .email_enabled), not a single global switch.
+    "email_enabled": False,
+    "smtp_host": "",
+    "smtp_port": 587,
+    "smtp_username": "",
+    "smtp_password": "",
+    "smtp_from_address": "",
+    "email_recipients": "",
 }
 
 # Write-through in-memory cache; populated from DB on startup.
@@ -137,6 +150,15 @@ class SettingsPayload(BaseModel):
     teams_enabled: bool = False
     teams_webhook_url: str = ""
     teams_digest_interval_minutes: int = 5
+
+    # Email escalation -- see the matching comment in _DEFAULTS above.
+    email_enabled: bool = False
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_address: str = ""
+    email_recipients: str = ""
 
 
 class TestConnectionPayload(BaseModel):
