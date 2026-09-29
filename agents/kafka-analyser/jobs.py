@@ -3,6 +3,7 @@ Multiple jobs for different metric types with independent schedules and timeouts
 """
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -41,6 +42,18 @@ _ALL_PER_CLUSTER_PREFIXES = _BREAKER_TRACKED_PREFIXES + (
 )
 
 _BREAKER_TRIP_THRESHOLD = 5
+
+_last_job_dispatched_at: float | None = None
+# Updated every time APScheduler fires any scheduled job (see
+# _schedule_trigger below) -- an external watchdog can check this to
+# detect a genuine scheduler-level stall (APScheduler stops dispatching
+# while the HTTP event loop stays fully responsive), which /livez's own
+# event-loop check alone cannot catch. Deliberately in-memory, not the
+# database -- an external watchdog checking this must not conflate
+# "Postgres is down" with "the scheduler itself has stalled". Set in
+# _schedule_trigger, BEFORE trigger_job's own DB calls (breaker state,
+# active-run check, run-record creation), for exactly that reason: set
+# any later and a Postgres outage would stop it updating.
 
 
 def _parse_any_cluster_job_id(job_id: str) -> int | None:
@@ -356,6 +369,8 @@ async def load_schedules() -> int:
 
 
 async def _schedule_trigger(job_id: str, schedule_id: int) -> None:
+    global _last_job_dispatched_at
+    _last_job_dispatched_at = time.time()
     await trigger_job(job_id, triggered_by="schedule")
 
 

@@ -374,6 +374,22 @@ services:
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
       LANGFUSE_HOST: http://langfuse:3000
+    healthcheck:
+      # Genuine, external-to-the-application check -- Docker itself runs
+      # this, not anything inside the Python process, so it stays
+      # meaningful even if the app's own event loop/scheduler were
+      # completely frozen (a risk neither of tonight's in-app watchdogs
+      # can detect, since both run inside that same process). Built
+      # 2026-09-28 as the external half of a two-layer defense: this
+      # gives visibility (docker ps / docker inspect show unhealthy),
+      # and a separate, host-level systemd timer (outside this compose
+      # file, since it must survive even if this container is completely
+      # unresponsive) acts on a sustained unhealthy status.
+      test: ["CMD", "curl", "-f", "-s", "-m", "5", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     depends_on:
       - backend
       - postgres

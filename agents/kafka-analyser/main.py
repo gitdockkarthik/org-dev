@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -924,6 +925,65 @@ async def health():
         return {"status": "ok", "agent": settings.agent_slug}
     except Exception as e:
         return JSONResponse(status_code=503, content={"status": "error", "reason": "database unavailable", "agent": settings.agent_slug})
+
+
+# Captured once, when this module loads (process start) -- the reference
+# point for /livez's startup grace window below.
+_LIVEZ_MODULE_LOAD_TIME = time.time()
+
+
+@app.get("/livez")
+async def livez():
+    """No database, no external dependency -- distinct from /health
+    (which also verifies Postgres connectivity, and so legitimately
+    returns 503 during a real database outage even when this app itself
+    is perfectly fine). Built to support a genuine, external scheduler-
+    stall detection mechanism (2026-09-28) -- an external watchdog
+    reacting to /health could otherwise restart this app repeatedly
+    during a Postgres outage it has no ability to fix.
+
+    Checks two independent things: (1) the event loop can handle this
+    request at all, proven simply by returning a response, and (2)
+    APScheduler is still genuinely dispatching jobs -- checked via an
+    in-memory timestamp updated at the exact moment APScheduler fires
+    any scheduled job (jobs._last_job_dispatched_at, set in
+    jobs._schedule_trigger before any DB access), NOT just whether the
+    HTTP server responds. These can diverge: a scheduler-level stall
+    could leave this event loop fully responsive while no job ever runs
+    again, which a bare "is the process alive" check would never catch.
+    _LIVEZ_STALE_THRESHOLD_SECS (180s) sits comfortably above the most
+    frequent job cadence (both watchdogs run every 1 minute), so 3
+    minutes of total silence is a genuine, clear signal, not normal
+    variance."""
+    import time
+    from jobs import _last_job_dispatched_at
+    from fastapi.responses import JSONResponse
+
+    _LIVEZ_STALE_THRESHOLD_SECS = 180
+    if _last_job_dispatched_at is None:
+        _uptime_secs = time.time() - _LIVEZ_MODULE_LOAD_TIME
+        if _uptime_secs > _LIVEZ_STALE_THRESHOLD_SECS:
+            # Nothing has EVER dispatched, and we're well past startup --
+            # the scheduler likely never started at all (e.g.
+            # load_schedules() failed, or start_scheduler() never ran).
+            # A bare "None means alive" check would stay green forever
+            # in exactly this failure mode.
+            return JSONResponse(status_code=503, content={
+                "status": "stale", "agent": settings.agent_slug,
+                "reason": f"no job has ever been dispatched, {_uptime_secs:.0f}s after startup -- scheduler may have failed to start",
+            })
+        # Still within the brief startup grace window -- treat as alive,
+        # not stale, to avoid a false positive before the first
+        # scheduled job has had a chance to fire.
+        return {"status": "alive", "agent": settings.agent_slug}
+
+    age_secs = time.time() - _last_job_dispatched_at
+    if age_secs > _LIVEZ_STALE_THRESHOLD_SECS:
+        return JSONResponse(status_code=503, content={
+            "status": "stale", "agent": settings.agent_slug,
+            "reason": f"no job has been dispatched in {age_secs:.0f}s (threshold {_LIVEZ_STALE_THRESHOLD_SECS}s) -- scheduler may be stalled",
+        })
+    return {"status": "alive", "agent": settings.agent_slug, "last_job_dispatched_secs_ago": round(age_secs, 1)}
 
 
 @app.post("/invoke", response_model=InvokeResponse)
