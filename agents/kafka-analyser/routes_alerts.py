@@ -3,6 +3,7 @@ backing the Teams tab's "Alert Configuration and Reporting" sub-tab. Firing,
 resolution and the digest live in teams_alerts.py; these routes only manage
 rules and read their history."""
 import logging
+import math
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Query
@@ -19,6 +20,13 @@ router = APIRouter(prefix="/alerts", tags=["alerts"])
 
 _SEVERITIES = ("critical", "warning", "info")
 
+# Threshold-based rules (evaluated by _evaluate_broker_thresholds in
+# teams_alerts.py): config holds {"mode": "simple", <tier>: <threshold>, ...}
+# instead of the single "threshold" count, and the tier that fired decides
+# the severity -- the rule's own `severity` is ignored for these types.
+_THRESHOLD_ALERT_TYPES = ("broker.cpu_pct", "broker.heap_pct")
+_TIERS = ("info", "warning", "critical")  # ascending
+
 # Fields that map to NOT NULL columns -- an explicit null for these in a PUT
 # body is rejected rather than written.
 _NON_NULLABLE_FIELDS = ("name", "alert_type", "severity", "threshold", "cooldown_minutes", "enabled", "email_enabled")
@@ -34,6 +42,7 @@ class AlertConfigPayload(BaseModel):
     cooldown_minutes: int = Field(default=30, ge=0)
     enabled: bool = True
     email_enabled: bool = False
+    tiers: dict | None = None
 
     @field_validator("severity")
     @classmethod
@@ -53,6 +62,7 @@ class AlertConfigUpdatePayload(BaseModel):
     cooldown_minutes: int | None = Field(default=None, ge=0)
     enabled: bool | None = None
     email_enabled: bool | None = None
+    tiers: dict | None = None
 
     @field_validator("severity")
     @classmethod
@@ -60,6 +70,26 @@ class AlertConfigUpdatePayload(BaseModel):
         if v is not None and v not in _SEVERITIES:
             raise ValueError(f"severity must be one of {', '.join(_SEVERITIES)}")
         return v
+
+
+def _threshold_config(tiers: dict | None) -> dict:
+    """Validate a threshold rule's tiers and return its stored config. 422
+    unless: keys only from _TIERS, values numeric and > 0, at least one tier,
+    and info < warning < critical among the tiers given."""
+    if not tiers:
+        raise HTTPException(status_code=422, detail=f"tiers must set at least one of {', '.join(_TIERS)}")
+    unknown = [k for k in tiers if k not in _TIERS]
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"Unknown tier(s) {', '.join(map(str, unknown))}; allowed: {', '.join(_TIERS)}")
+    for tier, value in tiers.items():
+        # bool is an int subclass -- reject it explicitly.
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+            raise HTTPException(status_code=422, detail=f"tiers.{tier} must be a number greater than 0")
+    given = [(t, tiers[t]) for t in _TIERS if t in tiers]
+    for (lower, lower_value), (higher, higher_value) in zip(given, given[1:]):
+        if lower_value >= higher_value:
+            raise HTTPException(status_code=422, detail=f"tiers.{lower} must be less than tiers.{higher}")
+    return {"mode": "simple", **dict(given)}
 
 
 def _get_session_factory(dashboard: bool = False):
@@ -149,13 +179,17 @@ async def create_alert_config(payload: AlertConfigPayload) -> dict:
     try:
         cluster_names = await _get_cluster_names()
         await _check_cluster_exists(payload.cluster_id, cluster_names)
+        if payload.alert_type in _THRESHOLD_ALERT_TYPES:
+            config = _threshold_config(payload.tiers)
+        else:
+            config = {"threshold": payload.threshold}
         now = datetime.now(timezone.utc)
         cfg = KafkaAlertConfig(
             name=payload.name,
             alert_type=payload.alert_type,
             cluster_id=payload.cluster_id,
             severity=payload.severity,
-            config={"threshold": payload.threshold},
+            config=config,
             # Empty string stored as NULL so it falls back to the agent-level webhook.
             webhook_url=payload.webhook_url or None,
             cooldown_minutes=payload.cooldown_minutes,
@@ -191,7 +225,15 @@ async def update_alert_config(config_id: int, payload: AlertConfigUpdatePayload)
             cfg = await session.get(KafkaAlertConfig, config_id)
             if cfg is None:
                 raise HTTPException(status_code=404, detail="Alert config not found")
-            if "threshold" in updates:
+            tiers_given = "tiers" in updates
+            tiers = updates.pop("tiers", None)
+            if updates.get("alert_type", cfg.alert_type) in _THRESHOLD_ALERT_TYPES:
+                # Tiers replace the whole config; a rule switched to a
+                # threshold type must bring its tiers with it.
+                updates.pop("threshold", None)
+                if tiers_given or updates.get("alert_type", cfg.alert_type) != cfg.alert_type:
+                    cfg.config = _threshold_config(tiers)
+            elif "threshold" in updates:
                 # Reassign (not mutate in place) so SQLAlchemy detects the JSONB change.
                 cfg.config = {**(cfg.config or {}), "threshold": updates.pop("threshold")}
             if "webhook_url" in updates:

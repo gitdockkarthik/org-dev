@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 
 from database import SessionLocal
-from models import KafkaAlertConfig, KafkaAlertTrigger
+from models import KafkaAlertConfig, KafkaAlertTrigger, KafkaBrokerMetrics
 from shared.escalation.notifier import build_adaptive_card, send_to_teams
 
 logger = logging.getLogger(__name__)
@@ -348,6 +348,10 @@ async def evaluate_alerts() -> None:
         await _evaluate_broker_reachability()
     except Exception as exc:
         logger.warning("evaluate_alerts: broker reachability check failed: %s", exc)
+    try:
+        await _evaluate_broker_thresholds()
+    except Exception as exc:
+        logger.warning("evaluate_alerts: broker threshold check failed: %s", exc)
 
 
 async def _evaluate_broker_reachability() -> None:
@@ -585,3 +589,323 @@ async def _evaluate_broker_reachability() -> None:
                     )
     except Exception as exc:
         logger.warning("_evaluate_broker_reachability: write session failed entirely: %s", exc)
+
+
+# Threshold rules (Simple mode): alert_type -> (kafka_broker_metrics column,
+# label used in the card). config is {"mode": "simple", <tier>: <threshold>}
+# as validated by routes_alerts._threshold_config.
+BROKER_THRESHOLD_METRICS = {
+    "broker.cpu_pct": ("cpu_pct", "CPU"),
+    "broker.heap_pct": ("heap_pct", "heap"),
+}
+_THRESHOLD_TIERS = ("info", "warning", "critical")  # ascending
+_TIER_RANK = {tier: rank for rank, tier in enumerate(_THRESHOLD_TIERS)}
+_threshold_breach_counts: dict[tuple[int, int, str], int] = {}  # in-memory, resets on restart
+_THRESHOLD_CONFIRM_CHECKS = 2  # consecutive breaching evaluations required before firing
+# Same 6-minute freshness window routes_dashboard.py uses for per-broker status.
+_BROKER_METRICS_MAX_AGE = timedelta(minutes=6)
+
+
+def _threshold_tier(tier_config: dict, value: float) -> str | None:
+    """Highest configured tier whose threshold is <= value, else None."""
+    for tier in reversed(_THRESHOLD_TIERS):
+        threshold = tier_config.get(tier)
+        if threshold is not None and value >= float(threshold):
+            return tier
+    return None
+
+
+async def _evaluate_broker_thresholds() -> None:
+    """Fire broker.cpu_pct / broker.heap_pct alerts from the latest
+    kafka_broker_metrics row per broker: one Teams card per (alert config,
+    cluster, broker) once the value sits in a tier on
+    _THRESHOLD_CONFIRM_CHECKS consecutive runs, only when no trigger for that
+    triple is already open and it is out of cooldown. An open trigger whose
+    tier rises is escalated in place with a new card; one whose tier falls is
+    updated silently; one whose value drops below every tier is resolved
+    silently (surfaced via the periodic digest).
+
+    Same four-stage structure as _evaluate_broker_reachability. A metric row
+    older than _BROKER_METRICS_MAX_AGE is ignored entirely -- no counter
+    change, no resolve, no fire -- so a stalled collector never looks healthy
+    or critical."""
+    if SessionLocal is None:
+        logger.info("evaluate_alerts: broker thresholds skipped: database not available")
+        return
+    try:
+        from routes_settings import _config
+        if not _config.get("teams_enabled"):
+            logger.info("evaluate_alerts: broker thresholds skipped: teams_enabled is off")
+            return
+
+        # ---- Single read session: configs, relevant triggers, broker metrics ----
+        async with SessionLocal() as session:
+            configs = (await session.execute(
+                select(KafkaAlertConfig).where(
+                    KafkaAlertConfig.alert_type.in_(list(BROKER_THRESHOLD_METRICS)),
+                    KafkaAlertConfig.enabled == True,
+                )
+            )).scalars().all()
+            if not configs:
+                logger.info("evaluate_alerts: broker thresholds skipped: no enabled broker threshold rules")
+                return
+            config_ids = [c.id for c in configs]
+
+            open_rows = (await session.execute(
+                select(
+                    KafkaAlertTrigger.id,
+                    KafkaAlertTrigger.alert_config_id,
+                    KafkaAlertTrigger.cluster_id,
+                    KafkaAlertTrigger.subject,
+                    KafkaAlertTrigger.severity,
+                ).where(
+                    KafkaAlertTrigger.alert_config_id.in_(config_ids),
+                    KafkaAlertTrigger.resolved_at.is_(None),
+                )
+            )).all()
+            open_triggers: dict[tuple[int, int, str], tuple[int, str | None]] = {
+                (r.alert_config_id, r.cluster_id, r.subject): (r.id, r.severity) for r in open_rows
+            }
+
+            # Most recent resolved_at per (config, cluster, subject), computed by the DB.
+            resolved_rows = (await session.execute(
+                select(
+                    KafkaAlertTrigger.alert_config_id,
+                    KafkaAlertTrigger.cluster_id,
+                    KafkaAlertTrigger.subject,
+                    func.max(KafkaAlertTrigger.resolved_at).label("last_resolved_at"),
+                ).where(
+                    KafkaAlertTrigger.alert_config_id.in_(config_ids),
+                    KafkaAlertTrigger.resolved_at.is_not(None),
+                ).group_by(
+                    KafkaAlertTrigger.alert_config_id,
+                    KafkaAlertTrigger.cluster_id,
+                    KafkaAlertTrigger.subject,
+                )
+            )).all()
+
+            # One row per (cluster, broker) -- the collector upserts the latest
+            # values (uq_broker_metrics_cluster_broker, migration 0012).
+            metrics_query = select(
+                KafkaBrokerMetrics.cluster_id,
+                KafkaBrokerMetrics.broker_id,
+                KafkaBrokerMetrics.cpu_pct,
+                KafkaBrokerMetrics.heap_pct,
+                KafkaBrokerMetrics.time,
+            )
+            if all(cfg.cluster_id is not None for cfg in configs):
+                metrics_query = metrics_query.where(
+                    KafkaBrokerMetrics.cluster_id.in_({cfg.cluster_id for cfg in configs})
+                )
+            metric_rows = (await session.execute(metrics_query)).all()
+        last_resolved: dict[tuple[int, int, str], datetime] = {
+            (r.alert_config_id, r.cluster_id, r.subject): r.last_resolved_at for r in resolved_rows
+        }
+    except Exception as exc:
+        logger.warning("_evaluate_broker_thresholds: setup failed: %s", exc)
+        return
+
+    # ---- Decide who fires/escalates/resolves, entirely in memory, no DB session open ----
+    now = datetime.now(timezone.utc)
+    to_insert: list[KafkaAlertTrigger] = []
+    to_update: list[tuple[int, str | None, str]] = []  # (trigger id, new severity or None, metric_value)
+    to_resolve: list[int] = []
+    # (config, cluster_id, subject, tier, description, new trigger or None for an escalation)
+    to_post: list[tuple[KafkaAlertConfig, int, str, str, str, KafkaAlertTrigger | None]] = []
+    cluster_ids_evaluated: set[int] = set()
+    brokers_evaluated = 0
+    stale_rows = 0
+    no_data_rows = 0
+    escalated = 0
+
+    for row in metric_rows:
+        if row.time is None or now - row.time > _BROKER_METRICS_MAX_AGE:
+            stale_rows += 1
+            continue
+        if (row.cpu_pct or 0.0) == 0.0 and (row.heap_pct or 0.0) == 0.0:
+            no_data_rows += 1
+            continue
+        cluster_id = row.cluster_id
+        subject = str(row.broker_id)
+        cluster_ids_evaluated.add(cluster_id)
+        brokers_evaluated += 1
+
+        for config in configs:
+            if config.cluster_id is not None and config.cluster_id != cluster_id:
+                continue
+            try:
+                column, label = BROKER_THRESHOLD_METRICS[config.alert_type]
+                value = getattr(row, column)
+                if value is None:
+                    continue
+                tier_config = config.config or {}
+                tier = _threshold_tier(tier_config, value)
+                key = (config.id, cluster_id, subject)
+                open_trigger = open_triggers.get(key)
+
+                if tier is None:
+                    _threshold_breach_counts[key] = 0
+                    if open_trigger is not None:
+                        to_resolve.append(open_trigger[0])
+                    continue
+
+                metric_value = str(value)
+                description = (
+                    f"Broker {subject} {label} is {value:.1f}% "
+                    f"({tier}, threshold {float(tier_config[tier]):g})"
+                )
+
+                if open_trigger is not None:
+                    trigger_id, open_severity = open_trigger
+                    # NULL severity = the rule's own severity (see models.py).
+                    old_tier = open_severity or config.severity
+                    old_rank = _TIER_RANK.get(old_tier, -1)
+                    if _TIER_RANK[tier] > old_rank:
+                        escalated += 1
+                        to_update.append((trigger_id, tier, metric_value))
+                        to_post.append((
+                            config, cluster_id, subject, tier,
+                            f"{description} -- ESCALATED from {old_tier}", None,
+                        ))
+                    elif _TIER_RANK[tier] < old_rank:
+                        to_update.append((trigger_id, tier, metric_value))
+                    else:
+                        to_update.append((trigger_id, None, metric_value))
+                    continue
+
+                _threshold_breach_counts[key] = _threshold_breach_counts.get(key, 0) + 1
+                if _threshold_breach_counts[key] < _THRESHOLD_CONFIRM_CHECKS:
+                    continue
+
+                last_resolved_at = last_resolved.get(key)
+                since_resolved = (now - last_resolved_at) if last_resolved_at is not None else None
+                if since_resolved is not None and since_resolved < timedelta(minutes=config.cooldown_minutes):
+                    continue  # still in cooldown
+                is_recurrence = (
+                    since_resolved is not None
+                    and since_resolved <= timedelta(hours=RECURRENCE_LOOKBACK_HOURS)
+                )
+                description += (
+                    " -- RECURRING: this same issue resolved recently and has now fired again"
+                    if is_recurrence else ""
+                )
+                trigger = KafkaAlertTrigger(
+                    alert_config_id=config.id,
+                    cluster_id=cluster_id,
+                    subject=subject,
+                    severity=tier,
+                    triggered_at=now,
+                    metric_value=metric_value,
+                    message_sent=description,
+                    teams_post_success=False,
+                    error_detail=None,
+                    resolved_at=None,
+                    is_recurrence=is_recurrence,
+                )
+                to_insert.append(trigger)
+                to_post.append((config, cluster_id, subject, tier, description, trigger))
+            except Exception as exc:
+                logger.warning(
+                    "_evaluate_broker_thresholds: alert_config_id=%s cluster_id=%s subject=%s failed: %s",
+                    config.id, cluster_id, subject, exc,
+                )
+
+    logger.info(
+        "evaluate_alerts: broker thresholds checked clusters=%d "
+        "brokers=%d stale_skipped=%d no_data_skipped=%d fired=%d escalated=%d resolved=%d",
+        len(cluster_ids_evaluated), brokers_evaluated, stale_rows, no_data_rows,
+        len(to_insert), escalated, len(to_resolve),
+    )
+
+    # ---- Teams posts, no DB session open ----
+    if to_post:
+        try:
+            cluster_names = await _get_cluster_names()
+        except Exception as exc:
+            logger.warning("_evaluate_broker_thresholds: cluster name lookup failed: %s", exc)
+            cluster_names = {}
+    for config, cluster_id, subject, tier, description, trigger in to_post:
+        try:
+            card = build_adaptive_card(
+                agent_name="Kafka Analyser",
+                cluster_name=cluster_names.get(cluster_id, str(cluster_id)),
+                anomaly={
+                    "severity": tier,
+                    "category": config.alert_type,
+                    "description": description,
+                    "recommended_action": "Check load on the broker and recent traffic changes.",
+                },
+            )
+            webhook_url = config.webhook_url or _config.get("teams_webhook_url", "")
+            if webhook_url:
+                # Isolated per (config, cluster, broker): one slow/failed
+                # post never blocks or is rolled back by another's.
+                success = await send_to_teams(webhook_url=webhook_url, card=card)
+                error_detail = None
+            else:
+                success = False
+                error_detail = "No webhook URL configured (per-alert or agent-level)"
+            if trigger is not None:
+                trigger.teams_post_success = success
+                trigger.error_detail = error_detail
+            elif not success:
+                logger.warning(
+                    "_evaluate_broker_thresholds: escalation card not sent for "
+                    "alert_config_id=%s cluster_id=%s subject=%s: %s",
+                    config.id, cluster_id, subject, error_detail or "Teams post failed",
+                )
+        except Exception as exc:
+            logger.warning(
+                "_evaluate_broker_thresholds: Teams post for alert_config_id=%s cluster_id=%s subject=%s failed: %s",
+                config.id, cluster_id, subject, exc,
+            )
+
+    if not to_insert and not to_update and not to_resolve:
+        return
+
+    # ---- Single write session: each row in its own savepoint ----
+    try:
+        async with SessionLocal() as session:
+            for trigger in to_insert:
+                try:
+                    async with session.begin_nested():
+                        session.add(trigger)
+                    await session.commit()
+                except Exception as exc:
+                    await session.rollback()
+                    logger.warning(
+                        "_evaluate_broker_thresholds: failed to record trigger for "
+                        "alert_config_id=%s cluster_id=%s subject=%s (card was already sent -- "
+                        "this broker will likely be re-alerted next cycle): %s",
+                        trigger.alert_config_id, trigger.cluster_id, trigger.subject, exc,
+                    )
+            for trigger_id, severity, metric_value in to_update:
+                try:
+                    async with session.begin_nested():
+                        trigger = await session.get(KafkaAlertTrigger, trigger_id)
+                        if trigger is not None and trigger.resolved_at is None:
+                            if severity is not None:
+                                trigger.severity = severity
+                            trigger.metric_value = metric_value
+                    await session.commit()
+                except Exception as exc:
+                    await session.rollback()
+                    logger.warning(
+                        "_evaluate_broker_thresholds: failed to update trigger id=%s: %s",
+                        trigger_id, exc,
+                    )
+            for trigger_id in to_resolve:
+                try:
+                    async with session.begin_nested():
+                        trigger = await session.get(KafkaAlertTrigger, trigger_id)
+                        if trigger is not None and trigger.resolved_at is None:
+                            trigger.resolved_at = now
+                    await session.commit()
+                except Exception as exc:
+                    await session.rollback()
+                    logger.warning(
+                        "_evaluate_broker_thresholds: failed to resolve trigger id=%s: %s",
+                        trigger_id, exc,
+                    )
+    except Exception as exc:
+        logger.warning("_evaluate_broker_thresholds: write session failed entirely: %s", exc)
