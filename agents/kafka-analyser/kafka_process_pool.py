@@ -8,6 +8,7 @@ small, dedicated pool for specific CRITICAL operations only -- NOT a wholesale
 replacement of the main thread pool used by everything else, to protect the
 memory headroom gained from the recent infrastructure upgrade."""
 import logging
+import os
 import time
 from concurrent.futures import ProcessPoolExecutor, TimeoutError as FutureTimeoutError
 
@@ -21,6 +22,36 @@ logger = logging.getLogger(__name__)
 # coordination. Used to tag early connection events as context='startup'.
 _MODULE_LOAD_TIME = time.time()
 _STARTUP_WINDOW_SECS = 300  # first 5 minutes after load = "startup" context
+
+
+def _close_inherited_tcp_sockets() -> None:
+    """Runs once in each new worker process (ProcessPoolExecutor initializer).
+    The pool forks, so a worker inherits copies of the main process's open
+    TCP sockets. A copy keeps the real connection open after the main
+    process closes its own, so the broker's later close leaves CLOSE_WAIT
+    in every worker. Workers open their own connections and never use
+    inherited ones. Uses plain close of this process's fd only, never
+    shutdown(), so the main process's connections are unaffected. Never
+    raises."""
+    try:
+        conn = set()
+        for line in open("/proc/net/tcp").read().splitlines()[1:]:
+            f = line.split()
+            if f[3] in ("01", "08"):
+                conn.add(f[9])
+        for fd in os.listdir("/proc/self/fd"):
+            try:
+                target = os.readlink("/proc/self/fd/" + fd)
+            except OSError:
+                continue
+            if target.startswith("socket:[") and target[8:-1] in conn:
+                try:
+                    os.close(int(fd))
+                except OSError:
+                    pass
+    except Exception:
+        pass
+
 
 # Sized to the KPI box's current 8 vCPU capacity (m5.2xlarge, upgraded
 # 2026-08-04 from the original 4-core t3.xlarge this pool was last sized
@@ -48,7 +79,7 @@ _STARTUP_WINDOW_SECS = 300  # first 5 minutes after load = "startup" context
 # attempt: it's a fresh, independently-evidenced sizing change, backed by
 # real, current contention data with the box confirmed (via nproc and
 # os.cpu_count(), not assumed) to have 8 real cores today.
-_process_pool = ProcessPoolExecutor(max_workers=6)
+_process_pool = ProcessPoolExecutor(max_workers=6, initializer=_close_inherited_tcp_sockets)
 
 # Per-worker-process persistent connections. Each worker process has its own
 # separate memory space, so this dict is naturally process-local -- no locking

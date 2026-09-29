@@ -2087,7 +2087,7 @@ async def check_and_recycle_close_wait() -> dict:
 
     import kafka_process_pool as _cwkpp
     old_pool = _cwkpp._process_pool
-    _cwkpp._process_pool = ProcessPoolExecutor(max_workers=6)
+    _cwkpp._process_pool = ProcessPoolExecutor(max_workers=6, initializer=_cwkpp._close_inherited_tcp_sockets)
 
     async def _drain_old_pool_task(pool):
         global _cw_recycle_in_progress
