@@ -985,7 +985,10 @@ def _describe_broker_distribution_worker(bootstrap_servers: str, cluster_config:
     describe_topics() for leader/replica info, aggregating leader_counts,
     replica_counts, and partition_leaders entirely within the worker to
     minimize IPC (only the aggregated result crosses the process boundary, not
-    raw per-topic metadata for potentially tens of thousands of partitions)."""
+    raw per-topic metadata for potentially tens of thousands of partitions).
+    Each partition_leaders entry also carries under_replicated: True when the
+    ISR is smaller than the replica list, False when not, None when describe
+    returned no "isr" key (so a missing field never looks like an outage)."""
     from tools.real_kafka import _is_internal_topic
     import collections
     admin = _get_worker_client(bootstrap_servers, cluster_config)
@@ -1007,6 +1010,8 @@ def _describe_broker_distribution_worker(bootstrap_servers: str, cluster_config:
                         "topic": topic_name,
                         "partition": p["partition"],
                         "leader": leader_id,
+                        "under_replicated": (len(p.get("isr") or []) < len(p.get("replicas") or []))
+                                            if "isr" in p else None,
                     })
                     for r in p.get("replicas", []):
                         replica_counts[str(r)] += 1
