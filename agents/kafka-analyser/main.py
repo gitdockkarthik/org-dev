@@ -755,7 +755,7 @@ async def lifespan(app: FastAPI):
         "Process Count Watchdog",
         "Independent safety net (no Kafka/DB/HTTP -- cannot itself hang): forces an immediate container restart if OS process count exceeds a hard threshold, catching accumulated orphaned worker processes even if the close-wait-check job itself is stuck",
         check_process_count_watchdog,
-        default_timeout_secs=10,
+        default_timeout_secs=25,
     )
     async with SessionLocal() as _sess:
         existing = await _sess.execute(
@@ -768,7 +768,7 @@ async def lifespan(app: FastAPI):
             # crossed, forces a safe, Docker-managed restart. No reason
             # to require manual enablement given what it protects against.
             await _jobs_module.create_schedule(
-                _watchdog_job_id, "* * * * *", enabled=True, timeout_secs=10
+                _watchdog_job_id, "* * * * *", enabled=True, timeout_secs=25
             )
             logger.info("Created schedule for %s (enabled by default -- pure safety net): every 2 minutes", _watchdog_job_id)
 

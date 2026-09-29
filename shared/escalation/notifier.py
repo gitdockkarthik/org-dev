@@ -107,27 +107,40 @@ def build_adaptive_card(
 def build_health_summary_card(
     agent_name: str,
     process_count: int,
+    health_status: str,
     rows: list[dict],
 ) -> dict:
     """Builds a multi-cluster health summary table card -- a periodic
     routine status card (distinct from build_adaptive_card's single-
-    anomaly cards), showing per-cluster data freshness and recent job
-    success/failure counts at a glance. Uses a ColumnSet-based table
-    layout (not the native Adaptive Card Table element) for reliable
-    rendering across both desktop and mobile Teams clients.
+    anomaly cards), showing per-cluster data freshness, recent job
+    success/failure counts, broker online status (both our own
+    collector's view and a real, live TCP check), and per-broker stale
+    (CLOSE_WAIT) connection counts, all at a glance. Uses a
+    ColumnSet-based table layout (not the native Adaptive Card Table
+    element) for reliable rendering across both desktop and mobile
+    Teams clients. Extended 2026-09-29 for proactive issue detection,
+    beyond the original process-count-only version.
+
+    health_status: overall agent health, e.g. "alive" or "stale" (from
+    the same scheduler-dispatch-activity signal /livez uses). Shown as
+    its own colored TextBlock below the FactSet rather than as a fact,
+    since FactSet values don't support per-fact color.
 
     rows: one dict per cluster, each with keys:
       - name: str (cluster display name)
       - data_age_minutes: float | None (None if no data ever collected)
       - success_count: int (recent window)
       - failed_count: int (recent window)
+      - brokers_online_agent: str | None (e.g. "2/3", our own
+        collector-freshness-based signal; None if unavailable)
+      - brokers_online_real: str | None (e.g. "3/3", a real, live TCP
+        reachability check; None if unavailable)
+      - broker_connections: list[dict] | None (each
+        {"label": "B4", "close_wait": int}; None if unavailable)
     """
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
     def _age_text(age: float | None) -> tuple[str, str]:
-        # Returns (display_text, color) -- color follows the same
-        # SEVERITY_COLOUR palette used elsewhere in this file for
-        # visual consistency.
         if age is None:
             return ("no data", "warning")
         if age < 5:
@@ -150,12 +163,34 @@ def build_health_summary_card(
             }],
         }
 
+    def _broker_online_text(agent: str | None, real: str | None) -> tuple[str, str]:
+        if agent is None and real is None:
+            return ("n/a", "default")
+        agent_disp = agent if agent is not None else "?"
+        real_disp = real if real is not None else "?"
+        # Mismatch between the two is itself the signal worth flagging --
+        # this is precisely the ambiguity a real incident (2026-09-28)
+        # showed can otherwise go unnoticed for hours.
+        mismatch = agent is not None and real is not None and agent != real
+        color = "attention" if mismatch else "good"
+        return (f"🖥️{agent_disp} 🌐{real_disp}", color)
+
+    legend_row = {
+        "type": "TextBlock",
+        "text": "🖥️ = our collector · 🌐 = live TCP check",
+        "size": "Small",
+        "color": "default",
+        "isSubtle": True,
+        "spacing": "Small",
+    }
+
     header_row = {
         "type": "ColumnSet",
         "columns": [
             _cell("Cluster", weight="Bolder"),
             _cell("Data Age", weight="Bolder"),
             _cell("Jobs (recent)", weight="Bolder"),
+            _cell("Brokers Online", weight="Bolder"),
         ],
         "separator": True,
     }
@@ -167,16 +202,38 @@ def build_health_summary_card(
         failed_count = r.get("failed_count", 0)
         jobs_color = "attention" if failed_count > 0 else "good"
         jobs_text = f"{success_count}✅ {failed_count}❌" if failed_count > 0 else f"{success_count}✅"
+        online_text, online_color = _broker_online_text(r.get("brokers_online_agent"), r.get("brokers_online_real"))
         data_rows.append({
             "type": "ColumnSet",
             "columns": [
                 _cell(r.get("name", "Unknown")),
                 _cell(age_text, color=age_color),
                 _cell(jobs_text, color=jobs_color),
+                _cell(online_text, color=online_color),
             ],
             "separator": True,
         })
 
+        conns = r.get("broker_connections")
+        if conns:
+            any_stale = any(c.get("close_wait", 0) > 0 for c in conns)
+            conn_text = "🔌 Stale: " + " ".join(f"{c.get('label', '?')}:{c.get('close_wait', 0)}" for c in conns)
+            data_rows.append({
+                "type": "ColumnSet",
+                "columns": [{
+                    "type": "Column",
+                    "width": "stretch",
+                    "items": [{
+                        "type": "TextBlock",
+                        "text": conn_text,
+                        "wrap": True,
+                        "size": "Small",
+                        "color": "attention" if any_stale else "default",
+                    }],
+                }],
+            })
+
+    health_color = "good" if health_status == "alive" else "attention"
     body = [
         {
             "type": "TextBlock",
@@ -191,6 +248,15 @@ def build_health_summary_card(
                 {"title": "Process Count", "value": str(process_count)},
             ],
         },
+        {
+            "type": "TextBlock",
+            "text": f"Health Status: {health_status.upper()}",
+            "weight": "Bolder",
+            "size": "Small",
+            "color": health_color,
+            "spacing": "Small",
+        },
+        legend_row,
         header_row,
     ] + data_rows
 
