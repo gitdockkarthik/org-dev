@@ -1280,7 +1280,15 @@ open.
    on clusters 8 and 4, but all clusters have 3 brokers, so the payload path
    was not distinguished from the fallback; expected_brokers counts every
    broker id ever seen, so a removed broker would still be expected (backend
-   question)]; Brokers Avg Heap has no amber band.
+   question)]; [DONE 2026-09-29: the Brokers tab "Avg Heap %" card now uses
+   the same bands as the per-broker heap bars: green below 60, amber from
+   60, red from 80 (kpi--success / kpi--warn / kpi--danger); it was red
+   above 80 and otherwise the default orange. Green verified on the live
+   Internal Staging tab; amber and red covered by a stub test only. Known
+   nuance: the card rounds the average to a whole number first, so an
+   average of 79.5 to 79.9 shows as 80% and turns the card red while a bar
+   at the same value stays amber; the bars use a slightly lighter amber
+   shade (#d97706) than the card (#b45309)].
 7. Backend errors shown as normal data: Consumer Groups and Brokers show
    "No data", SLO shows 0.0% red, Breaker Status shows "No clusters found".
    Also stale SLO data after cluster or range changes.
