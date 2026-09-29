@@ -309,6 +309,10 @@ class KafkaAlertTrigger(Base):
         Integer, ForeignKey("kafka_alert_configs.id", ondelete="CASCADE"), nullable=False
     )
     cluster_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # What this trigger is about when a rule fires per item rather than per
+    # cluster (broker for reachability, topic for replication factor). NULL
+    # means a cluster-level trigger -- every existing close_wait_spike row.
+    subject: Mapped[str | None] = mapped_column(Text, nullable=True)
     triggered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     metric_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     message_sent: Mapped[str | None] = mapped_column(Text, nullable=True)
