@@ -748,6 +748,34 @@ async def lifespan(app: FastAPI):
             )
             logger.info("Created schedule for %s (disabled by default -- trigger on demand): every 2 minutes", _closewait_job_id)
 
+    # Global alert evaluator -- a single, cluster-agnostic job that evaluates
+    # every enabled kafka_alert_configs rule whose check isn't driven by
+    # another job (close_wait_spike rides along on kafka-close-wait-check
+    # above). Broker reachability is the first check; future alert types
+    # plug into teams_alerts.evaluate_alerts. Every 5 minutes, with a
+    # broker alert requiring two consecutive failed checks before firing.
+    import teams_alerts
+    _alert_evaluator_job_id = "kafka-alert-evaluator"
+    _jobs_module.register_job(
+        _alert_evaluator_job_id,
+        "Alert Evaluator",
+        "Evaluates enabled alert rules (broker reachability first) and fires or resolves triggers",
+        teams_alerts.evaluate_alerts,
+        default_timeout_secs=60,
+    )
+    async with SessionLocal() as _sess:
+        existing = await _sess.execute(
+            _sel(KafkaJobSchedule).where(KafkaJobSchedule.job_id == _alert_evaluator_job_id)
+        )
+        if not existing.scalar_one_or_none():
+            # Created DISABLED -- enabled deliberately later, once the
+            # evaluator has been verified via on-demand triggers, in line
+            # with the Kafka team's no-new-automatically-running-jobs ask.
+            await _jobs_module.create_schedule(
+                _alert_evaluator_job_id, "*/5 * * * *", enabled=False, timeout_secs=60
+            )
+            logger.info("Created schedule for %s (disabled by default -- trigger on demand): every 5 minutes", _alert_evaluator_job_id)
+
     from collectors import check_process_count_watchdog
     _watchdog_job_id = "kafka-process-count-watchdog"
     _jobs_module.register_job(

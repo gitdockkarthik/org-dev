@@ -7,6 +7,7 @@ Every public function here is best-effort notification logic riding along
 on a real operational job: each one logs a warning and swallows on failure,
 never raises, so it can never break the caller's own check/recycle logic.
 """
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -333,3 +334,237 @@ def _build_digest_card(pending: list, resolved: list, recurrence: list, cluster_
             }
         ],
     }
+
+
+BROKER_UNREACHABLE_ALERT_TYPE = "broker_unreachable"
+_broker_fail_counts: dict[tuple[int, str], int] = {}  # in-memory, resets on restart
+_BROKER_CONFIRM_CHECKS = 2  # consecutive failures required before firing
+
+
+async def evaluate_alerts() -> None:
+    """Global alert evaluator job entry point. Calls each check in turn;
+    future alert types plug in here. Never raises."""
+    try:
+        await _evaluate_broker_reachability()
+    except Exception as exc:
+        logger.warning("evaluate_alerts: broker reachability check failed: %s", exc)
+
+
+async def _evaluate_broker_reachability() -> None:
+    """Fire broker_unreachable alerts: one immediate Teams card per (alert
+    config, cluster, broker) once a broker has failed a fresh TCP connect on
+    _BROKER_CONFIRM_CHECKS consecutive runs, only when no trigger for that
+    triple is already open and it is out of cooldown. A reachable broker
+    silently resolves its open trigger (surfaced via the periodic digest).
+
+    Same four-stage structure as fire_close_wait_alerts: one read session,
+    decide in memory, Teams posts with no DB session open, one write session
+    with each row in its own savepoint. A cluster whose reachability check
+    errored or returned no brokers is skipped entirely -- no counter change,
+    no resolve, no fire -- so a config/lookup problem never looks like an
+    outage or a recovery."""
+    if SessionLocal is None:
+        return
+    try:
+        from routes_settings import _config
+        if not _config.get("teams_enabled"):
+            return
+
+        # ---- Single read session: configs + every relevant trigger ----
+        async with SessionLocal() as session:
+            configs = (await session.execute(
+                select(KafkaAlertConfig).where(
+                    KafkaAlertConfig.alert_type == BROKER_UNREACHABLE_ALERT_TYPE,
+                    KafkaAlertConfig.enabled == True,
+                )
+            )).scalars().all()
+            if not configs:
+                return
+            config_ids = [c.id for c in configs]
+
+            open_rows = (await session.execute(
+                select(
+                    KafkaAlertTrigger.id,
+                    KafkaAlertTrigger.alert_config_id,
+                    KafkaAlertTrigger.cluster_id,
+                    KafkaAlertTrigger.subject,
+                ).where(
+                    KafkaAlertTrigger.alert_config_id.in_(config_ids),
+                    KafkaAlertTrigger.resolved_at.is_(None),
+                )
+            )).all()
+            open_triggers: dict[tuple[int, int, str], int] = {
+                (r.alert_config_id, r.cluster_id, r.subject): r.id for r in open_rows
+            }
+
+            # Most recent resolved_at per (config, cluster, subject), computed by the DB.
+            resolved_rows = (await session.execute(
+                select(
+                    KafkaAlertTrigger.alert_config_id,
+                    KafkaAlertTrigger.cluster_id,
+                    KafkaAlertTrigger.subject,
+                    func.max(KafkaAlertTrigger.resolved_at).label("last_resolved_at"),
+                ).where(
+                    KafkaAlertTrigger.alert_config_id.in_(config_ids),
+                    KafkaAlertTrigger.resolved_at.is_not(None),
+                ).group_by(
+                    KafkaAlertTrigger.alert_config_id,
+                    KafkaAlertTrigger.cluster_id,
+                    KafkaAlertTrigger.subject,
+                )
+            )).all()
+        last_resolved: dict[tuple[int, int, str], datetime] = {
+            (r.alert_config_id, r.cluster_id, r.subject): r.last_resolved_at for r in resolved_rows
+        }
+
+        # Paused clusters are deliberately included: _get_enabled_clusters
+        # filters on kafka_clusters.enabled only, not breaker pause state,
+        # and an unreachable broker is exactly what a paused cluster may have.
+        import collectors
+        enabled_cluster_ids = [int(collectors._cid(c)) for c in await collectors._get_enabled_clusters()]
+        cluster_ids = [
+            cid for cid in enabled_cluster_ids
+            if any(cfg.cluster_id is None or cfg.cluster_id == cid for cfg in configs)
+        ]
+        if not cluster_ids:
+            return
+    except Exception as exc:
+        logger.warning("_evaluate_broker_reachability: setup failed: %s", exc)
+        return
+
+    # ---- Fresh TCP reachability per cluster, concurrently, no DB session open ----
+    # Imported here, not at module level, to avoid a circular import.
+    from routes_dashboard import get_broker_reachability
+    results = await asyncio.gather(
+        *[get_broker_reachability(str(cid)) for cid in cluster_ids],
+        return_exceptions=True,
+    )
+
+    # ---- Decide who fires/resolves, entirely in memory, no DB session open ----
+    now = datetime.now(timezone.utc)
+    to_insert: list[KafkaAlertTrigger] = []
+    to_resolve: list[int] = []
+
+    for cluster_id, result in zip(cluster_ids, results):
+        if isinstance(result, BaseException) or result.get("error") or not result.get("total"):
+            logger.warning(
+                "_evaluate_broker_reachability: cluster_id=%s skipped this cycle (check did not complete): %s",
+                cluster_id, result if isinstance(result, BaseException) else result.get("error") or "no brokers",
+            )
+            continue
+        cluster_name = result.get("cluster_name") or str(cluster_id)
+        reachable_count = result.get("reachable_count", 0)
+        total = result["total"]
+        cluster_configs = [cfg for cfg in configs if cfg.cluster_id is None or cfg.cluster_id == cluster_id]
+
+        for broker in result.get("brokers", []):
+            subject = f"{broker['host']}:{broker['port']}"
+            key = (cluster_id, subject)
+
+            if broker.get("reachable"):
+                _broker_fail_counts[key] = 0
+                for config in cluster_configs:
+                    trigger_id = open_triggers.get((config.id, cluster_id, subject))
+                    if trigger_id is not None:
+                        to_resolve.append(trigger_id)
+                continue
+
+            _broker_fail_counts[key] = _broker_fail_counts.get(key, 0) + 1
+            if _broker_fail_counts[key] < _BROKER_CONFIRM_CHECKS:
+                continue
+
+            for config in cluster_configs:
+                try:
+                    if (config.id, cluster_id, subject) in open_triggers:
+                        continue  # already firing, avoid duplicate spam
+
+                    last_resolved_at = last_resolved.get((config.id, cluster_id, subject))
+                    since_resolved = (now - last_resolved_at) if last_resolved_at is not None else None
+                    if since_resolved is not None and since_resolved < timedelta(minutes=config.cooldown_minutes):
+                        continue  # still in cooldown
+                    is_recurrence = (
+                        since_resolved is not None
+                        and since_resolved <= timedelta(hours=RECURRENCE_LOOKBACK_HOURS)
+                    )
+
+                    description = (
+                        f"Broker {subject} is unreachable (TCP connect failed on "
+                        f"{_BROKER_CONFIRM_CHECKS} consecutive checks; "
+                        f"{reachable_count}/{total} brokers in this cluster reachable)"
+                    ) + (
+                        " -- RECURRING: this same issue resolved recently and has now fired again"
+                        if is_recurrence else ""
+                    )
+                    card = build_adaptive_card(
+                        agent_name="Kafka Analyser",
+                        cluster_name=cluster_name,
+                        anomaly={
+                            "severity": config.severity,
+                            "category": BROKER_UNREACHABLE_ALERT_TYPE,
+                            "description": description,
+                            "recommended_action": "Check the broker process/host and the network path to it.",
+                        },
+                    )
+
+                    webhook_url = config.webhook_url or _config.get("teams_webhook_url", "")
+                    if webhook_url:
+                        # Isolated per (config, cluster, broker): one slow/failed
+                        # post never blocks or is rolled back by another's.
+                        success = await send_to_teams(webhook_url=webhook_url, card=card)
+                        error_detail = None
+                    else:
+                        success = False
+                        error_detail = "No webhook URL configured (per-alert or agent-level)"
+
+                    to_insert.append(KafkaAlertTrigger(
+                        alert_config_id=config.id,
+                        cluster_id=cluster_id,
+                        subject=subject,
+                        triggered_at=now,
+                        metric_value="unreachable",
+                        message_sent=description,
+                        teams_post_success=success,
+                        error_detail=error_detail,
+                        resolved_at=None,
+                        is_recurrence=is_recurrence,
+                    ))
+                except Exception as exc:
+                    logger.warning(
+                        "_evaluate_broker_reachability: alert_config_id=%s cluster_id=%s subject=%s failed: %s",
+                        config.id, cluster_id, subject, exc,
+                    )
+
+    if not to_insert and not to_resolve:
+        return
+
+    # ---- Single write session: each row in its own savepoint ----
+    try:
+        async with SessionLocal() as session:
+            for trigger in to_insert:
+                try:
+                    async with session.begin_nested():
+                        session.add(trigger)
+                    await session.commit()
+                except Exception as exc:
+                    await session.rollback()
+                    logger.warning(
+                        "_evaluate_broker_reachability: failed to record trigger for "
+                        "alert_config_id=%s cluster_id=%s subject=%s (card was already sent -- "
+                        "this broker will likely be re-alerted next cycle): %s",
+                        trigger.alert_config_id, trigger.cluster_id, trigger.subject, exc,
+                    )
+            for trigger_id in to_resolve:
+                try:
+                    async with session.begin_nested():
+                        trigger = await session.get(KafkaAlertTrigger, trigger_id)
+                        if trigger is not None and trigger.resolved_at is None:
+                            trigger.resolved_at = now
+                    await session.commit()
+                except Exception as exc:
+                    await session.rollback()
+                    logger.warning(
+                        "_evaluate_broker_reachability: failed to resolve trigger id=%s: %s",
+                        trigger_id, exc,
+                    )
+    except Exception as exc:
+        logger.warning("_evaluate_broker_reachability: write session failed entirely: %s", exc)
