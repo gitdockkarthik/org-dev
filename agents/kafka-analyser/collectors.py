@@ -67,6 +67,16 @@ async def _get_cluster(cluster_id: str) -> dict | None:
     return next((c for c in clusters if str(c.get("id", "")) == str(cluster_id)), None)
 
 
+def _broker_urp(rows: dict, bid: str) -> tuple[int, bool]:
+    """(urp_count, known) for one broker from {leader_broker_id: (known_partitions,
+    urp_partitions)}. known is True only when at least one partition led by
+    this broker has a recorded under_replicated flag; otherwise (0, False)."""
+    known_partitions, urp_partitions = rows.get(str(bid), (0, 0))
+    if known_partitions > 0:
+        return int(urp_partitions), True
+    return 0, False
+
+
 # ── Job 1: Broker Health ──────────────────────────────────────────────────────
 async def collect_broker_health(cluster_id: str = ""):
     """Collect broker JVM metrics via Prometheus Phase 1 filtered pull."""
@@ -109,9 +119,34 @@ async def collect_broker_health(cluster_id: str = ""):
             from database import SessionLocal
             from sqlalchemy import text
             async with SessionLocal() as sess:
+                    # URP per broker = partitions it leads whose ISR is smaller than
+                    # the replica list, as recorded by collect_topic_structure in
+                    # kafka_partition_leaders.under_replicated. The Prometheus/JMX
+                    # value is not used: the exporter returns only CPU and JVM
+                    # families, so under_replicated_partitions is a meaningless 0.0.
+                    # A failed lookup must never block the broker write below: it
+                    # runs in its own savepoint (so the session is not left in an
+                    # aborted transaction) and an empty mapping makes every broker
+                    # "unknown", which keeps its stored urp_count.
+                    urp_by_broker = {}
+                    try:
+                        async with sess.begin_nested():
+                            _urp_rows = await sess.execute(text("""
+                                SELECT leader_broker_id,
+                                       COUNT(*) FILTER (WHERE under_replicated IS NOT NULL) AS known,
+                                       COUNT(*) FILTER (WHERE under_replicated) AS urp
+                                FROM kafka_partition_leaders
+                                WHERE cluster_id = :cid AND updated_at > now() - interval '15 minutes'
+                                GROUP BY leader_broker_id
+                            """), {"cid": int(cid)})
+                            urp_by_broker = {str(r.leader_broker_id): (r.known, r.urp) for r in _urp_rows.fetchall()}
+                    except Exception as exc:
+                        logger.warning("collect_broker_health: URP lookup failed for %s: %s", c["name"], exc)
+                        urp_by_broker = {}
                     for broker in brokers:
                         bid = broker.get("broker_id") or broker.get("id", "")
                         node_id = int(bid) if bid.isdigit() else None
+                        urp_val, urp_known = _broker_urp(urp_by_broker, bid)
                         data_gb_true = None
                         if node_id is not None:
                             data_gb_true = log_dir_result.get("broker_sizes_gb", {}).get(node_id)
@@ -130,7 +165,10 @@ async def collect_broker_health(cluster_id: str = ""):
                                 heap_pct = EXCLUDED.heap_pct,
                                 gc_pause_ms = EXCLUDED.gc_pause_ms,
                                 request_handler_idle_pct = EXCLUDED.request_handler_idle_pct,
-                                urp_count = EXCLUDED.urp_count,
+                                -- Unknown (no fresh flags for this broker) keeps the
+                                -- stored value rather than overwriting it with a fake 0.
+                                urp_count = CASE WHEN :urp_known THEN EXCLUDED.urp_count
+                                                 ELSE kafka_broker_metrics.urp_count END,
                                 messages_in_per_sec = EXCLUDED.messages_in_per_sec,
                                 cpu_pct = EXCLUDED.cpu_pct,
                                 disk_pct = EXCLUDED.disk_pct,
@@ -147,7 +185,8 @@ async def collect_broker_health(cluster_id: str = ""):
                             "heap": broker.get("heap_pct", 0.0),
                             "gc": int(broker.get("gc_pause_ms", 0)),
                             "idle": broker.get("request_handler_idle_pct", 100.0),
-                            "urp": int(broker.get("urp_count", 0)),
+                            "urp": urp_val,
+                            "urp_known": urp_known,
                             "msgs": broker.get("messages_in_per_sec", 0.0),
                             "cpu": broker.get("cpu_pct", 0.0),
                             "disk": broker.get("disk_pct", 0.0),
