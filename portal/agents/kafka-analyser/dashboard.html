@@ -4570,7 +4570,7 @@
             }).catch(() => {});
 
           // Donut chart for overall compliance
-          const overallPct = trend.length > 0 ? (trend[trend.length-1].overall_pct || 0) : (c.connector_availability_pct || 0);
+          const overallPct = c.overall_pct!=null ? c.overall_pct : (trend.length > 0 ? (trend[trend.length-1].overall_pct || 0) : (c.connector_availability_pct || 0));
           const donutCtx = document.getElementById('slo-donut')?.getContext('2d');
           if (donutCtx) {
             const color = overallPct >= 95 ? '#4CAF50' : overallPct >= 80 ? '#FF9800' : '#F44336';
