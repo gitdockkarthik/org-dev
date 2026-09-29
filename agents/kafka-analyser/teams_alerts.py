@@ -364,10 +364,12 @@ async def _evaluate_broker_reachability() -> None:
     no resolve, no fire -- so a config/lookup problem never looks like an
     outage or a recovery."""
     if SessionLocal is None:
+        logger.info("evaluate_alerts: broker_unreachable skipped: database not available")
         return
     try:
         from routes_settings import _config
         if not _config.get("teams_enabled"):
+            logger.info("evaluate_alerts: broker_unreachable skipped: teams_enabled is off")
             return
 
         # ---- Single read session: configs + every relevant trigger ----
@@ -379,6 +381,7 @@ async def _evaluate_broker_reachability() -> None:
                 )
             )).scalars().all()
             if not configs:
+                logger.info("evaluate_alerts: broker_unreachable skipped: no enabled broker_unreachable rules")
                 return
             config_ids = [c.id for c in configs]
 
@@ -427,6 +430,7 @@ async def _evaluate_broker_reachability() -> None:
             if any(cfg.cluster_id is None or cfg.cluster_id == cid for cfg in configs)
         ]
         if not cluster_ids:
+            logger.info("evaluate_alerts: broker_unreachable skipped: no enabled clusters match a rule")
             return
     except Exception as exc:
         logger.warning("_evaluate_broker_reachability: setup failed: %s", exc)
@@ -444,9 +448,13 @@ async def _evaluate_broker_reachability() -> None:
     now = datetime.now(timezone.utc)
     to_insert: list[KafkaAlertTrigger] = []
     to_resolve: list[int] = []
+    brokers_checked = 0
+    brokers_unreachable = 0
+    skipped_clusters = 0
 
     for cluster_id, result in zip(cluster_ids, results):
         if isinstance(result, BaseException) or result.get("error") or not result.get("total"):
+            skipped_clusters += 1
             logger.warning(
                 "_evaluate_broker_reachability: cluster_id=%s skipped this cycle (check did not complete): %s",
                 cluster_id, result if isinstance(result, BaseException) else result.get("error") or "no brokers",
@@ -460,6 +468,7 @@ async def _evaluate_broker_reachability() -> None:
         for broker in result.get("brokers", []):
             subject = f"{broker['host']}:{broker['port']}"
             key = (cluster_id, subject)
+            brokers_checked += 1
 
             if broker.get("reachable"):
                 _broker_fail_counts[key] = 0
@@ -469,6 +478,7 @@ async def _evaluate_broker_reachability() -> None:
                         to_resolve.append(trigger_id)
                 continue
 
+            brokers_unreachable += 1
             _broker_fail_counts[key] = _broker_fail_counts.get(key, 0) + 1
             if _broker_fail_counts[key] < _BROKER_CONFIRM_CHECKS:
                 continue
@@ -533,6 +543,13 @@ async def _evaluate_broker_reachability() -> None:
                         "_evaluate_broker_reachability: alert_config_id=%s cluster_id=%s subject=%s failed: %s",
                         config.id, cluster_id, subject, exc,
                     )
+
+    logger.info(
+        "evaluate_alerts: broker_unreachable checked clusters=%d "
+        "brokers=%d unreachable=%d skipped_clusters=%d fired=%d resolved=%d",
+        len(cluster_ids) - skipped_clusters, brokers_checked,
+        brokers_unreachable, skipped_clusters, len(to_insert), len(to_resolve),
+    )
 
     if not to_insert and not to_resolve:
         return
