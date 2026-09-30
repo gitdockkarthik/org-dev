@@ -1180,6 +1180,57 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Findings 2026-09-29 to 09-30 -- self-restart, deadlocks, open questions (2026-09-30)
+1. A watchdog restart leaves no readable record. The container restarted
+   itself at 17:11:03 UTC on 2026-09-29 (RestartCount 1; nine jobs marked
+   "Cleared on restart"), after consumer-lag timed out after 90s on
+   clusters 4, 10 and 8 at 17:07-17:08. Docker keeps the log only for the
+   current container run, so the pre-restart log is gone and the cause is
+   UNVERIFIED (most likely the data-freshness watchdog). Proposed: have each
+   watchdog write a row to the database before it restarts (which watchdog,
+   why, the values it saw), and show it on the Schedules and Reminders tab.
+   Touches the safety-net code: design first, full test, do not rush.
+2. Two Postgres DeadlockDetected failures after the 12:40 restart:
+   kafka-msg-rate-9 (13:10) and kafka-msg-rate-8 (14:09), one run each. Same
+   class as the 2026-09-24 deadlock. Cause UNVERIFIED; whether any of
+   2026-09-29's changes (structure job insert with the new column, health
+   job URP lookup) contributed is not known.
+3. Consumer-lag timed out at 17:07 on three clusters at once, around the
+   time of a DataStream incident on the staging tenants (Kafka reported
+   healthy by the Kafka team). Cause UNVERIFIED.
+4. Stopped on 2026-09-29 (not removed; docker compose start brings them
+   back): grafana, prometheus, cadvisor, node-exporter, postgres-exporter,
+   redis-exporter and cur-analyser. Nothing in the compose file or the
+   Kafka analyser code referred to the org-dev Prometheus; mcp-server,
+   backend and Grafana dashboards were not checked.
+5. Cluster 8 broker 6 CPU reads 100 at times (Prometheus path caps at 100;
+   cpu_cores is 8): verify the real core count. Disk % (disk_pct) is 0 on
+   every cluster: not collected, blocked on node exporter on the brokers,
+   paused until the Kafka upgrade. Log-dir volume (GB) is the only storage
+   figure available.
+6. One Teams post timed out after the 10:39 restart (httpx.ReadTimeout). A
+   timed-out alert card leaves teams_post_success false and the trigger
+   open, so it is not re-sent.
+7. Swap use on the KPI box climbed from 50Mi to 1.3Gi during the evening of
+   2026-09-29 and fell back several times; most of it is held by the
+   kafka-analyser container's six pool workers (about 240 MB swapped each
+   for three of them and about 105 MB for the other three, roughly 1 GB in
+   total; checked 2026-09-30 05:10 via /proc VmSwap and the container's
+   cgroup). Likely explanation, UNVERIFIED: idle workers have unused pages
+   moved to swap, which is harmless unless a busy job touches them; free
+   memory stayed at 18Gi. Postgres processes hold a further 120 to 170 MB
+   each. Watch item, not a fault. Postgres memory rose from 1.49GiB to
+   2.46GiB (limit 4GiB) at 10:55; not investigated.
+8. kafka-urp-status-8 last ran on 2026-08-06: probably a retired job,
+   UNVERIFIED. SLO expected_brokers counts every broker id ever seen. SLO
+   error handling does not cover an HTTP 500/422 body ({"detail": ...}).
+   The Schema Registry versions card does not update after Show More.
+   Brokers Avg Heap card rounds to a whole number before colouring.
+9. Alerting rule for tomorrow: use the dashboard's own data sources, not
+   raw tables (the raw broker table read 0 for URP, GC, idle and rates).
+   Replication-factor alerts must exclude partition_count = 0; alerts on
+   leader imbalance are not wanted (known, not fixable by the Kafka team).
+
 ### Dashboard audit 2026-09-29 -- defects found, fix order (fix 1 done)
 Read-only audit of every KPI card found these defects. Fix one at a time,
 own commit, full regression after each. Fix 1 is done (below); the rest are
