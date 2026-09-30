@@ -1186,10 +1186,21 @@ click-through to the popup shows accurate partition-level detail.
    "Cleared on restart"), after consumer-lag timed out after 90s on
    clusters 4, 10 and 8 at 17:07-17:08. Docker keeps the log only for the
    current container run, so the pre-restart log is gone and the cause is
-   UNVERIFIED (most likely the data-freshness watchdog). Proposed: have each
-   watchdog write a row to the database before it restarts (which watchdog,
-   why, the values it saw), and show it on the Schedules and Reminders tab.
-   Touches the safety-net code: design first, full test, do not rush.
+   UNVERIFIED (most likely the data-freshness watchdog).
+   PARTLY DONE 2026-09-30: migration 0056 adds kafka_watchdog_events (id,
+   created_at, watchdog, reason, details JSONB); the data-freshness watchdog
+   now writes one row just before os._exit(1), concurrently with the Teams
+   post under the same 5-second cap, so it adds no delay (stub-tested: the
+   exit is called at 5.00s even when both calls hang). The SQL was tested
+   against the live table (rolled back) and the helper _record_watchdog_event
+   was run inside the container (row written and deleted). NOT yet observed
+   on a real watchdog firing. STILL OPEN: the process-count watchdog
+   (collectors.py, os._exit around line 2489) does not record events (the
+   stuck-paused restart is part of the data-freshness watchdog and records
+   with reason stuck_paused); the process-count watchdog is documented as
+   making no DB or HTTP calls, so recording there needs a separate design;
+   nothing reads the table yet (the Schedules and Reminders tab should show
+   it).
 2. Two Postgres DeadlockDetected failures after the 12:40 restart:
    kafka-msg-rate-9 (13:10) and kafka-msg-rate-8 (14:09), one run each. Same
    class as the 2026-09-24 deadlock. Cause UNVERIFIED; whether any of

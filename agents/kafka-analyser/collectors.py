@@ -2516,6 +2516,33 @@ _STUCK_PAUSED_THRESHOLD_MINUTES = 45
 _DATA_FRESHNESS_MODULE_LOAD_TIME = time.time()
 
 
+async def _record_watchdog_event(watchdog: str, reason: str, details: dict) -> None:
+    """Best-effort write of one kafka_watchdog_events row just before a
+    watchdog restarts the agent, so the reason survives the restart (Docker
+    keeps logs only for the current run). Same raw-asyncpg approach as
+    kafka_process_pool._log_connection_event. Never raises: if asyncpg, the
+    database or the table is missing, it silently does nothing. The caller
+    caps the total wait; the restart never waits on this beyond that."""
+    try:
+        import json
+        import asyncpg
+        from config import settings
+        if not settings.database_url:
+            return
+        dsn = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
+        conn = await asyncpg.connect(dsn, timeout=2)
+        try:
+            await conn.execute(
+                "INSERT INTO kafka_watchdog_events (watchdog, reason, details) "
+                "VALUES ($1, $2, $3::jsonb)",
+                watchdog, reason, json.dumps(details, default=str),
+            )
+        finally:
+            conn.terminate()
+    except Exception:
+        pass
+
+
 async def check_data_freshness_watchdog() -> dict:
     """Independent safety-net check, completely separate from
     check_process_count_watchdog and check_and_recycle_close_wait --
@@ -2634,16 +2661,33 @@ async def check_data_freshness_watchdog() -> dict:
             len(stuck_paused_clusters), _STUCK_PAUSED_THRESHOLD_MINUTES, stuck_paused_clusters,
         )
         try:
+            _reason = "+".join(
+                r for r, hit in (("stale_data", stale_clusters), ("stuck_paused", stuck_paused_clusters)) if hit
+            )
+            # Teams post and event record run concurrently under the same
+            # 5-second cap, so recording adds no delay before the restart.
             await asyncio.wait_for(
-                _post_to_teams(
-                    "critical",
-                    f"Data freshness check failed for {len(stale_clusters)} cluster(s): "
-                    f"{stale_clusters} -- broker metrics have gone stale despite active "
-                    "dispatch, indicating a stale worker-pool client. Forcing an immediate "
-                    "restart. No action needed, Docker will bring the container back up "
-                    "automatically. If this recurs frequently, investigate.",
-                    category="data_freshness_watchdog",
-                    source="check_data_freshness_watchdog",
+                asyncio.gather(
+                    _post_to_teams(
+                        "critical",
+                        f"Data freshness check failed for {len(stale_clusters)} cluster(s): "
+                        f"{stale_clusters} -- broker metrics have gone stale despite active "
+                        "dispatch, indicating a stale worker-pool client. Forcing an immediate "
+                        "restart. No action needed, Docker will bring the container back up "
+                        "automatically. If this recurs frequently, investigate.",
+                        category="data_freshness_watchdog",
+                        source="check_data_freshness_watchdog",
+                    ),
+                    _record_watchdog_event(
+                        "data_freshness",
+                        _reason,
+                        {
+                            "stale_clusters": stale_clusters,
+                            "stuck_paused_clusters": stuck_paused_clusters,
+                            "threshold_minutes": _DATA_FRESHNESS_THRESHOLD_MINUTES,
+                        },
+                    ),
+                    return_exceptions=True,
                 ),
                 timeout=5,
             )
