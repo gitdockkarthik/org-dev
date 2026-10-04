@@ -1946,9 +1946,16 @@ _cw_last_detection: dict | None = None
 # side effect of an unrelated change.
 _TEAMS_ALERTS_ENABLED = False
 _WATCHDOG_STATUS_INTERVAL_MINUTES = 60
+# Shorter follow-up after a card with anything red, so recovery shows
+# without logging in; back to the normal interval after a clean card.
+_HEALTH_FOLLOWUP_INTERVAL_MINUTES = 10
 # In-memory, resets on restart -- same pattern as other in-memory state
 # in this codebase (e.g. teams_alerts.py's own digest-interval gate).
 _last_watchdog_status_sent_at: float | None = None
+_last_health_card_had_issue: bool = False
+# Epoch seconds of the window boundary of the last health card that was
+# actually sent; the next card's job window starts here.
+_health_card_window_start: float | None = None
 # Holds a strong reference to the in-flight drain task -- asyncio's own
 # docs warn that a task created via asyncio.create_task() with no
 # reference kept anywhere can be garbage-collected before it completes.
@@ -2253,7 +2260,7 @@ async def _post_to_teams(
         logger.warning("%s: Teams post failed: %s", source, _notify_exc)
 
 
-async def _send_health_summary_to_teams(process_count: int) -> None:
+async def _send_health_summary_to_teams(process_count: int) -> bool | None:
     """Gathers per-cluster data freshness (same signal
     check_data_freshness_watchdog uses), recent job success/failure
     counts, overall scheduler health, and per-cluster broker status
@@ -2269,13 +2276,15 @@ async def _send_health_summary_to_teams(process_count: int) -> None:
     behavior. The broker-level checks reuse the exact same,
     already-proven functions the dashboard itself uses
     (routes_dashboard.get_broker_reachability, .get_broker_connections)
-    rather than duplicating their logic."""
+    rather than duplicating their logic. Returns whether the card had
+    anything red (health_card_has_issue), or None if no card was sent."""
+    global _health_card_window_start
     try:
         from database import SessionLocal
         from sqlalchemy import text as _hs_text
         from datetime import datetime, timezone, timedelta
         from routes_settings import _config
-        from shared.escalation.notifier import build_health_summary_card, send_to_teams
+        from shared.escalation.notifier import build_health_summary_card, health_card_has_issue, send_to_teams
         from jobs import _parse_any_cluster_job_id, _last_job_dispatched_at
 
         webhook_url = _config.get("teams_webhook_url", "")
@@ -2295,11 +2304,16 @@ async def _send_health_summary_to_teams(process_count: int) -> None:
         if _last_job_dispatched_at is not None and (time.time() - _last_job_dispatched_at) > 180:
             health_status = "stale"
 
-        # Window matches the status-post cadence, so each card covers
-        # exactly the runs since the previous one. Bound as a timestamp
-        # cutoff (same :cutoff style as the retention/rollup queries in
-        # this file) rather than interpolated into an interval literal.
+        # Covers the runs since the previous card was sent, at most
+        # _WATCHDOG_STATUS_INTERVAL_MINUTES (the full hour for the first
+        # card after a start, or after a long gap), so a 10-minute
+        # follow-up counts only the runs since the card before it. Bound
+        # as a timestamp cutoff (same :cutoff style as the retention/
+        # rollup queries in this file) rather than interpolated into an
+        # interval literal.
         since = now - timedelta(minutes=_WATCHDOG_STATUS_INTERVAL_MINUTES)
+        if _health_card_window_start is not None:
+            since = max(since, datetime.fromtimestamp(_health_card_window_start, timezone.utc))
         async with SessionLocal() as session:
             clusters_result = await session.execute(_hs_text(
                 "SELECT id, name FROM kafka_clusters WHERE enabled = true ORDER BY id"
@@ -2409,9 +2423,12 @@ async def _send_health_summary_to_teams(process_count: int) -> None:
             })
 
         card = build_health_summary_card("Kafka Analyser", process_count, health_status, rows)
-        await send_to_teams(webhook_url, card)
+        if await send_to_teams(webhook_url, card):
+            _health_card_window_start = now.timestamp()
+        return health_card_has_issue(health_status, rows)
     except Exception as _hs_exc:
         logger.warning("_send_health_summary_to_teams failed: %s", _hs_exc)
+        return None
 
 
 async def check_process_count_watchdog() -> dict:
@@ -2453,7 +2470,7 @@ async def check_process_count_watchdog() -> dict:
     actively watching (2026-09-28, per explicit request)."""
     import os as _os
     import time as _time
-    global _last_watchdog_status_sent_at
+    global _last_watchdog_status_sent_at, _last_health_card_had_issue
     PROCESS_COUNT_THRESHOLD = 20
     count = sum(1 for pid in _os.listdir("/proc") if pid.isdigit())
     logger.info("check_process_count_watchdog: process count = %d (threshold %d)", count, PROCESS_COUNT_THRESHOLD)
@@ -2489,15 +2506,21 @@ async def check_process_count_watchdog() -> dict:
             _os._exit(1)
 
     now = _time.time()
+    status_interval_minutes = (
+        _HEALTH_FOLLOWUP_INTERVAL_MINUTES if _last_health_card_had_issue
+        else _WATCHDOG_STATUS_INTERVAL_MINUTES
+    )
     if (
         _last_watchdog_status_sent_at is None
-        or (now - _last_watchdog_status_sent_at) >= _WATCHDOG_STATUS_INTERVAL_MINUTES * 60
+        or (now - _last_watchdog_status_sent_at) >= status_interval_minutes * 60
     ):
         _last_watchdog_status_sent_at = now
+        had_issue = None
         try:
-            await asyncio.wait_for(_send_health_summary_to_teams(count), timeout=15)
+            had_issue = await asyncio.wait_for(_send_health_summary_to_teams(count), timeout=15)
         except Exception:
             pass
+        _last_health_card_had_issue = bool(had_issue)
 
     return {"action": "ok", "process_count": count}
 

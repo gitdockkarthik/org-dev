@@ -277,6 +277,30 @@ def build_health_summary_card(
     }
 
 
+def health_card_has_issue(health_status: str, rows: list[dict]) -> bool:
+    """True when build_health_summary_card would colour anything red
+    ("attention") for these inputs -- used to send the next health card
+    sooner so recovery is visible without logging in. Yellow data age
+    (5 to 10 minutes) does not count. Mirrors the card's own conditions;
+    keep the two in step."""
+    if health_status != "alive":
+        return True
+    for r in rows:
+        if r.get("failed_count", 0) > 0:
+            return True
+        age = r.get("data_age_minutes")
+        if age is not None and age >= 10:
+            return True
+        agent = r.get("brokers_online_agent")
+        real = r.get("brokers_online_real")
+        if agent is not None and real is not None and agent != real:
+            return True
+        conns = r.get("broker_connections")
+        if conns and any(c.get("close_wait", 0) > 0 for c in conns):
+            return True
+    return False
+
+
 async def send_to_teams(webhook_url: str, card: dict) -> bool:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
