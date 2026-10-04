@@ -1945,7 +1945,7 @@ _cw_last_detection: dict | None = None
 # Flip to True only after a deliberate decision to re-enable, not as a
 # side effect of an unrelated change.
 _TEAMS_ALERTS_ENABLED = False
-_WATCHDOG_STATUS_INTERVAL_MINUTES = 10
+_WATCHDOG_STATUS_INTERVAL_MINUTES = 60
 # In-memory, resets on restart -- same pattern as other in-memory state
 # in this codebase (e.g. teams_alerts.py's own digest-interval gate).
 _last_watchdog_status_sent_at: float | None = None

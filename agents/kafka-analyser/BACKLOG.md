@@ -1180,6 +1180,26 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Recurring data-freshness restarts on clusters 4 and 9 -- investigate first (2026-10-04)
+The data-freshness watchdog has restarted the agent four times in 23 hours
+(kafka_watchdog_events, reason stale_data): 2026-10-03 11:15 and 18:11,
+2026-10-04 00:31 and 10:39 UTC. Only External Staging Kafka (cluster 4) and
+Internal Production Kafka (cluster 9) ever appear, always just past the
+5-minute threshold (a 1-minute check cadence means the observed age says
+nothing about how long a stall lasts). A "Cleared on restart" count per hour
+shows restarts on 2026-09-29 12:00 (our rebuild) and 17:00, 2026-09-30 08:00
+(unmatched, probably an unrecorded self-restart before the table existed),
+and the four above; none on 10-01 or 10-02, so the rate rose from 10-03.
+Cause UNVERIFIED. Observed around the restarts: consumer-lag timeouts after
+90s on three clusters (2026-09-29 17:07, 2026-10-04 10:35). Question to
+answer first: what stops the kafka_broker_metrics write for clusters 4 and 9
+roughly every 6 hours, and what changed on 2026-10-03? Impact as far as
+known: up to about 6 minutes of stale broker data on those clusters, then a
+restart that cancels 8 to 14 in-flight runs; every restart closes all
+broker connections, so it adds no load to Kafka. Not known: whether the
+stalled jobs wait on Kafka. After this: the anomaly and recovery cards (state
+table first), and recording for the process-count watchdog.
+
 ### Findings 2026-09-29 to 09-30 -- self-restart, deadlocks, open questions (2026-09-30)
 1. A watchdog restart leaves no readable record. The container restarted
    itself at 17:11:03 UTC on 2026-09-29 (RestartCount 1; nine jobs marked
