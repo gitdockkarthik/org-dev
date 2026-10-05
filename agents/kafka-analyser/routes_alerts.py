@@ -43,6 +43,7 @@ class AlertConfigPayload(BaseModel):
     enabled: bool = True
     email_enabled: bool = False
     tiers: dict | None = None
+    send_resolve_card: bool | None = None
 
     @field_validator("severity")
     @classmethod
@@ -63,6 +64,7 @@ class AlertConfigUpdatePayload(BaseModel):
     enabled: bool | None = None
     email_enabled: bool | None = None
     tiers: dict | None = None
+    send_resolve_card: bool | None = None
 
     @field_validator("severity")
     @classmethod
@@ -134,6 +136,7 @@ def _config_out(cfg: KafkaAlertConfig, cluster_names: dict[int, str], open_trigg
         "severity": cfg.severity,
         "threshold": int((cfg.config or {}).get("threshold", 1)),
         "config": cfg.config or {},
+        "send_resolve_card": bool((cfg.config or {}).get("send_resolve_card", True)),
         "webhook_url": cfg.webhook_url,
         "cooldown_minutes": cfg.cooldown_minutes,
         "enabled": cfg.enabled,
@@ -183,6 +186,9 @@ async def create_alert_config(payload: AlertConfigPayload) -> dict:
             config = _threshold_config(payload.tiers)
         else:
             config = {"threshold": payload.threshold}
+        # Stored only when given; a missing key means true (see teams_alerts._send_resolve_cards).
+        if payload.send_resolve_card is not None:
+            config["send_resolve_card"] = payload.send_resolve_card
         now = datetime.now(timezone.utc)
         cfg = KafkaAlertConfig(
             name=payload.name,
@@ -227,6 +233,8 @@ async def update_alert_config(config_id: int, payload: AlertConfigUpdatePayload)
                 raise HTTPException(status_code=404, detail="Alert config not found")
             tiers_given = "tiers" in updates
             tiers = updates.pop("tiers", None)
+            send_resolve_card = updates.pop("send_resolve_card", None)
+            previous_config = cfg.config or {}
             if updates.get("alert_type", cfg.alert_type) in _THRESHOLD_ALERT_TYPES:
                 # Tiers replace the whole config; a rule switched to a
                 # threshold type must bring its tiers with it.
@@ -236,6 +244,12 @@ async def update_alert_config(config_id: int, payload: AlertConfigUpdatePayload)
             elif "threshold" in updates:
                 # Reassign (not mutate in place) so SQLAlchemy detects the JSONB change.
                 cfg.config = {**(cfg.config or {}), "threshold": updates.pop("threshold")}
+            # send_resolve_card lives in config: write it when given, otherwise
+            # carry the existing value over a replaced (tiers) config.
+            if send_resolve_card is not None:
+                cfg.config = {**(cfg.config or {}), "send_resolve_card": send_resolve_card}
+            elif "send_resolve_card" in previous_config and "send_resolve_card" not in (cfg.config or {}):
+                cfg.config = {**(cfg.config or {}), "send_resolve_card": previous_config["send_resolve_card"]}
             if "webhook_url" in updates:
                 updates["webhook_url"] = updates["webhook_url"] or None
             for field, value in updates.items():
