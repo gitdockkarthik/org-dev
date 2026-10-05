@@ -1180,6 +1180,80 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Alert rules plan: cluster rules, copy API, Overview metrics (agreed 2026-10-05)
+PURPOSE: Kafka admins manage alert rules from the UI without code changes;
+build tab by tab in dashboard order (Overview, Brokers, Topics, Consumer
+Groups, ZooKeeper, Kafka Connect, Schema Registry, MirrorMaker, SLI/SLO),
+enable and watch, walkthrough for the Kafka team, then handover to TOC.
+Thresholds are the Kafka team's decision: the agent ships rules DISABLED with
+placeholder values. Every tab gets a FRESH inventory before rules are
+designed (only metrics with real, populated data are offered; never alert on
+something the agent does not calculate). Brokers is NOT fully inventoried:
+leader partition distribution (known skew) still has to be assessed.
+RULE KINDS: (1) General rules, all clusters, unchanged: broker reachability
+and CLOSE_WAIT (they protect the agent and the Kafka ecosystem). (2) Cluster
+metric rules: one rule per cluster per metric, no "All clusters" choice,
+because normal ranges depend on cluster size and workload. Name format
+"<metric> - <cluster name>" (general rules keep their names).
+RULES FOR CLUSTER RULES: one rule per type per cluster (a duplicate is
+refused by the API, whatever creates it); new cluster-metric rules require a
+cluster (API guard, new rules only); copies are created DISABLED.
+COPY API (planned): POST /alerts/configs/copy with source cluster, target
+cluster(s) and an optional single rule; copies type, tiers, severity,
+cooldown, webhook override and resolve option; target that already has the
+type is SKIPPED (response lists created and skipped); preview flag returns
+the result without writing; general rules never copied; history not copied; a
+copy is an independent rule. Used by: "create for every cluster", a copy
+button on every table row, and onboarding a new cluster. A separate call adds
+disabled default rules ("DEFAULT - review thresholds" values) for a cluster,
+same skip-if-exists. UI: cluster filter above the table (view only).
+EVALUATOR (planned): a cluster-level evaluator for "one number per cluster"
+metrics (value above a tier), reusing the tier logic and _send_resolve_cards;
+later tabs add table entries. Needs a direction setting (fire above or below
+a tier) for good-when-high values such as the SLO score.
+OVERVIEW INVENTORY (all values come from the database, not the in-memory
+cache): brokers heap/CPU/data GB from kafka_broker_metrics; consumer lag from
+kafka_consumer_group_lag (rows updated in the last 20 minutes); URP and RF
+from kafka_topic_metrics. Health score = 100 minus 5 per URP, minus 15 or 5
+for heap >=85 or >=70, minus 2 per consumer group with lag > 10000, minus 10
+or 5 for RF=1 topics (>100 or >0). OFFERED: cluster.urp_total (tiers on the
+count) and cluster.rf_below_min. NOT OFFERED: health score (a blend; score
+alerts belong to the SLI/SLO tab, with a below-tier direction), topic count,
+and broker disk %, GC pause, request-handler idle (read 0 everywhere, not
+collected). Heap and CPU rules already exist.
+cluster.rf_below_min: number of topics per cluster with replication factor
+below N. N is a per-rule setting, defaulting to the cluster's broker count at
+creation and stored as an editable number (no live broker count, so a removed
+or downed broker cannot distort it). Excluded: system topics (name starts with
+"__" or equals "_schemas", the collector's definition in real_kafka.py) and
+partition_count = 0 (undescribed topics). Card states it covers RF only
+(min.insync.replicas is not collected; reading it needs an extra Kafka request
+per topic). DECISION: the Topics tab RF table counts system topics too
+(no filter) while this rule excludes them; difference documented, dashboard
+unchanged. Kafka team can ask for system topics later. Connect internal
+topics are included by default. Note: __consumer_offsets with low RF is
+excluded by this decision.
+PARKED, LAST: consumer group lag rule. Not cluster totals and not "all
+groups": opt-in per consumer group (connector groups included) with its own
+threshold, sustained for N minutes, possibly a growth/trend condition (high
+but flat lag is accepted; growing lag is the problem); the 10000 in the
+health score stays hardcoded. Needs its own evaluator.
+SLI/SLO TAB (later): score and per-target statuses are the place for score
+alerts; decide overall score only or per target (several overlap CPU, heap,
+URP rules).
+TESTING: mock test of each type through the real function; where possible a
+real test (rule temporarily enabled with a tier just under the current value,
+card then resolve card, then disabled again), rule name prefixed "TEST", cards
+go to the existing channel (unwatched until handover), no announcement, ask
+before each real test. NOT verified yet: an all-clusters tier rule through the
+real evaluator (the code skips only when config.cluster_id is set and
+differs).
+BUILD ORDER: (1) plumbing: duplicate guard, cluster required, copy API with
+preview, form (cluster required, create-for-every-cluster, per-row copy,
+filter); (2) cluster-level evaluator with urp_total and rf_below_min; (3)
+default disabled rules, mock tests, real tests one rule at a time; then the
+next tab.
+
 ### kafka_topic_metrics deadlocks on msg-rate -- investigated, NOT changed (2026-10-05)
 Evidence: 10 failed kafka-msg-rate runs (DeadlockDetectedError on UPDATE
 kafka_topic_metrics) between 2026-10-02 07:49 and 2026-10-05 04:43 UTC
