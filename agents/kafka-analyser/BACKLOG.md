@@ -1180,6 +1180,37 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Alert rule plumbing done 2026-10-05 -- what is open (2026-10-05)
+DONE and live (80b090a, 7d63fbd, cebc241, 2980ace): API refuses a second
+rule of the same type on the same cluster (409) and requires a cluster for
+cluster rules (422; general types are close_wait_spike and
+broker_unreachable); POST /alerts/configs/copy (preview, skip-if-exists,
+copies disabled, names "<metric> - <cluster name>"); form without "All
+clusters" for cluster rules, per-row Copy panel, "Show" filter, "Create for
+every cluster" (starts from the first cluster without the type), enabled
+clusters only in the dropdown and Copy panel; Breaker Status shows enabled
+clusters only (status table and events). Verified live with disabled test
+rules, all deleted afterwards.
+OPEN: (1) The API does not refuse a rule or copy onto a DISABLED cluster
+(only the form hides them); consider a 422. (2) The duplicate guard is a
+check in the API, not a database constraint: two simultaneous requests could
+both pass; a unique index on (alert_type, cluster_id) for non-general rules
+would close it (migration, not done). (3) Breaker Status still includes
+disabled clusters in brokers, connection_events and connection_summary, and
+recent_failures is unfiltered (keyed by job name); only the status table and
+events are filtered. (4) agents/kafka-analyser/static/teams.html is a stale
+copy from 2026-09-28 (portal/agents/kafka-analyser/teams.html is the live
+one); unknown whether the agent serves it. (5) The first rule created by the
+form keeps the name typed by the admin; copies follow
+"<metric> - <cluster name>". (6) Cluster 3 (DevQA Kafka Internal) is
+disabled; the "create for every cluster" run showed there are five clusters.
+(7) Brokers tab: leader partition distribution still has to be inventoried.
+(8) STILL TO BUILD: the cluster-level evaluator (cluster.urp_total,
+cluster.rf_below_min with an editable minimum RF and the exclusions in the
+alert rules plan entry), the metric entries for broker data on disk, default
+disabled rules per cluster ("DEFAULT - review thresholds"), mock tests, then
+real tests one rule at a time with a TEST prefix.
+
 ### Alert rules plan: cluster rules, copy API, Overview metrics (agreed 2026-10-05)
 PURPOSE: Kafka admins manage alert rules from the UI without code changes;
 build tab by tab in dashboard order (Overview, Brokers, Topics, Consumer
