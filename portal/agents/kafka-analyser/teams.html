@@ -193,7 +193,7 @@
       <!-- New alert rule form (hidden by default) -->
       <div class="card hidden" id="alert-form-card">
         <div class="card-title">New Alert Rule</div>
-        <div class="card-subtitle">Evaluated on each CLOSE_WAIT check; posts to Teams only when the condition is met</div>
+        <div class="card-subtitle">Posts to Teams when the condition is met, and again when it clears</div>
 
         <div class="field-grid">
           <div class="field">
@@ -260,6 +260,14 @@
             <input type="checkbox" id="af-enabled" checked />
             <label for="af-enabled">Enabled</label>
           </div>
+        </div>
+
+        <div class="field">
+          <div class="checkbox-row">
+            <input type="checkbox" id="af-resolve-card" checked />
+            <label for="af-resolve-card">Send a card when resolved</label>
+          </div>
+          <div class="hint">Posts a green card to Teams when the problem clears. Sent only if the original card reached Teams.</div>
         </div>
 
         <div class="actions" style="margin-top:1rem">
@@ -481,6 +489,7 @@
       $('af-cooldown').value = '30';
       $('af-webhook').value = '';
       $('af-enabled').checked = true;
+      $('af-resolve-card').checked = true;
       Object.values(TIER_IDS).forEach(id => { $(id).value = ''; });
       applyTypeFields();
       hideMsg($('alert-form-msg'));
@@ -532,6 +541,7 @@
         cooldown_minutes: parseInt($('af-cooldown').value, 10),
         webhook_url: $('af-webhook').value.trim() || null,
         enabled: $('af-enabled').checked,
+        send_resolve_card: $('af-resolve-card').checked,
       };
       if (kind === 'threshold_count' && (!Number.isInteger(payload.threshold) || payload.threshold < 1)) {
         showMsg(msgEl, '✗ Threshold must be a whole number of at least 1', 'err', 0); return;
