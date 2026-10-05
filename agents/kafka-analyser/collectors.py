@@ -1944,8 +1944,8 @@ _WATCHDOG_STATUS_INTERVAL_MINUTES = 60
 # Shorter follow-up after a card with anything red, so recovery shows
 # without logging in; back to the normal interval after a clean card.
 _HEALTH_FOLLOWUP_INTERVAL_MINUTES = 10
-# In-memory, resets on restart -- same pattern as other in-memory state
-# in this codebase (e.g. teams_alerts.py's own digest-interval gate).
+# In-memory last-sent timestamp, resets on restart -- same pattern as the
+# other module-level state here (e.g. _cw_last_detection above).
 _last_watchdog_status_sent_at: float | None = None
 _last_health_card_had_issue: bool = False
 # Epoch seconds of the window boundary of the last health card that was
@@ -2109,7 +2109,7 @@ async def check_and_recycle_close_wait() -> dict:
             _cw_background_tasks.add(_cw_alert_task)
             _cw_alert_task.add_done_callback(_cw_background_tasks.discard)
     except Exception as _cwae:
-        logger.warning("check_and_recycle_close_wait: Teams resolve/digest scheduling failed: %s", _cwae)
+        logger.warning("check_and_recycle_close_wait: Teams resolve scheduling failed: %s", _cwae)
 
     if not close_wait_by_cluster:
         _cw_last_detection = None
