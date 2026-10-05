@@ -1940,17 +1940,6 @@ async def check_breaker_recovery() -> dict:
 
 _cw_recycle_in_progress = False
 _cw_last_detection: dict | None = None
-# Temporary kill-switch (2026-09-28) -- disables the entire Teams alert
-# integration (resolve_cleared_close_wait_triggers, fire_close_wait_alerts,
-# maybe_send_digest) following a severe production incident where this
-# integration is suspected as a possible contributing factor (DB
-# connection pool pressure from many sessions per cycle -- since
-# addressed by consolidating to ~3 sessions, but not yet validated
-# reliable over time). The close-wait detection/recycle mechanism itself
-# is completely unaffected by this flag and continues running normally.
-# Flip to True only after a deliberate decision to re-enable, not as a
-# side effect of an unrelated change.
-_TEAMS_ALERTS_ENABLED = False
 _WATCHDOG_STATUS_INTERVAL_MINUTES = 60
 # Shorter follow-up after a card with anything red, so recovery shows
 # without logging in; back to the normal interval after a clean card.
@@ -2100,25 +2089,27 @@ async def check_and_recycle_close_wait() -> dict:
     # here, so neither a failure nor a slow Teams webhook post can affect
     # or delay this check/recycle.
     close_wait_by_cluster_id: dict[int, int] = {}
-    if _TEAMS_ALERTS_ENABLED:
-        try:
-            import teams_alerts
-            _cw_name_to_id = {c.get("name", str(c.get("id"))): int(c["id"]) for c in enabled}
-            close_wait_by_cluster_id = {
-                _cw_name_to_id[name]: count
-                for name, count in close_wait_by_cluster.items()
-                if name in _cw_name_to_id
-            }
+    try:
+        import teams_alerts
+        _cw_name_to_id = {c.get("name", str(c.get("id"))): int(c["id"]) for c in enabled}
+        close_wait_by_cluster_id = {
+            _cw_name_to_id[name]: count
+            for name, count in close_wait_by_cluster.items()
+            if name in _cw_name_to_id
+        }
 
-            async def _cw_resolve_and_digest(counts_by_id: dict[int, int]) -> None:
-                await teams_alerts.resolve_cleared_close_wait_triggers(counts_by_id)
-                await teams_alerts.maybe_send_digest()
+        async def _cw_resolve(counts_by_id: dict[int, int]) -> None:
+            await teams_alerts.resolve_cleared_close_wait_triggers(counts_by_id)
 
-            _cw_alert_task = asyncio.create_task(_cw_resolve_and_digest(close_wait_by_cluster_id))
+        # No resolve pass (and no DB session) while Teams alerting is off;
+        # close_wait_by_cluster_id above is still needed by the fire block.
+        from routes_settings import _config
+        if _config.get("teams_enabled"):
+            _cw_alert_task = asyncio.create_task(_cw_resolve(close_wait_by_cluster_id))
             _cw_background_tasks.add(_cw_alert_task)
             _cw_alert_task.add_done_callback(_cw_background_tasks.discard)
-        except Exception as _cwae:
-            logger.warning("check_and_recycle_close_wait: Teams resolve/digest scheduling failed: %s", _cwae)
+    except Exception as _cwae:
+        logger.warning("check_and_recycle_close_wait: Teams resolve/digest scheduling failed: %s", _cwae)
 
     if not close_wait_by_cluster:
         _cw_last_detection = None
@@ -2136,14 +2127,13 @@ async def check_and_recycle_close_wait() -> dict:
         "check_and_recycle_close_wait: CLOSE_WAIT seen on two consecutive checks -> %s -- recycling worker pool",
         close_wait_by_cluster,
     )
-    if _TEAMS_ALERTS_ENABLED:
-        try:
-            import teams_alerts
-            _cw_fire_task = asyncio.create_task(teams_alerts.fire_close_wait_alerts(close_wait_by_cluster_id))
-            _cw_background_tasks.add(_cw_fire_task)
-            _cw_fire_task.add_done_callback(_cw_background_tasks.discard)
-        except Exception as _cwfe:
-            logger.warning("check_and_recycle_close_wait: Teams alert firing scheduling failed: %s", _cwfe)
+    try:
+        import teams_alerts
+        _cw_fire_task = asyncio.create_task(teams_alerts.fire_close_wait_alerts(close_wait_by_cluster_id))
+        _cw_background_tasks.add(_cw_fire_task)
+        _cw_fire_task.add_done_callback(_cw_background_tasks.discard)
+    except Exception as _cwfe:
+        logger.warning("check_and_recycle_close_wait: Teams alert firing scheduling failed: %s", _cwfe)
     _cw_last_detection = None
     _cw_recycle_in_progress = True
 
@@ -2238,10 +2228,11 @@ async def _post_to_teams(
     source: str = "check_process_count_watchdog",
 ) -> None:
     """Direct Teams post shared by the watchdogs (bypasses teams_alerts.py
-    and _TEAMS_ALERTS_ENABLED entirely). Extracted to module level from
-    check_process_count_watchdog so check_data_freshness_watchdog reuses
-    the exact same logic; the defaults preserve the original closure's
-    category and log prefix unchanged."""
+    entirely, independent of the CLOSE_WAIT alert path). Extracted to
+    module level from check_process_count_watchdog so
+    check_data_freshness_watchdog reuses the exact same logic; the
+    defaults preserve the original closure's category and log prefix
+    unchanged."""
     # Best-effort, never allowed to affect the caller's own outcome --
     # wrapped so a Teams/config failure can't prevent a watchdog's
     # emergency exit path from running.
@@ -2468,7 +2459,7 @@ async def check_process_count_watchdog() -> dict:
     instead of a blind schedule.
 
     Also posts directly to Teams (bypassing teams_alerts.py entirely,
-    independent of _TEAMS_ALERTS_ENABLED, since this is a separate,
+    independent of the CLOSE_WAIT alert path, since this is a separate,
     minimal safety mechanism): an immediate critical alert if the
     threshold is breached, and a periodic (every
     _WATCHDOG_STATUS_INTERVAL_MINUTES) routine status update showing the
