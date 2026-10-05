@@ -70,6 +70,8 @@ _DEFAULTS: dict = {
     "smtp_password": "",
     "smtp_from_address": "",
     "email_recipients": "",
+    # Message-rate CSV cold archive to MinIO (rollup_hourly_to_daily Step 2)
+    "message_rate_archive_enabled": False,
 }
 
 # Write-through in-memory cache; populated from DB on startup.
@@ -159,6 +161,9 @@ class SettingsPayload(BaseModel):
     smtp_password: str = ""
     smtp_from_address: str = ""
     email_recipients: str = ""
+
+    # Message-rate CSV cold archive to MinIO (rollup_hourly_to_daily Step 2)
+    message_rate_archive_enabled: bool = False
 
 
 class TestConnectionPayload(BaseModel):

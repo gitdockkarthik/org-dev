@@ -1612,38 +1612,44 @@ async def rollup_hourly_to_daily(retention_days: int = 7) -> dict:
             # anyway rather than block retention on an archive failure; the data
             # still exists in daily_rollup, only the hourly-level detail is lost
             # for that one cycle if this genuinely fails.
-            rows_result = await sess.execute(_t("""
-                SELECT cluster_id, topic, hour_bucket, total_inflow, total_outflow, sample_count
-                FROM kafka_topic_message_rate_hourly_rollup
-                WHERE hour_bucket < :cutoff
-                ORDER BY cluster_id, date_trunc('day', hour_bucket), topic, hour_bucket
-            """), {"cutoff": cutoff})
-            rows = rows_result.fetchall()
-            archived_files = 0
-            if rows:
-                import csv
-                import io
-                groups: dict[tuple, list] = {}
-                for r in rows:
-                    day_key = r.hour_bucket.strftime("%Y-%m-%d")
-                    groups.setdefault((r.cluster_id, day_key), []).append(r)
-                try:
-                    s3 = _get_minio_client()
+            from routes_settings import _config
+            archive_enabled = bool(_config.get("message_rate_archive_enabled", False))
+            if archive_enabled:
+                rows_result = await sess.execute(_t("""
+                    SELECT cluster_id, topic, hour_bucket, total_inflow, total_outflow, sample_count
+                    FROM kafka_topic_message_rate_hourly_rollup
+                    WHERE hour_bucket < :cutoff
+                    ORDER BY cluster_id, date_trunc('day', hour_bucket), topic, hour_bucket
+                """), {"cutoff": cutoff})
+                rows = rows_result.fetchall()
+                archived_files = 0
+                if rows:
+                    import csv
+                    import io
+                    groups: dict[tuple, list] = {}
+                    for r in rows:
+                        day_key = r.hour_bucket.strftime("%Y-%m-%d")
+                        groups.setdefault((r.cluster_id, day_key), []).append(r)
                     try:
-                        s3.head_bucket(Bucket=_KAFKA_ARCHIVE_BUCKET)
-                    except Exception:
-                        s3.create_bucket(Bucket=_KAFKA_ARCHIVE_BUCKET)
-                    for (cid, day_key), group_rows in groups.items():
-                        buf = io.StringIO()
-                        writer = csv.writer(buf)
-                        writer.writerow(["cluster_id", "topic", "hour_bucket", "total_inflow", "total_outflow", "sample_count"])
-                        for r in group_rows:
-                            writer.writerow([r.cluster_id, r.topic, r.hour_bucket.isoformat(), r.total_inflow, r.total_outflow, r.sample_count])
-                        key = f"cluster-{cid}/{day_key}.csv"
-                        s3.put_object(Bucket=_KAFKA_ARCHIVE_BUCKET, Key=key, Body=buf.getvalue().encode("utf-8"))
-                        archived_files += 1
-                except Exception as archive_exc:
-                    logger.warning("rollup_hourly_to_daily: MinIO archive failed, continuing with delete: %s", archive_exc)
+                        s3 = _get_minio_client()
+                        try:
+                            s3.head_bucket(Bucket=_KAFKA_ARCHIVE_BUCKET)
+                        except Exception:
+                            s3.create_bucket(Bucket=_KAFKA_ARCHIVE_BUCKET)
+                        for (cid, day_key), group_rows in groups.items():
+                            buf = io.StringIO()
+                            writer = csv.writer(buf)
+                            writer.writerow(["cluster_id", "topic", "hour_bucket", "total_inflow", "total_outflow", "sample_count"])
+                            for r in group_rows:
+                                writer.writerow([r.cluster_id, r.topic, r.hour_bucket.isoformat(), r.total_inflow, r.total_outflow, r.sample_count])
+                            key = f"cluster-{cid}/{day_key}.csv"
+                            s3.put_object(Bucket=_KAFKA_ARCHIVE_BUCKET, Key=key, Body=buf.getvalue().encode("utf-8"))
+                            archived_files += 1
+                    except Exception as archive_exc:
+                        logger.warning("rollup_hourly_to_daily: MinIO archive failed, continuing with delete: %s", archive_exc)
+            else:
+                archived_files = 0
+                rows = []
 
             # Step 3: delete the now-safely-rolled-up (and archived, if MinIO
             # succeeded) hourly rows, using the SAME cutoff.

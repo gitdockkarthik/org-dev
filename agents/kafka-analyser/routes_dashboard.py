@@ -2256,6 +2256,9 @@ async def list_message_rate_archive(cluster_id: str | None = None) -> dict:
     """List available cold-archive CSV files (hourly message-rate detail, aged out
     of Postgres beyond 7 days) for a cluster -- lets the dashboard offer browse/
     download without giving anyone direct MinIO access/credentials."""
+    from routes_settings import _config
+    if not _config.get("message_rate_archive_enabled", False):
+        return {"enabled": False, "files": []}
     if not cluster_id:
         return {"files": []}
     try:

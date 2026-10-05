@@ -1180,6 +1180,25 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Message-rate CSV cold archive switched off (2026-10-05)
+rollup_hourly_to_daily Step 2 (export of aged-out hourly rows to MinIO,
+bucket kafka-message-rate-archive, one CSV per cluster per day) now runs only
+when the setting message_rate_archive_enabled is true (default false). Step 1
+(daily upsert) and Step 3 (DELETE of the aged-out hourly rows) are unchanged
+and unconditional, so retention is unaffected; with the setting off, the
+large SELECT of all aged-out hourly rows (fetchall) is skipped too. The
+Overview tab card "Archived Message-Rate Data" is hidden when
+GET /dashboard/topics/message-rate/archive returns enabled:false; the card
+markup and the download route are unchanged. Existing files are left in
+place: 157 files, 335.9 MB (checked 2026-10-05; about 9 MB a day while it
+was on). To turn it back on: POST /settings with
+{"message_rate_archive_enabled": true} (takes effect immediately, survives
+restarts); the card reappears and archiving resumes at the next hourly
+rollup. Verified on the live portal: card hidden. NOT yet observed: the
+first real rollup after the change (04:00 UTC 2026-10-05); check that the
+daily rollup ran and the hourly table is still cleaned. Not stub-tested:
+the list route.
+
 ### Recurring data-freshness restarts on clusters 4 and 9 -- investigate first (2026-10-04)
 The data-freshness watchdog has restarted the agent four times in 23 hours
 (kafka_watchdog_events, reason stale_data): 2026-10-03 11:15 and 18:11,

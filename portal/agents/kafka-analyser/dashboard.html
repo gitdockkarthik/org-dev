@@ -1637,6 +1637,11 @@
             const res = await fetch(`${PROXY}/dashboard/topics/message-rate/archive?cluster_id=${cid}`,
               { headers: _authHeaders(), cache: 'no-store' });
             const d = await res.json();
+            if (d.enabled === false) {
+              const card = listEl.closest('.chart-card');
+              if (card) card.style.display = 'none';
+              return;
+            }
             const files = d.files || [];
             if (!files.length) {
               listEl.innerHTML = '<div style="color:var(--text-muted);font-size:.82rem;padding:8px">No archived data yet — data ages into the archive after 7 days</div>';
