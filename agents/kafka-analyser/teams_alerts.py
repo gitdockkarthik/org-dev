@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 
 from database import SessionLocal
 from models import KafkaAlertConfig, KafkaAlertTrigger, KafkaBrokerMetrics
-from shared.escalation.notifier import build_adaptive_card, send_to_teams
+from shared.escalation.notifier import build_adaptive_card, build_resolve_card, send_to_teams
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,54 @@ async def _get_cluster_names() -> dict[int, str]:
     from config import settings
     clusters = await get_backend().get_clusters(settings.agent_slug)
     return {int(c["id"]): c.get("name", str(c["id"])) for c in clusters if c.get("id") is not None}
+
+
+_RESOLVE_CARDS_TIMEOUT_SECS = 10
+
+
+async def _send_resolve_cards(items: list[dict]) -> None:
+    """Post one green "resolved" card per item ({"config": KafkaAlertConfig,
+    "trigger": KafkaAlertTrigger, "cluster_name": str}), only for triggers
+    whose opening card actually reached Teams (teams_post_success) and whose
+    rule allows it (config.config["send_resolve_card"], default True).
+    Best-effort: capped at 10 s in total, every error logged as a warning,
+    never raises, never touches the database."""
+    async def _send_all() -> None:
+        from routes_settings import _config
+        if not _config.get("teams_enabled"):
+            return
+        for item in items:
+            try:
+                config = item["config"]
+                trigger = item["trigger"]
+                if trigger.teams_post_success is not True:
+                    continue
+                if not (config.config or {}).get("send_resolve_card", True):
+                    continue
+                webhook_url = config.webhook_url or _config.get("teams_webhook_url", "")
+                if not webhook_url:
+                    continue
+                open_minutes = None
+                if trigger.triggered_at is not None and trigger.resolved_at is not None:
+                    open_minutes = (trigger.resolved_at - trigger.triggered_at).total_seconds() / 60
+                card = build_resolve_card(
+                    agent_name="Kafka Analyser",
+                    cluster_name=item.get("cluster_name", ""),
+                    rule_name=config.name,
+                    subject=trigger.subject,
+                    severity=trigger.severity or config.severity,
+                    open_minutes=open_minutes,
+                )
+                await send_to_teams(webhook_url=webhook_url, card=card)
+            except Exception as exc:
+                logger.warning("_send_resolve_cards: item failed: %s", exc)
+
+    try:
+        await asyncio.wait_for(_send_all(), timeout=_RESOLVE_CARDS_TIMEOUT_SECS)
+    except asyncio.TimeoutError:
+        logger.warning("_send_resolve_cards: stopped after %s s cap", _RESOLVE_CARDS_TIMEOUT_SECS)
+    except Exception as exc:
+        logger.warning("_send_resolve_cards failed: %s", exc)
 
 
 async def resolve_cleared_close_wait_triggers(close_wait_by_cluster_id: dict[int, int]) -> None:

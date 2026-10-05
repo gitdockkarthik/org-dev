@@ -104,6 +104,75 @@ def build_adaptive_card(
     return card
 
 
+def _format_open_duration(open_minutes: float) -> str:
+    total = max(0, int(round(open_minutes)))
+    if total < 60:
+        return f"{total} min"
+    hours, minutes = divmod(total, 60)
+    return f"{hours} h {minutes} min" if minutes else f"{hours} h"
+
+
+def build_resolve_card(
+    agent_name: str,
+    cluster_name: str,
+    rule_name: str,
+    subject: str | None,
+    severity: str | None,
+    open_minutes: float | None,
+) -> dict:
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    facts = [
+        {"title": "Status", "value": "RESOLVED"},
+        {"title": "Rule", "value": rule_name},
+        {"title": "Cluster", "value": cluster_name},
+    ]
+    if subject:
+        facts.append({"title": "Subject", "value": subject})
+    if severity:
+        facts.append({"title": "Was", "value": severity.upper()})
+    if open_minutes is not None:
+        facts.append({"title": "Open for", "value": _format_open_duration(open_minutes)})
+    facts.append({"title": "Time", "value": timestamp})
+
+    body = [
+        {
+            "type": "TextBlock",
+            "text": f"✅ Operative Intelligence — {agent_name}",
+            "weight": "Bolder",
+            "size": "Medium",
+            "color": "good",
+        },
+        {
+            "type": "FactSet",
+            "facts": facts,
+        },
+        {
+            "type": "TextBlock",
+            "text": "The condition that triggered this alert has cleared.",
+            "wrap": True,
+            "spacing": "Medium",
+        },
+    ]
+
+    card = {
+        "type": "message",
+        "attachments": [
+            {
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": {
+                    "type": "AdaptiveCard",
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "version": "1.4",
+                    "body": body,
+                    "actions": [],
+                },
+            }
+        ],
+    }
+    return card
+
+
 def build_health_summary_card(
     agent_name: str,
     process_count: int,
