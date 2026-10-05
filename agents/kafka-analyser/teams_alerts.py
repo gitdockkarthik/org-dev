@@ -94,10 +94,17 @@ async def resolve_cleared_close_wait_triggers(close_wait_by_cluster_id: dict[int
     cluster's count reaches zero. A threshold=2 config's trigger must
     resolve as soon as count drops back below 2, not only at count==0,
     otherwise it could stay open indefinitely at a residual count that no
-    longer satisfies the condition that fired it. Silent -- no Teams post;
-    resolution is only surfaced via the periodic digest."""
+    longer satisfies the condition that fired it. Once the resolves are
+    saved and the session has closed, sends a resolve card per trigger
+    through _send_resolve_cards (only when the original card reached Teams
+    and the rule allows it)."""
     if SessionLocal is None:
         return
+    from types import SimpleNamespace
+    # (config, cluster_id, plain trigger snapshot) for resolves actually
+    # committed; snapshots are taken before the commit, as in
+    # _evaluate_broker_reachability.
+    saved: list[tuple] = []
     try:
         async with SessionLocal() as session:
             open_rows = (await session.execute(
@@ -110,16 +117,40 @@ async def resolve_cleared_close_wait_triggers(close_wait_by_cluster_id: dict[int
             )).all()
             now = datetime.now(timezone.utc)
             changed = False
+            pending: list[tuple] = []
             for trigger, config in open_rows:
                 threshold = int((config.config or {}).get("threshold", 1))
                 current_count = close_wait_by_cluster_id.get(trigger.cluster_id, 0)
                 if current_count < threshold:
                     trigger.resolved_at = now
                     changed = True
+                    pending.append((config, trigger.cluster_id, SimpleNamespace(
+                        subject=trigger.subject,
+                        severity=trigger.severity,
+                        triggered_at=trigger.triggered_at,
+                        resolved_at=trigger.resolved_at,
+                        teams_post_success=trigger.teams_post_success,
+                    )))
             if changed:
                 await session.commit()
+                saved = pending
     except Exception as exc:
         logger.warning("resolve_cleared_close_wait_triggers failed: %s", exc)
+
+    if saved:
+        try:
+            cluster_names = await _get_cluster_names()
+        except Exception as exc:
+            logger.warning("resolve_cleared_close_wait_triggers: cluster name lookup failed: %s", exc)
+            cluster_names = {}
+        items = [
+            {"config": config, "trigger": snapshot, "cluster_name": cluster_names.get(cluster_id, str(cluster_id))}
+            for config, cluster_id, snapshot in saved
+        ]
+        try:
+            await _send_resolve_cards(items)
+        except Exception as exc:
+            logger.warning("resolve_cleared_close_wait_triggers: resolve cards failed: %s", exc)
 
 
 async def fire_close_wait_alerts(close_wait_by_cluster_id: dict[int, int]) -> None:
