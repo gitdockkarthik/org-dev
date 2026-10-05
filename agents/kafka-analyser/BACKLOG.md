@@ -1198,6 +1198,25 @@ rollup. Verified on the live portal: card hidden. NOT yet observed: the
 first real rollup after the change (04:00 UTC 2026-10-05); check that the
 daily rollup ran and the hourly table is still cleaned. Not stub-tested:
 the list route.
+RESULT 2026-10-05: kafka-snapshot-rollup took 129 s, 181 s and 399 s at 01:00,
+02:00 and 03:00 UTC (archive on) and 71 s at 04:00, the first run with the
+archive off; one sample, confirm over the next day of runs. Cause of the
+earlier slowness, inferred: Step 2 loaded every aged-out hourly row into
+memory (fetchall) and wrote CSVs. Still a full-table scan each hour: EXPLAIN
+of "hour_bucket < now() - 7 days" on kafka_topic_message_rate_hourly_rollup
+(8.7M rows, 2215 MB) shows a Parallel Seq Scan, because both useful indexes
+lead with cluster_id (uq_topic_rate_rollup on cluster_id, topic, hour_bucket;
+ix_topic_rate_rollup_cluster_time on cluster_id, hour_bucket). An index on
+hour_bucket alone would fix it (CREATE INDEX CONCURRENTLY, built by hand
+because it cannot run inside a transaction, about 200-300 MB estimated,
+reversible with DROP INDEX CONCURRENTLY); NOT built, since 71 s may be enough;
+re-check after a day of runs. PLACEHOLDER: on-demand historical review in the
+UI of message-rate trends beyond 7 days. History beyond 7 days exists as daily
+totals in kafka_topic_message_rate_daily_rollup (oldest day: cluster 4
+2026-07-31, cluster 8 2026-08-04, cluster 9 2026-08-31, cluster 10 2026-09-21;
+newest 2026-09-28 on all four, as expected for a 7-day cutoff; about 2.2
+million rows); whether any chart reads it is UNVERIFIED. Hourly detail beyond
+7 days exists only in the 157 CSV files (to 2026-09-28) in MinIO. Not built.
 
 ### Recurring data-freshness restarts on clusters 4 and 9 -- investigate first (2026-10-04)
 The data-freshness watchdog has restarted the agent four times in 23 hours
@@ -1218,6 +1237,34 @@ restart that cancels 8 to 14 in-flight runs; every restart closes all
 broker connections, so it adds no load to Kafka. Not known: whether the
 stalled jobs wait on Kafka. After this: the anomaly and recovery cards (state
 table first), and recording for the process-count watchdog.
+UPDATE 2026-10-05: (1) No restart since the 2026-10-04 12:44 rebuild: 14+
+hours, RestartCount 0, no kafka_watchdog_events rows since 10-04 10:39; the
+earlier restarts came every 6 to 10 hours (11:15, 18:11, 00:31, 10:39). (2)
+Cause chain, inferred not proven: before each restart, broker-health runs took
+about 30.0 s (the describe_cluster_isolated or
+describe_broker_log_dirs_isolated timeout in kafka_process_pool.py, 30 s each)
+and were recorded as success because collect_brokers_only returns [] on a
+timeout and collect_broker_health ends with a plain return, so no row is
+written for that cycle; the data ages past 5 minutes and the watchdog restarts
+the agent. (3) The slow runs appear in a fixed order: clusters 4 and 9 in one
+minute, 10 and 8 in the next, repeating for about 4 minutes (10-03 11:11 to
+11:14, 10-04 00:27 to 00:30, 10:35 to 10:38). The pairing is the job schedule,
+not the clusters; clusters 4 and 9 appear in the watchdog rows only because
+their slot crosses the 5-minute line first, so the stall is not specific to
+them. A timeout is NOT visible as a failure: duration of about 30 s is the
+only trace. Decided not to change the job or the breaker. (4) Not known: why
+every call times out for about 4 minutes a few times a day (shared cause
+suspected: worker pool, host or network path; Kafka itself not shown to be
+involved). (5) A script now saves the stall-relevant lines of the agent log
+every 5 minutes (systemd timer kafka-analyser-save-log, files in
+/var/log/kafka-analyser-saved/, one per UTC day, 7 days kept, the auto-commit
+warning filtered out; each line may appear twice because of a 2-minute
+overlap) so the minutes before the next restart are no longer lost. Next step:
+after the next restart event, read that file for the 10 minutes before it.
+Also seen: all four shared AdminClients were invalidated in the same second at
+2026-10-05 03:45:01 (cause not looked into). And: kafka-snapshot-rollup took
+129 s, 181 s and 399 s at 01:00, 02:00 and 03:00 UTC on 2026-10-05; cause not
+known (first run with the archive off is 04:00).
 
 ### Findings 2026-09-29 to 09-30 -- self-restart, deadlocks, open questions (2026-09-30)
 1. A watchdog restart leaves no readable record. The container restarted
