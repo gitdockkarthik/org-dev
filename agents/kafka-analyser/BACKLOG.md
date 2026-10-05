@@ -1180,6 +1180,30 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Consumer lag: stale rows and the parked per-group lag rule (2026-10-05)
+CHECKED 2026-10-05 on cluster 4: kafka-consumer-lag-4 runs every 3 minutes
+and succeeds (3-5 s); 12 of 105 stored groups were updated in the last 10
+minutes and all show lag 0; live drill-downs on the Consumer Groups tab also
+returned 0, so the stored zeros are real values, not an empty fetch. The 93
+other rows are old (updated_at 2026-08-06 to 2026-09-29): e.g. sbgsnowflake
+(9,214) is reported by Kafka as Dead (no committed offsets, group no longer
+exists), so its stored lag is a frozen number that can never change or
+resolve. Dashboard lag views read only rows updated in the last 20 minutes.
+RULES FOR THE PARKED CONSUMER-GROUP LAG ALERT: count only fresh rows (same
+20-minute window); never alert on Dead or gone groups; opt-in per group (not
+all groups, not cluster totals); sustained for N minutes; possibly a growth
+condition; its own evaluator.
+OPEN, NOT DECIDED: cleanup of stale rows in kafka_consumer_group_lag.
+Unverified: (1) whether the lag job upserts on (cluster, group), i.e.
+whether a group that returns updates its old row and shows as active again;
+(2) which tables the 30-day charts and the trend/rate columns read (if they
+read snapshot tables, deleting rows here would not affect their history).
+The stored table has no Kafka state, so age alone cannot tell a Dead group
+from a monthly batch consumer; a proposed threshold is 90 days (longer than
+the 30-day dashboard filter), which would delete nothing today (oldest row
+is about 2 months). Deleting is permanent: decide only after checking (1)
+and (2).
+
 ### Alert rule plumbing done 2026-10-05 -- what is open (2026-10-05)
 DONE and live (80b090a, 7d63fbd, cebc241, 2980ace): API refuses a second
 rule of the same type on the same cluster (409) and requires a cluster for
