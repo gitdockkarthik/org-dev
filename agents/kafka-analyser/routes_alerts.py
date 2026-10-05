@@ -2,12 +2,13 @@
 backing the Teams tab's "Alert Configuration and Reporting" sub-tab. Firing
 and resolution (including resolve cards) live in teams_alerts.py; these
 routes only manage rules and read their history."""
+import copy
 import logging
 import math
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
 
 from config import settings
@@ -26,6 +27,14 @@ _SEVERITIES = ("critical", "warning", "info")
 # the severity -- the rule's own `severity` is ignored for these types.
 _THRESHOLD_ALERT_TYPES = ("broker.cpu_pct", "broker.heap_pct")
 _TIERS = ("info", "warning", "critical")  # ascending
+
+# General rules apply to all clusters; every other type is a cluster rule
+# (one per cluster per type, cluster required).
+_GENERAL_ALERT_TYPES = ("close_wait_spike", "broker_unreachable")
+
+# Labels used in copied rule names ("<label> - <cluster name>"); must match the
+# ALERT_TYPES labels in teams.html. Types not listed fall back to alert_type.
+_TYPE_LABELS = {"broker.cpu_pct": "Broker CPU %", "broker.heap_pct": "Broker heap %"}
 
 # Fields that map to NOT NULL columns -- an explicit null for these in a PUT
 # body is rejected rather than written.
@@ -74,6 +83,19 @@ class AlertConfigUpdatePayload(BaseModel):
         return v
 
 
+class AlertCopyPayload(BaseModel):
+    target_cluster_ids: list[int] = Field(min_length=1)
+    source_cluster_id: int | None = None
+    config_id: int | None = None
+    preview: bool = False
+
+    @model_validator(mode="after")
+    def _check_source(self) -> "AlertCopyPayload":
+        if (self.source_cluster_id is None) == (self.config_id is None):
+            raise ValueError("give exactly one of source_cluster_id or config_id")
+        return self
+
+
 def _threshold_config(tiers: dict | None) -> dict:
     """Validate a threshold rule's tiers and return its stored config. 422
     unless: keys only from _TIERS, values numeric and > 0, at least one tier,
@@ -120,6 +142,24 @@ def _cluster_label(cluster_id: int | None, cluster_names: dict[int, str]) -> str
 async def _check_cluster_exists(cluster_id: int | None, cluster_names: dict[int, str]) -> None:
     if cluster_id is not None and cluster_id not in cluster_names:
         raise HTTPException(status_code=422, detail=f"Unknown cluster_id {cluster_id}")
+
+
+def _check_cluster_required(alert_type: str, cluster_id: int | None) -> None:
+    if alert_type not in _GENERAL_ALERT_TYPES and cluster_id is None:
+        raise HTTPException(status_code=422, detail="cluster_id is required for this alert type")
+
+
+async def _check_no_duplicate(session, alert_type: str, cluster_id: int, exclude_id: int | None = None) -> None:
+    """409 if another rule already has this type on this cluster (cluster rules only)."""
+    query = select(KafkaAlertConfig.id).where(
+        KafkaAlertConfig.alert_type == alert_type,
+        KafkaAlertConfig.cluster_id == cluster_id,
+    )
+    if exclude_id is not None:
+        query = query.where(KafkaAlertConfig.id != exclude_id)
+    existing_id = (await session.execute(query.limit(1))).scalar_one_or_none()
+    if existing_id is not None:
+        raise HTTPException(status_code=409, detail=f"A rule of this type already exists for this cluster (id {existing_id})")
 
 
 def _iso(ts: datetime | None) -> str | None:
@@ -180,6 +220,7 @@ async def list_alert_configs() -> dict:
 @router.post("/configs")
 async def create_alert_config(payload: AlertConfigPayload) -> dict:
     try:
+        _check_cluster_required(payload.alert_type, payload.cluster_id)
         cluster_names = await _get_cluster_names()
         await _check_cluster_exists(payload.cluster_id, cluster_names)
         if payload.alert_type in _THRESHOLD_ALERT_TYPES:
@@ -205,6 +246,8 @@ async def create_alert_config(payload: AlertConfigPayload) -> dict:
             updated_at=now,
         )
         async with _get_session_factory()() as session:
+            if payload.alert_type not in _GENERAL_ALERT_TYPES:
+                await _check_no_duplicate(session, payload.alert_type, payload.cluster_id)
             session.add(cfg)
             await session.commit()
         return {"config": _config_out(cfg, cluster_names, 0)}
@@ -213,6 +256,97 @@ async def create_alert_config(payload: AlertConfigPayload) -> dict:
     except Exception as exc:
         logger.warning("create_alert_config failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"Failed to create alert config: {exc}")
+
+
+@router.post("/configs/copy")
+async def copy_alert_configs(payload: AlertCopyPayload) -> dict:
+    """Copy cluster rules to other clusters. A target that already has the
+    type is skipped, never modified; copies are created disabled; general
+    rules are never copied; history is not copied."""
+    try:
+        cluster_names = await _get_cluster_names()
+        target_ids = list(dict.fromkeys(payload.target_cluster_ids))
+        for cluster_id in target_ids:
+            await _check_cluster_exists(cluster_id, cluster_names)
+        await _check_cluster_exists(payload.source_cluster_id, cluster_names)
+        created_cfgs: list[KafkaAlertConfig] = []
+        skipped: list[dict] = []
+        async with _get_session_factory()() as session:
+            if payload.config_id is not None:
+                source = await session.get(KafkaAlertConfig, payload.config_id)
+                if source is None:
+                    raise HTTPException(status_code=404, detail="Alert config not found")
+                if source.alert_type in _GENERAL_ALERT_TYPES or source.cluster_id is None:
+                    raise HTTPException(status_code=422, detail="Only cluster rules can be copied")
+                sources = [source]
+            else:
+                sources = (await session.execute(
+                    select(KafkaAlertConfig)
+                    .where(
+                        KafkaAlertConfig.cluster_id == payload.source_cluster_id,
+                        KafkaAlertConfig.alert_type.not_in(_GENERAL_ALERT_TYPES),
+                    )
+                    .order_by(KafkaAlertConfig.id)
+                )).scalars().all()
+            existing = {
+                (alert_type, cluster_id): config_id
+                for config_id, alert_type, cluster_id in (await session.execute(
+                    select(KafkaAlertConfig.id, KafkaAlertConfig.alert_type, KafkaAlertConfig.cluster_id)
+                    .where(KafkaAlertConfig.cluster_id.in_(target_ids))
+                )).all()
+            }
+            now = datetime.now(timezone.utc)
+            for source in sources:
+                for cluster_id in target_ids:
+                    if cluster_id == source.cluster_id:
+                        reason = "same cluster"
+                    elif (source.alert_type, cluster_id) in existing:
+                        existing_id = existing[(source.alert_type, cluster_id)]
+                        reason = f"exists (id {existing_id})" if existing_id is not None else "exists (copied in this request)"
+                    else:
+                        reason = None
+                    if reason:
+                        skipped.append({
+                            "alert_type": source.alert_type,
+                            "cluster_id": cluster_id,
+                            "cluster_name": _cluster_label(cluster_id, cluster_names),
+                            "reason": reason,
+                        })
+                        continue
+                    created_cfgs.append(KafkaAlertConfig(
+                        name=f"{_TYPE_LABELS.get(source.alert_type, source.alert_type)} - {_cluster_label(cluster_id, cluster_names)}",
+                        alert_type=source.alert_type,
+                        cluster_id=cluster_id,
+                        severity=source.severity,
+                        config=copy.deepcopy(source.config or {}),
+                        webhook_url=source.webhook_url,
+                        cooldown_minutes=source.cooldown_minutes,
+                        enabled=False,
+                        email_enabled=False,
+                        created_at=now,
+                        updated_at=now,
+                    ))
+                    # Guards against two source rules of one type landing on the same target.
+                    existing[(source.alert_type, cluster_id)] = None
+            if not payload.preview and created_cfgs:
+                session.add_all(created_cfgs)
+                await session.commit()
+        created = [
+            {
+                "id": None if payload.preview else cfg.id,
+                "alert_type": cfg.alert_type,
+                "cluster_id": cfg.cluster_id,
+                "cluster_name": _cluster_label(cfg.cluster_id, cluster_names),
+                "name": cfg.name,
+            }
+            for cfg in created_cfgs
+        ]
+        return {"preview": payload.preview, "created": created, "skipped": skipped}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("copy_alert_configs failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Failed to copy alert configs: {exc}")
 
 
 @router.put("/configs/{config_id}")
@@ -231,6 +365,15 @@ async def update_alert_config(config_id: int, payload: AlertConfigUpdatePayload)
             cfg = await session.get(KafkaAlertConfig, config_id)
             if cfg is None:
                 raise HTTPException(status_code=404, detail="Alert config not found")
+            # Cluster-rule checks run only when the type or cluster is in the
+            # body, so other edits to existing rules behave as before.
+            if "alert_type" in updates or "cluster_id" in updates:
+                new_type = updates.get("alert_type", cfg.alert_type)
+                new_cluster_id = updates.get("cluster_id", cfg.cluster_id)
+                if new_type not in _GENERAL_ALERT_TYPES:
+                    _check_cluster_required(new_type, new_cluster_id)
+                    if new_type != cfg.alert_type or new_cluster_id != cfg.cluster_id:
+                        await _check_no_duplicate(session, new_type, new_cluster_id, exclude_id=cfg.id)
             tiers_given = "tiers" in updates
             tiers = updates.pop("tiers", None)
             send_resolve_card = updates.pop("send_resolve_card", None)
