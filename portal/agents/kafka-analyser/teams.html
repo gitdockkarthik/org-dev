@@ -392,6 +392,17 @@
     const TRIGGERS_PAGE_SIZE = 10;
     let _triggersLimit = TRIGGERS_PAGE_SIZE;
 
+    // Last list returned by loadConfigs (the Edit button reads from it), and
+    // the id of the rule the form is editing (null = creating a new rule).
+    let _alertConfigs = [];
+    let editingId = null;
+    // The edited rule's cluster when the form opened (null = all clusters),
+    // and the temporary <option> added when that cluster is not in the list.
+    let editingClusterId = null;
+    let _tempClusterOption = null;
+    // True once the admin changes the cluster select during an edit.
+    let editingClusterTouched = false;
+
     document.querySelectorAll('.tab-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -515,7 +526,68 @@
       }
     }
 
+    // Back to "new rule" mode: type selectable, Enabled shown, default texts.
+    function exitEditMode() {
+      editingId = null;
+      editingClusterId = null;
+      editingClusterTouched = false;
+      if (_tempClusterOption) {
+        _tempClusterOption.remove();
+        _tempClusterOption = null;
+      }
+      $('af-alert-type').disabled = false;
+      $('alert-form-card').querySelector('.card-title').textContent = 'New Alert Rule';
+      $('btn-save-alert').textContent = 'Save Rule';
+      $('af-enabled').closest('.field').classList.remove('hidden');
+    }
+
+    // Fill the form from an existing rule. The type cannot be changed, and
+    // Enabled is left to the table toggle, so its field is hidden.
+    function openEditForm(c) {
+      editingId = c.id;
+      resetAlertForm();
+      const kind = alertTypeOf(c.alert_type).kind;
+      const config = c.config || {};
+      $('af-name').value = c.name || '';
+      $('af-alert-type').value = c.alert_type;
+      applyTypeFields();
+      $('af-alert-type').disabled = true;
+      editingClusterId = c.cluster_id != null ? Number(c.cluster_id) : null;
+      editingClusterTouched = false;
+      $('af-cluster').value = c.cluster_id != null ? String(c.cluster_id) : '';
+      if (c.cluster_id != null && $('af-cluster').value !== String(c.cluster_id)) {
+        // The rule's cluster is not in the list (not loaded, disabled or gone):
+        // show it anyway so an untouched save keeps it.
+        const opt = document.createElement('option');
+        opt.value = String(c.cluster_id);
+        opt.textContent = c.cluster_name || ('Cluster ' + c.cluster_id);
+        opt.dataset.temp = '1';
+        $('af-cluster').appendChild(opt);
+        _tempClusterOption = opt;
+        $('af-cluster').value = String(c.cluster_id);
+      }
+      if (kind !== 'tiers') $('af-severity').value = c.severity;
+      if (kind === 'threshold_count') $('af-threshold').value = String(c.threshold);
+      for (const [tier, id] of Object.entries(TIER_IDS)) {
+        $(id).value = config[tier] !== undefined && config[tier] !== null ? String(config[tier]) : '';
+      }
+      $('af-cooldown').value = String(c.cooldown_minutes);
+      $('af-webhook').value = c.webhook_url || '';
+      $('af-resolve-card').checked = c.send_resolve_card !== false;
+      $('alert-form-card').querySelector('.card-title').textContent = 'Edit Alert Rule';
+      $('btn-save-alert').textContent = 'Save Changes';
+      $('af-enabled').closest('.field').classList.add('hidden');
+      $('alert-form-card').classList.remove('hidden');
+      $('alert-form-card').scrollIntoView({ behavior: 'smooth' });
+      $('af-name').focus();
+    }
+
+    $('af-cluster').addEventListener('change', () => {
+      if (editingId !== null) editingClusterTouched = true;
+    });
+
     $('btn-new-alert').addEventListener('click', () => {
+      exitEditMode();
       resetAlertForm();
       $('alert-form-card').classList.remove('hidden');
       $('alert-form-card').scrollIntoView({ behavior: 'smooth' });
@@ -523,6 +595,7 @@
     });
 
     $('btn-cancel-alert').addEventListener('click', () => {
+      exitEditMode();
       $('alert-form-card').classList.add('hidden');
       resetAlertForm();
     });
@@ -574,10 +647,25 @@
       btn.disabled = true;
       showMsg(msgEl, 'Saving…', 'info', 0);
       try {
-        await api('/alerts/configs', { method: 'POST', body: JSON.stringify(payload) });
-        $('alert-form-card').classList.add('hidden');
-        resetAlertForm();
-        showMsg($('configs-msg'), '✓ Alert rule "' + name + '" created', 'ok');
+        if (editingId === null) {
+          await api('/alerts/configs', { method: 'POST', body: JSON.stringify(payload) });
+          $('alert-form-card').classList.add('hidden');
+          resetAlertForm();
+          showMsg($('configs-msg'), '✓ Alert rule "' + name + '" created', 'ok');
+        } else {
+          // The type is fixed and Enabled belongs to the table toggle.
+          delete payload.alert_type;
+          delete payload.enabled;
+          // Only send the cluster when the admin changed it. An untouched
+          // select can still read '' (e.g. the cluster list was rebuilt
+          // without the rule's cluster), which must not mean "All clusters".
+          if (!(editingClusterTouched && payload.cluster_id !== editingClusterId)) delete payload.cluster_id;
+          await api(`/alerts/configs/${editingId}`, { method: 'PUT', body: JSON.stringify(payload) });
+          $('alert-form-card').classList.add('hidden');
+          exitEditMode();
+          resetAlertForm();
+          showMsg($('configs-msg'), '✓ Alert rule "' + name + '" updated', 'ok');
+        }
         await loadConfigs();
       } catch (err) {
         // Kept visible (no auto-hide) so validation errors can be read and fixed.
@@ -646,7 +734,7 @@
               </label>
             </td>
             <td>${openCell}</td>
-            <td><button class="btn btn-danger btn-sm config-delete" data-id="${esc(c.id)}" data-name="${esc(c.name)}">Delete</button></td>
+            <td class="nowrap"><button class="btn btn-secondary btn-sm config-edit" data-id="${esc(c.id)}">Edit</button> <button class="btn btn-danger btn-sm config-delete" data-id="${esc(c.id)}" data-name="${esc(c.name)}">Delete</button></td>
           </tr>`;
       }).join('');
 
@@ -682,6 +770,14 @@
         });
       });
 
+      body.querySelectorAll('.config-edit').forEach(btn => {
+        btn.addEventListener('click', function () {
+          const id = parseInt(this.dataset.id, 10);
+          const c = _alertConfigs.find(x => x.id === id);
+          if (c) openEditForm(c);
+        });
+      });
+
       body.querySelectorAll('.config-delete').forEach(btn => {
         btn.addEventListener('click', async function () {
           const id = parseInt(this.dataset.id, 10);
@@ -703,7 +799,8 @@
     async function loadConfigs() {
       try {
         const d = await api('/alerts/configs');
-        renderConfigs(d.configs || []);
+        _alertConfigs = d.configs || [];
+        renderConfigs(_alertConfigs);
       } catch (err) {
         $('configs-body').innerHTML =
           `<tr><td colspan="10" class="data-table__error">Failed to load alert rules: ${esc(err.message)}</td></tr>`;
