@@ -293,7 +293,7 @@
                 <th>Type</th>
                 <th>Cluster</th>
                 <th>Severity</th>
-                <th>Threshold</th>
+                <th>Threshold / tiers</th>
                 <th>Cooldown (min)</th>
                 <th>Teams</th>
                 <th>Email</th>
@@ -583,6 +583,23 @@
     });
 
     // ── Alert rules table ────────────────────────────────────────────────
+    function alertTypeOf(value) {
+      return ALERT_TYPES.find(t => t.value === value) || { value, kind: 'threshold_count' };
+    }
+
+    const TIER_SHORT = { info: 'info', warning: 'warn', critical: 'crit' };
+
+    // "info 60 · warn 70 · crit 90 %" from a tier rule's config, or "—".
+    function tiersText(c) {
+      const t = alertTypeOf(c.alert_type);
+      const config = c.config || {};
+      const parts = Object.keys(TIER_SHORT)
+        .filter(tier => config[tier] !== undefined && config[tier] !== null)
+        .map(tier => `${TIER_SHORT[tier]} ${config[tier]}`);
+      if (!parts.length) return '—';
+      return parts.join(' · ') + (t.unit ? ` ${t.unit}` : '');
+    }
+
     function renderConfigs(configs) {
       const body = $('configs-body');
       if (!configs.length) {
@@ -593,13 +610,20 @@
         const openCell = c.open_trigger_count > 0
           ? `<span class="open-count-warn" title="Currently unresolved">⚠ ${esc(c.open_trigger_count)}</span>`
           : '0';
+        const kind = alertTypeOf(c.alert_type).kind;
+        const thresholdCell = kind === 'tiers' ? esc(tiersText(c)) : kind === 'binary' ? '—' : esc(c.threshold);
+        const severityCell = kind === 'tiers'
+          ? 'by tier'
+          : `<span class="sev sev--${esc(c.severity)}">${esc(c.severity)}</span>`;
+        // Rules saved before the option existed have no field: treated as on.
+        const resolveLine = c.send_resolve_card !== false ? '<div class="hint">↩ resolve card</div>' : '';
         return `
           <tr>
             <td><strong>${esc(c.name)}</strong></td>
-            <td class="nowrap">${esc(alertTypeLabel(c.alert_type))}</td>
+            <td class="nowrap">${esc(alertTypeLabel(c.alert_type))}${resolveLine}</td>
             <td>${esc(c.cluster_name)}</td>
-            <td><span class="sev sev--${esc(c.severity)}">${esc(c.severity)}</span></td>
-            <td>${esc(c.threshold)}</td>
+            <td>${severityCell}</td>
+            <td>${thresholdCell}</td>
             <td>${esc(c.cooldown_minutes)}</td>
             <td class="nowrap">
               <label class="toggle-wrap" title="Click to ${c.enabled ? 'disable' : 'enable'}">
