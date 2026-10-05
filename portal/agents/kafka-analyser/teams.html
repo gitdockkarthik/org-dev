@@ -382,7 +382,7 @@
     // whose evaluator sends a resolve card (teams_alerts._send_resolve_cards);
     // a new type must not set it until its evaluator calls that function.
     const ALERT_TYPES = [
-      { value: 'close_wait_spike', label: 'CLOSE_WAIT spike', group: 'Connections', kind: 'threshold_count' },
+      { value: 'close_wait_spike', label: 'CLOSE_WAIT spike', group: 'Connections', kind: 'threshold_count', resolves: true },
       { value: 'broker_unreachable', label: 'Broker reachability (live check)', group: 'Broker', kind: 'binary', resolves: true },
       { value: 'broker.cpu_pct', label: 'Broker CPU %', group: 'Broker', kind: 'tiers', unit: '%', resolves: true },
       { value: 'broker.heap_pct', label: 'Broker heap %', group: 'Broker', kind: 'tiers', unit: '%', resolves: true },
