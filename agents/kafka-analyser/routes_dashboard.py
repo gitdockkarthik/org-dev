@@ -833,6 +833,16 @@ async def get_breaker_status(cluster_id: str | None = None, hours: int = 24) -> 
         all_clusters = await get_backend().get_clusters(settings.agent_slug)
         cluster_meta = {int(c["id"]): c.get("name", f"Cluster {c['id']}") for c in all_clusters if c.get("id") is not None}
         cluster_bootstrap = {int(c["id"]): c.get("bootstrap_servers", "") for c in all_clusters if c.get("id") is not None}
+        # Only enabled clusters are shown (status table and breaker events).
+        # An explicitly requested cluster_id is always shown, as before; an
+        # empty cluster list (e.g. the backend returned nothing) disables
+        # the filter rather than hiding everything.
+        enabled_ids = {int(c["id"]) for c in all_clusters if c.get("id") is not None and c.get("enabled")}
+        if _cid_filter is not None:
+            enabled_ids.add(_cid_filter)
+
+        def _shown(cid) -> bool:
+            return not all_clusters or cid in enabled_ids
 
         async with SessionLocal() as sess:
             # Current state per cluster
@@ -951,6 +961,8 @@ async def get_breaker_status(cluster_id: str | None = None, hours: int = 24) -> 
 
         clusters_out = []
         for cid, name in sorted(cluster_meta.items()):
+            if not _shown(cid):
+                continue
             st = state_by_cid.get(cid)
             rates = rate_by_cid.get(cid, {"success": 0, "failed": 0, "skipped": 0})
             clusters_out.append({
@@ -977,7 +989,7 @@ async def get_breaker_status(cluster_id: str | None = None, hours: int = 24) -> 
             "reason": r.reason,
             "consecutive_failures": r.consecutive_failures,
             "created_at": r.created_at.isoformat(),
-        } for r in event_rows]
+        } for r in event_rows if _shown(r.cluster_id)]
 
         failures_out = [{
             "id": r.id,
