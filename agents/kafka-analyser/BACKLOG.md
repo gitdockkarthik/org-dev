@@ -1180,6 +1180,44 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### kafka_topic_metrics deadlocks on msg-rate -- investigated, NOT changed (2026-10-05)
+Evidence: 10 failed kafka-msg-rate runs (DeadlockDetectedError on UPDATE
+kafka_topic_metrics) between 2026-10-02 07:49 and 2026-10-05 04:43 UTC
+(query capped at 10 rows, so there may be more): msg-rate-8 and msg-rate-9
+only; each is one failed run, the next 2-minute run succeeds. Not yet checked:
+whether a failed run skews the next run's rate. The Postgres log for the 04:43
+event names both statements: msg-rate's rate UPDATE (bytes_in_per_sec, joined
+on cluster_id + topic) against the structure job's UPDATE (partition_count,
+replication_factor, urp_count, cluster_id = 8 + topic); the CONTEXT line shows
+the same tuple. Job-history overlap shows a topic-structure run on the
+victim's own cluster in most events, but also many unrelated neighbours, so
+the history alone does not name the collider; only the 04:43 event has the
+log text. Writers of the table known from grep (may not be complete):
+structure INSERT/DELETE (sizes job, one transaction, single commit, about
+25k rows on the largest cluster), structure UPDATE, msg-rate zero-rate UPDATE
+and rate UPDATE, storage.save_topic_metrics (caller unknown). All three
+UPDATEs already sort by topic, use 1000-row batches and commit per batch
+(the 2026-09-24 mitigation).
+Plan finding (cluster 8, structure UPDATE shape, one moment): batches up to
+400 rows plan as Nested Loop with an index lookup per row (lock order follows
+the sorted list); 500 rows and above plan as Hash Join over a Seq Scan of the
+whole table (about 52k rows; lock order follows table order). So full
+1000-row batches and a smaller final batch can lock rows in different
+orders, a plausible but UNPROVEN deadlock mechanism (no deadlock was caught
+mid-batch). Side cost: each full batch scans the whole table.
+Candidate fix, NOT applied: batch size about 150 in _TS_BULK (structure),
+_AT_BULK and _ZR_BULK (msg-rate) in collectors.py. Measured on cluster 8:
+EXPLAIN ANALYZE of a 150-row batch (rolled back) took 2.6 ms, 1343 buffer
+hits, index scan per row. Cost: about 7x more commits on the busiest shared
+table; load not measured. DECISION 2026-10-05: leave as is (small,
+self-healing impact; the 2026-09-24 incident came from changing batch and
+commit behaviour on this table). Revisit if deadlocks become more frequent,
+structure or msg-rate run times grow, or database CPU pressure appears;
+re-check with: failed kafka-msg-rate runs whose error contains "deadlock".
+Other options considered: retry a batch on DeadlockDetectedError (safe only
+for the two UPDATE writers; the sizes job is one transaction), per-cluster
+advisory lock in every writer (needs the full writer list).
+
 ### Alert rules managed from the UI -- what exists and what is left (2026-10-05)
 DONE and live: resolve cards (build_resolve_card in notifier.py,
 _send_resolve_cards in teams_alerts.py; sent only when the original card
