@@ -224,6 +224,24 @@
             <input type="number" id="af-threshold" min="1" value="1" />
             <div class="hint">Fires when the count is at or above this value</div>
           </div>
+          <div class="field hidden" id="af-tiers-field">
+            <label>Thresholds</label>
+            <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.5rem">
+              <div>
+                <label for="af-tier-info">Info at<span class="af-tier-unit"></span></label>
+                <input type="number" id="af-tier-info" step="any" min="0" />
+              </div>
+              <div>
+                <label for="af-tier-warning">Warning at<span class="af-tier-unit"></span></label>
+                <input type="number" id="af-tier-warning" step="any" min="0" />
+              </div>
+              <div>
+                <label for="af-tier-critical">Critical at<span class="af-tier-unit"></span></label>
+                <input type="number" id="af-tier-critical" step="any" min="0" />
+              </div>
+            </div>
+            <div class="hint">Set at least one; the highest tier reached decides the severity</div>
+          </div>
           <div class="field">
             <label for="af-cooldown">Cooldown Minutes</label>
             <input type="number" id="af-cooldown" min="0" value="30" />
@@ -349,10 +367,17 @@
 
     const $ = id => document.getElementById(id);
 
-    // Adding an alert type later is a one-line change here.
+    // Adding an alert type later is a one-line change here. `group` is the
+    // dropdown <optgroup>; `kind` picks the form fields: 'threshold_count'
+    // (threshold + severity), 'tiers' (info/warning/critical values, severity
+    // comes from the tier) or 'binary' (severity only).
     const ALERT_TYPES = [
-      { value: 'close_wait_spike', label: 'CLOSE_WAIT spike' },
+      { value: 'close_wait_spike', label: 'CLOSE_WAIT spike', group: 'Connections', kind: 'threshold_count' },
+      { value: 'broker_unreachable', label: 'Broker reachability (live check)', group: 'Broker', kind: 'binary' },
+      { value: 'broker.cpu_pct', label: 'Broker CPU %', group: 'Broker', kind: 'tiers', unit: '%' },
+      { value: 'broker.heap_pct', label: 'Broker heap %', group: 'Broker', kind: 'tiers', unit: '%' },
     ];
+    const TIER_IDS = { info: 'af-tier-info', warning: 'af-tier-warning', critical: 'af-tier-critical' };
 
     const TRIGGERS_PAGE_SIZE = 10;
     let _triggersLimit = TRIGGERS_PAGE_SIZE;
@@ -425,9 +450,27 @@
     }
 
     // ── New alert rule form ──────────────────────────────────────────────
-    $('af-alert-type').innerHTML = ALERT_TYPES
-      .map(t => `<option value="${esc(t.value)}">${esc(t.value)} — ${esc(t.label)}</option>`)
+    $('af-alert-type').innerHTML = [...new Set(ALERT_TYPES.map(t => t.group))]
+      .map(group => `<optgroup label="${esc(group)}">` + ALERT_TYPES
+        .filter(t => t.group === group)
+        .map(t => `<option value="${esc(t.value)}">${esc(t.label)}</option>`)
+        .join('') + '</optgroup>')
       .join('');
+
+    function selectedAlertType() {
+      const value = $('af-alert-type').value;
+      return ALERT_TYPES.find(t => t.value === value) || { value, kind: 'threshold_count' };
+    }
+
+    function applyTypeFields() {
+      const t = selectedAlertType();
+      $('af-threshold').closest('.field').classList.toggle('hidden', t.kind !== 'threshold_count');
+      $('af-severity').closest('.field').classList.toggle('hidden', t.kind === 'tiers');
+      $('af-tiers-field').classList.toggle('hidden', t.kind !== 'tiers');
+      document.querySelectorAll('.af-tier-unit').forEach(el => { el.textContent = t.unit ? ` (${t.unit})` : ''; });
+    }
+
+    $('af-alert-type').addEventListener('change', applyTypeFields);
 
     function resetAlertForm() {
       $('af-name').value = '';
@@ -438,6 +481,8 @@
       $('af-cooldown').value = '30';
       $('af-webhook').value = '';
       $('af-enabled').checked = true;
+      Object.values(TIER_IDS).forEach(id => { $(id).value = ''; });
+      applyTypeFields();
       hideMsg($('alert-form-msg'));
     }
 
@@ -475,18 +520,37 @@
       const name = $('af-name').value.trim();
       if (!name) { showMsg(msgEl, '✗ Name is required', 'err', 0); return; }
       const clusterVal = $('af-cluster').value;
+      const kind = selectedAlertType().kind;
       const payload = {
         name,
         alert_type: $('af-alert-type').value,
         cluster_id: clusterVal ? parseInt(clusterVal, 10) : null,
-        severity: $('af-severity').value,
-        threshold: parseInt($('af-threshold').value, 10),
+        // Tier rules take their severity from the tier; the API ignores this.
+        severity: kind === 'tiers' ? 'warning' : $('af-severity').value,
+        // Only count rules use the threshold; 1 keeps the payload valid for the others.
+        threshold: kind === 'threshold_count' ? parseInt($('af-threshold').value, 10) : 1,
         cooldown_minutes: parseInt($('af-cooldown').value, 10),
         webhook_url: $('af-webhook').value.trim() || null,
         enabled: $('af-enabled').checked,
       };
-      if (!Number.isInteger(payload.threshold) || payload.threshold < 1) {
+      if (kind === 'threshold_count' && (!Number.isInteger(payload.threshold) || payload.threshold < 1)) {
         showMsg(msgEl, '✗ Threshold must be a whole number of at least 1', 'err', 0); return;
+      }
+      if (kind === 'tiers') {
+        const tiers = {};
+        for (const [tier, id] of Object.entries(TIER_IDS)) {
+          const raw = $(id).value.trim();
+          if (raw === '') continue;
+          const value = parseFloat(raw);
+          if (!Number.isFinite(value) || value <= 0) {
+            showMsg(msgEl, '✗ ' + tier.charAt(0).toUpperCase() + tier.slice(1) + ' at must be a number greater than 0', 'err', 0); return;
+          }
+          tiers[tier] = value;
+        }
+        if (!Object.keys(tiers).length) {
+          showMsg(msgEl, '✗ Set at least one of Info at, Warning at or Critical at', 'err', 0); return;
+        }
+        payload.tiers = tiers;
       }
       if (!Number.isInteger(payload.cooldown_minutes) || payload.cooldown_minutes < 0) {
         showMsg(msgEl, '✗ Cooldown Minutes must be a whole number of 0 or more', 'err', 0); return;
