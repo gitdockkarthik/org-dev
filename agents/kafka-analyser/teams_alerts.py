@@ -500,6 +500,7 @@ async def _evaluate_broker_reachability() -> None:
     now = datetime.now(timezone.utc)
     to_insert: list[KafkaAlertTrigger] = []
     to_resolve: list[int] = []
+    resolve_context: dict[int, tuple[KafkaAlertConfig, str]] = {}
     brokers_checked = 0
     brokers_unreachable = 0
     skipped_clusters = 0
@@ -528,6 +529,7 @@ async def _evaluate_broker_reachability() -> None:
                     trigger_id = open_triggers.get((config.id, cluster_id, subject))
                     if trigger_id is not None:
                         to_resolve.append(trigger_id)
+                        resolve_context[trigger_id] = (config, cluster_name)
                 continue
 
             brokers_unreachable += 1
@@ -607,6 +609,11 @@ async def _evaluate_broker_reachability() -> None:
         return
 
     # ---- Single write session: each row in its own savepoint ----
+    # Resolve cards are sent only after this session has closed. Each entry
+    # holds a plain snapshot of the trigger (taken before its commit), since
+    # a later rollback in this session expires every ORM object in it.
+    from types import SimpleNamespace
+    resolved_items: list[dict] = []
     try:
         async with SessionLocal() as session:
             for trigger in to_insert:
@@ -624,11 +631,22 @@ async def _evaluate_broker_reachability() -> None:
                     )
             for trigger_id in to_resolve:
                 try:
+                    snapshot = None
                     async with session.begin_nested():
                         trigger = await session.get(KafkaAlertTrigger, trigger_id)
                         if trigger is not None and trigger.resolved_at is None:
                             trigger.resolved_at = now
+                            snapshot = SimpleNamespace(
+                                subject=trigger.subject,
+                                severity=trigger.severity,
+                                triggered_at=trigger.triggered_at,
+                                resolved_at=trigger.resolved_at,
+                                teams_post_success=trigger.teams_post_success,
+                            )
                     await session.commit()
+                    if snapshot is not None and trigger_id in resolve_context:
+                        config, cluster_name = resolve_context[trigger_id]
+                        resolved_items.append({"config": config, "trigger": snapshot, "cluster_name": cluster_name})
                 except Exception as exc:
                     await session.rollback()
                     logger.warning(
@@ -637,6 +655,12 @@ async def _evaluate_broker_reachability() -> None:
                     )
     except Exception as exc:
         logger.warning("_evaluate_broker_reachability: write session failed entirely: %s", exc)
+
+    if resolved_items:
+        try:
+            await _send_resolve_cards(resolved_items)
+        except Exception as exc:
+            logger.warning("_evaluate_broker_reachability: resolve cards failed: %s", exc)
 
 
 # Threshold rules (Simple mode): alert_type -> (kafka_broker_metrics column,
