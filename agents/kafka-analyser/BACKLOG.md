@@ -1180,6 +1180,43 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Alert rules managed from the UI -- what exists and what is left (2026-10-05)
+DONE and live: resolve cards (build_resolve_card in notifier.py,
+_send_resolve_cards in teams_alerts.py; sent only when the original card
+reached Teams and the rule's send_resolve_card is not false; called from
+_evaluate_broker_reachability and _evaluate_broker_thresholds after the
+resolve is saved and the write session has closed, with a plain snapshot of
+the trigger because a rollback expires ORM objects); API stores and keeps
+send_resolve_card across updates; rule form with grouped types, tier inputs,
+the resolve checkbox, editing (type locked, Enabled owned by the table
+toggle, cluster_id sent only if the admin changed it) and a table showing
+tiers and the resolve option. ALERT_TYPES in teams.html has a `kind`
+(threshold_count, tiers, binary) and a `resolves` flag; a type must not set
+`resolves` until its evaluator calls _send_resolve_cards. Admins can create
+and maintain rules for broker reachability, broker CPU % and broker heap %
+without code changes. Verified live: resolve card path through the real
+function with a fake broker and Teams stubbed; form create, edit and delete
+with disabled test rules. NOT observed: a real outage with a real resolve
+card; a real CPU or heap rule firing (none is enabled).
+LEFT: (1) Evaluators for more alert types, each reading data the dashboard
+already shows and each calling _send_resolve_cards: topic size, replication
+factor below N (exclude partition_count = 0), consumer lag, connector
+failures, SLO compliance, cluster data staleness, failed job runs per
+cluster (covers failures that start right after a clean health card), URP.
+Extend the shared threshold mechanism (BROKER_THRESHOLD_METRICS in
+teams_alerts.py) rather than writing a near-copy per metric; only metrics
+the agent really collects (the broker table reads zero for URP, GC, idle and
+rates; CPU and heap are the Prometheus-filtered ones that work); Simple mode
+only until baseline data exists for Comparison mode. (2) The old CLOSE_WAIT
+path sends no resolve card and is gated by the hardcoded
+_TEAMS_ALERTS_ENABLED (False): replace with a UI setting and an
+"alerting paused" notice. (3) The first card of a restart re-counts failures
+a pre-restart card may have shown (the previous-card time is in memory). (4)
+A resolve under 30 seconds reads "Open for 0 min". (5) Typing letters into a
+tier input reads as "Set at least one tier" in a browser. (6) Edit sends
+severity "warning" for tier rules and threshold 1 for reachability rules;
+both ignored.
+
 ### Message-rate CSV cold archive switched off (2026-10-05)
 rollup_hourly_to_daily Step 2 (export of aged-out hourly rows to MinIO,
 bucket kafka-message-rate-archive, one CSV per cluster per day) now runs only
