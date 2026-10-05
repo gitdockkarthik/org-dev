@@ -1,7 +1,9 @@
-"""Teams alert firing/resolution/digest logic for kafka_alert_configs /
+"""Teams alert firing/resolution logic for kafka_alert_configs /
 kafka_alert_triggers (see models.py for the agreed notification model,
-2026-09-28). Currently driven only by check_and_recycle_close_wait in
-collectors.py (alert_type 'close_wait_spike').
+2026-09-28): an immediate card when a rule fires and a resolve card
+(_send_resolve_cards) when it clears. Driven by check_and_recycle_close_wait
+in collectors.py (alert_type 'close_wait_spike') and by evaluate_alerts
+(broker reachability and broker CPU/heap thresholds).
 
 Every public function here is best-effort notification logic riding along
 on a real operational job: each one logs a warning and swallows on failure,
@@ -25,12 +27,6 @@ CLOSE_WAIT_ALERT_TYPE = "close_wait_spike"
 # alert+cluster's previous trigger resolved within this window. Fixed for
 # now -- tune later.
 RECURRENCE_LOOKBACK_HOURS = 24
-
-_DEFAULT_DIGEST_INTERVAL_MINUTES = 5
-
-# In-memory, resets on restart -- same as other in-memory state in this
-# codebase (e.g. the escalation notifier's cooldown cache).
-_last_digest_sent_at: datetime | None = None
 
 
 async def _get_cluster_names() -> dict[int, str]:
@@ -306,115 +302,6 @@ async def fire_close_wait_alerts(close_wait_by_cluster_id: dict[int, int]) -> No
         logger.warning("fire_close_wait_alerts: write session failed entirely: %s", exc)
 
 
-async def maybe_send_digest() -> None:
-    """Post the periodic Resolved/Pending/Recurrence summary card at most
-    once per teams_digest_interval_minutes. No card when all three sections
-    are empty (no all-clear card, per agreed design)."""
-    global _last_digest_sent_at
-    if SessionLocal is None:
-        return
-    try:
-        from routes_settings import _config
-        try:
-            interval_minutes = int(_config.get("teams_digest_interval_minutes", _DEFAULT_DIGEST_INTERVAL_MINUTES))
-        except (TypeError, ValueError):
-            interval_minutes = _DEFAULT_DIGEST_INTERVAL_MINUTES
-        # Defensive -- the settings UI doesn't validate this server-side.
-        interval = timedelta(minutes=max(1, interval_minutes))
-
-        now = datetime.now(timezone.utc)
-        if _last_digest_sent_at is not None and now - _last_digest_sent_at < interval:
-            return
-
-        webhook_url = _config.get("teams_webhook_url", "")
-        if not _config.get("teams_enabled") or not webhook_url:
-            return
-
-        # Window covers everything since the last digest, not just the last
-        # `interval` -- this runs on the close-wait job's own cadence, so the
-        # actual gap between digests is usually longer than `interval`, and
-        # a fixed `now - interval` window would silently drop events in the
-        # difference.
-        window_start = _last_digest_sent_at if _last_digest_sent_at is not None else now - interval
-
-        async with SessionLocal() as session:
-            base = select(KafkaAlertTrigger, KafkaAlertConfig).join(
-                KafkaAlertConfig, KafkaAlertTrigger.alert_config_id == KafkaAlertConfig.id
-            )
-            pending = (await session.execute(
-                base.where(KafkaAlertTrigger.resolved_at.is_(None))
-                .order_by(KafkaAlertTrigger.triggered_at.desc())
-            )).all()
-            resolved = (await session.execute(
-                base.where(
-                    KafkaAlertTrigger.resolved_at.is_not(None),
-                    KafkaAlertTrigger.resolved_at > window_start,
-                ).order_by(KafkaAlertTrigger.resolved_at.desc())
-            )).all()
-            recurrence = (await session.execute(
-                base.where(
-                    KafkaAlertTrigger.is_recurrence == True,
-                    KafkaAlertTrigger.triggered_at > window_start,
-                ).order_by(KafkaAlertTrigger.triggered_at.desc())
-            )).all()
-
-        if not (pending or resolved or recurrence):
-            _last_digest_sent_at = now
-            return
-
-        cluster_names = await _get_cluster_names()
-        card = _build_digest_card(pending, resolved, recurrence, cluster_names)
-        # Set before sending, regardless of outcome -- never retry-storm a
-        # failing webhook.
-        _last_digest_sent_at = now
-        await send_to_teams(webhook_url=webhook_url, card=card)
-    except Exception as exc:
-        logger.warning("maybe_send_digest failed: %s", exc)
-
-
-def _build_digest_card(pending: list, resolved: list, recurrence: list, cluster_names: dict[int, str]) -> dict:
-    def _line(trigger: KafkaAlertTrigger, config: KafkaAlertConfig, ts: datetime) -> str:
-        cluster = cluster_names.get(trigger.cluster_id, str(trigger.cluster_id)) \
-            if trigger.cluster_id is not None else "all clusters"
-        return f"{config.name} — {cluster} — {ts.strftime('%Y-%m-%d %H:%M UTC')}"
-
-    body = [{
-        "type": "TextBlock",
-        "text": "Kafka Alert Digest",
-        "weight": "Bolder",
-        "size": "Medium",
-    }]
-    sections = [
-        ("Pending", [_line(t, c, t.triggered_at) for t, c in pending]),
-        ("Resolved", [_line(t, c, t.resolved_at) for t, c in resolved]),
-        ("Recurrence", [_line(t, c, t.triggered_at) for t, c in recurrence]),
-    ]
-    for title, lines in sections:
-        if lines:
-            body.append({
-                "type": "TextBlock",
-                "text": f"**{title}**\n\n" + "\n\n".join(lines),
-                "wrap": True,
-                "spacing": "Medium",
-            })
-
-    return {
-        "type": "message",
-        "attachments": [
-            {
-                "contentType": "application/vnd.microsoft.card.adaptive",
-                "content": {
-                    "type": "AdaptiveCard",
-                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-                    "version": "1.4",
-                    "body": body,
-                    "actions": [],
-                },
-            }
-        ],
-    }
-
-
 BROKER_UNREACHABLE_ALERT_TYPE = "broker_unreachable"
 _broker_fail_counts: dict[tuple[int, str], int] = {}  # in-memory, resets on restart
 _BROKER_CONFIRM_CHECKS = 2  # consecutive failures required before firing
@@ -438,7 +325,7 @@ async def _evaluate_broker_reachability() -> None:
     config, cluster, broker) once a broker has failed a fresh TCP connect on
     _BROKER_CONFIRM_CHECKS consecutive runs, only when no trigger for that
     triple is already open and it is out of cooldown. A reachable broker
-    silently resolves its open trigger (surfaced via the periodic digest).
+    resolves its open trigger and gets a resolve card (_send_resolve_cards).
 
     Same four-stage structure as fire_close_wait_alerts: one read session,
     decide in memory, Teams posts with no DB session open, one write session
@@ -726,7 +613,7 @@ async def _evaluate_broker_thresholds() -> None:
     triple is already open and it is out of cooldown. An open trigger whose
     tier rises is escalated in place with a new card; one whose tier falls is
     updated silently; one whose value drops below every tier is resolved
-    silently (surfaced via the periodic digest).
+    and gets a resolve card (_send_resolve_cards).
 
     Same four-stage structure as _evaluate_broker_reachability. A metric row
     older than _BROKER_METRICS_MAX_AGE is ignored entirely -- no counter

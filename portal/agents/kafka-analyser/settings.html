@@ -567,13 +567,6 @@
           </div>
 
           <div class="field">
-            <label for="teams-digest-interval">Digest Interval (minutes)</label>
-            <input type="number" id="teams-digest-interval" min="1" value="5"
-                   style="max-width:120px" />
-            <div class="hint">Minimum minutes between periodic Resolved/Pending/Recurrence summary cards. Piggybacked on the existing close-wait check cadence -- no extra broker connections.</div>
-          </div>
-
-          <div class="field">
             <button class="btn btn-secondary" id="btn-test-teams" type="button">
               Send Test Message
             </button>
@@ -816,7 +809,6 @@
       return {
         teams_enabled: $('teams-enabled').checked,
         teams_webhook_url: $('teams-webhook-url').value.trim(),
-        teams_digest_interval_minutes: parseInt($('teams-digest-interval').value, 10) || 5,
         email_enabled: $('email-enabled') ? $('email-enabled').checked : false,
         smtp_host: $('smtp-host') ? $('smtp-host').value.trim() : '',
         smtp_port: $('smtp-port') ? (parseInt($('smtp-port').value, 10) || 587) : 587,
@@ -1003,7 +995,6 @@
 
         if ($('teams-enabled')) $('teams-enabled').checked = cfg.teams_enabled || false;
         if ($('teams-webhook-url')) $('teams-webhook-url').value = cfg.teams_webhook_url || '';
-        if ($('teams-digest-interval')) $('teams-digest-interval').value = cfg.teams_digest_interval_minutes || 5;
         if ($('email-enabled')) $('email-enabled').checked = cfg.email_enabled || false;
         if ($('smtp-host')) $('smtp-host').value = cfg.smtp_host || '';
         if ($('smtp-port')) $('smtp-port').value = cfg.smtp_port || 587;

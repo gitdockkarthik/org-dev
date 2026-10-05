@@ -298,8 +298,9 @@ class KafkaAlertTrigger(Base):
     -- backs the tab's "last 10 + show more" view. Also drives the
     notification model agreed 2026-09-28: an immediate Teams card on firing,
     only if no other trigger for the same alert_config_id + cluster_id is
-    already open (resolved_at NULL); no immediate card on resolution --
-    instead a separate periodic digest covers Resolved/Pending/Recurrence.
+    already open (resolved_at NULL); on resolution a resolve card is sent
+    through teams_alerts._send_resolve_cards (only when the original card
+    reached Teams and the rule allows it).
     is_recurrence=True marks a trigger that fired again shortly after the
     same alert+cluster's previous trigger had resolved (flapping signal)."""
     __tablename__ = "kafka_alert_triggers"

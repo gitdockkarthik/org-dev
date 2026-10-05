@@ -56,7 +56,6 @@ _DEFAULTS: dict = {
     # Teams escalation
     "teams_enabled": False,
     "teams_webhook_url": "",
-    "teams_digest_interval_minutes": 5,
 
     # Email escalation -- configuration scaffolding only (2026-09-29),
     # not yet wired to any sending logic. All blank/disabled until real
@@ -151,7 +150,6 @@ class SettingsPayload(BaseModel):
     # Teams escalation
     teams_enabled: bool = False
     teams_webhook_url: str = ""
-    teams_digest_interval_minutes: int = 5
 
     # Email escalation -- see the matching comment in _DEFAULTS above.
     email_enabled: bool = False

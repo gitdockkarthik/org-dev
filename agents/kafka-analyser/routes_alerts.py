@@ -1,7 +1,7 @@
 """CRUD + trigger-history routes for kafka_alert_configs / kafka_alert_triggers,
-backing the Teams tab's "Alert Configuration and Reporting" sub-tab. Firing,
-resolution and the digest live in teams_alerts.py; these routes only manage
-rules and read their history."""
+backing the Teams tab's "Alert Configuration and Reporting" sub-tab. Firing
+and resolution (including resolve cards) live in teams_alerts.py; these
+routes only manage rules and read their history."""
 import logging
 import math
 from datetime import datetime, timedelta, timezone
