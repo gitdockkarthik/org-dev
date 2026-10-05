@@ -378,12 +378,14 @@
     // Adding an alert type later is a one-line change here. `group` is the
     // dropdown <optgroup>; `kind` picks the form fields: 'threshold_count'
     // (threshold + severity), 'tiers' (info/warning/critical values, severity
-    // comes from the tier) or 'binary' (severity only).
+    // comes from the tier) or 'binary' (severity only). `resolves` marks types
+    // whose evaluator sends a resolve card (teams_alerts._send_resolve_cards);
+    // a new type must not set it until its evaluator calls that function.
     const ALERT_TYPES = [
       { value: 'close_wait_spike', label: 'CLOSE_WAIT spike', group: 'Connections', kind: 'threshold_count' },
-      { value: 'broker_unreachable', label: 'Broker reachability (live check)', group: 'Broker', kind: 'binary' },
-      { value: 'broker.cpu_pct', label: 'Broker CPU %', group: 'Broker', kind: 'tiers', unit: '%' },
-      { value: 'broker.heap_pct', label: 'Broker heap %', group: 'Broker', kind: 'tiers', unit: '%' },
+      { value: 'broker_unreachable', label: 'Broker reachability (live check)', group: 'Broker', kind: 'binary', resolves: true },
+      { value: 'broker.cpu_pct', label: 'Broker CPU %', group: 'Broker', kind: 'tiers', unit: '%', resolves: true },
+      { value: 'broker.heap_pct', label: 'Broker heap %', group: 'Broker', kind: 'tiers', unit: '%', resolves: true },
     ];
     const TIER_IDS = { info: 'af-tier-info', warning: 'af-tier-warning', critical: 'af-tier-critical' };
 
@@ -475,6 +477,7 @@
       $('af-threshold').closest('.field').classList.toggle('hidden', t.kind !== 'threshold_count');
       $('af-severity').closest('.field').classList.toggle('hidden', t.kind === 'tiers');
       $('af-tiers-field').classList.toggle('hidden', t.kind !== 'tiers');
+      $('af-resolve-card').closest('.field').classList.toggle('hidden', !t.resolves);
       document.querySelectorAll('.af-tier-unit').forEach(el => { el.textContent = t.unit ? ` (${t.unit})` : ''; });
     }
 
@@ -530,6 +533,7 @@
       if (!name) { showMsg(msgEl, '✗ Name is required', 'err', 0); return; }
       const clusterVal = $('af-cluster').value;
       const kind = selectedAlertType().kind;
+      const resolves = !!selectedAlertType().resolves;
       const payload = {
         name,
         alert_type: $('af-alert-type').value,
@@ -541,8 +545,9 @@
         cooldown_minutes: parseInt($('af-cooldown').value, 10),
         webhook_url: $('af-webhook').value.trim() || null,
         enabled: $('af-enabled').checked,
-        send_resolve_card: $('af-resolve-card').checked,
       };
+      // Only types whose evaluator sends resolve cards store the option.
+      if (resolves) payload.send_resolve_card = $('af-resolve-card').checked;
       if (kind === 'threshold_count' && (!Number.isInteger(payload.threshold) || payload.threshold < 1)) {
         showMsg(msgEl, '✗ Threshold must be a whole number of at least 1', 'err', 0); return;
       }
@@ -616,7 +621,8 @@
           ? 'by tier'
           : `<span class="sev sev--${esc(c.severity)}">${esc(c.severity)}</span>`;
         // Rules saved before the option existed have no field: treated as on.
-        const resolveLine = c.send_resolve_card !== false ? '<div class="hint">↩ resolve card</div>' : '';
+        const resolveLine = alertTypeOf(c.alert_type).resolves && c.send_resolve_card !== false
+          ? '<div class="hint">↩ resolve card</div>' : '';
         return `
           <tr>
             <td><strong>${esc(c.name)}</strong></td>
