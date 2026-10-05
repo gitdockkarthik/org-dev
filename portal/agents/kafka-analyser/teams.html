@@ -210,6 +210,13 @@
               <option value="">All clusters</option>
             </select>
             <div class="hint" id="af-cluster-hint"></div>
+            <div class="hidden" id="af-all-clusters-row" style="margin-top:0.5rem">
+              <div class="checkbox-row">
+                <input type="checkbox" id="af-all-clusters" />
+                <label for="af-all-clusters">Create for every cluster</label>
+              </div>
+              <div class="hint">One independent rule per cluster, created disabled. A cluster that already has this rule is skipped.</div>
+            </div>
           </div>
           <div class="field">
             <label for="af-severity">Severity</label>
@@ -277,6 +284,24 @@
         <div id="alert-form-msg" class="action-msg hidden"></div>
       </div>
 
+      <!-- Copy a cluster rule to other clusters -->
+      <div class="card hidden" id="copy-panel">
+        <div class="card-title">Copy rule</div>
+        <div class="card-subtitle" id="copy-source"></div>
+        <div class="field">
+          <label>Copy to clusters</label>
+          <div id="copy-clusters"></div>
+          <div class="hint">Copies are created disabled; a cluster that already has this rule is skipped</div>
+        </div>
+        <div class="actions" style="margin-top:1rem">
+          <button class="btn btn-secondary" id="btn-copy-preview">Preview</button>
+          <button class="btn btn-primary" id="btn-copy-run">Copy</button>
+          <button class="btn btn-secondary" id="btn-copy-cancel">Cancel</button>
+        </div>
+        <div id="copy-msg" class="action-msg hidden"></div>
+        <div id="copy-result"></div>
+      </div>
+
       <!-- Alert rules list -->
       <div class="card">
         <div class="card-head">
@@ -284,6 +309,13 @@
             <div class="card-title">Alert Rules</div>
           </div>
           <button class="btn btn-primary" id="btn-new-alert" style="padding:0.375rem 0.875rem">+ New Alert Rule</button>
+        </div>
+        <div class="field" style="max-width:20rem">
+          <label for="configs-cluster-filter">Show</label>
+          <select id="configs-cluster-filter">
+            <option value="">All rules</option>
+            <option value="general">General rules (all clusters)</option>
+          </select>
         </div>
         <div class="data-table-wrap">
           <table class="data-table">
@@ -381,9 +413,12 @@
     // comes from the tier) or 'binary' (severity only). `resolves` marks types
     // whose evaluator sends a resolve card (teams_alerts._send_resolve_cards);
     // a new type must not set it until its evaluator calls that function.
+    // `general` marks rules that apply to all clusters (routes_alerts.
+    // _GENERAL_ALERT_TYPES); every other type is a cluster rule: one per
+    // cluster, a cluster is required and "All clusters" is not offered.
     const ALERT_TYPES = [
-      { value: 'close_wait_spike', label: 'CLOSE_WAIT spike', group: 'Connections', kind: 'threshold_count', resolves: true },
-      { value: 'broker_unreachable', label: 'Broker reachability (live check)', group: 'Broker', kind: 'binary', resolves: true },
+      { value: 'close_wait_spike', label: 'CLOSE_WAIT spike', group: 'Connections', kind: 'threshold_count', resolves: true, general: true },
+      { value: 'broker_unreachable', label: 'Broker reachability (live check)', group: 'Broker', kind: 'binary', resolves: true, general: true },
       { value: 'broker.cpu_pct', label: 'Broker CPU %', group: 'Broker', kind: 'tiers', unit: '%', resolves: true },
       { value: 'broker.heap_pct', label: 'Broker heap %', group: 'Broker', kind: 'tiers', unit: '%', resolves: true },
     ];
@@ -402,6 +437,11 @@
     let _tempClusterOption = null;
     // True once the admin changes the cluster select during an edit.
     let editingClusterTouched = false;
+    // Cluster list state for the hint: true while loading, or the load error.
+    let _clustersLoading = false;
+    let _clustersError = null;
+    // True when the list loaded but no cluster is enabled.
+    let _noEnabledClusters = false;
 
     document.querySelectorAll('.tab-btn').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -490,6 +530,57 @@
       $('af-tiers-field').classList.toggle('hidden', t.kind !== 'tiers');
       $('af-resolve-card').closest('.field').classList.toggle('hidden', !t.resolves);
       document.querySelectorAll('.af-tier-unit').forEach(el => { el.textContent = t.unit ? ` (${t.unit})` : ''; });
+      applyClusterOption();
+    }
+
+    // "All clusters" ('' option) is offered for general rules only. For a
+    // cluster rule it is hidden and, if selected, nothing is selected instead.
+    // Called again after the cluster list is rebuilt.
+    function applyClusterOption() {
+      const sel = $('af-cluster');
+      const general = !!selectedAlertType().general;
+      const allOpt = sel.querySelector('option[value=""]');
+      if (allOpt) {
+        allOpt.hidden = !general;
+        allOpt.disabled = !general;
+      }
+      if (!general && sel.value === '') sel.selectedIndex = -1;
+      if (general && sel.selectedIndex === -1) sel.value = '';
+      const hint = $('af-cluster-hint');
+      if (_clustersLoading) {
+        hint.textContent = 'Loading clusters…';
+      } else if (_clustersError) {
+        hint.textContent = 'Could not load clusters (' + _clustersError + ') — ' + (general
+          ? 'only "All clusters" is available.'
+          : 'this metric needs a cluster, so a new rule cannot be saved.');
+      } else if (_noEnabledClusters) {
+        hint.textContent = 'No enabled clusters — ' + (general
+          ? 'only "All clusters" is available.'
+          : 'this metric needs a cluster, so a new rule cannot be saved.');
+      } else {
+        hint.textContent = general ? '' : 'Required: this metric is set per cluster';
+      }
+      applyAllClustersOption();
+    }
+
+    // "Create for every cluster": offered only when creating a cluster rule.
+    // Ticked, the single-cluster select is disabled and not required.
+    function applyAllClustersOption() {
+      const row = $('af-all-clusters-row');
+      const box = $('af-all-clusters');
+      const offered = editingId === null && !selectedAlertType().general;
+      row.classList.toggle('hidden', !offered);
+      if (!offered) box.checked = false;
+      $('af-cluster').disabled = box.checked;
+      if (box.checked && !_clustersLoading && !_clustersError) {
+        $('af-cluster-hint').textContent = 'Not used: a rule is created for every cluster';
+      }
+    }
+
+    $('af-all-clusters').addEventListener('change', applyClusterOption);
+
+    function allClustersSelected() {
+      return editingId === null && $('af-all-clusters').checked && !$('af-all-clusters-row').classList.contains('hidden');
     }
 
     $('af-alert-type').addEventListener('change', applyTypeFields);
@@ -504,6 +595,7 @@
       $('af-webhook').value = '';
       $('af-enabled').checked = true;
       $('af-resolve-card').checked = true;
+      $('af-all-clusters').checked = false;
       Object.values(TIER_IDS).forEach(id => { $(id).value = ''; });
       applyTypeFields();
       hideMsg($('alert-form-msg'));
@@ -511,19 +603,27 @@
 
     async function loadClusterOptions() {
       const sel = $('af-cluster');
-      const hint = $('af-cluster-hint');
-      hint.textContent = 'Loading clusters…';
+      _clustersLoading = true;
+      _clustersError = null;
+      _noEnabledClusters = false;
+      applyClusterOption();
       try {
         const d = await api('/settings/clusters');
         const current = sel.value;
-        sel.innerHTML = '<option value="">All clusters</option>' + (d.clusters || []).map(c =>
-          `<option value="${esc(c.id)}">${esc(c.name)}${c.enabled ? '' : ' (disabled)'}</option>`
+        // Enabled clusters only; the Copy panel and "Create for every
+        // cluster" read these options. A rule on a disabled cluster still
+        // shows it through openEditForm's temporary option.
+        const enabled = (d.clusters || []).filter(c => c.enabled);
+        _noEnabledClusters = !enabled.length;
+        sel.innerHTML = '<option value="">All clusters</option>' + enabled.map(c =>
+          `<option value="${esc(c.id)}">${esc(c.name)}</option>`
         ).join('');
         sel.value = current;
-        hint.textContent = '';
       } catch (err) {
-        hint.textContent = 'Could not load clusters (' + err.message + ') — only "All clusters" is available.';
+        _clustersError = err.message;
       }
+      _clustersLoading = false;
+      applyClusterOption();
     }
 
     // Back to "new rule" mode: type selectable, Enabled shown, default texts.
@@ -605,6 +705,32 @@
       const name = $('af-name').value.trim();
       if (!name) { showMsg(msgEl, '✗ Name is required', 'err', 0); return; }
       const clusterVal = $('af-cluster').value;
+      // "Create for every cluster": the first cluster gets the rule, the
+      // others get copies (POST /alerts/configs/copy).
+      let everyClusterIds = null;
+      let everyClusterDropped = 0;
+      if (allClustersSelected()) {
+        everyClusterIds = [...$('af-cluster').options]
+          .filter(o => o.value !== '' && !o.dataset.temp)
+          .map(o => parseInt(o.value, 10));
+        if (everyClusterIds.length < 2) {
+          showMsg(msgEl, '✗ Only one cluster is available - use the cluster selector', 'err', 0); return;
+        }
+        // Start from the first cluster without this type, so the first POST
+        // is not refused as a duplicate; the dropped ones count as skipped.
+        const alertType = $('af-alert-type').value;
+        const haveType = new Set(_alertConfigs
+          .filter(c => c.alert_type === alertType && c.cluster_id != null)
+          .map(c => Number(c.cluster_id)));
+        const remaining = everyClusterIds.filter(id => !haveType.has(id));
+        everyClusterDropped = everyClusterIds.length - remaining.length;
+        if (!remaining.length) {
+          showMsg(msgEl, '✗ Every cluster already has this rule', 'err', 0); return;
+        }
+        everyClusterIds = remaining;
+      } else if (editingId === null && !selectedAlertType().general && !clusterVal) {
+        showMsg(msgEl, '✗ Cluster is required for this metric', 'err', 0); return;
+      }
       const kind = selectedAlertType().kind;
       const resolves = !!selectedAlertType().resolves;
       const payload = {
@@ -621,6 +747,10 @@
       };
       // Only types whose evaluator sends resolve cards store the option.
       if (resolves) payload.send_resolve_card = $('af-resolve-card').checked;
+      if (everyClusterIds) {
+        payload.cluster_id = everyClusterIds[0];
+        payload.enabled = false;
+      }
       if (kind === 'threshold_count' && (!Number.isInteger(payload.threshold) || payload.threshold < 1)) {
         showMsg(msgEl, '✗ Threshold must be a whole number of at least 1', 'err', 0); return;
       }
@@ -647,7 +777,23 @@
       btn.disabled = true;
       showMsg(msgEl, 'Saving…', 'info', 0);
       try {
-        if (editingId === null) {
+        if (editingId === null && everyClusterIds) {
+          const first = await api('/alerts/configs', { method: 'POST', body: JSON.stringify(payload) });
+          const firstName = (first.config && first.config.cluster_name) || ('cluster ' + everyClusterIds[0]);
+          $('alert-form-card').classList.add('hidden');
+          resetAlertForm();
+          try {
+            const d = everyClusterIds.length > 1
+              ? await api('/alerts/configs/copy', {
+                method: 'POST',
+                body: JSON.stringify({ config_id: first.config.id, target_cluster_ids: everyClusterIds.slice(1), preview: false }),
+              })
+              : { created: [], skipped: [] };
+            showMsg($('configs-msg'), '✓ Created ' + (1 + (d.created || []).length) + ' rule(s), ' + ((d.skipped || []).length + everyClusterDropped) + ' skipped', 'ok');
+          } catch (err) {
+            showMsg($('configs-msg'), '✗ Rule created on ' + firstName + ', but copying to the other clusters failed: ' + err.message + '. Use the Copy button on that rule.', 'err', 0);
+          }
+        } else if (editingId === null) {
           await api('/alerts/configs', { method: 'POST', body: JSON.stringify(payload) });
           $('alert-form-card').classList.add('hidden');
           resetAlertForm();
@@ -693,13 +839,41 @@
       return parts.join(' · ') + (t.unit ? ` ${t.unit}` : '');
     }
 
+    // View-only filter: '' = all rules, 'general' = general types, else a cluster id.
+    function matchesConfigFilter(c, filter) {
+      if (filter === '') return true;
+      if (filter === 'general') return !!alertTypeOf(c.alert_type).general;
+      return c.cluster_id != null && String(c.cluster_id) === filter;
+    }
+
+    // Options: the two fixed ones plus each cluster that has at least one rule.
+    function buildConfigsClusterFilter() {
+      const sel = $('configs-cluster-filter');
+      const current = sel.value;
+      const clusters = new Map();
+      _alertConfigs.forEach(c => {
+        if (c.cluster_id != null && !clusters.has(String(c.cluster_id))) clusters.set(String(c.cluster_id), c.cluster_name);
+      });
+      sel.innerHTML = '<option value="">All rules</option><option value="general">General rules (all clusters)</option>' +
+        [...clusters].map(([id, name]) => `<option value="${esc(id)}">${esc(name || ('Cluster ' + id))}</option>`).join('');
+      sel.value = [...sel.options].some(o => o.value === current) ? current : '';
+    }
+
+    $('configs-cluster-filter').addEventListener('change', () => renderConfigs(_alertConfigs));
+
     function renderConfigs(configs) {
       const body = $('configs-body');
       if (!configs.length) {
         body.innerHTML = '<tr><td colspan="10" class="data-table__empty">No alert rules configured yet. Click "+ New Alert Rule" to create one.</td></tr>';
         return;
       }
-      body.innerHTML = configs.map(c => {
+      const filter = $('configs-cluster-filter').value;
+      const shown = configs.filter(c => matchesConfigFilter(c, filter));
+      if (!shown.length) {
+        body.innerHTML = '<tr><td colspan="10" class="data-table__empty">No rules match this filter.</td></tr>';
+        return;
+      }
+      body.innerHTML = shown.map(c => {
         const openCell = c.open_trigger_count > 0
           ? `<span class="open-count-warn" title="Currently unresolved">⚠ ${esc(c.open_trigger_count)}</span>`
           : '0';
@@ -711,6 +885,9 @@
         // Rules saved before the option existed have no field: treated as on.
         const resolveLine = alertTypeOf(c.alert_type).resolves && c.send_resolve_card !== false
           ? '<div class="hint">↩ resolve card</div>' : '';
+        // Only cluster rules can be copied to other clusters.
+        const copyBtn = alertTypeOf(c.alert_type).general
+          ? '' : `<button class="btn btn-secondary btn-sm config-copy" data-id="${esc(c.id)}">Copy</button> `;
         return `
           <tr>
             <td><strong>${esc(c.name)}</strong></td>
@@ -734,7 +911,7 @@
               </label>
             </td>
             <td>${openCell}</td>
-            <td class="nowrap"><button class="btn btn-secondary btn-sm config-edit" data-id="${esc(c.id)}">Edit</button> <button class="btn btn-danger btn-sm config-delete" data-id="${esc(c.id)}" data-name="${esc(c.name)}">Delete</button></td>
+            <td class="nowrap">${copyBtn}<button class="btn btn-secondary btn-sm config-edit" data-id="${esc(c.id)}">Edit</button> <button class="btn btn-danger btn-sm config-delete" data-id="${esc(c.id)}" data-name="${esc(c.name)}">Delete</button></td>
           </tr>`;
       }).join('');
 
@@ -770,6 +947,14 @@
         });
       });
 
+      body.querySelectorAll('.config-copy').forEach(btn => {
+        btn.addEventListener('click', function () {
+          const id = parseInt(this.dataset.id, 10);
+          const c = _alertConfigs.find(x => x.id === id);
+          if (c) openCopyPanel(c);
+        });
+      });
+
       body.querySelectorAll('.config-edit').forEach(btn => {
         btn.addEventListener('click', function () {
           const id = parseInt(this.dataset.id, 10);
@@ -796,10 +981,78 @@
       });
     }
 
+    // ── Copy rule panel ──────────────────────────────────────────────────
+    // The rule being copied (set when the panel opens).
+    let _copySource = null;
+
+    // Targets come from the form's cluster select (filled by
+    // loadClusterOptions), without "All clusters", a temporary edit option
+    // and the rule's own cluster.
+    function openCopyPanel(c) {
+      _copySource = c;
+      $('copy-source').textContent = `Source: ${c.name} (${alertTypeLabel(c.alert_type)}) on ${c.cluster_name}`;
+      const options = [...$('af-cluster').options]
+        .filter(o => o.value !== '' && !o.dataset.temp && o.value !== String(c.cluster_id));
+      $('copy-clusters').innerHTML = options.length
+        ? options.map(o => `
+          <div class="checkbox-row">
+            <input type="checkbox" class="copy-target" id="copy-target-${esc(o.value)}" value="${esc(o.value)}" />
+            <label for="copy-target-${esc(o.value)}">${esc(o.textContent)}</label>
+          </div>`).join('')
+        : '<div class="hint">No other clusters loaded.</div>';
+      $('copy-result').innerHTML = '';
+      hideMsg($('copy-msg'));
+      $('copy-panel').classList.remove('hidden');
+      $('copy-panel').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function copyResultHtml(d) {
+      const list = (title, items) => `
+        <div style="margin-top:0.75rem"><strong>${esc(title)}</strong>${items.length
+          ? '<ul style="margin:0.25rem 0 0 1.25rem">' + items.map(i => `<li>${i}</li>`).join('') + '</ul>'
+          : ' <span class="hint">none</span>'}</div>`;
+      const created = (d.created || []).map(x => esc(x.cluster_name));
+      const skipped = (d.skipped || []).map(x => `${esc(x.cluster_name)} (${esc(x.reason)})`);
+      return list(d.preview ? 'Would create' : 'Created', created) + list(d.preview ? 'Would skip' : 'Skipped', skipped);
+    }
+
+    async function runCopy(preview) {
+      const msgEl = $('copy-msg');
+      const targets = [...$('copy-clusters').querySelectorAll('.copy-target:checked')].map(b => parseInt(b.value, 10));
+      if (!targets.length) { showMsg(msgEl, '✗ Tick at least one cluster', 'err', 0); return; }
+      const buttons = ['btn-copy-preview', 'btn-copy-run', 'btn-copy-cancel'].map($);
+      buttons.forEach(b => { b.disabled = true; });
+      showMsg(msgEl, preview ? 'Previewing…' : 'Copying…', 'info', 0);
+      try {
+        const d = await api('/alerts/configs/copy', {
+          method: 'POST',
+          body: JSON.stringify({ config_id: _copySource.id, target_cluster_ids: targets, preview }),
+        });
+        $('copy-result').innerHTML = copyResultHtml(d);
+        hideMsg(msgEl);
+        if (!preview) {
+          await loadConfigs();
+          showMsg($('configs-msg'), '✓ Copied ' + (d.created || []).length + ' rule(s)', 'ok');
+        }
+      } catch (err) {
+        showMsg(msgEl, '✗ ' + (preview ? 'Preview' : 'Copy') + ' failed: ' + err.message, 'err', 0);
+      } finally {
+        buttons.forEach(b => { b.disabled = false; });
+      }
+    }
+
+    $('btn-copy-preview').addEventListener('click', () => runCopy(true));
+    $('btn-copy-run').addEventListener('click', () => runCopy(false));
+    $('btn-copy-cancel').addEventListener('click', () => {
+      $('copy-panel').classList.add('hidden');
+      _copySource = null;
+    });
+
     async function loadConfigs() {
       try {
         const d = await api('/alerts/configs');
         _alertConfigs = d.configs || [];
+        buildConfigsClusterFilter();
         renderConfigs(_alertConfigs);
       } catch (err) {
         $('configs-body').innerHTML =
