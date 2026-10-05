@@ -1207,10 +1207,17 @@ Extend the shared threshold mechanism (BROKER_THRESHOLD_METRICS in
 teams_alerts.py) rather than writing a near-copy per metric; only metrics
 the agent really collects (the broker table reads zero for URP, GC, idle and
 rates; CPU and heap are the Prometheus-filtered ones that work); Simple mode
-only until baseline data exists for Comparison mode. (2) The old CLOSE_WAIT
-path sends no resolve card and is gated by the hardcoded
-_TEAMS_ALERTS_ENABLED (False): replace with a UI setting and an
-"alerting paused" notice. (3) The first card of a restart re-counts failures
+only until baseline data exists for Comparison mode. (2) DONE 2026-10-05:
+_TEAMS_ALERTS_ENABLED removed (987a7c4); CLOSE_WAIT alerting now follows the
+Teams setting and the rule's Enabled toggle; the resolve pass runs only when
+teams_enabled is on; CLOSE_WAIT sends resolve cards (898dc42) and the form
+offers the option (2f98f49); the old digest and its
+teams_digest_interval_minutes setting are removed (ab175ad; a stored row, if
+present, is still returned by GET /settings). NOT observed: a real CLOSE_WAIT
+confirmation producing a card and its resolve (none since the socket fix).
+Open: two wording leftovers in collectors.py (a comment citing the
+digest-interval gate, and the warning text "Teams resolve/digest scheduling
+failed"). (3) The first card of a restart re-counts failures
 a pre-restart card may have shown (the previous-card time is in memory). (4)
 A resolve under 30 seconds reads "Open for 0 min". (5) Typing letters into a
 tier input reads as "Set at least one tier" in a browser. (6) Edit sends
@@ -1564,6 +1571,9 @@ visible toggle can look enabled while nothing sends. Replace with a UI
 setting plus an "alerting paused" notice on the Notifications page when a
 gate blocks sends. The CLOSE_WAIT alert rule is intentionally left off:
 the health card already shows per-broker stale connections.
+UPDATE 2026-10-05: the hardcoded switch no longer exists; the two remaining
+gates (the Teams setting and each rule's Enabled toggle) are both visible in
+the UI.
 
 ### Schedules and Reminders tab: show watchdog escalations (2026-09-29)
 When the Schedules and Reminders sub-tab is built, escalations from the
