@@ -1681,6 +1681,51 @@ async def run_snapshot_rollups() -> dict:
     return results
 
 
+# Resolved alert triggers older than this are purged daily (kafka-alert-trigger-purge).
+# Open triggers (resolved_at IS NULL) are never deleted, whatever their age.
+ALERT_TRIGGER_RETENTION_DAYS = 90
+_ALERT_TRIGGER_PURGE_BATCH = 1000
+
+
+async def purge_resolved_alert_triggers() -> dict:
+    """Delete kafka_alert_triggers rows resolved more than
+    ALERT_TRIGGER_RETENTION_DAYS ago, _ALERT_TRIGGER_PURGE_BATCH ids per
+    DELETE (each committed), looping until a batch comes back short. A failure
+    is logged and returned, never raised; batches already committed stay
+    deleted."""
+    from database import SessionLocal
+    from sqlalchemy import text as _t
+    from datetime import datetime, timezone, timedelta
+    if SessionLocal is None:
+        return {"error": "DB unavailable"}
+    cutoff = datetime.now(timezone.utc) - timedelta(days=ALERT_TRIGGER_RETENTION_DAYS)
+    deleted = 0
+    try:
+        async with SessionLocal() as sess:
+            while True:
+                result = await sess.execute(_t("""
+                    DELETE FROM kafka_alert_triggers WHERE id IN (
+                        SELECT id FROM kafka_alert_triggers
+                        WHERE resolved_at IS NOT NULL AND resolved_at < :cutoff
+                        ORDER BY id LIMIT :batch
+                    )
+                """), {"cutoff": cutoff, "batch": _ALERT_TRIGGER_PURGE_BATCH})
+                await sess.commit()
+                deleted += result.rowcount
+                if result.rowcount < _ALERT_TRIGGER_PURGE_BATCH:
+                    break
+        logger.info(
+            "purge_resolved_alert_triggers: deleted %d trigger(s) resolved before %s (%d-day retention)",
+            deleted, cutoff.isoformat(), ALERT_TRIGGER_RETENTION_DAYS,
+        )
+        purge_resolved_alert_triggers._last_result = f"Deleted {deleted} resolved triggers older than {ALERT_TRIGGER_RETENTION_DAYS} days"
+        return {"deleted": deleted}
+    except Exception as e:
+        logger.error("purge_resolved_alert_triggers failed after deleting %d: %s", deleted, e)
+        purge_resolved_alert_triggers._last_result = f"Failed after deleting {deleted}: {e}"
+        return {"error": str(e), "deleted": deleted}
+
+
 def _breaker_tcp_check_sync(host: str, port: int, timeout: float = 5.0) -> bool:
     """Raw TCP connect + immediate close -- no Kafka protocol handshake at
     all, so this can never itself leak a connection or add meaningful load.

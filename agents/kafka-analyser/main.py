@@ -851,6 +851,27 @@ async def lifespan(app: FastAPI):
             )
             logger.info("Created schedule for %s: weekly (Sunday 03:00 UTC)", _vacuum_job_id)
 
+    # Register the alert-trigger purge -- standalone, cluster-agnostic, DB only.
+    # Daily at 04:43 UTC (quiet hour, off the :00 rollup and the Sunday 03:00 VACUUM).
+    from collectors import purge_resolved_alert_triggers, ALERT_TRIGGER_RETENTION_DAYS
+    _trigger_purge_job_id = "kafka-alert-trigger-purge"
+    _jobs_module.register_job(
+        _trigger_purge_job_id,
+        "Alert Trigger Purge",
+        f"Deletes alert triggers resolved more than {ALERT_TRIGGER_RETENTION_DAYS} days ago, in batches; open triggers are never deleted",
+        purge_resolved_alert_triggers,
+        default_timeout_secs=60,
+    )
+    async with SessionLocal() as _sess:
+        existing = await _sess.execute(
+            _sel(KafkaJobSchedule).where(KafkaJobSchedule.job_id == _trigger_purge_job_id)
+        )
+        if not existing.scalar_one_or_none():
+            await _jobs_module.create_schedule(
+                _trigger_purge_job_id, "43 4 * * *", enabled=True, timeout_secs=60
+            )
+            logger.info("Created schedule for %s: daily (04:43 UTC)", _trigger_purge_job_id)
+
     count = await _jobs_module.load_schedules()
     logger.info("Job scheduler: loaded %d schedule(s)", count)
     _jobs_module.start_scheduler()
