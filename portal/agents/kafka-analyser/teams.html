@@ -74,6 +74,21 @@
     .af-tier-input { display: flex; align-items: center; gap: 0.375rem; }
     .field .af-tier-input input[type="number"] { flex: 1 1 6rem; min-width: 6rem; }
     .af-tier-unit { white-space: nowrap; font-size: 0.8125rem; color: #64748b; }
+    /* Alert rules table filters: one row that wraps on narrow screens. */
+    .configs-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0 1rem; }
+    .configs-filters .field { flex: 0 1 12rem; min-width: 9rem; margin-bottom: 0.75rem; }
+    .configs-filters .field:first-child { flex-basis: 16rem; }
+    .configs-filters .configs-page-size-field { flex: 0 0 6rem; min-width: 6rem; }
+    .configs-search { position: relative; }
+    .field .configs-search input[type="text"] { padding-right: 1.75rem; }
+    .configs-search-clear {
+      position: absolute; right: 0.375rem; top: 50%; transform: translateY(-50%);
+      border: none; background: none; padding: 0.125rem 0.25rem; line-height: 1;
+      font-size: 1rem; color: #94a3b8; cursor: pointer;
+    }
+    .configs-search-clear:hover { color: #475569; }
+    .configs-filters .configs-reset { margin-bottom: 0.75rem; }
+    #configs-count { margin: 0 0 0.5rem; font-size: 0.8125rem; color: #64748b; }
 
     .hidden { display: none; }
 
@@ -335,20 +350,45 @@
           </div>
           <button class="btn btn-primary" id="btn-new-alert" style="padding:0.375rem 0.875rem">+ New Alert Rule</button>
         </div>
-        <div class="field" style="max-width:20rem">
-          <label for="configs-cluster-filter">Show</label>
-          <select id="configs-cluster-filter">
-            <option value="">All rules</option>
-            <option value="general">General rules (all clusters)</option>
-          </select>
+        <div class="configs-filters">
+          <div class="field">
+            <label for="configs-cluster-filter">Show</label>
+            <select id="configs-cluster-filter">
+              <option value="">All rules</option>
+              <option value="general">General rules (all clusters)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="configs-type-filter">Type</label>
+            <select id="configs-type-filter">
+              <option value="">All types</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="configs-state-filter">State</label>
+            <select id="configs-state-filter">
+              <option value="">All</option>
+              <option value="enabled">Enabled</option>
+              <option value="disabled">Disabled</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="configs-name-search">Name</label>
+            <div class="configs-search">
+              <input type="text" id="configs-name-search" placeholder="Contains" autocomplete="off" />
+              <button type="button" class="configs-search-clear" id="btn-configs-name-clear" title="Clear name search" aria-label="Clear name search">&times;</button>
+            </div>
+          </div>
+          <div class="field configs-page-size-field">
+            <label for="configs-page-size">Per page</label>
+            <select id="configs-page-size">
+              <option value="10" selected>10</option>
+              <option value="25">25</option>
+            </select>
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm configs-reset hidden" id="btn-configs-reset">Reset filters</button>
         </div>
-        <div class="field" style="max-width:8rem">
-          <label for="configs-page-size">Per page</label>
-          <select id="configs-page-size">
-            <option value="10" selected>10</option>
-            <option value="25">25</option>
-          </select>
-        </div>
+        <div id="configs-count"></div>
         <div class="show-more-row configs-pager hidden" id="configs-pager-top" style="margin:0 0 0.75rem">
           <button class="btn btn-secondary btn-sm configs-prev" id="btn-configs-prev-top">Previous</button>
           <button class="btn btn-secondary btn-sm configs-next" id="btn-configs-next-top">Next</button>
@@ -950,7 +990,65 @@
       sel.value = [...sel.options].some(o => o.value === current) ? current : '';
     }
 
+    // Options: "All types" plus each type that has at least one rule, by label.
+    function buildConfigsTypeFilter() {
+      const sel = $('configs-type-filter');
+      const current = sel.value;
+      const types = [...new Set(_alertConfigs.map(c => c.alert_type))]
+        .map(value => [value, alertTypeLabel(value)])
+        .sort((a, b) => a[1].localeCompare(b[1]));
+      sel.innerHTML = '<option value="">All types</option>' +
+        types.map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join('');
+      sel.value = [...sel.options].some(o => o.value === current) ? current : '';
+    }
+
+    // The cluster, type, state and name filters combine (AND); view only.
+    function configsNameQuery() {
+      return $('configs-name-search').value.trim().toLowerCase();
+    }
+    function configFiltersActive() {
+      return $('configs-cluster-filter').value !== '' || $('configs-type-filter').value !== ''
+        || $('configs-state-filter').value !== '' || configsNameQuery() !== '';
+    }
+    function matchesConfigFilters(c) {
+      const type = $('configs-type-filter').value;
+      const state = $('configs-state-filter').value;
+      const name = configsNameQuery();
+      return matchesConfigFilter(c, $('configs-cluster-filter').value)
+        && (type === '' || c.alert_type === type)
+        && (state === '' || (state === 'enabled') === !!c.enabled)
+        && (name === '' || String(c.name ?? '').toLowerCase().includes(name));
+    }
+
+    // "36 rules, 2 enabled", or "Showing N of 36 rules" while a filter is
+    // active; Reset filters is shown only then.
+    function renderConfigsCount(matching, configs) {
+      const rules = `${configs.length} rule${configs.length === 1 ? '' : 's'}`;
+      const active = configFiltersActive();
+      $('configs-count').textContent = active
+        ? `Showing ${matching} of ${rules}`
+        : `${rules}, ${configs.filter(c => c.enabled).length} enabled`;
+      $('btn-configs-reset').classList.toggle('hidden', !active);
+    }
+
     $('configs-cluster-filter').addEventListener('change', () => { _configsPage = 0; renderConfigs(_alertConfigs); });
+    $('configs-type-filter').addEventListener('change', () => { _configsPage = 0; renderConfigs(_alertConfigs); });
+    $('configs-state-filter').addEventListener('change', () => { _configsPage = 0; renderConfigs(_alertConfigs); });
+    $('configs-name-search').addEventListener('input', () => { _configsPage = 0; renderConfigs(_alertConfigs); });
+    $('btn-configs-name-clear').addEventListener('click', () => {
+      $('configs-name-search').value = '';
+      _configsPage = 0;
+      renderConfigs(_alertConfigs);
+    });
+    // Clears the four filters (not Per page); view only.
+    $('btn-configs-reset').addEventListener('click', () => {
+      $('configs-cluster-filter').value = '';
+      $('configs-type-filter').value = '';
+      $('configs-state-filter').value = '';
+      $('configs-name-search').value = '';
+      _configsPage = 0;
+      renderConfigs(_alertConfigs);
+    });
     $('configs-page-size').addEventListener('change', () => { _configsPage = 0; renderConfigs(_alertConfigs); });
     // Two pagers (above and below the table) share the classes below and
     // _configsPage; renderConfigsPager / showConfigsPagers update both.
@@ -975,12 +1073,13 @@
       const body = $('configs-body');
       if (!configs.length) {
         showConfigsPagers(false);
+        renderConfigsCount(0, configs);
         body.innerHTML = '<tr><td colspan="10" class="data-table__empty">No alert rules configured yet. Click "+ New Alert Rule" to create one.</td></tr>';
         return;
       }
       showConfigsPagers(true);
-      const filter = $('configs-cluster-filter').value;
-      const filtered = configs.filter(c => matchesConfigFilter(c, filter));
+      const filtered = configs.filter(matchesConfigFilters);
+      renderConfigsCount(filtered.length, configs);
       if (!filtered.length) {
         renderConfigsPager(0, 0, configs.length);
         body.innerHTML = '<tr><td colspan="10" class="data-table__empty">No rules match this filter.</td></tr>';
@@ -1174,6 +1273,7 @@
         const d = await api('/alerts/configs');
         _alertConfigs = d.configs || [];
         buildConfigsClusterFilter();
+        buildConfigsTypeFilter();
         renderConfigs(_alertConfigs);
       } catch (err) {
         $('configs-body').innerHTML =
