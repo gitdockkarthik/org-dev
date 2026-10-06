@@ -249,6 +249,11 @@
             </div>
             <div class="hint">Set at least one; the highest tier reached decides the severity</div>
           </div>
+          <div class="field hidden" id="af-min-rf-field">
+            <label for="af-min-rf">Minimum replication factor</label>
+            <input type="number" id="af-min-rf" min="2" step="1" />
+            <div class="hint">A topic counts when its replication factor is below this. System topics (__ prefix, _schemas) and undescribed topics are excluded. Covers RF only; min.insync.replicas is not checked.</div>
+          </div>
           <div class="field">
             <label for="af-cooldown">Cooldown Minutes</label>
             <input type="number" id="af-cooldown" min="0" value="30" />
@@ -416,11 +421,16 @@
     // `general` marks rules that apply to all clusters (routes_alerts.
     // _GENERAL_ALERT_TYPES); every other type is a cluster rule: one per
     // cluster, a cluster is required and "All clusters" is not offered.
+    // `minRf` marks types that also need a minimum replication factor (the
+    // af-min-rf field, sent as min_rf; routes_alerts validates it). Labels
+    // must match routes_alerts._TYPE_LABELS.
     const ALERT_TYPES = [
       { value: 'close_wait_spike', label: 'CLOSE_WAIT spike', group: 'Connections', kind: 'threshold_count', resolves: true, general: true },
       { value: 'broker_unreachable', label: 'Broker reachability (live check)', group: 'Broker', kind: 'binary', resolves: true, general: true },
       { value: 'broker.cpu_pct', label: 'Broker CPU %', group: 'Broker', kind: 'tiers', unit: '%', resolves: true },
       { value: 'broker.heap_pct', label: 'Broker heap %', group: 'Broker', kind: 'tiers', unit: '%', resolves: true },
+      { value: 'cluster.urp_total', label: 'Under-replicated partitions', group: 'Cluster', kind: 'tiers', unit: 'partitions', resolves: true },
+      { value: 'cluster.rf_below_min', label: 'Topics below minimum RF', group: 'Cluster', kind: 'tiers', unit: 'topics', resolves: true, minRf: true },
     ];
     const TIER_IDS = { info: 'af-tier-info', warning: 'af-tier-warning', critical: 'af-tier-critical' };
 
@@ -487,7 +497,9 @@
     }
 
     // FastAPI puts errors in `detail`: a string for HTTPException, or a list
-    // of {loc, msg} objects for request-validation (422) errors.
+    // of {loc, msg} objects for request-validation (422) errors. Pydantic
+    // prefixes custom validator messages with "Value error, "; that is
+    // dropped, and so is the field name when the message already starts with it.
     async function errorFromResponse(res) {
       let body = null;
       try { body = await res.json(); } catch (_) { /* non-JSON body */ }
@@ -495,7 +507,8 @@
       if (Array.isArray(detail)) {
         return detail.map(d => {
           const field = Array.isArray(d.loc) ? d.loc.filter(p => p !== 'body').join('.') : '';
-          return (field ? field + ': ' : '') + (d.msg || JSON.stringify(d));
+          const msg = d.msg ? String(d.msg).replace(/^Value error, /, '') : JSON.stringify(d);
+          return (field && !msg.startsWith(field) ? field + ': ' : '') + msg;
         }).join('; ');
       }
       if (typeof detail === 'string' && detail) return detail;
@@ -528,6 +541,7 @@
       $('af-threshold').closest('.field').classList.toggle('hidden', t.kind !== 'threshold_count');
       $('af-severity').closest('.field').classList.toggle('hidden', t.kind === 'tiers');
       $('af-tiers-field').classList.toggle('hidden', t.kind !== 'tiers');
+      $('af-min-rf-field').classList.toggle('hidden', !t.minRf);
       $('af-resolve-card').closest('.field').classList.toggle('hidden', !t.resolves);
       document.querySelectorAll('.af-tier-unit').forEach(el => { el.textContent = t.unit ? ` (${t.unit})` : ''; });
       applyClusterOption();
@@ -597,6 +611,7 @@
       $('af-resolve-card').checked = true;
       $('af-all-clusters').checked = false;
       Object.values(TIER_IDS).forEach(id => { $(id).value = ''; });
+      $('af-min-rf').value = '';
       applyTypeFields();
       hideMsg($('alert-form-msg'));
     }
@@ -671,6 +686,7 @@
       for (const [tier, id] of Object.entries(TIER_IDS)) {
         $(id).value = config[tier] !== undefined && config[tier] !== null ? String(config[tier]) : '';
       }
+      if (alertTypeOf(c.alert_type).minRf) $('af-min-rf').value = c.min_rf != null ? String(c.min_rf) : '';
       $('af-cooldown').value = String(c.cooldown_minutes);
       $('af-webhook').value = c.webhook_url || '';
       $('af-resolve-card').checked = c.send_resolve_card !== false;
@@ -770,6 +786,16 @@
         }
         payload.tiers = tiers;
       }
+      // Sent for minRf types only; copies made by "Create for every cluster"
+      // inherit it from the first rule's config.
+      if (selectedAlertType().minRf) {
+        const raw = $('af-min-rf').value.trim();
+        const minRf = /^\d+$/.test(raw) ? parseInt(raw, 10) : NaN;
+        if (!Number.isInteger(minRf) || minRf < 2) {
+          showMsg(msgEl, '✗ Minimum replication factor must be a whole number of at least 2', 'err', 0); return;
+        }
+        payload.min_rf = minRf;
+      }
       if (!Number.isInteger(payload.cooldown_minutes) || payload.cooldown_minutes < 0) {
         showMsg(msgEl, '✗ Cooldown Minutes must be a whole number of 0 or more', 'err', 0); return;
       }
@@ -835,6 +861,8 @@
       const parts = Object.keys(TIER_SHORT)
         .filter(tier => config[tier] !== undefined && config[tier] !== null)
         .map(tier => `${TIER_SHORT[tier]} ${config[tier]}`);
+      // minRf types lead with the stored minimum: "RF < 3 · warn 5 · crit 20 topics".
+      if (t.minRf && c.min_rf != null) parts.unshift(`RF < ${c.min_rf}`);
       if (!parts.length) return '—';
       return parts.join(' · ') + (t.unit ? ` ${t.unit}` : '');
     }
