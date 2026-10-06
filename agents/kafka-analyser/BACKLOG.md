@@ -1180,6 +1180,35 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Message rate in (cluster.msg_rate_in) and default rules (2026-10-06)
+DONE (deployed 05:57 UTC, form checked in the browser): cluster.msg_rate_in,
+the first "fire BELOW a tier" metric. Tiers descend (info > warning >
+critical), zero allowed, stored with "direction": "below". Source:
+kafka_topic_message_rate_snapshots rows written by
+collect_topic_message_inflow (topic-inflow, every ~10 min; consumer-lag also
+writes outflow-only rows to this table, so every query filters inflow IS NOT
+NULL). Value = SUM(inflow) / interval_seconds of the LATEST inflow run per
+cluster; ignored (no fire/resolve/counter change) if that run is older than
+15 min or interval_seconds is missing, <= 0 or > 1200. A breach counts only
+when a NEW collected_at appears (in-memory _msg_rate_last_run, resets on
+restart), so a real drop takes about 20 minutes to fire; stated in the form
+hint. Two grouped queries, bound parameters; EXPLAIN (no ANALYZE) on cluster
+8 uses ix_topic_message_rate_cluster_time. TO VERIFY once after deploy:
+the plan for the second query with a real collected_at (about 25k rows).
+Known: the first run after an agent restart writes nothing (baseline in
+memory); new topics slightly understate the rate.
+DEFAULT RULES (all DISABLED): ids 42-45 (clusters 4, 8, 9, 10), info 1,
+warning 0.5, critical 0 msgs/sec, cooldown 30, resolve card on. Placeholders
+only; the Kafka team sets real values. NOT verified: a real card.
+CORRECTION: kafka_topic_metrics.messages_in_per_sec reads 0 (unused); the
+dashboard message rate comes from the snapshot/rollup tables.
+ALL DEFAULT RULES NOW: ids 20-27 (URP, RF), 28-35 (CPU, heap), 37-40
+(leader skew), 42-45 (message rate in); 3 and 5 general and enabled.
+STILL OPEN: data on disk (GB) per broker (data_gb_true) with defaults;
+Topics, Consumer Groups, ZooKeeper, Connect, Schema Registry, MirrorMaker and
+SLI/SLO inventories; batch test session script; rules table filters and
+Recent Triggers paging; stub expectations to update.
+
 ### Leader partition skew metric and default rules (2026-10-06)
 DONE (deployed 04:59 UTC, form checked in the browser): cluster.leader_skew
 = busiest broker's leader count / cluster average, from
