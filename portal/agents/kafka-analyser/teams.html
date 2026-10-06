@@ -256,6 +256,7 @@
               </div>
             </div>
             <div class="hint">Set at least one; the highest tier reached decides the severity</div>
+            <div class="hint hidden" id="af-tiers-skew-hint">Ratio of the busiest broker's leader partitions to the cluster average (1.0 = balanced). Does not detect a broker that has lost all its leaders.</div>
           </div>
           <div class="field hidden" id="af-min-rf-field">
             <label for="af-min-rf">Minimum replication factor</label>
@@ -461,6 +462,7 @@
       { value: 'broker.heap_pct', label: 'Broker heap %', group: 'Broker', kind: 'tiers', unit: '%', resolves: true },
       { value: 'cluster.urp_total', label: 'Under-replicated partitions', group: 'Cluster', kind: 'tiers', unit: 'partitions', resolves: true },
       { value: 'cluster.rf_below_min', label: 'Topics below minimum RF', group: 'Cluster', kind: 'tiers', unit: 'topics', resolves: true, minRf: true },
+      { value: 'cluster.leader_skew', label: 'Leader partition skew', group: 'Cluster', kind: 'tiers', unit: 'x average', resolves: true },
     ];
     const TIER_IDS = { info: 'af-tier-info', warning: 'af-tier-warning', critical: 'af-tier-critical' };
 
@@ -575,6 +577,7 @@
       $('af-severity').closest('.field').classList.toggle('hidden', t.kind === 'tiers');
       $('af-tiers-field').classList.toggle('hidden', t.kind !== 'tiers');
       $('af-min-rf-field').classList.toggle('hidden', !t.minRf);
+      $('af-tiers-skew-hint').classList.toggle('hidden', t.value !== 'cluster.leader_skew');
       $('af-resolve-card').closest('.field').classList.toggle('hidden', !t.resolves);
       document.querySelectorAll('.af-tier-unit').forEach(el => { el.textContent = t.unit ? ` (${t.unit})` : ''; });
       applyClusterOption();
