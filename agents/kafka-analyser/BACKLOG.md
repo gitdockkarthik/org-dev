@@ -1180,6 +1180,28 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Topics tab inventory: closed, no new rules (2026-10-06)
+DECISION: no alert rules for Hot, Large or Stale topics counts, Total topics,
+or the size/throughput views. They are informational: reported on the
+dashboard, nothing an admin would act on, and count rules would be noisy.
+Revisit only if the Kafka team asks during the walkthrough.
+ALREADY COVERED from the Topics tab: under-replicated partitions
+(cluster.urp_total), topics below minimum RF (cluster.rf_below_min, system
+topics excluded; the tab's RF table includes them), message rate in
+(cluster.msg_rate_in).
+FIRST-LOOK COUNTS 2026-10-06 (own approximations from kafka_topic_metrics,
+partition_count > 0; the dashboard cards compute differently and did not
+match exactly, e.g. cluster 4 cards showed Large 3 / Stale 655 vs 4 / 643
+here, cluster 8 Large 8 / Stale 1347 vs 13 / 1338): large >10 GB: c4 4, c8
+13, c9 21, c10 0; hot column (>100 KB/s): c4 0, c8 4, c9 45, c10 0; stale-like
+(size > 0, bytes in = 0): c4 643, c8 1338, c9 1011, c10 187.
+CAVEATS: the bytes_in_per_sec topic column has been unreliable, so hot counts
+are unverified; if the Kafka team wants a rule, the most plausible is a
+per-topic size limit on named topics (opt-in list, like the parked consumer
+lag rule), after reading the dashboard's own large/hot/stale queries.
+NEXT: Consumer Groups tab inventory (the per-group lag rule stays last), then
+ZooKeeper, Kafka Connect, Schema Registry, MirrorMaker, SLI/SLO.
+
 ### Data on disk metrics and the full default rule set (2026-10-06)
 DONE (deployed 06:23 UTC, form checked in the browser): two cluster metrics
 from kafka_broker_metrics.data_gb_true, both firing ABOVE a tier, decimals
