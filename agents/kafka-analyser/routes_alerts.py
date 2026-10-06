@@ -21,12 +21,18 @@ router = APIRouter(prefix="/alerts", tags=["alerts"])
 
 _SEVERITIES = ("critical", "warning", "info")
 
-# Threshold-based rules (evaluated by _evaluate_broker_thresholds in
-# teams_alerts.py): config holds {"mode": "simple", <tier>: <threshold>, ...}
-# instead of the single "threshold" count, and the tier that fired decides
-# the severity -- the rule's own `severity` is ignored for these types.
-_THRESHOLD_ALERT_TYPES = ("broker.cpu_pct", "broker.heap_pct")
+# Threshold-based rules (broker.* evaluated by _evaluate_broker_thresholds in
+# teams_alerts.py; cluster.* not evaluated yet): config holds
+# {"mode": "simple", <tier>: <threshold>, ...} instead of the single
+# "threshold" count, and the tier that fired decides the severity -- the
+# rule's own `severity` is ignored for these types.
+_THRESHOLD_ALERT_TYPES = ("broker.cpu_pct", "broker.heap_pct", "cluster.urp_total", "cluster.rf_below_min")
 _TIERS = ("info", "warning", "critical")  # ascending
+
+# The one type whose config also holds "min_rf" (integer >= 2), stored next to
+# mode and tiers and never stored for any other type.
+_MIN_RF_ALERT_TYPE = "cluster.rf_below_min"
+_MIN_RF_ERROR = "min_rf must be a whole number of at least 2"
 
 # General rules apply to all clusters; every other type is a cluster rule
 # (one per cluster per type, cluster required).
@@ -34,7 +40,12 @@ _GENERAL_ALERT_TYPES = ("close_wait_spike", "broker_unreachable")
 
 # Labels used in copied rule names ("<label> - <cluster name>"); must match the
 # ALERT_TYPES labels in teams.html. Types not listed fall back to alert_type.
-_TYPE_LABELS = {"broker.cpu_pct": "Broker CPU %", "broker.heap_pct": "Broker heap %"}
+_TYPE_LABELS = {
+    "broker.cpu_pct": "Broker CPU %",
+    "broker.heap_pct": "Broker heap %",
+    "cluster.urp_total": "Under-replicated partitions",
+    "cluster.rf_below_min": "Topics below minimum RF",
+}
 
 # Fields that map to NOT NULL columns -- an explicit null for these in a PUT
 # body is rejected rather than written.
@@ -53,12 +64,22 @@ class AlertConfigPayload(BaseModel):
     email_enabled: bool = False
     tiers: dict | None = None
     send_resolve_card: bool | None = None
+    min_rf: int | None = None
 
     @field_validator("severity")
     @classmethod
     def _check_severity(cls, v: str | None) -> str | None:
         if v is not None and v not in _SEVERITIES:
             raise ValueError(f"severity must be one of {', '.join(_SEVERITIES)}")
+        return v
+
+    @field_validator("min_rf", mode="before")
+    @classmethod
+    def _check_min_rf_type(cls, v):
+        # Before int coercion, so true, 2.5 and "3" are rejected rather than
+        # turned into 1, an error and 3. The >= 2 check is per type (see _min_rf).
+        if v is not None and (isinstance(v, bool) or not isinstance(v, int)):
+            raise ValueError(_MIN_RF_ERROR)
         return v
 
 
@@ -74,12 +95,22 @@ class AlertConfigUpdatePayload(BaseModel):
     email_enabled: bool | None = None
     tiers: dict | None = None
     send_resolve_card: bool | None = None
+    min_rf: int | None = None
 
     @field_validator("severity")
     @classmethod
     def _check_severity(cls, v: str | None) -> str | None:
         if v is not None and v not in _SEVERITIES:
             raise ValueError(f"severity must be one of {', '.join(_SEVERITIES)}")
+        return v
+
+    @field_validator("min_rf", mode="before")
+    @classmethod
+    def _check_min_rf_type(cls, v):
+        # Before int coercion, so true, 2.5 and "3" are rejected rather than
+        # turned into 1, an error and 3. The >= 2 check is per type (see _min_rf).
+        if v is not None and (isinstance(v, bool) or not isinstance(v, int)):
+            raise ValueError(_MIN_RF_ERROR)
         return v
 
 
@@ -114,6 +145,13 @@ def _threshold_config(tiers: dict | None) -> dict:
         if lower_value >= higher_value:
             raise HTTPException(status_code=422, detail=f"tiers.{lower} must be less than tiers.{higher}")
     return {"mode": "simple", **dict(given)}
+
+
+def _min_rf(value) -> int:
+    """Validate a cluster.rf_below_min rule's min_rf: 422 unless an integer >= 2."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 2:
+        raise HTTPException(status_code=422, detail=_MIN_RF_ERROR)
+    return value
 
 
 def _get_session_factory(dashboard: bool = False):
@@ -177,6 +215,7 @@ def _config_out(cfg: KafkaAlertConfig, cluster_names: dict[int, str], open_trigg
         "threshold": int((cfg.config or {}).get("threshold", 1)),
         "config": cfg.config or {},
         "send_resolve_card": bool((cfg.config or {}).get("send_resolve_card", True)),
+        "min_rf": (cfg.config or {}).get("min_rf"),
         "webhook_url": cfg.webhook_url,
         "cooldown_minutes": cfg.cooldown_minutes,
         "enabled": cfg.enabled,
@@ -227,6 +266,8 @@ async def create_alert_config(payload: AlertConfigPayload) -> dict:
             config = _threshold_config(payload.tiers)
         else:
             config = {"threshold": payload.threshold}
+        if payload.alert_type == _MIN_RF_ALERT_TYPE:
+            config["min_rf"] = _min_rf(payload.min_rf)
         # Stored only when given; a missing key means true (see teams_alerts._send_resolve_cards).
         if payload.send_resolve_card is not None:
             config["send_resolve_card"] = payload.send_resolve_card
@@ -377,7 +418,12 @@ async def update_alert_config(config_id: int, payload: AlertConfigUpdatePayload)
             tiers_given = "tiers" in updates
             tiers = updates.pop("tiers", None)
             send_resolve_card = updates.pop("send_resolve_card", None)
+            min_rf = updates.pop("min_rf", None)
             previous_config = cfg.config or {}
+            # Validated before any config is replaced: an rf_below_min rule
+            # must end up with min_rf, either given here or carried over.
+            if updates.get("alert_type", cfg.alert_type) == _MIN_RF_ALERT_TYPE:
+                min_rf = _min_rf(min_rf if min_rf is not None else previous_config.get("min_rf"))
             if updates.get("alert_type", cfg.alert_type) in _THRESHOLD_ALERT_TYPES:
                 # Tiers replace the whole config; a rule switched to a
                 # threshold type must bring its tiers with it.
@@ -393,6 +439,12 @@ async def update_alert_config(config_id: int, payload: AlertConfigUpdatePayload)
                 cfg.config = {**(cfg.config or {}), "send_resolve_card": send_resolve_card}
             elif "send_resolve_card" in previous_config and "send_resolve_card" not in (cfg.config or {}):
                 cfg.config = {**(cfg.config or {}), "send_resolve_card": previous_config["send_resolve_card"]}
+            # min_rf likewise (validated above); dropped if the rule left the type.
+            if updates.get("alert_type", cfg.alert_type) == _MIN_RF_ALERT_TYPE:
+                if (cfg.config or {}).get("min_rf") != min_rf:
+                    cfg.config = {**(cfg.config or {}), "min_rf": min_rf}
+            elif "min_rf" in (cfg.config or {}):
+                cfg.config = {k: v for k, v in cfg.config.items() if k != "min_rf"}
             if "webhook_url" in updates:
                 updates["webhook_url"] = updates["webhook_url"] or None
             for field, value in updates.items():

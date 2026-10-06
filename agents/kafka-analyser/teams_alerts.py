@@ -3,7 +3,7 @@ kafka_alert_triggers (see models.py for the agreed notification model,
 2026-09-28): an immediate card when a rule fires and a resolve card
 (_send_resolve_cards) when it clears. Driven by check_and_recycle_close_wait
 in collectors.py (alert_type 'close_wait_spike') and by evaluate_alerts
-(broker reachability and broker CPU/heap thresholds).
+(broker reachability, broker CPU/heap thresholds and cluster URP/RF metrics).
 
 Every public function here is best-effort notification logic riding along
 on a real operational job: each one logs a warning and swallows on failure,
@@ -13,7 +13,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import bindparam, func, select, text
 
 from database import SessionLocal
 from models import KafkaAlertConfig, KafkaAlertTrigger, KafkaBrokerMetrics
@@ -318,6 +318,10 @@ async def evaluate_alerts() -> None:
         await _evaluate_broker_thresholds()
     except Exception as exc:
         logger.warning("evaluate_alerts: broker threshold check failed: %s", exc)
+    try:
+        await _evaluate_cluster_metrics()
+    except Exception as exc:
+        logger.warning("evaluate_alerts: cluster metric check failed: %s", exc)
 
 
 async def _evaluate_broker_reachability() -> None:
@@ -927,3 +931,380 @@ async def _evaluate_broker_thresholds() -> None:
             await _send_resolve_cards(resolved_items)
         except Exception as exc:
             logger.warning("_evaluate_broker_thresholds: resolve cards failed: %s", exc)
+
+
+# Cluster threshold rules (Simple mode, same config as the broker thresholds):
+# one value per rule from kafka_topic_metrics, which collect_topic_structure
+# refreshes (one row per topic). Subject is always "cluster".
+CLUSTER_METRIC_TYPES = ("cluster.urp_total", "cluster.rf_below_min")
+_CLUSTER_METRIC_SUBJECT = "cluster"
+# A cluster is evaluated only if its topic-structure job succeeded this recently.
+_CLUSTER_STRUCTURE_MAX_AGE = timedelta(minutes=15)
+_CLUSTER_STRUCTURE_JOB_PREFIX = "kafka-topic-structure-"
+_CLUSTER_STRUCTURE_FRESH_SQL = text(
+    "SELECT DISTINCT job_id FROM kafka_job_runs "
+    "WHERE status = 'success' AND job_id IN :job_ids AND ended_at >= :since"
+).bindparams(bindparam("job_ids", expanding=True))
+_URP_TOTAL_SQL = text(
+    "SELECT cluster_id, COALESCE(SUM(urp_count), 0) AS value FROM kafka_topic_metrics "
+    "WHERE cluster_id IN :cids AND partition_count > 0 GROUP BY cluster_id"
+).bindparams(bindparam("cids", expanding=True))
+# System topics (__consumer_offsets, __transaction_state, ...) and _schemas are excluded.
+_RF_BELOW_MIN_SQL = text(
+    "SELECT COUNT(*) FROM kafka_topic_metrics "
+    "WHERE cluster_id = :cid AND partition_count > 0 AND replication_factor < :min_rf "
+    r"AND topic NOT LIKE '\_\_%' AND topic <> '_schemas'"
+)
+_CLUSTER_METRIC_ACTIONS = {
+    "cluster.urp_total": "Check broker health and replica sync.",
+    "cluster.rf_below_min": "Check the topic replication factors with the Kafka team.",
+}
+
+
+async def _evaluate_cluster_metrics() -> None:
+    """Fire cluster.urp_total / cluster.rf_below_min alerts: one Teams card
+    per (alert config, cluster) once the value sits in a tier on
+    _THRESHOLD_CONFIRM_CHECKS consecutive runs, only when no trigger is
+    already open and it is out of cooldown. Escalation, silent
+    de-escalation and resolve (with a resolve card) work exactly as in
+    _evaluate_broker_thresholds, whose four-stage structure this copies.
+
+    A cluster whose kafka-topic-structure job has not succeeded within
+    _CLUSTER_STRUCTURE_MAX_AGE is ignored entirely -- no counter change, no
+    resolve, no fire -- so stale topic data never looks healthy or broken."""
+    if SessionLocal is None:
+        logger.info("evaluate_alerts: cluster metrics skipped: database not available")
+        return
+    try:
+        from routes_settings import _config
+        if not _config.get("teams_enabled"):
+            logger.info("evaluate_alerts: cluster metrics skipped: teams_enabled is off")
+            return
+
+        # ---- Single read session: configs, triggers, freshness, metric values ----
+        async with SessionLocal() as session:
+            configs = (await session.execute(
+                select(KafkaAlertConfig).where(
+                    KafkaAlertConfig.alert_type.in_(list(CLUSTER_METRIC_TYPES)),
+                    KafkaAlertConfig.enabled == True,
+                )
+            )).scalars().all()
+            if not configs:
+                logger.info("evaluate_alerts: cluster metrics skipped: no enabled cluster metric rules")
+                return
+            config_ids = [c.id for c in configs]
+
+            open_rows = (await session.execute(
+                select(
+                    KafkaAlertTrigger.id,
+                    KafkaAlertTrigger.alert_config_id,
+                    KafkaAlertTrigger.cluster_id,
+                    KafkaAlertTrigger.subject,
+                    KafkaAlertTrigger.severity,
+                ).where(
+                    KafkaAlertTrigger.alert_config_id.in_(config_ids),
+                    KafkaAlertTrigger.resolved_at.is_(None),
+                )
+            )).all()
+            open_triggers: dict[tuple[int, int, str], tuple[int, str | None]] = {
+                (r.alert_config_id, r.cluster_id, r.subject): (r.id, r.severity) for r in open_rows
+            }
+
+            # Most recent resolved_at per (config, cluster, subject), computed by the DB.
+            resolved_rows = (await session.execute(
+                select(
+                    KafkaAlertTrigger.alert_config_id,
+                    KafkaAlertTrigger.cluster_id,
+                    KafkaAlertTrigger.subject,
+                    func.max(KafkaAlertTrigger.resolved_at).label("last_resolved_at"),
+                ).where(
+                    KafkaAlertTrigger.alert_config_id.in_(config_ids),
+                    KafkaAlertTrigger.resolved_at.is_not(None),
+                ).group_by(
+                    KafkaAlertTrigger.alert_config_id,
+                    KafkaAlertTrigger.cluster_id,
+                    KafkaAlertTrigger.subject,
+                )
+            )).all()
+
+            rule_cluster_ids = {cfg.cluster_id for cfg in configs if cfg.cluster_id is not None}
+            fresh_cluster_ids: set[int] = set()
+            if rule_cluster_ids:
+                fresh_job_ids = set((await session.execute(
+                    _CLUSTER_STRUCTURE_FRESH_SQL,
+                    {
+                        "job_ids": [f"{_CLUSTER_STRUCTURE_JOB_PREFIX}{cid}" for cid in rule_cluster_ids],
+                        "since": datetime.now(timezone.utc) - _CLUSTER_STRUCTURE_MAX_AGE,
+                    },
+                )).scalars().all())
+                fresh_cluster_ids = {
+                    cid for cid in rule_cluster_ids if f"{_CLUSTER_STRUCTURE_JOB_PREFIX}{cid}" in fresh_job_ids
+                }
+
+            # Values keyed by config id; a rule missing here is skipped this run.
+            values: dict[int, int] = {}
+            urp_cluster_ids = {
+                cfg.cluster_id for cfg in configs
+                if cfg.alert_type == "cluster.urp_total" and cfg.cluster_id in fresh_cluster_ids
+            }
+            if urp_cluster_ids:
+                urp_by_cluster = {
+                    r.cluster_id: int(r.value)
+                    for r in (await session.execute(_URP_TOTAL_SQL, {"cids": sorted(urp_cluster_ids)})).all()
+                }
+                for cfg in configs:
+                    if cfg.alert_type == "cluster.urp_total" and cfg.cluster_id in urp_cluster_ids:
+                        # A cluster with no topic rows has no URPs.
+                        values[cfg.id] = urp_by_cluster.get(cfg.cluster_id, 0)
+            for cfg in configs:
+                if cfg.alert_type != "cluster.rf_below_min" or cfg.cluster_id not in fresh_cluster_ids:
+                    continue
+                min_rf = (cfg.config or {}).get("min_rf")
+                if isinstance(min_rf, bool) or not isinstance(min_rf, int) or min_rf < 2:
+                    logger.warning(
+                        "_evaluate_cluster_metrics: alert_config_id=%s has no valid min_rf (%r); skipped",
+                        cfg.id, min_rf,
+                    )
+                    continue
+                values[cfg.id] = int((await session.execute(
+                    _RF_BELOW_MIN_SQL, {"cid": cfg.cluster_id, "min_rf": min_rf}
+                )).scalar_one())
+        last_resolved: dict[tuple[int, int, str], datetime] = {
+            (r.alert_config_id, r.cluster_id, r.subject): r.last_resolved_at for r in resolved_rows
+        }
+    except Exception as exc:
+        logger.warning("_evaluate_cluster_metrics: setup failed: %s", exc)
+        return
+
+    # ---- Decide who fires/escalates/resolves, entirely in memory, no DB session open ----
+    now = datetime.now(timezone.utc)
+    to_insert: list[KafkaAlertTrigger] = []
+    to_update: list[tuple[int, str | None, str]] = []  # (trigger id, new severity or None, metric_value)
+    to_resolve: list[int] = []
+    resolve_context: dict[int, tuple[KafkaAlertConfig, int]] = {}
+    # (config, cluster_id, subject, tier, description, new trigger or None for an escalation)
+    to_post: list[tuple[KafkaAlertConfig, int, str, str, str, KafkaAlertTrigger | None]] = []
+    cluster_ids_evaluated: set[int] = set()
+    stale_cluster_ids: set[int] = set()
+    rules_evaluated = 0
+    escalated = 0
+    subject = _CLUSTER_METRIC_SUBJECT
+
+    for config in configs:
+        cluster_id = config.cluster_id
+        if cluster_id is None:
+            logger.warning("_evaluate_cluster_metrics: alert_config_id=%s has no cluster_id; skipped", config.id)
+            continue
+        if cluster_id not in fresh_cluster_ids:
+            stale_cluster_ids.add(cluster_id)
+            continue
+        if config.id not in values:
+            continue
+        try:
+            value = values[config.id]
+            cluster_ids_evaluated.add(cluster_id)
+            rules_evaluated += 1
+            tier_config = config.config or {}
+            tier = _threshold_tier(tier_config, value)
+            key = (config.id, cluster_id, subject)
+            open_trigger = open_triggers.get(key)
+
+            if tier is None:
+                _threshold_breach_counts[key] = 0
+                if open_trigger is not None:
+                    to_resolve.append(open_trigger[0])
+                    resolve_context[open_trigger[0]] = (config, cluster_id)
+                continue
+
+            metric_value = str(value)
+            if config.alert_type == "cluster.urp_total":
+                description = f"{value} under-replicated partitions"
+            else:
+                description = (
+                    f"{value} topics have replication factor below {tier_config['min_rf']} "
+                    "(system topics excluded; min.insync.replicas is not checked)"
+                )
+            description += f" ({tier}, threshold {float(tier_config[tier]):g})"
+
+            if open_trigger is not None:
+                trigger_id, open_severity = open_trigger
+                # NULL severity = the rule's own severity (see models.py).
+                old_tier = open_severity or config.severity
+                old_rank = _TIER_RANK.get(old_tier, -1)
+                if _TIER_RANK[tier] > old_rank:
+                    escalated += 1
+                    to_update.append((trigger_id, tier, metric_value))
+                    to_post.append((
+                        config, cluster_id, subject, tier,
+                        f"{description} -- ESCALATED from {old_tier}", None,
+                    ))
+                elif _TIER_RANK[tier] < old_rank:
+                    to_update.append((trigger_id, tier, metric_value))
+                else:
+                    to_update.append((trigger_id, None, metric_value))
+                continue
+
+            _threshold_breach_counts[key] = _threshold_breach_counts.get(key, 0) + 1
+            if _threshold_breach_counts[key] < _THRESHOLD_CONFIRM_CHECKS:
+                continue
+
+            last_resolved_at = last_resolved.get(key)
+            since_resolved = (now - last_resolved_at) if last_resolved_at is not None else None
+            if since_resolved is not None and since_resolved < timedelta(minutes=config.cooldown_minutes):
+                continue  # still in cooldown
+            is_recurrence = (
+                since_resolved is not None
+                and since_resolved <= timedelta(hours=RECURRENCE_LOOKBACK_HOURS)
+            )
+            description += (
+                " -- RECURRING: this same issue resolved recently and has now fired again"
+                if is_recurrence else ""
+            )
+            trigger = KafkaAlertTrigger(
+                alert_config_id=config.id,
+                cluster_id=cluster_id,
+                subject=subject,
+                severity=tier,
+                triggered_at=now,
+                metric_value=metric_value,
+                message_sent=description,
+                teams_post_success=False,
+                error_detail=None,
+                resolved_at=None,
+                is_recurrence=is_recurrence,
+            )
+            to_insert.append(trigger)
+            to_post.append((config, cluster_id, subject, tier, description, trigger))
+        except Exception as exc:
+            logger.warning(
+                "_evaluate_cluster_metrics: alert_config_id=%s cluster_id=%s failed: %s",
+                config.id, cluster_id, exc,
+            )
+
+    if stale_cluster_ids:
+        logger.info(
+            "evaluate_alerts: cluster metrics ignored clusters %s: no successful topic-structure run in %d min",
+            sorted(stale_cluster_ids), int(_CLUSTER_STRUCTURE_MAX_AGE.total_seconds() // 60),
+        )
+    logger.info(
+        "evaluate_alerts: cluster metrics checked clusters=%d rules=%d stale_skipped=%d "
+        "fired=%d escalated=%d resolved=%d",
+        len(cluster_ids_evaluated), rules_evaluated, len(stale_cluster_ids),
+        len(to_insert), escalated, len(to_resolve),
+    )
+
+    # ---- Teams posts, no DB session open ----
+    if to_post or to_resolve:
+        try:
+            cluster_names = await _get_cluster_names()
+        except Exception as exc:
+            logger.warning("_evaluate_cluster_metrics: cluster name lookup failed: %s", exc)
+            cluster_names = {}
+    for config, cluster_id, subject, tier, description, trigger in to_post:
+        try:
+            card = build_adaptive_card(
+                agent_name="Kafka Analyser",
+                cluster_name=cluster_names.get(cluster_id, str(cluster_id)),
+                anomaly={
+                    "severity": tier,
+                    "category": config.alert_type,
+                    "description": description,
+                    "recommended_action": _CLUSTER_METRIC_ACTIONS[config.alert_type],
+                },
+            )
+            webhook_url = config.webhook_url or _config.get("teams_webhook_url", "")
+            if webhook_url:
+                success = await send_to_teams(webhook_url=webhook_url, card=card)
+                error_detail = None
+            else:
+                success = False
+                error_detail = "No webhook URL configured (per-alert or agent-level)"
+            if trigger is not None:
+                trigger.teams_post_success = success
+                trigger.error_detail = error_detail
+            elif not success:
+                logger.warning(
+                    "_evaluate_cluster_metrics: escalation card not sent for "
+                    "alert_config_id=%s cluster_id=%s: %s",
+                    config.id, cluster_id, error_detail or "Teams post failed",
+                )
+        except Exception as exc:
+            logger.warning(
+                "_evaluate_cluster_metrics: Teams post for alert_config_id=%s cluster_id=%s failed: %s",
+                config.id, cluster_id, exc,
+            )
+
+    if not to_insert and not to_update and not to_resolve:
+        return
+
+    # ---- Single write session: each row in its own savepoint ----
+    # Resolve cards are sent only after this session has closed, from plain
+    # snapshots taken before each commit (a later rollback expires ORM objects).
+    from types import SimpleNamespace
+    resolved_items: list[dict] = []
+    try:
+        async with SessionLocal() as session:
+            for trigger in to_insert:
+                try:
+                    async with session.begin_nested():
+                        session.add(trigger)
+                    await session.commit()
+                except Exception as exc:
+                    await session.rollback()
+                    logger.warning(
+                        "_evaluate_cluster_metrics: failed to record trigger for "
+                        "alert_config_id=%s cluster_id=%s (card was already sent -- "
+                        "this cluster will likely be re-alerted next cycle): %s",
+                        trigger.alert_config_id, trigger.cluster_id, exc,
+                    )
+            for trigger_id, severity, metric_value in to_update:
+                try:
+                    async with session.begin_nested():
+                        trigger = await session.get(KafkaAlertTrigger, trigger_id)
+                        if trigger is not None and trigger.resolved_at is None:
+                            if severity is not None:
+                                trigger.severity = severity
+                            trigger.metric_value = metric_value
+                    await session.commit()
+                except Exception as exc:
+                    await session.rollback()
+                    logger.warning(
+                        "_evaluate_cluster_metrics: failed to update trigger id=%s: %s",
+                        trigger_id, exc,
+                    )
+            for trigger_id in to_resolve:
+                try:
+                    snapshot = None
+                    async with session.begin_nested():
+                        trigger = await session.get(KafkaAlertTrigger, trigger_id)
+                        if trigger is not None and trigger.resolved_at is None:
+                            trigger.resolved_at = now
+                            snapshot = SimpleNamespace(
+                                subject=trigger.subject,
+                                severity=trigger.severity,
+                                triggered_at=trigger.triggered_at,
+                                resolved_at=trigger.resolved_at,
+                                teams_post_success=trigger.teams_post_success,
+                            )
+                    await session.commit()
+                    if snapshot is not None and trigger_id in resolve_context:
+                        config, cluster_id = resolve_context[trigger_id]
+                        resolved_items.append({
+                            "config": config,
+                            "trigger": snapshot,
+                            "cluster_name": cluster_names.get(cluster_id, str(cluster_id)),
+                        })
+                except Exception as exc:
+                    await session.rollback()
+                    logger.warning(
+                        "_evaluate_cluster_metrics: failed to resolve trigger id=%s: %s",
+                        trigger_id, exc,
+                    )
+    except Exception as exc:
+        logger.warning("_evaluate_cluster_metrics: write session failed entirely: %s", exc)
+
+    if resolved_items:
+        try:
+            await _send_resolve_cards(resolved_items)
+        except Exception as exc:
+            logger.warning("_evaluate_cluster_metrics: resolve cards failed: %s", exc)

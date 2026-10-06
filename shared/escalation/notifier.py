@@ -27,6 +27,10 @@ CATEGORY_LABEL = {
     "connector_failure": "Connector Failure",
     "cost_spike": "Cost Spike",
     "noise_alert": "Noise Alert",
+    "cluster.urp_total": "Under-Replicated Partitions",
+    "cluster.rf_below_min": "Topics Below Minimum RF",
+    "broker.cpu_pct": "Broker CPU %",
+    "broker.heap_pct": "Broker Heap %",
 }
 
 def build_adaptive_card(
