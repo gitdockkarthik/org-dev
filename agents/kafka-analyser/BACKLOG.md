@@ -1180,6 +1180,32 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Leader partition skew metric and default rules (2026-10-06)
+DONE (deployed 04:59 UTC, form checked in the browser): cluster.leader_skew
+= busiest broker's leader count / cluster average, from
+kafka_broker_distribution, per cluster (API, _evaluate_cluster_metrics, card
+label "Leader Partition Skew", form entry with decimal tiers and a hint).
+Evaluator skips clusters with fewer than 2 brokers or average 0, and ignores
+a cluster whose distribution updated_at is older than 15 minutes (own guard,
+not the structure-job one). DEFAULT RULES, all DISABLED, created through the
+API: ids 37-40 (clusters 4, 8, 9, 10), warning 2.0, critical 3.0, cooldown
+30, resolve card on. Ratios on 2026-10-06: cluster 4 = 2.96 (leaders 1, 99,
+7886), 8 = 1.03, 9 = 1.97, 10 = 2.07; so 4 and 10 would fire if enabled with
+the placeholders. The Kafka team sets the real thresholds.
+LIMITATION: the ratio does not detect a broker that has lost all its
+leaders. collect_topic_structure writes a kafka_broker_distribution row only
+for brokers that currently lead at least one partition, so a broker with no
+leaders has no row (the average leaves it out, ratio reads too low) or keeps
+a stale old row. Coverage for a down broker comes from reachability (rule 5),
+URP and the data freshness checks. Optional later: a separate "broker with
+zero leaders" rule; needs a change to what the structure job writes.
+Correction to earlier notes: cluster 8 is balanced; the skew is on 4, 9, 10.
+STILL OPEN FOR THE BROKERS TAB: data on disk (GB) metric and its default
+rules; inventory of any remaining Brokers panels. Tests: one batch session
+with a script that polls kafka_alert_triggers and writes a log file (restore
+tiers and enabled=false in a finally block); not yet written or run.
+NOT verified: a real skew card.
+
 ### Cluster alert types, default rules, rules table paging (2026-10-06)
 DONE and live (7e53ed9, 08a117f, plus the paging and width commit): cluster.urp_total and
 cluster.rf_below_min (evaluator _evaluate_cluster_metrics, API, form, table,
