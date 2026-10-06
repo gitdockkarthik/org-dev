@@ -1180,6 +1180,39 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Data on disk metrics and the full default rule set (2026-10-06)
+DONE (deployed 06:23 UTC, form checked in the browser): two cluster metrics
+from kafka_broker_metrics.data_gb_true, both firing ABOVE a tier, decimals
+allowed. cluster.data_gb_max = largest broker's data (GB); the card names
+the broker. cluster.data_spread_pct = (max - min) / max * 100; the card names
+the low and high broker; catches a rebuilt broker, lost disks or a broker not
+replicating. Per cluster the evaluator ignores the cluster (no fire, no
+resolve, no counter change) if it has fewer than 2 broker rows, any broker's
+data_gb_true is NULL, or any broker has not reported in 6 minutes; the INFO
+line names the broker that caused it. Spread is skipped if the largest broker
+holds 0 GB. Neither uses the structure-job guard.
+LIMITATION: collect_broker_health never deletes kafka_broker_metrics rows. If
+a broker is decommissioned, its row goes stale and BOTH data rules ignore the
+whole cluster until that row is removed (same count caveat as the SLO
+expected_brokers note). The INFO line makes it visible.
+Not covered: a spread rule cannot tell a healthy cluster from one where every
+broker lost the same data (the max rule and others cover that). Spread
+placeholders are untested guesses. Today: data GB per broker is within about
+1% inside each cluster (4: ~174, 8: ~481, 9: ~812, 10: ~8).
+DEFAULT RULES (all DISABLED, per enabled cluster 4, 8, 9, 10, cooldown 30,
+resolve card on): ids 48, 50, 52, 54 = Data on disk (max broker), warning
+5000, critical 8000 GB; ids 49, 51, 53, 55 = Data spread between brokers,
+warning 10, critical 25 %. Placeholders only; capacity is the Kafka team's
+call. NOT verified: a real card.
+ALL DEFAULT RULES NOW: 20-27 URP and RF, 28-35 CPU and heap, 37-40 leader
+skew, 42-45 message rate in, 48-55 data on disk and spread; 3 and 5 are
+general and enabled. The Brokers tab inventory is complete (request handler
+idle, GC pause, disk % and ISR columns are not collected; replica counts carry
+no signal; bytes in is a possible later rule needing baselines).
+STILL OPEN: Topics inventory and the remaining tabs (consumer lag last),
+batch test session script, rules table filters and Recent Triggers paging,
+stub expectations to update.
+
 ### Message rate in (cluster.msg_rate_in) and default rules (2026-10-06)
 DONE (deployed 05:57 UTC, form checked in the browser): cluster.msg_rate_in,
 the first "fire BELOW a tier" metric. Tiers descend (info > warning >
