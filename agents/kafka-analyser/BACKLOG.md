@@ -1180,6 +1180,42 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Alert rules table, Recent Triggers, trigger purge, CLOSE_WAIT rule off (2026-10-06)
+DONE (deployed 2026-10-06): rules table filters (type, state, name search,
+cluster, count line, Reset filters, x for the name box); Thresholds block
+alignment; Recent Triggers filters (From/To read as UTC, alert name search,
+cluster, status, recurrence, Teams post), Previous/Next paging with a Per
+page choice, count line and Reset; the look-back selector was removed, the
+page always loads since_days=30 and limit=500 (a note shows if the window
+holds more). History older than 30 days is kept but not reachable from the
+page.
+PURGE: job kafka-alert-trigger-purge, daily 04:43 UTC, enabled, timeout 60 s
+(DB only, no Kafka). Deletes alert triggers with resolved_at older than 90
+days, in batches of 1000; open triggers are never deleted; cooldown and
+recurrence look back at most 24 h, so they are unaffected. A direct call
+of the function on 2026-10-06 (not through the jobs page, so no kafka_job_runs
+row) returned deleted 0 (35 triggers, oldest 2026-09-28); first real
+deletions about 2026-12-27. Rows also disappear when their rule is deleted
+(cascade): deleting a real rule erases its firing history (tell the Kafka
+team). Index ix_kafka_alert_triggers_config_time leads with alert_config_id,
+so a triggered_at-only scan is a table scan; fine at this volume.
+CLOSE_WAIT RULE 3 DISABLED 2026-10-06 (your decision, it was created for
+your own visibility): it fired 35 times in about 21 hours on all four
+clusters (4: 8, 8: 7, 9: 11, 10: 9), each a self-healing recycle (two
+consecutive checks, worker pool recycled, resolved in about 2 minutes), at
+counts of 1 to 3. The hourly health card still shows per-broker stale
+connections with its 10-minute follow-up. The recycle does not depend on the
+rule. OPEN: why CLOSE_WAIT connections (1 to 3) still appear after the
+socket fix; not investigated (broker idle timeouts vs client behaviour).
+STILL OPEN: stub expectations to update (stub_tier_layout expects
+btn-show-more, stub_data_form's Cluster option order, stub_filter's sort
+order, stub_paging's exact button classes); the stray empty file named "="
+was deleted; email alerts need a sender (planned mailbox
+ai_agent_alerts@operative.com, SMTP via the Settings page, not created yet);
+remaining tabs (Consumer Groups per-group lag rule last, Kafka Connect,
+Schema Registry, MirrorMaker, SLI/SLO); batch test session script; more
+Recent Triggers columns (rule type, severity, subject need a backend change).
+
 ### ZooKeeper ensemble rule and default rules (2026-10-06)
 DONE (deployed 08:20 UTC, form checked in the browser): cluster.zk_ensemble,
 fires ABOVE a tier. Value = number of ZooKeeper nodes that do not answer
