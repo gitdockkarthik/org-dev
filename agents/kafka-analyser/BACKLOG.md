@@ -1180,6 +1180,53 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Cluster alert types, default rules, rules table paging (2026-10-06)
+DONE and live (7e53ed9, 08a117f, plus the paging and width commit): cluster.urp_total and
+cluster.rf_below_min (evaluator _evaluate_cluster_metrics, API, form, table,
+card labels incl. Broker CPU % / Heap %). The evaluator ignores a cluster
+unless its kafka-topic-structure job succeeded in the last 15 minutes.
+Verified by stub tests, a controlled live run through the real evaluator with
+Teams replaced by a recorder (RF rule fired on the 2nd check with 25168
+topics below RF 4 on cluster 8; URP quiet; resolve card after raising the
+tier), and the form in the browser with disabled test rules. NOT verified: a
+real card to the channel; a real URP above 0.
+DEFAULT RULES (all DISABLED, per enabled cluster 4, 8, 9, 10, names
+"<metric> - <cluster name>", cooldown 30, resolve card on, no webhook
+override), created through the API on 2026-10-06: ids 20-27 = URP (warning 1,
+critical 5) and Topics below minimum RF (min_rf 3, warning 1, critical 10);
+ids 28-35 = Broker CPU % (warning 70, critical 90) and Broker heap % (warning
+70, critical 85). Placeholders only; thresholds are the Kafka team's
+decision. Cluster 3 (DevQA) is disabled and has no rules. General rules 3
+(CLOSE_WAIT) and 5 (reachability) stay all-clusters and enabled.
+FINDINGS: cluster 4 has 293 topics at RF 2 (system topics excluded), so rule
+21 would be critical immediately if enabled with the placeholders; clusters 8
+and 10 have 1 topic at RF 1 each; cluster 9 has none. The Kafka team knows
+and plans RF 3 everywhere. Cluster 8 broker CPU has been seen at 88.9% and
+cluster 9 average heap is about 67%, so CPU/heap placeholders could fire if
+enabled.
+DECISION: no "known issue" handling in code. Admins manage thresholds; for a
+known count raise the tier above it, and LOWER IT AGAIN after fixing topics,
+otherwise new problems stay hidden until the count passes it again
+(guidance for the walkthrough).
+RULE FOR EVERY NEW ALERT TYPE: ship its disabled per-cluster default rules in
+the same step. Data on disk (GB) is not built yet.
+RULES TABLE (portal only): paging with a Per page selector (10 or 25,
+default 10), Previous/Next above and below the table sharing one page state,
+sorted by type, cluster, id; the page is kept across reloads, toggles, edits
+and copies, and moves back one page after a delete empties the last page.
+Table uses the full page width (no 1100px cap), fixed column layout,
+min-width 900px with horizontal scroll only below that; Teams and Email show
+the switch only with the state in a tooltip. Verified in the browser.
+LATER (after the alert types and rules are complete, before the
+walkthrough): (1) type, state (enabled/disabled) and name-search filters for
+the rules table; (2) the same paging, width and filters for the Recent
+Triggers table (alert firings from the last 3 days, newest first); (3) update
+stub_filter's expected order (the new sort changed it) and the exact-class
+check in stub_paging.
+LEFT: a real test with one rule enabled temporarily (with go-ahead), the
+Brokers inventory incl. leader partition distribution, then Topics and the
+other tabs in dashboard order.
+
 ### Consumer lag: stale rows and the parked per-group lag rule (2026-10-05)
 CHECKED 2026-10-05 on cluster 4: kafka-consumer-lag-4 runs every 3 minutes
 and succeeds (3-5 s); 12 of 105 stored groups were updated in the last 10

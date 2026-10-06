@@ -18,8 +18,8 @@
 
     body { background: #f1f5f9; color: #334155; }
 
-    /* Wider than settings.html's 720px -- this page is mostly tables. */
-    .container { max-width: 1100px; margin: 0 auto; }
+    /* Full width (no cap) -- this page is mostly tables; .content keeps the padding. */
+    .container { max-width: none; margin: 0 auto; }
 
     .page-header { margin-bottom: 1.75rem; }
     .page-header h1 { font-size: 1.5rem; font-weight: 700; color: #1e293b; }
@@ -123,6 +123,14 @@
     .data-table__loading { padding: 24px; text-align: center; color: #94a3b8; font-style: italic; }
     .data-table__error { padding: 24px; text-align: center; color: #b91c1c; }
     .nowrap { white-space: nowrap; }
+    /* Alert rules table: columns share the width (colgroup), cells wrap, so
+       it fits without a horizontal scrollbar. Below 900px of table width the
+       wrapper's overflow-x scroll is the fallback (keeps the toggles from
+       being squeezed under their 38px). */
+    .configs-table { table-layout: fixed; min-width: 900px; }
+    .configs-table th { white-space: normal; padding: 10px 8px; }
+    .configs-table td { padding: 10px 8px; overflow-wrap: anywhere; }
+    .configs-actions { display: flex; flex-wrap: wrap; gap: 0.375rem; }
 
     /* Severity badges — same as dashboard.html, plus info */
     .sev { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: .72rem; font-weight: 700; text-transform: uppercase; }
@@ -322,8 +330,25 @@
             <option value="general">General rules (all clusters)</option>
           </select>
         </div>
+        <div class="field" style="max-width:8rem">
+          <label for="configs-page-size">Per page</label>
+          <select id="configs-page-size">
+            <option value="10" selected>10</option>
+            <option value="25">25</option>
+          </select>
+        </div>
+        <div class="show-more-row configs-pager hidden" id="configs-pager-top" style="margin:0 0 0.75rem">
+          <button class="btn btn-secondary btn-sm configs-prev" id="btn-configs-prev-top">Previous</button>
+          <button class="btn btn-secondary btn-sm configs-next" id="btn-configs-next-top">Next</button>
+          <span class="hint configs-page-label" id="configs-page-label-top"></span>
+        </div>
         <div class="data-table-wrap">
-          <table class="data-table">
+          <table class="data-table configs-table">
+            <colgroup>
+              <col style="width:19%" /><col style="width:12%" /><col style="width:11%" /><col style="width:7%" />
+              <col style="width:14%" /><col style="width:6%" /><col style="width:6%" /><col style="width:6%" />
+              <col style="width:6%" /><col />
+            </colgroup>
             <thead>
               <tr>
                 <th>Name</th>
@@ -342,6 +367,11 @@
               <tr><td colspan="10" class="data-table__loading">Loading…</td></tr>
             </tbody>
           </table>
+        </div>
+        <div class="show-more-row configs-pager hidden" id="configs-pager">
+          <button class="btn btn-secondary btn-sm configs-prev" id="btn-configs-prev">Previous</button>
+          <button class="btn btn-secondary btn-sm configs-next" id="btn-configs-next">Next</button>
+          <span class="hint configs-page-label" id="configs-page-label"></span>
         </div>
         <div id="configs-msg" class="action-msg hidden"></div>
       </div>
@@ -441,6 +471,9 @@
     // the id of the rule the form is editing (null = creating a new rule).
     let _alertConfigs = [];
     let editingId = null;
+    // Alert rules table page (0-based, view only). Kept across reloads,
+    // toggles, edits and copies; renderConfigs clamps it to the last page.
+    let _configsPage = 0;
     // The edited rule's cluster when the form opened (null = all clusters),
     // and the temporary <option> added when that cluster is not in the list.
     let editingClusterId = null;
@@ -887,20 +920,52 @@
       sel.value = [...sel.options].some(o => o.value === current) ? current : '';
     }
 
-    $('configs-cluster-filter').addEventListener('change', () => renderConfigs(_alertConfigs));
+    $('configs-cluster-filter').addEventListener('change', () => { _configsPage = 0; renderConfigs(_alertConfigs); });
+    $('configs-page-size').addEventListener('change', () => { _configsPage = 0; renderConfigs(_alertConfigs); });
+    // Two pagers (above and below the table) share the classes below and
+    // _configsPage; renderConfigsPager / showConfigsPagers update both.
+    document.querySelectorAll('.configs-prev').forEach(btn => btn.addEventListener('click', () => { _configsPage -= 1; renderConfigs(_alertConfigs); }));
+    document.querySelectorAll('.configs-next').forEach(btn => btn.addEventListener('click', () => { _configsPage += 1; renderConfigs(_alertConfigs); }));
+
+    function showConfigsPagers(show) {
+      document.querySelectorAll('.configs-pager').forEach(el => el.classList.toggle('hidden', !show));
+    }
+
+    // "Showing 11-18 of 18", or "Showing 0 of N" when the filter matches
+    // nothing; Previous/Next disabled at the ends (both when empty).
+    function renderConfigsPager(start, end, total) {
+      const empty = end === start;
+      const text = empty ? `Showing 0 of ${total}` : `Showing ${start + 1}-${end} of ${total}`;
+      document.querySelectorAll('.configs-page-label').forEach(el => { el.textContent = text; });
+      document.querySelectorAll('.configs-prev').forEach(btn => { btn.disabled = empty || start === 0; });
+      document.querySelectorAll('.configs-next').forEach(btn => { btn.disabled = empty || end >= total; });
+    }
 
     function renderConfigs(configs) {
       const body = $('configs-body');
       if (!configs.length) {
+        showConfigsPagers(false);
         body.innerHTML = '<tr><td colspan="10" class="data-table__empty">No alert rules configured yet. Click "+ New Alert Rule" to create one.</td></tr>';
         return;
       }
+      showConfigsPagers(true);
       const filter = $('configs-cluster-filter').value;
-      const shown = configs.filter(c => matchesConfigFilter(c, filter));
-      if (!shown.length) {
+      const filtered = configs.filter(c => matchesConfigFilter(c, filter));
+      if (!filtered.length) {
+        renderConfigsPager(0, 0, configs.length);
         body.innerHTML = '<tr><td colspan="10" class="data-table__empty">No rules match this filter.</td></tr>';
         return;
       }
+      // Filter, then sort by type label, cluster name and id, then page.
+      const sorted = filtered.slice().sort((a, b) =>
+        alertTypeLabel(a.alert_type).localeCompare(alertTypeLabel(b.alert_type))
+        || String(a.cluster_name ?? '').localeCompare(String(b.cluster_name ?? ''))
+        || a.id - b.id);
+      const pageSize = parseInt($('configs-page-size').value, 10) || 10;
+      _configsPage = Math.min(Math.max(_configsPage, 0), Math.ceil(sorted.length / pageSize) - 1);
+      const start = _configsPage * pageSize;
+      const shown = sorted.slice(start, start + pageSize);
+      renderConfigsPager(start, start + shown.length, sorted.length);
       body.innerHTML = shown.map(c => {
         const openCell = c.open_trigger_count > 0
           ? `<span class="open-count-warn" title="Currently unresolved">⚠ ${esc(c.open_trigger_count)}</span>`
@@ -919,27 +984,25 @@
         return `
           <tr>
             <td><strong>${esc(c.name)}</strong></td>
-            <td class="nowrap">${esc(alertTypeLabel(c.alert_type))}${resolveLine}</td>
+            <td>${esc(alertTypeLabel(c.alert_type))}${resolveLine}</td>
             <td>${esc(c.cluster_name)}</td>
             <td>${severityCell}</td>
             <td>${thresholdCell}</td>
             <td>${esc(c.cooldown_minutes)}</td>
             <td class="nowrap">
-              <label class="toggle-wrap" title="Click to ${c.enabled ? 'disable' : 'enable'}">
+              <label class="toggle-wrap" title="${c.enabled ? 'Enabled (click to disable)' : 'Disabled (click to enable)'}">
                 <input type="checkbox" class="toggle-input config-enable-toggle" data-id="${esc(c.id)}" ${c.enabled ? 'checked' : ''} />
                 <span class="toggle-slider"></span>
-                <span class="toggle-text">${c.enabled ? 'Enabled' : 'Disabled'}</span>
               </label>
             </td>
             <td class="nowrap">
-              <label class="toggle-wrap" style="opacity:0.65" title="Email sending is not yet configured (no SMTP details set up) -- this toggle is safe to set now and will take effect once it is.">
+              <label class="toggle-wrap" style="opacity:0.65" title="${c.email_enabled ? 'Enabled' : 'Disabled'}. Email sending is not yet configured (no SMTP details set up) -- this toggle is safe to set now and will take effect once it is.">
                 <input type="checkbox" class="toggle-input config-email-toggle" data-id="${esc(c.id)}" ${c.email_enabled ? 'checked' : ''} />
                 <span class="toggle-slider"></span>
-                <span class="toggle-text">${c.email_enabled ? 'Enabled' : 'Disabled'}</span>
               </label>
             </td>
             <td>${openCell}</td>
-            <td class="nowrap">${copyBtn}<button class="btn btn-secondary btn-sm config-edit" data-id="${esc(c.id)}">Edit</button> <button class="btn btn-danger btn-sm config-delete" data-id="${esc(c.id)}" data-name="${esc(c.name)}">Delete</button></td>
+            <td class="nowrap"><div class="configs-actions">${copyBtn}<button class="btn btn-secondary btn-sm config-edit" data-id="${esc(c.id)}">Edit</button> <button class="btn btn-danger btn-sm config-delete" data-id="${esc(c.id)}" data-name="${esc(c.name)}">Delete</button></div></td>
           </tr>`;
       }).join('');
 
