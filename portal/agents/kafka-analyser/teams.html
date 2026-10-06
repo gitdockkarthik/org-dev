@@ -65,8 +65,15 @@
       border-color: #FF6B35; box-shadow: 0 0 0 3px rgba(255,107,53,0.12);
     }
     .hint { margin-top: 0.3rem; font-size: 0.75rem; color: #94a3b8; }
-    .field-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0 1rem; }
+    .field-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr)); gap: 0 1rem; }
     .field-grid .field:last-child { margin-bottom: 1rem; }
+    /* Thresholds take a full row of the field grid; the three tiers wrap on narrow screens. */
+    .field-grid #af-tiers-field { grid-column: 1 / -1; }
+    .af-tiers-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 14rem)); gap: 0.5rem 1rem; align-items: end; }
+    .af-tiers-grid label { display: block; white-space: nowrap; font-size: 0.8125rem; color: #475569; margin-bottom: 0.25rem; }
+    .af-tier-input { display: flex; align-items: center; gap: 0.375rem; }
+    .field .af-tier-input input[type="number"] { flex: 1 1 6rem; min-width: 6rem; }
+    .af-tier-unit { white-space: nowrap; font-size: 0.8125rem; color: #64748b; }
 
     .hidden { display: none; }
 
@@ -241,18 +248,18 @@
           </div>
           <div class="field hidden" id="af-tiers-field">
             <label>Thresholds</label>
-            <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.5rem">
+            <div class="af-tiers-grid">
               <div>
-                <label for="af-tier-info">Info at<span class="af-tier-unit"></span></label>
-                <input type="number" id="af-tier-info" step="any" min="0" />
+                <label for="af-tier-info">Info at</label>
+                <div class="af-tier-input"><input type="number" id="af-tier-info" step="any" min="0" /><span class="af-tier-unit"></span></div>
               </div>
               <div>
-                <label for="af-tier-warning">Warning at<span class="af-tier-unit"></span></label>
-                <input type="number" id="af-tier-warning" step="any" min="0" />
+                <label for="af-tier-warning">Warning at</label>
+                <div class="af-tier-input"><input type="number" id="af-tier-warning" step="any" min="0" /><span class="af-tier-unit"></span></div>
               </div>
               <div>
-                <label for="af-tier-critical">Critical at<span class="af-tier-unit"></span></label>
-                <input type="number" id="af-tier-critical" step="any" min="0" />
+                <label for="af-tier-critical">Critical at</label>
+                <div class="af-tier-input"><input type="number" id="af-tier-critical" step="any" min="0" /><span class="af-tier-unit"></span></div>
               </div>
             </div>
             <div class="hint" id="af-tiers-above-hint">Set at least one; the highest tier reached decides the severity</div>
