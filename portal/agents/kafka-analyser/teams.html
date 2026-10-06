@@ -259,6 +259,7 @@
             <div class="hint hidden" id="af-tiers-below-hint">Fires when the cluster's inflow falls BELOW a tier. Enter tiers from high to low (info &gt; warning &gt; critical); 0 means no messages at all. Needs two consecutive inflow runs (about 10 minutes apart), so a real drop takes about 20 minutes to fire.</div>
             <div class="hint hidden" id="af-tiers-data-max-hint">Fires when the largest broker's data on disk (GB) reaches a tier. The card names that broker. The rule is ignored while any broker of the cluster is not reporting.</div>
             <div class="hint hidden" id="af-tiers-data-spread-hint">Spread = (largest - smallest broker data) / largest x 100. Fires when a broker holds much less data than the others (rebuilt, lost disks or not replicating). Normal spread is under 1%. Ignored while any broker is not reporting.</div>
+            <div class="hint hidden" id="af-tiers-zk-hint">Counts problems in the cluster's ZooKeeper ensemble: one per node that does not answer, plus one if there is not exactly one leader. Checked live every 5 minutes (one mntr per node) and confirmed over two checks. With three nodes, 1 = degraded and 2 = quorum at risk.</div>
             <div class="hint hidden" id="af-tiers-skew-hint">Ratio of the busiest broker's leader partitions to the cluster average (1.0 = balanced). Does not detect a broker that has lost all its leaders.</div>
           </div>
           <div class="field hidden" id="af-min-rf-field">
@@ -471,6 +472,7 @@
       { value: 'cluster.msg_rate_in', label: 'Message rate in', group: 'Cluster', kind: 'tiers', unit: 'msgs/sec', resolves: true, below: true },
       { value: 'cluster.data_gb_max', label: 'Data on disk (max broker)', group: 'Cluster', kind: 'tiers', unit: 'GB', resolves: true },
       { value: 'cluster.data_spread_pct', label: 'Data spread between brokers', group: 'Cluster', kind: 'tiers', unit: '%', resolves: true },
+      { value: 'cluster.zk_ensemble', label: 'ZooKeeper ensemble problems', group: 'Cluster', kind: 'tiers', unit: 'problems', resolves: true },
     ];
     const TIER_IDS = { info: 'af-tier-info', warning: 'af-tier-warning', critical: 'af-tier-critical' };
 
@@ -588,6 +590,7 @@
       $('af-tiers-skew-hint').classList.toggle('hidden', t.value !== 'cluster.leader_skew');
       $('af-tiers-data-max-hint').classList.toggle('hidden', t.value !== 'cluster.data_gb_max');
       $('af-tiers-data-spread-hint').classList.toggle('hidden', t.value !== 'cluster.data_spread_pct');
+      $('af-tiers-zk-hint').classList.toggle('hidden', t.value !== 'cluster.zk_ensemble');
       $('af-tiers-above-hint').classList.toggle('hidden', !!t.below);
       $('af-tiers-below-hint').classList.toggle('hidden', !t.below);
       $('af-resolve-card').closest('.field').classList.toggle('hidden', !t.resolves);
