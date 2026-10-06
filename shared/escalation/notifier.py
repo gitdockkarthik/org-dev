@@ -33,6 +33,7 @@ CATEGORY_LABEL = {
     "cluster.msg_rate_in": "Message Rate In",
     "cluster.data_gb_max": "Data On Disk (Max Broker)",
     "cluster.data_spread_pct": "Data Spread Between Brokers",
+    "cluster.zk_ensemble": "ZooKeeper Ensemble",
     "broker.cpu_pct": "Broker CPU %",
     "broker.heap_pct": "Broker Heap %",
 }

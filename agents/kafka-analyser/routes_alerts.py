@@ -28,7 +28,7 @@ _SEVERITIES = ("critical", "warning", "info")
 # rule's own `severity` is ignored for these types.
 _THRESHOLD_ALERT_TYPES = (
     "broker.cpu_pct", "broker.heap_pct", "cluster.urp_total", "cluster.rf_below_min", "cluster.leader_skew",
-    "cluster.msg_rate_in", "cluster.data_gb_max", "cluster.data_spread_pct",
+    "cluster.msg_rate_in", "cluster.data_gb_max", "cluster.data_spread_pct", "cluster.zk_ensemble",
 )
 # Threshold types that fire when the value drops BELOW a tier: tiers are
 # >= 0 (zero allowed) and descending (info > warning > critical), and the
@@ -56,6 +56,7 @@ _TYPE_LABELS = {
     "cluster.msg_rate_in": "Message rate in",
     "cluster.data_gb_max": "Data on disk (max broker)",
     "cluster.data_spread_pct": "Data spread between brokers",
+    "cluster.zk_ensemble": "ZooKeeper ensemble problems",
 }
 
 # Fields that map to NOT NULL columns -- an explicit null for these in a PUT

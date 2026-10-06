@@ -18,6 +18,7 @@ from sqlalchemy import bindparam, func, select, text
 from database import SessionLocal
 from models import KafkaAlertConfig, KafkaAlertTrigger, KafkaBrokerMetrics
 from shared.escalation.notifier import build_adaptive_card, build_resolve_card, send_to_teams
+from tools.zookeeper import _parse_mntr, _zk_command
 
 logger = logging.getLogger(__name__)
 
@@ -948,7 +949,7 @@ async def _evaluate_broker_thresholds() -> None:
 # refreshes (one row per topic). Subject is always "cluster".
 CLUSTER_METRIC_TYPES = (
     "cluster.urp_total", "cluster.rf_below_min", "cluster.leader_skew", "cluster.msg_rate_in",
-    "cluster.data_gb_max", "cluster.data_spread_pct",
+    "cluster.data_gb_max", "cluster.data_spread_pct", "cluster.zk_ensemble",
 )
 _CLUSTER_METRIC_SUBJECT = "cluster"
 # A cluster is evaluated only if its topic-structure job succeeded this recently.
@@ -1016,6 +1017,20 @@ _DATA_GB_MAX_AGE = timedelta(minutes=6)
 _DATA_GB_SQL = text(
     "SELECT cluster_id, broker_id, data_gb_true, time FROM kafka_broker_metrics WHERE cluster_id IN :cids"
 ).bindparams(bindparam("cids", expanding=True))
+# cluster.zk_ensemble: number of ZooKeeper problems, probed live after the read
+# session has closed: one `mntr` per node of kafka_clusters.zookeeper_url
+# (comma-separated host:port), all nodes in parallel, each bounded by
+# _ZK_PROBE_TIMEOUT_SECS and never retried in the same run. A node is down
+# unless it answers with a zk_server_state. Value = down nodes, + 1 if the
+# nodes that answered do not hold exactly one leader; if none answered, the
+# number of configured nodes. Own guard: a cluster with an empty URL or fewer
+# than 2 nodes is ignored.
+_ZK_ENSEMBLE_ALERT_TYPE = "cluster.zk_ensemble"
+_ZK_PROBE_TIMEOUT_SECS = 3
+_ZK_DEFAULT_PORT = 2181
+_ZK_URL_SQL = text(
+    "SELECT id, zookeeper_url FROM kafka_clusters WHERE id IN :cids"
+).bindparams(bindparam("cids", expanding=True))
 _CLUSTER_METRIC_ACTIONS = {
     "cluster.urp_total": "Check broker health and replica sync.",
     "cluster.rf_below_min": "Check the topic replication factors with the Kafka team.",
@@ -1023,7 +1038,50 @@ _CLUSTER_METRIC_ACTIONS = {
     "cluster.msg_rate_in": "Check producers and connectors writing to this cluster.",
     "cluster.data_gb_max": "Check disk capacity and retention with the Kafka team.",
     "cluster.data_spread_pct": "Check whether the low broker is replicating correctly (rebuilt, lost disks or not catching up).",
+    "cluster.zk_ensemble": "Check the ZooKeeper nodes and ensemble quorum with the Kafka team.",
 }
+
+
+def _zk_nodes(zookeeper_url: str | None) -> list[str]:
+    """The distinct host:port nodes of a zookeeper_url (a chroot suffix such as
+    "/kafka" is dropped; a node without a port gets _ZK_DEFAULT_PORT)."""
+    entries = [e.strip() for e in (zookeeper_url or "").split("/", 1)[0].split(",") if e.strip()]
+    return list(dict.fromkeys(e if ":" in e else f"{e}:{_ZK_DEFAULT_PORT}" for e in entries))
+
+
+async def _zk_probe(node: str) -> tuple[bool, str | None]:
+    """One `mntr` to a host:port node within _ZK_PROBE_TIMEOUT_SECS, no retry:
+    (answered, zk_server_state or None). Never raises."""
+    try:
+        host, _, port = node.rpartition(":")
+        output = await asyncio.wait_for(
+            _zk_command(host, int(port), "mntr", timeout=_ZK_PROBE_TIMEOUT_SECS),
+            timeout=_ZK_PROBE_TIMEOUT_SECS,
+        )
+    except Exception:
+        return False, None
+    return bool(output.strip()), _parse_mntr(output).get("zk_server_state") or None
+
+
+def _zk_ensemble_value(nodes: list[str], answers: dict[str, tuple[bool, str | None]]) -> tuple[int, str]:
+    """(problem count, card description without the tier suffix) for one cluster."""
+    down = [n for n in nodes if answers[n][1] is None]
+    if len(down) == len(nodes):
+        if any(answers[n][0] for n in nodes):
+            detail = "no node returned zk_server_state (is mntr in 4lw.commands.whitelist?)"
+        else:
+            detail = "no node reachable from the agent: check the network path first"
+        return len(nodes), f"ZooKeeper: {len(nodes)} problem(s): down {', '.join(down)}; {detail}"
+    leaders = [n for n in nodes if answers[n][1] == "leader"]
+    value = len(down) + (1 if len(leaders) != 1 else 0)
+    parts = [f"down {', '.join(down)}"] if down else []
+    if len(leaders) == 1:
+        parts.append(f"leader {leaders[0]}")
+    elif leaders:
+        parts.append(f"{len(leaders)} leaders {', '.join(leaders)}")
+    else:
+        parts.append("no leader")
+    return value, f"ZooKeeper: {value} problem(s): " + "; ".join(parts)
 
 
 async def _evaluate_cluster_metrics() -> None:
@@ -1043,7 +1101,9 @@ async def _evaluate_cluster_metrics() -> None:
     at or BELOW a tier (descending tiers), uses the latest inflow run with
     its own guard, and counts a breach only once per new run.
     cluster.data_gb_max / cluster.data_spread_pct use their own guard (every
-    broker's data_gb_true set and fresh, at least two brokers)."""
+    broker's data_gb_true set and fresh, at least two brokers).
+    cluster.zk_ensemble probes ZooKeeper live, after the read session has
+    closed, and ignores clusters with an empty URL or fewer than two nodes."""
     if SessionLocal is None:
         logger.info("evaluate_alerts: cluster metrics skipped: database not available")
         return
@@ -1103,7 +1163,9 @@ async def _evaluate_cluster_metrics() -> None:
             rule_cluster_ids = {
                 cfg.cluster_id for cfg in configs
                 if cfg.cluster_id is not None
-                and cfg.alert_type not in (_LEADER_SKEW_ALERT_TYPE, _MSG_RATE_IN_ALERT_TYPE, *_DATA_GB_ALERT_TYPES)
+                and cfg.alert_type not in (
+                    _LEADER_SKEW_ALERT_TYPE, _MSG_RATE_IN_ALERT_TYPE, *_DATA_GB_ALERT_TYPES, _ZK_ENSEMBLE_ALERT_TYPE,
+                )
             }
             fresh_cluster_ids: set[int] = set()
             if rule_cluster_ids:
@@ -1244,9 +1306,43 @@ async def _evaluate_cluster_metrics() -> None:
                         values[cfg.id] = round((hi_gb - lo_gb) / hi_gb * 100, 1)
                     else:
                         data_ignored.setdefault(cfg.cluster_id, f"spread skipped: largest broker {hi_broker} holds {hi_gb:g} GB")
+
+            zk_cluster_ids = {
+                cfg.cluster_id for cfg in configs
+                if cfg.alert_type == _ZK_ENSEMBLE_ALERT_TYPE and cfg.cluster_id is not None
+            }
+            zk_urls: dict[int, str] = {}
+            if zk_cluster_ids:
+                zk_urls = {
+                    r.id: r.zookeeper_url or ""
+                    for r in (await session.execute(_ZK_URL_SQL, {"cids": sorted(zk_cluster_ids)})).all()
+                }
         last_resolved: dict[tuple[int, int, str], datetime] = {
             (r.alert_config_id, r.cluster_id, r.subject): r.last_resolved_at for r in resolved_rows
         }
+
+        # ZooKeeper probes: no DB session open, one connection per distinct node.
+        zk_by_cluster: dict[int, tuple[int, str]] = {}  # cluster_id -> (problems, description)
+        zk_ignored: dict[int, str] = {}  # cluster_id -> reason
+        if zk_cluster_ids:
+            zk_nodes_by_cluster: dict[int, list[str]] = {}
+            for cid in sorted(zk_cluster_ids):
+                nodes = _zk_nodes(zk_urls.get(cid))
+                if cid not in zk_urls:
+                    zk_ignored[cid] = "cluster not found in kafka_clusters"
+                elif not nodes:
+                    zk_ignored[cid] = "zookeeper_url is empty"
+                elif len(nodes) < 2:
+                    zk_ignored[cid] = f"zookeeper_url lists only {nodes[0]}"
+                else:
+                    zk_nodes_by_cluster[cid] = nodes
+            probe_nodes = list(dict.fromkeys(n for nodes in zk_nodes_by_cluster.values() for n in nodes))
+            answers = dict(zip(probe_nodes, await asyncio.gather(*(_zk_probe(n) for n in probe_nodes))))
+            for cid, nodes in zk_nodes_by_cluster.items():
+                zk_by_cluster[cid] = _zk_ensemble_value(nodes, answers)
+            for cfg in configs:
+                if cfg.alert_type == _ZK_ENSEMBLE_ALERT_TYPE and cfg.cluster_id in zk_by_cluster:
+                    values[cfg.id] = zk_by_cluster[cfg.cluster_id][0]
     except Exception as exc:
         logger.warning("_evaluate_cluster_metrics: setup failed: %s", exc)
         return
@@ -1283,6 +1379,9 @@ async def _evaluate_cluster_metrics() -> None:
         elif config.alert_type in _DATA_GB_ALERT_TYPES:
             if cluster_id not in data_by_cluster:
                 continue  # reason logged from data_ignored
+        elif config.alert_type == _ZK_ENSEMBLE_ALERT_TYPE:
+            if cluster_id not in zk_by_cluster:
+                continue  # reason logged from zk_ignored
         elif cluster_id not in fresh_cluster_ids:
             stale_cluster_ids.add(cluster_id)
             continue
@@ -1324,6 +1423,8 @@ async def _evaluate_cluster_metrics() -> None:
                     f"Broker {lo_broker} holds {lo_gb:.1f} GB vs broker {hi_broker} at {hi_gb:.1f} GB: "
                     f"spread {value}%"
                 )
+            elif config.alert_type == _ZK_ENSEMBLE_ALERT_TYPE:
+                description = zk_by_cluster[cluster_id][1]
             elif config.alert_type == _MSG_RATE_IN_ALERT_TYPE:
                 description = (
                     f"Cluster inflow is {value} msgs/sec over the last "
@@ -1411,6 +1512,11 @@ async def _evaluate_cluster_metrics() -> None:
         logger.info(
             "evaluate_alerts: data on disk ignored clusters: %s",
             "; ".join(f"{cid}: {reason}" for cid, reason in sorted(data_ignored.items())),
+        )
+    if zk_ignored:
+        logger.info(
+            "evaluate_alerts: ZooKeeper ensemble ignored clusters: %s",
+            "; ".join(f"{cid}: {reason}" for cid, reason in sorted(zk_ignored.items())),
         )
     if skew_skipped_cluster_ids:
         logger.info(
