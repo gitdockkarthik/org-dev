@@ -41,3 +41,29 @@ Done | Open | Blocked | In Progress
 ---
 
 *Internal use only — Operative Intelligence, Incident Response System (Agentic AI). Update only the delta at the end of each session.*
+
+## Alert-analyser findings 2026-10-06 (Zabbix handling; scope: Zabbix first, then New Relic)
+
+DONE: Creation guard - the final else branch (INSERT with related_ticket_id) in routes_settings.py now skips re-creation when source is Email and the title contains [Zabbix]. Deployed 15:07 UTC. Not yet seen firing; copy creation had already stopped ~03:xx UTC on 6 Oct, cause unknown.
+
+FINDINGS
+1. Re-creation loop: the sync re-processes every alert in the 4h history window each cycle. After a Zabbix ticket resolved and the 15-min cooldown ended, the same alert_id got a new ESCALATED ticket (related_ticket_id set), later re-resolved by the Closed notice. 2,906 copies from 249 alert_ids (2026-09-11 to 10-06), max 15 per alert (4h window / ~16 min). Time ESCALATED: <5s 2,342; 5s-1min 322; 1min-1h 202; >1h 34. 6 copies were still ESCALATED; 3 of the 6 are closed in OpsGenie.
+2. ~1,781 Zabbix Open tickets ESCALATED. Dry run (read-only): 1,733 have a later Closed notice (resolve_recovered; 315 rely on prefix matching for the 130-char title truncation), 40 keep_active, 4 merge_duplicate, 4 hosts unparsed. Ambiguity: on o1stg RDS hosts one Open prefix pairs with several Closed texts that differ in trailing threshold numbers (about 14 tickets) - resolve only if all prefix-matching Closed texts are identical; otherwise review list.
+3. Reconciliation shortcut: _check_one uses parse_message_status(title); [Open]/[Critical]/[Warning] titles return "open", so OpsGenie is never asked. Sample: 5 of 200 ESCALATED were closed in OpsGenie.
+4. Zabbix Open and Closed emails are separate OpsGenie records. Records are often only acknowledged, never closed (e570ad0c, b4484584 still open), so the live-status guard in the Zabbix closure path blocks resolution. Planned: close on the Closed notice itself when its own createdAt is later than the Open's createdAt, resolved_at = notice time.
+5. OpsGenie truncates messages at 130 chars; Open and Closed titles end at different points, so exact title equality never matches for long hostnames.
+6. recurrence_count is inflated: the same-alert branch adds 1 every 2-min cycle while the alert is in the 4h window (caps at 120). The RAG payload design reads this column.
+7. action_resolved: 73 total; 68 are "Auto-resolved - alert closed in OpsGenie" (37 are re-created copies), 3 Jenkins restart SUCCESS, 2 ALREADY_HEALTHY. The dashboard hero card overstates remediation - split it. Which agent writes CLOSED_IN_OPSGENIE is unknown.
+8. closure_alert_correlation (~3,122 Zabbix resolutions) is mostly copies (2,871); ~250 real. MTTR and correlation counts are probably skewed by ~2,900 near-1s resolutions (not measured).
+9. Classifier: fresh P3/P4/P5 alerts score -1 at best vs the -2 genuine cutoff, so none can become genuine (0 of ~93,000 in alert_sync_history). priority_weights appears unused by classify_alerts (verify). 34,053 non-recovery P3-P5 alerts affected; New Relic P3-P5 older than 2h: 23,051, only 50 with a later recovery.
+
+NEXT SESSION (in order)
+1. Check the guard overnight: "Skipping re-creation for Zabbix" log lines and new related_ticket_id copies.
+2. Closed-notice recovery rule in the sync, behind a dry-run flag.
+3. Reconciliation: ask OpsGenie for tickets still ESCALATED; use the title only to skip the lookup when it says Closed.
+4. Clean up the 1,733 recovered tickets under their own resolution_type, plus the review list.
+5. Dashboard: split action_resolved, exclude copies at query level (check how the queries are written first), fix recurrence_count.
+6. Scope New Relic. Open question: which agent writes CLOSED_IN_OPSGENIE.
+Retagging the ~2,900 historical copies: deferred, low value while incident management is not live.
+
+DEFERRED (other sources): MongoDB Atlas emails (~3,373 in window, ~39% prod, no Atlas alerts in OpsGenie since 5 Oct 12:00 UTC - stopped upstream, not a sync gap; app-support-agent not meant to handle DB alerts now). AWS Health (~160), Lightstep webhook (~137, sunsetting), EM Event Clear and [RESOLVED - Error] recovery tags not recognised by parse_message_status. kube-prometheus-stack and GoogleStackdriver P3/P5 sampled closed in OpsGenie, so current non-escalation is correct. Source 54.214.32.36 (P3, ~1,026) unidentified. Dashboard "no active P3/P4 incidents" was a classifier artefact.

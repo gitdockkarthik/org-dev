@@ -611,6 +611,19 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                                 )
                                 updated_count += 1
                             else:
+                                # Zabbix (Email) Open alerts get a NEW alert_id for every real
+                                # occurrence, so a RESOLVED ticket for the SAME alert_id coming
+                                # back is the sync re-reading an alert still inside the 4-hour
+                                # history window, not a genuine recurrence. Re-creating it
+                                # produced ~2,900 duplicate tickets (2026-09-11 to 10-06), each
+                                # ESCALATED until a Closed notice re-resolved it. Other sources
+                                # keep the re-creation behaviour. Added 2026-10-06.
+                                if source_tool == "Email" and "[Zabbix]" in title:
+                                    logger.info(
+                                        "Skipping re-creation for Zabbix alert_id=%s: prior ticket already %s",
+                                        alert_id, row.status,
+                                    )
+                                    continue
                                 await session.execute(
                                     text("""
                                         INSERT INTO incident_management.incidents
