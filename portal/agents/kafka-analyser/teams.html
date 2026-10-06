@@ -55,6 +55,7 @@
     .field > label { display: block; font-size: 0.875rem; font-weight: 500; color: #475569; margin-bottom: 0.375rem; }
     .field input[type="text"],
     .field input[type="number"],
+    .field input[type="datetime-local"],
     .field select {
       width: 100%; padding: 0.5rem 0.75rem; border: 1px solid #cbd5e1;
       border-radius: 6px; font-size: 0.875rem; color: #1e293b;
@@ -74,11 +75,11 @@
     .af-tier-input { display: flex; align-items: center; gap: 0.375rem; }
     .field .af-tier-input input[type="number"] { flex: 1 1 6rem; min-width: 6rem; }
     .af-tier-unit { white-space: nowrap; font-size: 0.8125rem; color: #64748b; }
-    /* Alert rules table filters: one row that wraps on narrow screens. */
-    .configs-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0 1rem; }
-    .configs-filters .field { flex: 0 1 12rem; min-width: 9rem; margin-bottom: 0.75rem; }
+    /* Alert rules and Recent Triggers filters: one row that wraps on narrow screens. */
+    .configs-filters, .triggers-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0 1rem; }
+    .configs-filters .field, .triggers-filters .field { flex: 0 1 12rem; min-width: 9rem; margin-bottom: 0.75rem; }
     .configs-filters .field:first-child { flex-basis: 16rem; }
-    .configs-filters .configs-page-size-field { flex: 0 0 6rem; min-width: 6rem; }
+    .configs-filters .configs-page-size-field, .triggers-filters .triggers-small-field { flex: 0 0 6rem; min-width: 6rem; }
     .configs-search { position: relative; }
     .field .configs-search input[type="text"] { padding-right: 1.75rem; }
     .configs-search-clear {
@@ -87,8 +88,9 @@
       font-size: 1rem; color: #94a3b8; cursor: pointer;
     }
     .configs-search-clear:hover { color: #475569; }
-    .configs-filters .configs-reset { margin-bottom: 0.75rem; }
-    #configs-count { margin: 0 0 0.5rem; font-size: 0.8125rem; color: #64748b; }
+    .configs-filters .configs-reset, .triggers-filters .triggers-reset { margin-bottom: 0.75rem; }
+    #configs-count, #triggers-count { margin: 0 0 0.5rem; font-size: 0.8125rem; color: #64748b; }
+    #triggers-limit-note { margin: 0 0 0.5rem; font-size: 0.8125rem; color: #b45309; }
 
     .hidden { display: none; }
 
@@ -433,9 +435,71 @@
         <div class="card-head">
           <div>
             <div class="card-title">Recent Triggers</div>
-            <div class="card-subtitle" style="margin-bottom:0">Alert firings from the last 3 days, newest first</div>
+            <div class="card-subtitle" style="margin-bottom:0">Alert firings from the last 30 days, newest first</div>
           </div>
           <button class="btn btn-secondary btn-sm" id="btn-refresh-triggers">Refresh</button>
+        </div>
+        <div class="triggers-filters">
+          <div class="field">
+            <label for="triggers-from">From (UTC)</label>
+            <input type="datetime-local" id="triggers-from" />
+          </div>
+          <div class="field">
+            <label for="triggers-to">To (UTC)</label>
+            <input type="datetime-local" id="triggers-to" />
+          </div>
+          <div class="field">
+            <label for="triggers-name-search">Alert</label>
+            <div class="configs-search">
+              <input type="text" id="triggers-name-search" placeholder="Contains" autocomplete="off" />
+              <button type="button" class="configs-search-clear" id="btn-triggers-name-clear" title="Clear name search" aria-label="Clear name search">&times;</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="triggers-cluster-filter">Cluster</label>
+            <select id="triggers-cluster-filter">
+              <option value="">All clusters</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="triggers-status-filter">Status</label>
+            <select id="triggers-status-filter">
+              <option value="">All</option>
+              <option value="open">Open</option>
+              <option value="resolved">Resolved</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="triggers-recurrence-filter">Recurrence</label>
+            <select id="triggers-recurrence-filter">
+              <option value="">All</option>
+              <option value="recurring">Recurring</option>
+              <option value="new">New</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="triggers-teams-filter">Teams Post</label>
+            <select id="triggers-teams-filter">
+              <option value="">All</option>
+              <option value="sent">Sent</option>
+              <option value="failed">Failed</option>
+            </select>
+          </div>
+          <div class="field triggers-small-field">
+            <label for="triggers-page-size">Per page</label>
+            <select id="triggers-page-size">
+              <option value="10" selected>10</option>
+              <option value="25">25</option>
+            </select>
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm triggers-reset hidden" id="btn-triggers-reset">Reset filters</button>
+        </div>
+        <div id="triggers-count"></div>
+        <div class="hidden" id="triggers-limit-note"></div>
+        <div class="show-more-row triggers-pager hidden" id="triggers-pager-top" style="margin:0 0 0.75rem">
+          <button class="btn btn-secondary btn-sm triggers-prev" id="btn-triggers-prev-top">Previous</button>
+          <button class="btn btn-secondary btn-sm triggers-next" id="btn-triggers-next-top">Next</button>
+          <span class="hint triggers-page-label" id="triggers-page-label-top"></span>
         </div>
         <div class="data-table-wrap">
           <table class="data-table">
@@ -455,9 +519,10 @@
             </tbody>
           </table>
         </div>
-        <div class="show-more-row">
-          <button class="btn btn-secondary btn-sm hidden" id="btn-show-more">Show More</button>
-          <span class="show-more-count" id="triggers-count"></span>
+        <div class="show-more-row triggers-pager hidden" id="triggers-pager">
+          <button class="btn btn-secondary btn-sm triggers-prev" id="btn-triggers-prev">Previous</button>
+          <button class="btn btn-secondary btn-sm triggers-next" id="btn-triggers-next">Next</button>
+          <span class="hint triggers-page-label" id="triggers-page-label"></span>
         </div>
       </div>
 
@@ -523,8 +588,14 @@
     ];
     const TIER_IDS = { info: 'af-tier-info', warning: 'af-tier-warning', critical: 'af-tier-critical' };
 
-    const TRIGGERS_PAGE_SIZE = 10;
-    let _triggersLimit = TRIGGERS_PAGE_SIZE;
+    // Recent Triggers: the newest TRIGGERS_FETCH_LIMIT firings of the last
+    // TRIGGERS_SINCE_DAYS days (one request); filters and paging apply in the browser.
+    const TRIGGERS_SINCE_DAYS = 30;
+    const TRIGGERS_FETCH_LIMIT = 500;
+    let _triggers = [];
+    let _triggersTotal = 0;
+    let _triggersPage = 0;  // 0-based; kept across reloads, clamped by renderTriggers
+    let _triggersLoadSeq = 0;  // only the latest request renders
 
     // Last list returned by loadConfigs (the Edit button reads from it), and
     // the id of the rule the form is editing (null = creating a new rule).
@@ -1282,64 +1353,165 @@
     }
 
     // ── Recent triggers table ────────────────────────────────────────────
-    function renderTriggers(triggers, totalCount) {
+    // datetime-local value ("2026-10-06T08:20") read as UTC, in ms; null if empty.
+    function triggersBound(id) {
+      const v = $(id).value;
+      if (!v) return null;
+      const ms = Date.parse(v + (v.length === 16 ? ':00' : '') + 'Z');
+      return Number.isFinite(ms) ? ms : null;
+    }
+    function triggersNameQuery() {
+      return $('triggers-name-search').value.trim().toLowerCase();
+    }
+    const TRIGGERS_FILTER_IDS = ['triggers-cluster-filter', 'triggers-status-filter', 'triggers-recurrence-filter', 'triggers-teams-filter'];
+    function triggerFiltersActive() {
+      return $('triggers-from').value !== '' || $('triggers-to').value !== '' || triggersNameQuery() !== ''
+        || TRIGGERS_FILTER_IDS.some(id => $(id).value !== '');
+    }
+    // All filters combine (AND). From is inclusive; To includes its whole minute.
+    function matchesTriggerFilters(t) {
+      const from = triggersBound('triggers-from'), to = triggersBound('triggers-to');
+      const at = Date.parse(t.triggered_at);
+      const name = triggersNameQuery();
+      const cluster = $('triggers-cluster-filter').value;
+      const status = $('triggers-status-filter').value;
+      const recurrence = $('triggers-recurrence-filter').value;
+      const teams = $('triggers-teams-filter').value;
+      return (from === null || at >= from)
+        && (to === null || at < to + 60000)
+        && (name === '' || String(t.config_name ?? '').toLowerCase().includes(name))
+        && (cluster === '' || (t.cluster_id != null && String(t.cluster_id) === cluster))
+        && (status === '' || (status === 'open') === !t.resolved_at)
+        && (recurrence === '' || (recurrence === 'recurring') === !!t.is_recurrence)
+        && (teams === '' || (teams === 'sent') === !!t.teams_post_success);
+    }
+
+    // Options: "All clusters" plus each cluster present in the loaded firings.
+    function buildTriggersClusterFilter() {
+      const sel = $('triggers-cluster-filter');
+      const current = sel.value;
+      const clusters = new Map();
+      _triggers.forEach(t => {
+        if (t.cluster_id != null && !clusters.has(String(t.cluster_id))) clusters.set(String(t.cluster_id), t.cluster_name);
+      });
+      sel.innerHTML = '<option value="">All clusters</option>' +
+        [...clusters].map(([id, name]) => `<option value="${esc(id)}">${esc(name || ('Cluster ' + id))}</option>`).join('');
+      sel.value = [...sel.options].some(o => o.value === current) ? current : '';
+    }
+
+    function showTriggersPagers(show) {
+      document.querySelectorAll('.triggers-pager').forEach(el => el.classList.toggle('hidden', !show));
+    }
+    // Same text and button states as the rules table pager.
+    function renderTriggersPager(start, end, total) {
+      const empty = end === start;
+      const text = empty ? `Showing 0 of ${total}` : `Showing ${start + 1}-${end} of ${total}`;
+      document.querySelectorAll('.triggers-page-label').forEach(el => { el.textContent = text; });
+      document.querySelectorAll('.triggers-prev').forEach(btn => { btn.disabled = empty || start === 0; });
+      document.querySelectorAll('.triggers-next').forEach(btn => { btn.disabled = empty || end >= total; });
+    }
+
+    // "35 firings, 2 open", or "Showing N of 35 firings" while a filter is
+    // active (Reset filters shown only then); a note when the window holds
+    // more than the fetched rows.
+    function renderTriggersCount(matching) {
+      const n = _triggers.length;
+      const firings = `${n} firing${n === 1 ? '' : 's'}`;
+      const active = triggerFiltersActive();
+      $('triggers-count').textContent = active
+        ? `Showing ${matching} of ${firings}`
+        : `${firings}, ${_triggers.filter(t => !t.resolved_at).length} open`;
+      $('btn-triggers-reset').classList.toggle('hidden', !active);
+      const note = $('triggers-limit-note');
+      note.textContent = `Showing the newest ${n} of ${_triggersTotal} firings in this window`;
+      note.classList.toggle('hidden', _triggersTotal <= n);
+    }
+
+    function renderTriggers() {
       const body = $('triggers-body');
-      if (!triggers.length) {
+      const filtered = _triggers.filter(matchesTriggerFilters);
+      renderTriggersCount(filtered.length);
+      if (!_triggers.length) {
+        showTriggersPagers(false);
         body.innerHTML = '<tr><td colspan="7" class="data-table__empty">No alerts have fired yet.</td></tr>';
-      } else {
-        body.innerHTML = triggers.map(t => {
-          const status = t.resolved_at
-            ? `<span class="status-resolved">✓ Resolved ${esc(fmtUtc(t.resolved_at))}</span>`
-            : '<span class="status-open">● Open</span>';
-          const recur = t.is_recurrence
-            ? '<span class="recur-badge" title="Fired again shortly after this alert last resolved (flapping)">↻ Recurring</span>'
-            : '';
-          let post;
-          if (t.teams_post_success) {
-            post = '<span class="post-ok" title="Posted to Teams">✓</span>';
-          } else {
-            const reason = t.error_detail || 'Teams post failed (see agent logs for details)';
-            post = `<span class="post-fail" title="${esc(reason)}">✗</span>`;
-          }
-          return `
-            <tr>
-              <td class="nowrap">${esc(fmtUtc(t.triggered_at))}</td>
-              <td>${esc(t.config_name)}</td>
-              <td>${esc(t.cluster_name)}</td>
-              <td>${t.metric_value != null ? esc(t.metric_value) : '—'}</td>
-              <td>${status}</td>
-              <td>${recur}</td>
-              <td>${post}</td>
-            </tr>`;
-        }).join('');
+        return;
       }
-      const showMore = $('btn-show-more');
-      showMore.classList.toggle('hidden', triggers.length >= totalCount);
-      $('triggers-count').textContent = totalCount
-        ? `Showing ${triggers.length} of ${totalCount}`
-        : '';
+      showTriggersPagers(true);
+      if (!filtered.length) {
+        renderTriggersPager(0, 0, _triggers.length);
+        body.innerHTML = '<tr><td colspan="7" class="data-table__empty">No firings match this filter.</td></tr>';
+        return;
+      }
+      // Rows arrive newest first; filter, then page.
+      const pageSize = parseInt($('triggers-page-size').value, 10) || 10;
+      _triggersPage = Math.min(Math.max(_triggersPage, 0), Math.ceil(filtered.length / pageSize) - 1);
+      const start = _triggersPage * pageSize;
+      const shown = filtered.slice(start, start + pageSize);
+      renderTriggersPager(start, start + shown.length, filtered.length);
+      body.innerHTML = shown.map(t => {
+        const status = t.resolved_at
+          ? `<span class="status-resolved">✓ Resolved ${esc(fmtUtc(t.resolved_at))}</span>`
+          : '<span class="status-open">● Open</span>';
+        const recur = t.is_recurrence
+          ? '<span class="recur-badge" title="Fired again shortly after this alert last resolved (flapping)">↻ Recurring</span>'
+          : '';
+        let post;
+        if (t.teams_post_success) {
+          post = '<span class="post-ok" title="Posted to Teams">✓</span>';
+        } else {
+          const reason = t.error_detail || 'Teams post failed (see agent logs for details)';
+          post = `<span class="post-fail" title="${esc(reason)}">✗</span>`;
+        }
+        return `
+          <tr>
+            <td class="nowrap">${esc(fmtUtc(t.triggered_at))}</td>
+            <td>${esc(t.config_name)}</td>
+            <td>${esc(t.cluster_name)}</td>
+            <td>${t.metric_value != null ? esc(t.metric_value) : '—'}</td>
+            <td>${status}</td>
+            <td>${recur}</td>
+            <td>${post}</td>
+          </tr>`;
+      }).join('');
     }
 
     async function loadTriggers() {
+      const seq = ++_triggersLoadSeq;
       try {
-        const d = await api(`/alerts/triggers?limit=${_triggersLimit}&offset=0`);
-        renderTriggers(d.triggers || [], d.total_count || 0);
+        const d = await api(`/alerts/triggers?since_days=${TRIGGERS_SINCE_DAYS}&limit=${TRIGGERS_FETCH_LIMIT}&offset=0`);
+        if (seq !== _triggersLoadSeq) return;
+        _triggers = d.triggers || [];
+        _triggersTotal = d.total_count || 0;
+        buildTriggersClusterFilter();
+        renderTriggers();
       } catch (err) {
+        if (seq !== _triggersLoadSeq) return;
         $('triggers-body').innerHTML =
           `<tr><td colspan="7" class="data-table__error">Failed to load recent triggers: ${esc(err.message)}</td></tr>`;
-        $('btn-show-more').classList.add('hidden');
+        showTriggersPagers(false);
         $('triggers-count').textContent = '';
+        $('triggers-limit-note').classList.add('hidden');
       }
     }
 
-    $('btn-show-more').addEventListener('click', async function () {
-      _triggersLimit += TRIGGERS_PAGE_SIZE;
-      this.disabled = true;
-      this.textContent = 'Loading…';
-      await loadTriggers();
-      this.disabled = false;
-      this.textContent = 'Show More';
+    // Filters and the page size apply to the loaded rows (no request).
+    ['triggers-from', 'triggers-to', 'triggers-page-size', ...TRIGGERS_FILTER_IDS].forEach(id =>
+      $(id).addEventListener('change', () => { _triggersPage = 0; renderTriggers(); }));
+    $('triggers-name-search').addEventListener('input', () => { _triggersPage = 0; renderTriggers(); });
+    $('btn-triggers-name-clear').addEventListener('click', () => {
+      $('triggers-name-search').value = '';
+      _triggersPage = 0;
+      renderTriggers();
     });
+    // Clears every filter except page size; no request.
+    $('btn-triggers-reset').addEventListener('click', () => {
+      ['triggers-from', 'triggers-to', 'triggers-name-search', ...TRIGGERS_FILTER_IDS].forEach(id => { $(id).value = ''; });
+      _triggersPage = 0;
+      renderTriggers();
+    });
+    // Two pagers (above and below the table) share _triggersPage.
+    document.querySelectorAll('.triggers-prev').forEach(btn => btn.addEventListener('click', () => { _triggersPage -= 1; renderTriggers(); }));
+    document.querySelectorAll('.triggers-next').forEach(btn => btn.addEventListener('click', () => { _triggersPage += 1; renderTriggers(); }));
 
     $('btn-refresh-triggers').addEventListener('click', async function () {
       this.disabled = true;
