@@ -255,7 +255,8 @@
                 <input type="number" id="af-tier-critical" step="any" min="0" />
               </div>
             </div>
-            <div class="hint">Set at least one; the highest tier reached decides the severity</div>
+            <div class="hint" id="af-tiers-above-hint">Set at least one; the highest tier reached decides the severity</div>
+            <div class="hint hidden" id="af-tiers-below-hint">Fires when the cluster's inflow falls BELOW a tier. Enter tiers from high to low (info &gt; warning &gt; critical); 0 means no messages at all. Needs two consecutive inflow runs (about 10 minutes apart), so a real drop takes about 20 minutes to fire.</div>
             <div class="hint hidden" id="af-tiers-skew-hint">Ratio of the busiest broker's leader partitions to the cluster average (1.0 = balanced). Does not detect a broker that has lost all its leaders.</div>
           </div>
           <div class="field hidden" id="af-min-rf-field">
@@ -454,7 +455,9 @@
     // cluster, a cluster is required and "All clusters" is not offered.
     // `minRf` marks types that also need a minimum replication factor (the
     // af-min-rf field, sent as min_rf; routes_alerts validates it). Labels
-    // must match routes_alerts._TYPE_LABELS.
+    // must match routes_alerts._TYPE_LABELS. `below` marks types that fire when
+    // the value falls below a tier (routes_alerts._BELOW_ALERT_TYPES): tiers
+    // are entered high to low and 0 is allowed.
     const ALERT_TYPES = [
       { value: 'close_wait_spike', label: 'CLOSE_WAIT spike', group: 'Connections', kind: 'threshold_count', resolves: true, general: true },
       { value: 'broker_unreachable', label: 'Broker reachability (live check)', group: 'Broker', kind: 'binary', resolves: true, general: true },
@@ -463,6 +466,7 @@
       { value: 'cluster.urp_total', label: 'Under-replicated partitions', group: 'Cluster', kind: 'tiers', unit: 'partitions', resolves: true },
       { value: 'cluster.rf_below_min', label: 'Topics below minimum RF', group: 'Cluster', kind: 'tiers', unit: 'topics', resolves: true, minRf: true },
       { value: 'cluster.leader_skew', label: 'Leader partition skew', group: 'Cluster', kind: 'tiers', unit: 'x average', resolves: true },
+      { value: 'cluster.msg_rate_in', label: 'Message rate in', group: 'Cluster', kind: 'tiers', unit: 'msgs/sec', resolves: true, below: true },
     ];
     const TIER_IDS = { info: 'af-tier-info', warning: 'af-tier-warning', critical: 'af-tier-critical' };
 
@@ -578,6 +582,8 @@
       $('af-tiers-field').classList.toggle('hidden', t.kind !== 'tiers');
       $('af-min-rf-field').classList.toggle('hidden', !t.minRf);
       $('af-tiers-skew-hint').classList.toggle('hidden', t.value !== 'cluster.leader_skew');
+      $('af-tiers-above-hint').classList.toggle('hidden', !!t.below);
+      $('af-tiers-below-hint').classList.toggle('hidden', !t.below);
       $('af-resolve-card').closest('.field').classList.toggle('hidden', !t.resolves);
       document.querySelectorAll('.af-tier-unit').forEach(el => { el.textContent = t.unit ? ` (${t.unit})` : ''; });
       applyClusterOption();
@@ -808,11 +814,16 @@
       }
       if (kind === 'tiers') {
         const tiers = {};
+        // Below types allow 0 (no messages at all); the others need > 0.
+        const below = !!selectedAlertType().below;
         for (const [tier, id] of Object.entries(TIER_IDS)) {
           const raw = $(id).value.trim();
           if (raw === '') continue;
           const value = parseFloat(raw);
-          if (!Number.isFinite(value) || value <= 0) {
+          if (below && (!Number.isFinite(value) || value < 0)) {
+            showMsg(msgEl, '✗ ' + tier.charAt(0).toUpperCase() + tier.slice(1) + ' at must be a number of 0 or more', 'err', 0); return;
+          }
+          if (!below && (!Number.isFinite(value) || value <= 0)) {
             showMsg(msgEl, '✗ ' + tier.charAt(0).toUpperCase() + tier.slice(1) + ' at must be a number greater than 0', 'err', 0); return;
           }
           tiers[tier] = value;
