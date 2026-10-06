@@ -609,6 +609,16 @@ def _threshold_tier(tier_config: dict, value: float) -> str | None:
     return None
 
 
+def _threshold_tier_below(tier_config: dict, value: float) -> str | None:
+    """For "direction": "below" rules (descending tiers): the most severe
+    configured tier whose threshold the value is at or below, else None."""
+    for tier in reversed(_THRESHOLD_TIERS):
+        threshold = tier_config.get(tier)
+        if threshold is not None and value <= float(threshold):
+            return tier
+    return None
+
+
 async def _evaluate_broker_thresholds() -> None:
     """Fire broker.cpu_pct / broker.heap_pct alerts from the latest
     kafka_broker_metrics row per broker: one Teams card per (alert config,
@@ -936,7 +946,7 @@ async def _evaluate_broker_thresholds() -> None:
 # Cluster threshold rules (Simple mode, same config as the broker thresholds):
 # one value per rule from kafka_topic_metrics, which collect_topic_structure
 # refreshes (one row per topic). Subject is always "cluster".
-CLUSTER_METRIC_TYPES = ("cluster.urp_total", "cluster.rf_below_min", "cluster.leader_skew")
+CLUSTER_METRIC_TYPES = ("cluster.urp_total", "cluster.rf_below_min", "cluster.leader_skew", "cluster.msg_rate_in")
 _CLUSTER_METRIC_SUBJECT = "cluster"
 # A cluster is evaluated only if its topic-structure job succeeded this recently.
 _CLUSTER_STRUCTURE_MAX_AGE = timedelta(minutes=15)
@@ -966,10 +976,36 @@ _LEADER_SKEW_SQL = text(
     "AVG(leader_partition_count) AS avg_leaders, MAX(updated_at) AS last_updated "
     "FROM kafka_broker_distribution WHERE cluster_id IN :cids GROUP BY cluster_id"
 ).bindparams(bindparam("cids", expanding=True))
+# cluster.msg_rate_in ("direction": "below"): msgs/sec of the latest inflow
+# run per cluster from kafka_topic_message_rate_snapshots, written by
+# collect_topic_message_inflow (~every 10 min; all topics of a run share one
+# collected_at and interval_seconds). consumer-lag writes outflow-only rows
+# to the same table, hence inflow IS NOT NULL everywhere. Rate = SUM(inflow)
+# / interval_seconds of that run. Own guard: the run must be within
+# _MSG_RATE_MAX_AGE and its interval in (0, _MSG_RATE_MAX_INTERVAL_SECS].
+_MSG_RATE_IN_ALERT_TYPE = "cluster.msg_rate_in"
+_MSG_RATE_MAX_AGE = timedelta(minutes=15)
+_MSG_RATE_MAX_INTERVAL_SECS = 1200
+_MSG_RATE_LATEST_SQL = text(
+    "SELECT cluster_id, MAX(collected_at) AS collected_at FROM kafka_topic_message_rate_snapshots "
+    "WHERE cluster_id IN :cids AND inflow IS NOT NULL AND collected_at >= :since GROUP BY cluster_id"
+).bindparams(bindparam("cids", expanding=True))
+# Exactly the latest runs: cluster_id IN and collected_at IN, then the
+# (cluster_id, collected_at) pairs are matched in Python.
+_MSG_RATE_RUN_SQL = text(
+    "SELECT cluster_id, collected_at, SUM(inflow) AS msgs, MAX(interval_seconds) AS interval_seconds "
+    "FROM kafka_topic_message_rate_snapshots "
+    "WHERE cluster_id IN :cids AND collected_at IN :runs AND inflow IS NOT NULL "
+    "GROUP BY cluster_id, collected_at"
+).bindparams(bindparam("cids", expanding=True), bindparam("runs", expanding=True))
+# Last inflow run seen per (config, cluster, subject): a msg_rate_in breach
+# counts only on a new run (in-memory, resets on restart).
+_msg_rate_last_run: dict[tuple[int, int, str], datetime] = {}
 _CLUSTER_METRIC_ACTIONS = {
     "cluster.urp_total": "Check broker health and replica sync.",
     "cluster.rf_below_min": "Check the topic replication factors with the Kafka team.",
     "cluster.leader_skew": "Review leader distribution with the Kafka team; a preferred leader election may rebalance it.",
+    "cluster.msg_rate_in": "Check producers and connectors writing to this cluster.",
 }
 
 
@@ -986,7 +1022,9 @@ async def _evaluate_cluster_metrics() -> None:
     resolve, no fire -- so stale topic data never looks healthy or broken.
     cluster.leader_skew uses its own guard instead (_LEADER_SKEW_MAX_AGE on
     kafka_broker_distribution.updated_at) and skips clusters with fewer than
-    two brokers or no leaders."""
+    two brokers or no leaders. cluster.msg_rate_in fires when the value is
+    at or BELOW a tier (descending tiers), uses the latest inflow run with
+    its own guard, and counts a breach only once per new run."""
     if SessionLocal is None:
         logger.info("evaluate_alerts: cluster metrics skipped: database not available")
         return
@@ -1045,7 +1083,8 @@ async def _evaluate_cluster_metrics() -> None:
             # The structure-job guard covers URP/RF rules; leader skew has its own below.
             rule_cluster_ids = {
                 cfg.cluster_id for cfg in configs
-                if cfg.cluster_id is not None and cfg.alert_type != _LEADER_SKEW_ALERT_TYPE
+                if cfg.cluster_id is not None
+                and cfg.alert_type not in (_LEADER_SKEW_ALERT_TYPE, _MSG_RATE_IN_ALERT_TYPE)
             }
             fresh_cluster_ids: set[int] = set()
             if rule_cluster_ids:
@@ -1110,6 +1149,37 @@ async def _evaluate_cluster_metrics() -> None:
                 for cfg in configs:
                     if cfg.alert_type == _LEADER_SKEW_ALERT_TYPE and cfg.cluster_id in skew_by_cluster:
                         values[cfg.id] = skew_by_cluster[cfg.cluster_id]
+
+            rate_cluster_ids = {
+                cfg.cluster_id for cfg in configs
+                if cfg.alert_type == _MSG_RATE_IN_ALERT_TYPE and cfg.cluster_id is not None
+            }
+            # cluster_id -> (collected_at, interval_seconds) of a valid latest run
+            rate_runs: dict[int, tuple[datetime, float]] = {}
+            if rate_cluster_ids:
+                latest = {
+                    r.cluster_id: r.collected_at
+                    for r in (await session.execute(_MSG_RATE_LATEST_SQL, {
+                        "cids": sorted(rate_cluster_ids),
+                        "since": datetime.now(timezone.utc) - _MSG_RATE_MAX_AGE,
+                    })).all()
+                    if r.collected_at is not None
+                }
+                rate_by_cluster: dict[int, float] = {}
+                if latest:
+                    for r in (await session.execute(_MSG_RATE_RUN_SQL, {
+                        "cids": sorted(latest), "runs": sorted(set(latest.values())),
+                    })).all():
+                        if latest.get(r.cluster_id) != r.collected_at:
+                            continue  # another cluster's run time
+                        interval = float(r.interval_seconds) if r.interval_seconds is not None else None
+                        if interval is None or interval <= 0 or interval > _MSG_RATE_MAX_INTERVAL_SECS:
+                            continue  # ignored like a stale run
+                        rate_runs[r.cluster_id] = (r.collected_at, interval)
+                        rate_by_cluster[r.cluster_id] = round(float(r.msgs or 0) / interval, 2)
+                for cfg in configs:
+                    if cfg.alert_type == _MSG_RATE_IN_ALERT_TYPE and cfg.cluster_id in rate_by_cluster:
+                        values[cfg.id] = rate_by_cluster[cfg.cluster_id]
         last_resolved: dict[tuple[int, int, str], datetime] = {
             (r.alert_config_id, r.cluster_id, r.subject): r.last_resolved_at for r in resolved_rows
         }
@@ -1128,6 +1198,7 @@ async def _evaluate_cluster_metrics() -> None:
     cluster_ids_evaluated: set[int] = set()
     stale_cluster_ids: set[int] = set()
     stale_skew_cluster_ids: set[int] = set()
+    stale_rate_cluster_ids: set[int] = set()
     rules_evaluated = 0
     escalated = 0
     subject = _CLUSTER_METRIC_SUBJECT
@@ -1141,6 +1212,10 @@ async def _evaluate_cluster_metrics() -> None:
             if cluster_id not in skew_fresh_cluster_ids:
                 stale_skew_cluster_ids.add(cluster_id)
                 continue
+        elif config.alert_type == _MSG_RATE_IN_ALERT_TYPE:
+            if cluster_id not in rate_runs:
+                stale_rate_cluster_ids.add(cluster_id)
+                continue
         elif cluster_id not in fresh_cluster_ids:
             stale_cluster_ids.add(cluster_id)
             continue
@@ -1151,8 +1226,15 @@ async def _evaluate_cluster_metrics() -> None:
             cluster_ids_evaluated.add(cluster_id)
             rules_evaluated += 1
             tier_config = config.config or {}
-            tier = _threshold_tier(tier_config, value)
             key = (config.id, cluster_id, subject)
+            # msg_rate_in: below-direction tiers, and a breach counts only on a new run.
+            new_run = True
+            if config.alert_type == _MSG_RATE_IN_ALERT_TYPE:
+                tier = _threshold_tier_below(tier_config, value)
+                new_run = _msg_rate_last_run.get(key) != rate_runs[cluster_id][0]
+                _msg_rate_last_run[key] = rate_runs[cluster_id][0]
+            else:
+                tier = _threshold_tier(tier_config, value)
             open_trigger = open_triggers.get(key)
 
             if tier is None:
@@ -1167,6 +1249,11 @@ async def _evaluate_cluster_metrics() -> None:
                 description = f"{value} under-replicated partitions"
             elif config.alert_type == _LEADER_SKEW_ALERT_TYPE:
                 description = f"Leader partitions are skewed: busiest broker has {value:g} times the cluster average"
+            elif config.alert_type == _MSG_RATE_IN_ALERT_TYPE:
+                description = (
+                    f"Cluster inflow is {value} msgs/sec over the last "
+                    f"{rate_runs[cluster_id][1] / 60:.1f} minutes"
+                )
             else:
                 description = (
                     f"{value} topics have replication factor below {tier_config['min_rf']} "
@@ -1192,8 +1279,9 @@ async def _evaluate_cluster_metrics() -> None:
                     to_update.append((trigger_id, None, metric_value))
                 continue
 
-            _threshold_breach_counts[key] = _threshold_breach_counts.get(key, 0) + 1
-            if _threshold_breach_counts[key] < _THRESHOLD_CONFIRM_CHECKS:
+            if new_run:
+                _threshold_breach_counts[key] = _threshold_breach_counts.get(key, 0) + 1
+            if _threshold_breach_counts.get(key, 0) < _THRESHOLD_CONFIRM_CHECKS:
                 continue
 
             last_resolved_at = last_resolved.get(key)
@@ -1238,6 +1326,11 @@ async def _evaluate_cluster_metrics() -> None:
         logger.info(
             "evaluate_alerts: leader skew ignored clusters %s: no broker distribution update in %d min",
             sorted(stale_skew_cluster_ids), int(_LEADER_SKEW_MAX_AGE.total_seconds() // 60),
+        )
+    if stale_rate_cluster_ids:
+        logger.info(
+            "evaluate_alerts: message rate ignored clusters %s: no valid inflow run in %d min",
+            sorted(stale_rate_cluster_ids), int(_MSG_RATE_MAX_AGE.total_seconds() // 60),
         )
     if skew_skipped_cluster_ids:
         logger.info(

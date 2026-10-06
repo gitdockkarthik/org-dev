@@ -30,6 +30,7 @@ CATEGORY_LABEL = {
     "cluster.urp_total": "Under-Replicated Partitions",
     "cluster.rf_below_min": "Topics Below Minimum RF",
     "cluster.leader_skew": "Leader Partition Skew",
+    "cluster.msg_rate_in": "Message Rate In",
     "broker.cpu_pct": "Broker CPU %",
     "broker.heap_pct": "Broker Heap %",
 }

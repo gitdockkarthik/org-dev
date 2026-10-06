@@ -28,7 +28,12 @@ _SEVERITIES = ("critical", "warning", "info")
 # rule's own `severity` is ignored for these types.
 _THRESHOLD_ALERT_TYPES = (
     "broker.cpu_pct", "broker.heap_pct", "cluster.urp_total", "cluster.rf_below_min", "cluster.leader_skew",
+    "cluster.msg_rate_in",
 )
+# Threshold types that fire when the value drops BELOW a tier: tiers are
+# >= 0 (zero allowed) and descending (info > warning > critical), and the
+# stored config carries "direction": "below".
+_BELOW_ALERT_TYPES = ("cluster.msg_rate_in",)
 _TIERS = ("info", "warning", "critical")  # ascending
 
 # The one type whose config also holds "min_rf" (integer >= 2), stored next to
@@ -48,6 +53,7 @@ _TYPE_LABELS = {
     "cluster.urp_total": "Under-replicated partitions",
     "cluster.rf_below_min": "Topics below minimum RF",
     "cluster.leader_skew": "Leader partition skew",
+    "cluster.msg_rate_in": "Message rate in",
 }
 
 # Fields that map to NOT NULL columns -- an explicit null for these in a PUT
@@ -130,10 +136,12 @@ class AlertCopyPayload(BaseModel):
         return self
 
 
-def _threshold_config(tiers: dict | None) -> dict:
+def _threshold_config(tiers: dict | None, below: bool = False) -> dict:
     """Validate a threshold rule's tiers and return its stored config. 422
     unless: keys only from _TIERS, values numeric and > 0, at least one tier,
-    and info < warning < critical among the tiers given."""
+    and info < warning < critical among the tiers given. With below=True
+    (_BELOW_ALERT_TYPES): values >= 0 and info > warning > critical, stored
+    with "direction": "below"."""
     if not tiers:
         raise HTTPException(status_code=422, detail=f"tiers must set at least one of {', '.join(_TIERS)}")
     unknown = [k for k in tiers if k not in _TIERS]
@@ -141,9 +149,18 @@ def _threshold_config(tiers: dict | None) -> dict:
         raise HTTPException(status_code=422, detail=f"Unknown tier(s) {', '.join(map(str, unknown))}; allowed: {', '.join(_TIERS)}")
     for tier, value in tiers.items():
         # bool is an int subclass -- reject it explicitly.
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        bad = isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
+        if below:
+            if bad or value < 0:
+                raise HTTPException(status_code=422, detail=f"tiers.{tier} must be a number of 0 or more")
+        elif bad or value <= 0:
             raise HTTPException(status_code=422, detail=f"tiers.{tier} must be a number greater than 0")
     given = [(t, tiers[t]) for t in _TIERS if t in tiers]
+    if below:
+        for (lower, lower_value), (higher, higher_value) in zip(given, given[1:]):
+            if lower_value <= higher_value:
+                raise HTTPException(status_code=422, detail=f"tiers.{lower} must be greater than tiers.{higher}")
+        return {"mode": "simple", "direction": "below", **dict(given)}
     for (lower, lower_value), (higher, higher_value) in zip(given, given[1:]):
         if lower_value >= higher_value:
             raise HTTPException(status_code=422, detail=f"tiers.{lower} must be less than tiers.{higher}")
@@ -266,7 +283,7 @@ async def create_alert_config(payload: AlertConfigPayload) -> dict:
         cluster_names = await _get_cluster_names()
         await _check_cluster_exists(payload.cluster_id, cluster_names)
         if payload.alert_type in _THRESHOLD_ALERT_TYPES:
-            config = _threshold_config(payload.tiers)
+            config = _threshold_config(payload.tiers, payload.alert_type in _BELOW_ALERT_TYPES)
         else:
             config = {"threshold": payload.threshold}
         if payload.alert_type == _MIN_RF_ALERT_TYPE:
@@ -432,7 +449,7 @@ async def update_alert_config(config_id: int, payload: AlertConfigUpdatePayload)
                 # threshold type must bring its tiers with it.
                 updates.pop("threshold", None)
                 if tiers_given or updates.get("alert_type", cfg.alert_type) != cfg.alert_type:
-                    cfg.config = _threshold_config(tiers)
+                    cfg.config = _threshold_config(tiers, updates.get("alert_type", cfg.alert_type) in _BELOW_ALERT_TYPES)
             elif "threshold" in updates:
                 # Reassign (not mutate in place) so SQLAlchemy detects the JSONB change.
                 cfg.config = {**(cfg.config or {}), "threshold": updates.pop("threshold")}
