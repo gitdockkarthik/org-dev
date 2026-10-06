@@ -946,7 +946,10 @@ async def _evaluate_broker_thresholds() -> None:
 # Cluster threshold rules (Simple mode, same config as the broker thresholds):
 # one value per rule from kafka_topic_metrics, which collect_topic_structure
 # refreshes (one row per topic). Subject is always "cluster".
-CLUSTER_METRIC_TYPES = ("cluster.urp_total", "cluster.rf_below_min", "cluster.leader_skew", "cluster.msg_rate_in")
+CLUSTER_METRIC_TYPES = (
+    "cluster.urp_total", "cluster.rf_below_min", "cluster.leader_skew", "cluster.msg_rate_in",
+    "cluster.data_gb_max", "cluster.data_spread_pct",
+)
 _CLUSTER_METRIC_SUBJECT = "cluster"
 # A cluster is evaluated only if its topic-structure job succeeded this recently.
 _CLUSTER_STRUCTURE_MAX_AGE = timedelta(minutes=15)
@@ -1001,11 +1004,25 @@ _MSG_RATE_RUN_SQL = text(
 # Last inflow run seen per (config, cluster, subject): a msg_rate_in breach
 # counts only on a new run (in-memory, resets on restart).
 _msg_rate_last_run: dict[tuple[int, int, str], datetime] = {}
+# cluster.data_gb_max (largest broker's data, GB) and cluster.data_spread_pct
+# ((max - min) / max * 100), from kafka_broker_metrics.data_gb_true (one
+# upserted row per broker, collect_broker_health). Own guard: a cluster is
+# ignored unless it has >= 2 broker rows, all with data_gb_true set and time
+# within _DATA_GB_MAX_AGE (the 6 minutes the dashboard uses for broker status).
+_DATA_GB_MAX_ALERT_TYPE = "cluster.data_gb_max"
+_DATA_SPREAD_ALERT_TYPE = "cluster.data_spread_pct"
+_DATA_GB_ALERT_TYPES = (_DATA_GB_MAX_ALERT_TYPE, _DATA_SPREAD_ALERT_TYPE)
+_DATA_GB_MAX_AGE = timedelta(minutes=6)
+_DATA_GB_SQL = text(
+    "SELECT cluster_id, broker_id, data_gb_true, time FROM kafka_broker_metrics WHERE cluster_id IN :cids"
+).bindparams(bindparam("cids", expanding=True))
 _CLUSTER_METRIC_ACTIONS = {
     "cluster.urp_total": "Check broker health and replica sync.",
     "cluster.rf_below_min": "Check the topic replication factors with the Kafka team.",
     "cluster.leader_skew": "Review leader distribution with the Kafka team; a preferred leader election may rebalance it.",
     "cluster.msg_rate_in": "Check producers and connectors writing to this cluster.",
+    "cluster.data_gb_max": "Check disk capacity and retention with the Kafka team.",
+    "cluster.data_spread_pct": "Check whether the low broker is replicating correctly (rebuilt, lost disks or not catching up).",
 }
 
 
@@ -1024,7 +1041,9 @@ async def _evaluate_cluster_metrics() -> None:
     kafka_broker_distribution.updated_at) and skips clusters with fewer than
     two brokers or no leaders. cluster.msg_rate_in fires when the value is
     at or BELOW a tier (descending tiers), uses the latest inflow run with
-    its own guard, and counts a breach only once per new run."""
+    its own guard, and counts a breach only once per new run.
+    cluster.data_gb_max / cluster.data_spread_pct use their own guard (every
+    broker's data_gb_true set and fresh, at least two brokers)."""
     if SessionLocal is None:
         logger.info("evaluate_alerts: cluster metrics skipped: database not available")
         return
@@ -1084,7 +1103,7 @@ async def _evaluate_cluster_metrics() -> None:
             rule_cluster_ids = {
                 cfg.cluster_id for cfg in configs
                 if cfg.cluster_id is not None
-                and cfg.alert_type not in (_LEADER_SKEW_ALERT_TYPE, _MSG_RATE_IN_ALERT_TYPE)
+                and cfg.alert_type not in (_LEADER_SKEW_ALERT_TYPE, _MSG_RATE_IN_ALERT_TYPE, *_DATA_GB_ALERT_TYPES)
             }
             fresh_cluster_ids: set[int] = set()
             if rule_cluster_ids:
@@ -1180,6 +1199,51 @@ async def _evaluate_cluster_metrics() -> None:
                 for cfg in configs:
                     if cfg.alert_type == _MSG_RATE_IN_ALERT_TYPE and cfg.cluster_id in rate_by_cluster:
                         values[cfg.id] = rate_by_cluster[cfg.cluster_id]
+
+            data_cluster_ids = {
+                cfg.cluster_id for cfg in configs
+                if cfg.alert_type in _DATA_GB_ALERT_TYPES and cfg.cluster_id is not None
+            }
+            # cluster_id -> (largest broker, its GB, smallest broker, its GB) for clusters passing the guard
+            data_by_cluster: dict[int, tuple[str, float, str, float]] = {}
+            data_ignored: dict[int, str] = {}  # cluster_id -> reason, naming the broker
+            if data_cluster_ids:
+                brokers_by_cluster: dict[int, list] = {}
+                for r in (await session.execute(_DATA_GB_SQL, {"cids": sorted(data_cluster_ids)})).all():
+                    brokers_by_cluster.setdefault(r.cluster_id, []).append(r)
+                data_now = datetime.now(timezone.utc)
+                for cid in sorted(data_cluster_ids):
+                    rows = sorted(brokers_by_cluster.get(cid, []), key=lambda r: str(r.broker_id))
+                    if len(rows) < 2:
+                        data_ignored[cid] = (
+                            f"only broker {rows[0].broker_id} has a metrics row" if rows else "no broker metrics rows"
+                        )
+                        continue
+                    missing = next((r for r in rows if r.data_gb_true is None), None)
+                    if missing is not None:
+                        data_ignored[cid] = f"broker {missing.broker_id} has no data_gb_true"
+                        continue
+                    stale = next((r for r in rows if r.time is None or data_now - r.time > _DATA_GB_MAX_AGE), None)
+                    if stale is not None:
+                        data_ignored[cid] = (
+                            f"broker {stale.broker_id} has no metrics in the last "
+                            f"{int(_DATA_GB_MAX_AGE.total_seconds() // 60)} min"
+                            + (f" (last {int((data_now - stale.time).total_seconds() // 60)} min ago)" if stale.time else "")
+                        )
+                        continue
+                    hi = max(rows, key=lambda r: r.data_gb_true)
+                    lo = min(rows, key=lambda r: r.data_gb_true)
+                    data_by_cluster[cid] = (str(hi.broker_id), float(hi.data_gb_true), str(lo.broker_id), float(lo.data_gb_true))
+                for cfg in configs:
+                    if cfg.alert_type not in _DATA_GB_ALERT_TYPES or cfg.cluster_id not in data_by_cluster:
+                        continue
+                    hi_broker, hi_gb, lo_broker, lo_gb = data_by_cluster[cfg.cluster_id]
+                    if cfg.alert_type == _DATA_GB_MAX_ALERT_TYPE:
+                        values[cfg.id] = round(hi_gb, 1)
+                    elif hi_gb > 0:
+                        values[cfg.id] = round((hi_gb - lo_gb) / hi_gb * 100, 1)
+                    else:
+                        data_ignored.setdefault(cfg.cluster_id, f"spread skipped: largest broker {hi_broker} holds {hi_gb:g} GB")
         last_resolved: dict[tuple[int, int, str], datetime] = {
             (r.alert_config_id, r.cluster_id, r.subject): r.last_resolved_at for r in resolved_rows
         }
@@ -1216,6 +1280,9 @@ async def _evaluate_cluster_metrics() -> None:
             if cluster_id not in rate_runs:
                 stale_rate_cluster_ids.add(cluster_id)
                 continue
+        elif config.alert_type in _DATA_GB_ALERT_TYPES:
+            if cluster_id not in data_by_cluster:
+                continue  # reason logged from data_ignored
         elif cluster_id not in fresh_cluster_ids:
             stale_cluster_ids.add(cluster_id)
             continue
@@ -1249,6 +1316,14 @@ async def _evaluate_cluster_metrics() -> None:
                 description = f"{value} under-replicated partitions"
             elif config.alert_type == _LEADER_SKEW_ALERT_TYPE:
                 description = f"Leader partitions are skewed: busiest broker has {value:g} times the cluster average"
+            elif config.alert_type == _DATA_GB_MAX_ALERT_TYPE:
+                description = f"Broker {data_by_cluster[cluster_id][0]} holds {value} GB"
+            elif config.alert_type == _DATA_SPREAD_ALERT_TYPE:
+                hi_broker, hi_gb, lo_broker, lo_gb = data_by_cluster[cluster_id]
+                description = (
+                    f"Broker {lo_broker} holds {lo_gb:.1f} GB vs broker {hi_broker} at {hi_gb:.1f} GB: "
+                    f"spread {value}%"
+                )
             elif config.alert_type == _MSG_RATE_IN_ALERT_TYPE:
                 description = (
                     f"Cluster inflow is {value} msgs/sec over the last "
@@ -1331,6 +1406,11 @@ async def _evaluate_cluster_metrics() -> None:
         logger.info(
             "evaluate_alerts: message rate ignored clusters %s: no valid inflow run in %d min",
             sorted(stale_rate_cluster_ids), int(_MSG_RATE_MAX_AGE.total_seconds() // 60),
+        )
+    if data_ignored:
+        logger.info(
+            "evaluate_alerts: data on disk ignored clusters: %s",
+            "; ".join(f"{cid}: {reason}" for cid, reason in sorted(data_ignored.items())),
         )
     if skew_skipped_cluster_ids:
         logger.info(

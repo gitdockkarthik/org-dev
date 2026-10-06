@@ -31,6 +31,8 @@ CATEGORY_LABEL = {
     "cluster.rf_below_min": "Topics Below Minimum RF",
     "cluster.leader_skew": "Leader Partition Skew",
     "cluster.msg_rate_in": "Message Rate In",
+    "cluster.data_gb_max": "Data On Disk (Max Broker)",
+    "cluster.data_spread_pct": "Data Spread Between Brokers",
     "broker.cpu_pct": "Broker CPU %",
     "broker.heap_pct": "Broker Heap %",
 }
