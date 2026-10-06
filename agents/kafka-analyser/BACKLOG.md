@@ -1180,6 +1180,39 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### ZooKeeper ensemble rule and default rules (2026-10-06)
+DONE (deployed 08:20 UTC, form checked in the browser): cluster.zk_ensemble,
+fires ABOVE a tier. Value = number of ZooKeeper nodes that do not answer
+mntr with a zk_server_state, plus 1 if the answering nodes do not hold
+exactly one leader; if no node answers, the node count. Live probe, no
+stored data: one mntr per node of kafka_clusters.zookeeper_url, in parallel,
+3 s timeout, no retry in the same run, outside any DB session; a node shared
+by two clusters is probed once. Confirmed over 2 consecutive evaluations
+(in-memory counter, resets on restart). Cards name down nodes and the
+leader; if every node answers but none gives a state, the card points at
+4lw.commands.whitelist; if none answers it says to check the network path.
+A cluster with an empty URL or fewer than 2 nodes is ignored (INFO line).
+Verified 2026-10-06 with mntr on clusters 4, 8, 9, 10: each has 3 nodes, 1
+leader, 2 followers, 0 outstanding requests.
+DEFAULT RULES (all DISABLED): ids 57-60 (clusters 4, 8, 9, 10), warning 1,
+critical 2 problems, cooldown 30, resolve card on. Placeholders only; the
+Kafka team sets real values. NOT verified: a real card or a real failure.
+LIMITATIONS: (1) tools/zookeeper.py _zk_command does not close its
+connection on timeout or cancel, so a slow node's socket stays open until
+garbage collection; small at one probe per node per 5 min but worth fixing
+(the dashboard uses the same function). (2) Cluster 3 (DevQA, disabled)
+has 3 ZooKeeper nodes but its zookeeper_url lists only aos-qa-zookeeper01;
+complete the URL list before enabling it. (3) Open file descriptors are
+about 150 of 100000 (0.15%), so an FD rule would never fire; latency is an
+average since start and hides spikes, so neither is offered. (4) With an
+enabled rule each evaluator run can take up to 3 s longer while probes wait.
+STUB EXPECTATIONS TO UPDATE: stub_data_form asserts the data types are the
+last three Cluster options (now four with ZooKeeper).
+ALL DEFAULT RULES NOW: 20-27, 28-35, 37-40, 42-45, 48-55, 57-60; 3 and 5
+general and enabled. STILL OPEN: Consumer Groups (per-group lag rule last),
+Kafka Connect, Schema Registry, MirrorMaker, SLI/SLO inventories; batch
+test session script; rules table filters and Recent Triggers paging.
+
 ### Topics tab inventory: closed, no new rules (2026-10-06)
 DECISION: no alert rules for Hot, Large or Stale topics counts, Total topics,
 or the size/throughput views. They are informational: reported on the
