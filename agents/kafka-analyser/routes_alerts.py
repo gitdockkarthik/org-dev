@@ -26,7 +26,9 @@ _SEVERITIES = ("critical", "warning", "info")
 # {"mode": "simple", <tier>: <threshold>, ...} instead of the single
 # "threshold" count, and the tier that fired decides the severity -- the
 # rule's own `severity` is ignored for these types.
-_THRESHOLD_ALERT_TYPES = ("broker.cpu_pct", "broker.heap_pct", "cluster.urp_total", "cluster.rf_below_min")
+_THRESHOLD_ALERT_TYPES = (
+    "broker.cpu_pct", "broker.heap_pct", "cluster.urp_total", "cluster.rf_below_min", "cluster.leader_skew",
+)
 _TIERS = ("info", "warning", "critical")  # ascending
 
 # The one type whose config also holds "min_rf" (integer >= 2), stored next to
@@ -45,6 +47,7 @@ _TYPE_LABELS = {
     "broker.heap_pct": "Broker heap %",
     "cluster.urp_total": "Under-replicated partitions",
     "cluster.rf_below_min": "Topics below minimum RF",
+    "cluster.leader_skew": "Leader partition skew",
 }
 
 # Fields that map to NOT NULL columns -- an explicit null for these in a PUT

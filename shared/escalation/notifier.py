@@ -29,6 +29,7 @@ CATEGORY_LABEL = {
     "noise_alert": "Noise Alert",
     "cluster.urp_total": "Under-Replicated Partitions",
     "cluster.rf_below_min": "Topics Below Minimum RF",
+    "cluster.leader_skew": "Leader Partition Skew",
     "broker.cpu_pct": "Broker CPU %",
     "broker.heap_pct": "Broker Heap %",
 }

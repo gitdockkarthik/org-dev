@@ -936,7 +936,7 @@ async def _evaluate_broker_thresholds() -> None:
 # Cluster threshold rules (Simple mode, same config as the broker thresholds):
 # one value per rule from kafka_topic_metrics, which collect_topic_structure
 # refreshes (one row per topic). Subject is always "cluster".
-CLUSTER_METRIC_TYPES = ("cluster.urp_total", "cluster.rf_below_min")
+CLUSTER_METRIC_TYPES = ("cluster.urp_total", "cluster.rf_below_min", "cluster.leader_skew")
 _CLUSTER_METRIC_SUBJECT = "cluster"
 # A cluster is evaluated only if its topic-structure job succeeded this recently.
 _CLUSTER_STRUCTURE_MAX_AGE = timedelta(minutes=15)
@@ -955,14 +955,26 @@ _RF_BELOW_MIN_SQL = text(
     "WHERE cluster_id = :cid AND partition_count > 0 AND replication_factor < :min_rf "
     r"AND topic NOT LIKE '\_\_%' AND topic <> '_schemas'"
 )
+# cluster.leader_skew: busiest broker's leader count / the cluster's average,
+# from kafka_broker_distribution (one row per broker, written by
+# collect_topic_structure). Its own freshness guard: the newest updated_at
+# must be within _LEADER_SKEW_MAX_AGE (the structure-job guard is not used).
+_LEADER_SKEW_ALERT_TYPE = "cluster.leader_skew"
+_LEADER_SKEW_MAX_AGE = timedelta(minutes=15)
+_LEADER_SKEW_SQL = text(
+    "SELECT cluster_id, COUNT(*) AS brokers, MAX(leader_partition_count) AS max_leaders, "
+    "AVG(leader_partition_count) AS avg_leaders, MAX(updated_at) AS last_updated "
+    "FROM kafka_broker_distribution WHERE cluster_id IN :cids GROUP BY cluster_id"
+).bindparams(bindparam("cids", expanding=True))
 _CLUSTER_METRIC_ACTIONS = {
     "cluster.urp_total": "Check broker health and replica sync.",
     "cluster.rf_below_min": "Check the topic replication factors with the Kafka team.",
+    "cluster.leader_skew": "Review leader distribution with the Kafka team; a preferred leader election may rebalance it.",
 }
 
 
 async def _evaluate_cluster_metrics() -> None:
-    """Fire cluster.urp_total / cluster.rf_below_min alerts: one Teams card
+    """Fire cluster.urp_total / cluster.rf_below_min / cluster.leader_skew alerts: one Teams card
     per (alert config, cluster) once the value sits in a tier on
     _THRESHOLD_CONFIRM_CHECKS consecutive runs, only when no trigger is
     already open and it is out of cooldown. Escalation, silent
@@ -971,7 +983,10 @@ async def _evaluate_cluster_metrics() -> None:
 
     A cluster whose kafka-topic-structure job has not succeeded within
     _CLUSTER_STRUCTURE_MAX_AGE is ignored entirely -- no counter change, no
-    resolve, no fire -- so stale topic data never looks healthy or broken."""
+    resolve, no fire -- so stale topic data never looks healthy or broken.
+    cluster.leader_skew uses its own guard instead (_LEADER_SKEW_MAX_AGE on
+    kafka_broker_distribution.updated_at) and skips clusters with fewer than
+    two brokers or no leaders."""
     if SessionLocal is None:
         logger.info("evaluate_alerts: cluster metrics skipped: database not available")
         return
@@ -1027,7 +1042,11 @@ async def _evaluate_cluster_metrics() -> None:
                 )
             )).all()
 
-            rule_cluster_ids = {cfg.cluster_id for cfg in configs if cfg.cluster_id is not None}
+            # The structure-job guard covers URP/RF rules; leader skew has its own below.
+            rule_cluster_ids = {
+                cfg.cluster_id for cfg in configs
+                if cfg.cluster_id is not None and cfg.alert_type != _LEADER_SKEW_ALERT_TYPE
+            }
             fresh_cluster_ids: set[int] = set()
             if rule_cluster_ids:
                 fresh_job_ids = set((await session.execute(
@@ -1042,7 +1061,7 @@ async def _evaluate_cluster_metrics() -> None:
                 }
 
             # Values keyed by config id; a rule missing here is skipped this run.
-            values: dict[int, int] = {}
+            values: dict[int, int | float] = {}
             urp_cluster_ids = {
                 cfg.cluster_id for cfg in configs
                 if cfg.alert_type == "cluster.urp_total" and cfg.cluster_id in fresh_cluster_ids
@@ -1069,6 +1088,28 @@ async def _evaluate_cluster_metrics() -> None:
                 values[cfg.id] = int((await session.execute(
                     _RF_BELOW_MIN_SQL, {"cid": cfg.cluster_id, "min_rf": min_rf}
                 )).scalar_one())
+
+            skew_cluster_ids = {
+                cfg.cluster_id for cfg in configs
+                if cfg.alert_type == _LEADER_SKEW_ALERT_TYPE and cfg.cluster_id is not None
+            }
+            skew_fresh_cluster_ids: set[int] = set()
+            skew_skipped_cluster_ids: set[int] = set()  # fresh, but < 2 brokers or no leaders
+            if skew_cluster_ids:
+                skew_by_cluster: dict[int, float] = {}
+                skew_now = datetime.now(timezone.utc)
+                for r in (await session.execute(_LEADER_SKEW_SQL, {"cids": sorted(skew_cluster_ids)})).all():
+                    if r.last_updated is None or skew_now - r.last_updated > _LEADER_SKEW_MAX_AGE:
+                        continue  # stale: ignored like a cluster without a recent structure run
+                    skew_fresh_cluster_ids.add(r.cluster_id)
+                    avg_leaders = float(r.avg_leaders or 0)
+                    if r.brokers < 2 or avg_leaders <= 0:
+                        skew_skipped_cluster_ids.add(r.cluster_id)
+                        continue
+                    skew_by_cluster[r.cluster_id] = round(float(r.max_leaders) / avg_leaders, 2)
+                for cfg in configs:
+                    if cfg.alert_type == _LEADER_SKEW_ALERT_TYPE and cfg.cluster_id in skew_by_cluster:
+                        values[cfg.id] = skew_by_cluster[cfg.cluster_id]
         last_resolved: dict[tuple[int, int, str], datetime] = {
             (r.alert_config_id, r.cluster_id, r.subject): r.last_resolved_at for r in resolved_rows
         }
@@ -1086,6 +1127,7 @@ async def _evaluate_cluster_metrics() -> None:
     to_post: list[tuple[KafkaAlertConfig, int, str, str, str, KafkaAlertTrigger | None]] = []
     cluster_ids_evaluated: set[int] = set()
     stale_cluster_ids: set[int] = set()
+    stale_skew_cluster_ids: set[int] = set()
     rules_evaluated = 0
     escalated = 0
     subject = _CLUSTER_METRIC_SUBJECT
@@ -1095,7 +1137,11 @@ async def _evaluate_cluster_metrics() -> None:
         if cluster_id is None:
             logger.warning("_evaluate_cluster_metrics: alert_config_id=%s has no cluster_id; skipped", config.id)
             continue
-        if cluster_id not in fresh_cluster_ids:
+        if config.alert_type == _LEADER_SKEW_ALERT_TYPE:
+            if cluster_id not in skew_fresh_cluster_ids:
+                stale_skew_cluster_ids.add(cluster_id)
+                continue
+        elif cluster_id not in fresh_cluster_ids:
             stale_cluster_ids.add(cluster_id)
             continue
         if config.id not in values:
@@ -1119,6 +1165,8 @@ async def _evaluate_cluster_metrics() -> None:
             metric_value = str(value)
             if config.alert_type == "cluster.urp_total":
                 description = f"{value} under-replicated partitions"
+            elif config.alert_type == _LEADER_SKEW_ALERT_TYPE:
+                description = f"Leader partitions are skewed: busiest broker has {value:g} times the cluster average"
             else:
                 description = (
                     f"{value} topics have replication factor below {tier_config['min_rf']} "
@@ -1185,6 +1233,16 @@ async def _evaluate_cluster_metrics() -> None:
         logger.info(
             "evaluate_alerts: cluster metrics ignored clusters %s: no successful topic-structure run in %d min",
             sorted(stale_cluster_ids), int(_CLUSTER_STRUCTURE_MAX_AGE.total_seconds() // 60),
+        )
+    if stale_skew_cluster_ids:
+        logger.info(
+            "evaluate_alerts: leader skew ignored clusters %s: no broker distribution update in %d min",
+            sorted(stale_skew_cluster_ids), int(_LEADER_SKEW_MAX_AGE.total_seconds() // 60),
+        )
+    if skew_skipped_cluster_ids:
+        logger.info(
+            "evaluate_alerts: leader skew skipped clusters %s: fewer than 2 brokers or no leaders",
+            sorted(skew_skipped_cluster_ids),
         )
     logger.info(
         "evaluate_alerts: cluster metrics checked clusters=%d rules=%d stale_skipped=%d "
