@@ -201,6 +201,7 @@
 
     <div class="tab-bar">
       <button class="tab-btn tab-btn--active" onclick="switchTab('incidents',this)">🚨 Incident Management</button>
+      <button class="tab-btn" onclick="switchTab('report',this)">📋 Incident Report</button>
       <button class="tab-btn" onclick="switchTab('overview',this)">Overview</button>
       <button class="tab-btn" onclick="switchTab('noise',this)">Noise Analysis</button>
       <button class="tab-btn" onclick="switchTab('genuine',this)">Genuine Alerts</button>
@@ -210,6 +211,7 @@
     </div>
 
     <div id="tab-incidents" class="tab-panel tab-panel--active"></div>
+    <div id="tab-report" class="tab-panel"></div>
     <div id="tab-overview" class="tab-panel"></div>
     <div id="tab-noise"    class="tab-panel"></div>
     <div id="tab-genuine"  class="tab-panel"></div>
@@ -255,6 +257,138 @@
       btn.classList.add('tab-btn--active');
       if (name === 'insights') renderInsights();
       if (name === 'downloads') renderDownloads();
+      if (name === 'report') renderIncidentReport();
+    }
+
+    // ── Incident Report tab (read-only; data from /dashboard/incident-report) ──
+    var _irData = null, _irFilter = '';
+    function _irEsc(s) {
+      return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+    function _irAge(h) {
+      if (h == null) return '—';
+      if (h < 1) return Math.max(1, Math.round(h * 60)) + 'm';
+      if (h < 48) return Math.round(h) + 'h';
+      const d = Math.floor(h / 24);
+      return d + 'd ' + Math.round(h - d * 24) + 'h';
+    }
+    function _irTime(iso) { return iso ? String(iso).replace('T', ' ').slice(0, 16) : '—'; }
+    function _irCron(c) {
+      const m = /^\*\/(\d+) \* \* \* \*$/.exec(c || '');
+      return m ? 'every ' + m[1] + ' minutes' : (c || '');
+    }
+    function _irPct(n, total) {
+      if (!total) return '';
+      const p = 100 * n / total;
+      return p < 0.1 ? '<0.1%' : (p < 10 ? p.toFixed(1) : Math.round(p)) + '%';
+    }
+    function _irRunNote(note) {
+      const m = /^(live|dry run): (?:resolved|would resolve) (\d+) .*?judged (\d+): keep (\d+), review (\d+)/.exec(note || '');
+      if (!m) return _irEsc(note || '');
+      const verb = m[1] === 'live' ? 'Closed' : 'Would close';
+      const stillOpen = m[1] === 'live' ? Number(m[3]) - Number(m[2]) : Number(m[3]);
+      return `${verb} <b>${m[2]}</b> · ${stillOpen} still open: ${m[4]} waiting for recovery, ${m[5]} need a person`;
+    }
+    const _irReasons = {
+      pending_closure:       { label: 'Closing soon',            bg: 'var(--accent-glow)', fg: 'var(--accent)' },
+      no_recovery:           { label: 'Waiting for recovery',    bg: 'var(--warn-bg)',     fg: 'var(--warn)' },
+      agent_outcome:         { label: 'Automation agent',        bg: 'var(--accent-glow)', fg: 'var(--accent)' },
+      ambiguous_prefix:      { label: 'Needs a person',          bg: 'var(--danger-bg)',   fg: 'var(--danger)' },
+      unparsed_title:        { label: 'Needs a person',          bg: 'var(--danger-bg)',   fg: 'var(--danger)' },
+      unparsed_time:         { label: 'Needs a person',          bg: 'var(--danger-bg)',   fg: 'var(--danger)' },
+      older_open_superseded: { label: 'Replaced by newer alert', bg: 'var(--navy-3)',      fg: 'var(--text-muted)' },
+    };
+    function _irChip(code) {
+      const r = _irReasons[code] || { label: code, bg: 'var(--navy-3)', fg: 'var(--text-muted)' };
+      return `<span style="display:inline-block;padding:2px 9px;border-radius:999px;font-size:.72rem;font-weight:600;background:${r.bg};color:${r.fg};white-space:nowrap">${_irEsc(r.label)}</span>`;
+    }
+    function _irOpenRows() {
+      const list = (_irData.open.incidents || []).filter(i => !_irFilter || i.reason_code === _irFilter);
+      if (!list.length) return '<tr><td colspan="5" class="data-table__empty">No incidents in this view</td></tr>';
+      return list.map(i => {
+        const pri = (i.priority || '').toLowerCase();
+        const fix = i.fix_attempt
+          ? `<div style="font-size:.76rem"><b style="color:${String(i.fix_attempt.outcome).toUpperCase() === 'FAILED' ? 'var(--danger)' : 'var(--text)'}">${_irEsc(i.fix_attempt.outcome)}</b>${i.fix_attempt.at ? ' · ' + _irEsc(_irTime(i.fix_attempt.at)) : ''}</div><div style="font-size:.72rem;color:var(--text-muted)">${_irEsc(i.fix_attempt.what || '')}</div>`
+          : '<span style="color:var(--text-dim)">None</span>';
+        return `<tr>
+          <td style="max-width:430px;word-break:break-word" title="alert id: ${_irEsc(i.alert_id)}">${_irEsc(i.title)}</td>
+          <td><span class="pri pri--${_irEsc(pri)}">${_irEsc(i.priority || '—')}</span></td>
+          <td style="white-space:nowrap" title="opened ${_irEsc(_irTime(i.created_at))} UTC">${_irEsc(_irAge(i.age_hours))}</td>
+          <td style="max-width:360px">${_irChip(i.reason_code)}<div style="font-size:.76rem;color:var(--text-muted);margin-top:4px">${_irEsc(i.reason)}</div></td>
+          <td style="min-width:150px">${fix}</td>
+        </tr>`;
+      }).join('');
+    }
+    function _irSetFilter(v) {
+      _irFilter = v;
+      const body = document.getElementById('ir-open-body');
+      if (body) body.innerHTML = _irOpenRows();
+    }
+    async function renderIncidentReport() {
+      const el = document.getElementById('tab-report');
+      if (!_irData) el.innerHTML = '<div class="chart-card" style="color:var(--text-muted)">Loading the incident report…</div>';
+      let d;
+      try { d = await api('/dashboard/incident-report'); }
+      catch (e) { el.innerHTML = `<div class="chart-card" style="color:var(--danger)">Could not load the incident report: ${_irEsc(e.message)}</div>`; return; }
+      if (!d || d.error || !d.sources || !d.open || !d.closure_job || !d.resolved_30d) {
+        el.innerHTML = `<div class="chart-card" style="color:var(--danger)">Could not load the incident report: ${_irEsc((d && d.error) || 'unexpected response')}</div>`; return;
+      }
+      _irData = d;
+      const paused = (d.sources.alerts_24h || []).filter(s => !s.enabled).reduce((a, s) => a + s.genuine_alerts, 0);
+      const job = d.closure_job, res = d.resolved_30d;
+      const jobCls = job.mode === 'live' ? 'kpi--success' : (job.mode === 'dry run' ? 'kpi--warn' : 'kpi--danger');
+      const jobSub = job.mode === 'live' ? 'closes recovered incidents' : (job.mode === 'dry run' ? 'checks only, closes nothing' : 'not running');
+      const reasonOpts = Object.keys(d.open.by_reason).sort().map(k => `<option value="${_irEsc(k)}" ${_irFilter === k ? 'selected' : ''}>${_irEsc((_irReasons[k] || { label: k }).label)} — ${_irEsc(k.replace(/_/g, ' '))} (${d.open.by_reason[k]})</option>`).join('');
+      const max = Math.max(1, ...res.buckets.filter(b => b.kind !== 'test').map(b => b.count));
+      const resRows = res.buckets.map(b => {
+        const color = b.kind === 'pipeline' ? 'var(--success)' : (b.kind === 'test' ? 'var(--border-hi)' : 'var(--text-dim)');
+        const muted = b.kind === 'test' ? 'color:var(--text-dim);' : '';
+        return `<tr style="${muted}"><td style="${b.kind === 'test' ? 'border-top:2px solid var(--border)' : ''}">${_irEsc(b.label)}${b.kind === 'pipeline' ? ' <span class="badge badge--published" style="margin-left:6px">pipeline fix</span>' : ''}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;${b.kind === 'test' ? 'border-top:2px solid var(--border)' : ''}">${b.count.toLocaleString()}${b.kind === 'test' ? '' : ` <span style="color:var(--text-muted);font-size:.74rem">(${_irPct(b.count, res.total)})</span>`}</td>
+          <td style="width:34%;${b.kind === 'test' ? 'border-top:2px solid var(--border)' : ''}"><div style="height:8px;border-radius:4px;background:${color};width:${Math.max(2, Math.round(100 * b.count / max))}%;max-width:100%"></div></td></tr>`;
+      }).join('');
+      const runRows = (job.runs || []).map(r => `<tr><td style="white-space:nowrap">${_irEsc(_irTime(r.started_at))}</td><td>${_irEsc(r.job)}</td>
+          <td style="color:${r.status === 'success' ? 'var(--success)' : 'var(--danger)'}">${_irEsc(r.status)}</td><td style="font-size:.8rem;color:var(--text-muted)" title="${_irEsc(r.note || '')}">${_irRunNote(r.note)}</td></tr>`).join('')
+        || '<tr><td colspan="4" class="data-table__empty">No runs yet</td></tr>';
+      const srcRows = (d.sources.alerts_24h || []).map(s => `<tr><td>${_irEsc(s.source)}</td>
+          <td>${s.enabled ? '<span style="color:var(--success);font-weight:600">Yes</span>' : '<span style="color:var(--text-muted)">Not yet</span>'}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums">${s.genuine_alerts.toLocaleString()}</td></tr>`).join('')
+        || '<tr><td colspan="3" class="data-table__empty">No genuine alerts in the last 24 hours</td></tr>';
+      el.innerHTML = `
+        <div class="page-heading" style="margin-bottom:14px">
+          <div><div class="page-heading__title" style="font-size:1.15rem">Incident Report</div>
+            <div class="page-heading__sub">What the pipeline is doing with incidents right now. Read-only, refreshed at most once a minute. The date range above does not apply to this tab.</div></div>
+          <button class="btn btn--secondary btn--sm" onclick="renderIncidentReport()">Refresh</button>
+        </div>
+        <div class="kpi-grid">
+          <div class="kpi"><div class="kpi__label">Open incidents</div><div class="kpi__value">${d.open.total.toLocaleString()}</div><div class="kpi__sub">ESCALATED, no recovery recorded</div></div>
+          <div class="kpi ${jobCls}"><div class="kpi__label">Closure job</div><div class="kpi__value" style="text-transform:capitalize">${_irEsc(job.mode)}</div><div class="kpi__sub">${_irEsc(jobSub)} · ${_irEsc(_irCron(job.schedule))}</div></div>
+          <div class="kpi"><div class="kpi__label">Resolved, last 30 days</div><div class="kpi__value">${res.total.toLocaleString()}</div><div class="kpi__sub">pre-launch test data not counted</div></div>
+          <div class="kpi"><div class="kpi__label">Alerts not yet turned into incidents</div><div class="kpi__value">${paused.toLocaleString()}</div><div class="kpi__sub">genuine alerts, last 24 h, paused sources</div></div>
+        </div>
+        <div class="chart-card" style="margin-bottom:16px">
+          <div class="chart-card__title">Open incidents</div>
+          <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+            <select class="dash-select" onchange="_irSetFilter(this.value)" style="font-size:.82rem;padding:4px 8px"><option value="">All reasons (${d.open.total})</option>${reasonOpts}</select>
+            <span style="font-size:.75rem;color:var(--text-muted)">Oldest first. Hover a title for its alert id, the age for the time it opened.</span>
+          </div>
+          <div class="data-table-wrap" style="margin-bottom:0"><table class="data-table">
+            <thead><tr><th>Alert</th><th>Priority</th><th>Open for</th><th>Why it is still open</th><th>Automated fix attempt</th></tr></thead>
+            <tbody id="ir-open-body">${_irOpenRows()}</tbody></table></div>
+        </div>
+        <div class="chart-grid">
+          <div class="chart-card"><div class="chart-card__title">Which sources create incidents</div>
+            <div class="data-table-wrap" style="margin-bottom:0"><table class="data-table"><thead><tr><th>Source</th><th>Creates incidents</th><th style="text-align:right">Genuine alerts, 24 h</th></tr></thead><tbody>${srcRows}</tbody></table></div>
+            <div style="font-size:.75rem;color:var(--text-muted);margin-top:10px">Sources are enabled one at a time, each after its own validation.</div></div>
+          <div class="chart-card"><div class="chart-card__title">How incidents were resolved (last 30 days)</div>
+            <div class="data-table-wrap" style="margin-bottom:0"><table class="data-table"><tbody>${resRows}</tbody></table></div>
+            <div style="font-size:.75rem;color:var(--text-muted);margin-top:10px">Only an automated fix counts as a pipeline fix. The other lines were closed outside the pipeline.</div></div>
+        </div>
+        <div class="chart-card" style="margin-bottom:16px"><div class="chart-card__title">Closure job: latest runs</div>
+          <div class="data-table-wrap" style="margin-bottom:0"><table class="data-table"><thead><tr><th>Started (UTC)</th><th>Job</th><th>Status</th><th>What it did</th></tr></thead><tbody>${runRows}</tbody></table></div></div>
+        <div class="chart-card"><div class="chart-card__title">What the statuses mean</div>
+          <div style="font-size:.84rem;line-height:1.55"><div><b>ESCALATED</b> — ${_irEsc(d.definitions.ESCALATED)}</div><div style="margin-top:6px"><b>RESOLVED</b> — ${_irEsc(d.definitions.RESOLVED)}</div></div>
+          <div style="font-size:.72rem;color:var(--text-dim);margin-top:12px">Generated ${_irEsc(_irTime(d.generated_at))} UTC</div></div>`;
     }
 
     function renderDownloads() {
