@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS incident_management.incidents (
 );
 
 CREATE INDEX IF NOT EXISTS idx_incidents_alert_id ON incident_management.incidents(alert_id);
+CREATE INDEX IF NOT EXISTS idx_incidents_related_ticket_id ON incident_management.incidents(related_ticket_id);
 
 ALTER TABLE incident_management.incidents ADD COLUMN IF NOT EXISTS resolved_externally BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE incident_management.incidents ADD COLUMN IF NOT EXISTS source_tool TEXT;
