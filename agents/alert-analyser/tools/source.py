@@ -295,6 +295,37 @@ class StandaloneOpsgenieSource(AlertSource):
             return None
         return None
 
+    async def get_alert_description(self, alert_id: str, client=None) -> tuple[str, str | None]:
+        """Fetch one alert and return (outcome, description); outcome is 'ok', 'not_found', 'throttled' or
+        'error'. Unlike get_alert_status it tells a missing alert from a failed lookup, and it does not wait
+        on a 429: the caller stops its batch and tries again on its next run. The description (the full
+        problem name and Zabbix's problem ID) is returned by Get Alert but not by the list call that
+        load_alerts() uses. An httpx client may be passed in to reuse one connection across a batch."""
+        import httpx
+        url = f"{self._base_url}/v2/alerts/{alert_id}"
+        headers = {
+            "Authorization": f"GenieKey {self._api_key}",
+            "Accept": "application/json",
+        }
+        try:
+            if client is None:
+                async with httpx.AsyncClient(timeout=15.0) as own:
+                    resp = await own.get(url, headers=headers)
+            else:
+                resp = await client.get(url, headers=headers)
+        except Exception:
+            return "error", None
+        if resp.status_code == 429:
+            return "throttled", None
+        if resp.status_code == 404:
+            return "not_found", None
+        if resp.status_code != 200:
+            return "error", None
+        try:
+            return "ok", (resp.json().get("data") or {}).get("description")
+        except Exception:
+            return "error", None
+
 
 # Backward-compatibility alias — existing callers (routes_settings.py, main.py) keep working.
 OpsgenieAPISource = JSMSource

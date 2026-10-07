@@ -405,8 +405,39 @@ async def lifespan(app: FastAPI):
             "Resolves ESCALATED Zabbix incidents whose recovery notice exists",
             _zabbix_closure_live_job,
         )
+
+        async def _zabbix_detail_job():
+            # Fetches each Zabbix alert's description from OpsGenie once and stores its problem ID and full title in
+            # zabbix_alert_detail (tools/zabbix_enrich.py). It writes only to that table and never to an incident,
+            # so it needs no guard beyond its schedule, which is created disabled: it runs when triggered by hand
+            # or once its schedule is enabled with PUT /jobs/zabbix-detail/schedules/<schedule_id>.
+            from routes_settings import _config
+            from tools.source import StandaloneOpsgenieSource
+            from sqlalchemy import text as _text
+            import tools.zabbix_enrich as _ze
+            if _config.get("source_type", "opsgenie") == "standalone" and _config.get("opsgenie_type", "standalone") == "jsm":
+                _zabbix_detail_job._last_result = "skipped: the configured source is Atlassian JSM, which does not return alert descriptions in this form"
+                return
+            if not _config.get("api_token"):
+                _zabbix_detail_job._last_result = "skipped: no OpsGenie API key is configured"
+                return
+            _zsource = StandaloneOpsgenieSource(
+                api_key=_config["api_token"],
+                base_url=_config.get("opsgenie_base_url") or "https://api.opsgenie.com",
+            )
+            try:
+                _zabbix_detail_job._last_result = await _ze.run_enrichment(_zsource, SessionLocal, _text)
+            except _asyncio.TimeoutError:
+                raise RuntimeError("timed out after %ss" % _ze.ENRICH_TIMEOUT_SECONDS)
+
+        _jobs_module.register_job(
+            "zabbix-detail",
+            "Zabbix alert details",
+            "Fetches each Zabbix alert's description from OpsGenie once and stores its problem ID and full title; changes no incident",
+            _zabbix_detail_job,
+        )
         async with SessionLocal() as _zsess:
-            for _zid, _zenabled in (("zabbix-closure-dry-run", True), ("zabbix-closure", False)):
+            for _zid, _zenabled in (("zabbix-closure-dry-run", True), ("zabbix-closure", False), ("zabbix-detail", False)):
                 _zexisting = await _zsess.execute(_sel(AlertJobSchedule).where(AlertJobSchedule.job_id == _zid))
                 if not _zexisting.first():
                     await _jobs_module.create_schedule(_zid, "*/5 * * * *", enabled=_zenabled)
