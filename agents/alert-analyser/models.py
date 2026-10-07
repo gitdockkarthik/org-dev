@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Float, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -92,3 +92,25 @@ class AlertJobRun(Base):
     logs: Mapped[str] = mapped_column(Text, nullable=False, default="")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ZabbixAlertDetail(Base):
+    """Details OpsGenie keeps in a Zabbix alert's description: the problem ID and the full problem name (created by revision 0057)."""
+
+    __tablename__ = "zabbix_alert_detail"
+    __table_args__ = (Index("ix_zabbix_alert_detail_problem_id", "problem_id"),)
+
+    alert_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    problem_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    problem_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    full_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    title_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    kind: Mapped[str | None] = mapped_column(Text, nullable=True)
+    host: Mapped[str | None] = mapped_column(Text, nullable=True)
+    severity: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fetch_status: Mapped[str] = mapped_column(Text, nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
