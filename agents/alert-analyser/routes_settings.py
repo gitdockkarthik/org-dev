@@ -133,6 +133,24 @@ async def load_config_from_db() -> dict:
         return {}
 
 
+# Incident creation is enabled one source at a time (decided 2026-10-07).
+# To enable the next source: add its key here, then validate it with
+# scripts/audit_incidents.py before moving on. LightStep is intentionally
+# never enabled (tool is being sunset).
+INCIDENT_ENABLED_SOURCES = {"zabbix"}
+logger.info("Incident creation enabled for sources: %s", sorted(INCIDENT_ENABLED_SOURCES))
+
+
+def _incident_source_key(alert: dict) -> str:
+    """Zabbix alerts are recognised by the [Zabbix] title tag whatever the source label
+    (they arrive as source 'Email'). Everything else is keyed by its lower-cased source label."""
+    msg = alert.get("message", alert.get("alias", "")) or ""
+    if "[Zabbix]" in msg:
+        return "zabbix"
+    src = alert.get("source", "unknown") or "unknown"
+    return str(src).strip().lower()
+
+
 async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
     """Core sync logic callable from HTTP handler or lifespan startup."""
     global _sync_lock
@@ -287,6 +305,10 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                 async with SessionLocal() as session:
                     for alert in classified:
                         try:
+                            # Source gate: no incident, closure or audit row for sources that are not
+                            # enabled yet (2026-10-07).
+                            if _incident_source_key(alert) not in INCIDENT_ENABLED_SOURCES:
+                                continue
                             # Audit-trail record for noise-suspect alerts whose own
                             # title conclusively says resolved (e.g. "[Closed]").
                             # These previously vanished with no incident record at
