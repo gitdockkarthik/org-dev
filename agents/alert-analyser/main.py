@@ -362,6 +362,58 @@ async def lifespan(app: FastAPI):
         if not existing.scalar_one_or_none():
             await _jobs_module.create_schedule("alert-opsgenie-sync", "*/15 * * * *", enabled=True)
             logger.info("Created default 15-min schedule for alert-opsgenie-sync")
+    # Zabbix closure: resolves ESCALATED Zabbix incidents whose recovery notice exists (tools/zabbix_closure.py).
+    # Two jobs share the code. The dry run (schedule enabled) rolls back every write and records what it would
+    # resolve; the live job is registered with its schedule DISABLED and refuses to run (also when triggered by
+    # hand) unless one of its schedules is enabled. To go live, enable the live job's schedule and disable the
+    # dry run's with PUT /jobs/<job_id>/schedules/<schedule_id> and a body with BOTH fields, for example
+    # {"cron_expression": "*/5 * * * *", "enabled": true}: an omitted field falls back to */15 and true.
+    try:
+        import asyncio as _asyncio
+        import tools.zabbix_closure as _zc
+
+        async def _zabbix_closure_dry_run_job():
+            try:
+                _zabbix_closure_dry_run_job._last_result = await _zc.run_job(commit=False)
+            except _asyncio.TimeoutError:
+                raise RuntimeError("timed out after %ss" % _zc.RUN_TIMEOUT_SECONDS)
+
+        async def _zabbix_closure_live_job():
+            # The enabled schedule is the single on/off switch: a manual trigger must not resolve incidents
+            # while the live job's schedule is disabled.
+            async with SessionLocal() as _zchk:
+                _zon = (await _zchk.execute(
+                    _sel(AlertJobSchedule.id).where(AlertJobSchedule.job_id == "zabbix-closure", AlertJobSchedule.enabled == True)
+                )).first()
+            if not _zon:
+                _zabbix_closure_live_job._last_result = "skipped: this job's schedule is disabled (the dry-run job is the active one)"
+                return
+            try:
+                _zabbix_closure_live_job._last_result = await _zc.run_job(commit=True)
+            except _asyncio.TimeoutError:
+                raise RuntimeError("timed out after %ss" % _zc.RUN_TIMEOUT_SECONDS)
+
+        _jobs_module.register_job(
+            "zabbix-closure-dry-run",
+            "Zabbix closure (dry run)",
+            "Finds ESCALATED Zabbix incidents whose recovery notice exists and records what it would resolve; changes nothing",
+            _zabbix_closure_dry_run_job,
+        )
+        _jobs_module.register_job(
+            "zabbix-closure",
+            "Zabbix closure",
+            "Resolves ESCALATED Zabbix incidents whose recovery notice exists",
+            _zabbix_closure_live_job,
+        )
+        async with SessionLocal() as _zsess:
+            for _zid, _zenabled in (("zabbix-closure-dry-run", True), ("zabbix-closure", False)):
+                _zexisting = await _zsess.execute(_sel(AlertJobSchedule).where(AlertJobSchedule.job_id == _zid))
+                if not _zexisting.first():
+                    await _jobs_module.create_schedule(_zid, "*/5 * * * *", enabled=_zenabled)
+                    logger.info("Created default schedule for %s (enabled=%s)", _zid, _zenabled)
+    except Exception:
+        logger.exception("Startup: Zabbix closure jobs not registered (agent will still start)")
+
     count = await _jobs_module.load_schedules()
     logger.info("Job scheduler: loaded %d schedule(s)", count)
     _jobs_module.start_scheduler()
