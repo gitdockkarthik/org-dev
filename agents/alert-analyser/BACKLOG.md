@@ -122,8 +122,8 @@ OWNER DECISIONS 2026-10-07
 3. No new status or resolution_type values until required; reuse existing ones. MARKED_FOR_CLOSURE is withdrawn; revisit only if measured flapping churn justifies it.
 4. Audit-event retention: 30 days.
 5. Communication to app-support-agent owners: only Zabbix creates incidents, as part of the fix in progress; other sources are enabled one at a time; do not mention the cleanup unless asked; they test after our side is validated. Their scope today is a few alerts with their own jobs (for example "Jetty service is down").
-6. Still open: should a Critical alert that closes within seconds create an incident? (2 of 111 Critical alerts in 24h had none: SSIS13 "Processor load is too high", closed in 19-26 s, score -3 + 3 = 0 -> noise-suspect.) Recommendation: escalate every Critical Zabbix Open. Not changed.
-7. Pending confirmation: the cleanup of recovered incidents reuses resolution_type closure_alert_correlation (default), with the list of resolved IDs and matched Closed notices written to /data/backups; the alternative is a dated value.
+6. DECIDED (owner, 2026-10-07): leave as is unless an issue is found or reported. A Critical alert that closes within seconds does not create an incident (2 of 111 Critical alerts in 24h had none: SSIS13 "Processor load is too high", closed in 19-26 s, score -3 + 3 = 0 -> noise-suspect). Audit C1 keeps reporting these as FAIL; proposal, not built: show accepted fast-closing cases as informational so a permanent FAIL cannot hide a real miss.
+7. DECIDED (owner, 2026-10-07; follows decision 3): the cleanup of recovered incidents reuses resolution_type closure_alert_correlation; the list of resolved IDs and matched Closed notices is written to /data/backups so the closures stay traceable.
 
 FINDINGS (continuing the numbering above)
 16. Stale Zabbix stock: 1,842 ESCALATED incidents. Top check texts: CPU Utilization is greater than 90% 288, Lack of available memory is less than 10% 258, Disk Queue Depth 238, Jetty service is down 232, Analytics PBA service is down 173, Processor load is too high 161, Timeout Error in Apache Logs 139. Jetty: 229 of 232 have a later Closed notice for the same host and environment (host and environment match only; it does not prove that notice belongs to that particular Open, because flapping is possible), 3 have none, 0 hosts unparsed, median Open to first Closed 6 m 08 s, oldest 15 Sep. Hosts with most Jetty incidents: awo1-nvaprod2-api02 37, api01 35, o1ui04 13, o1ui03 11.
@@ -149,3 +149,9 @@ NEXT (in order)
 8. Dashboard: exclude copies at query level; revisit the action_resolved card; owner to check the Incident Management tab on the Zabbix-only table (not yet seen).
 9. Next source after Zabbix sign-off (New Relic): its copy loop was the largest (17,130 copies since 22 Sep), so its creation guard and closure logic need their own design.
 10. Contract note for the incidents table (what a row means, when status changes) once the closure rule exists.
+
+## Alert-analyser update 2026-10-07 (part 3): guard verified, P1 lane note
+
+- Creation guard fully verified. 24h audit at 04:31 UTC (window starts 6 Oct 04:31, after the 15:07 deploy and past the old copy tail): C3 = 0 copies and 0 alert_ids with more than one incident. NEXT item 1 of part 2 is done.
+- Same audit: C1 2 (the two accepted SSIS13 alerts), C2 0, C4 1,806, C5 1,604. C4 and C5 rose by 9 and 10 since the 03:04 audit (about 6 an hour). Hypothesis, not measured: nothing resolves recovered incidents now.
+- Owner observation: the P1 lane on the Incident Management tab is blank for the past day. Not yet explained. Either there was no P1 (only 1 of 637 Critical Zabbix Opens in 7 days was P1) or the lane hides it. From the 16 Sep handoff the lane asks for ESCALATED incidents oldest first with a limit of 200 (not rechecked), and there are now 1,800+ ESCALATED incidents, mostly P2, so a P1 outside the 200 oldest could be hidden. Check after the recovery rule has cleared the stale stock.
