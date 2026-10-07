@@ -1546,6 +1546,26 @@ async def correct_false_resolutions(batch_size: int = 100, dry_run: bool = True)
         }
 
 
+@router.get("/dashboard/incident-report")
+async def get_incident_report() -> dict:
+    """Read-only data for the dashboard's Incident Report tab (tools/incident_report.py); cached for about a minute."""
+    from database import SessionLocal
+    from sqlalchemy import text
+    import logging
+    _log = logging.getLogger(__name__)
+
+    if SessionLocal is None:
+        return {"error": "Database not available"}
+
+    try:
+        from routes_settings import INCIDENT_ENABLED_SOURCES, _incident_source_key
+        from tools.incident_report import get_report_cached
+        return await get_report_cached(SessionLocal, text, INCIDENT_ENABLED_SOURCES, _incident_source_key)
+    except Exception as e:
+        _log.error(f"incident-report error: {e}")
+        return {"error": str(e)}
+
+
 @router.get("/dashboard/incidents/mttx-summary")
 async def get_mttx_summary(from_date: str | None = None, to_date: str | None = None) -> dict:
     """Return MTTD/MTTA/MTTR min/max/avg across verified tickets.
