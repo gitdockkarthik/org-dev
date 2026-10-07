@@ -9,7 +9,8 @@ Filled by the enrichment job from Get Alert. fetch_status records why a row has 
 problem_id (ok, no_description, not_found, error) so that only errors are retried.
 The agent runs Base.metadata.create_all() at startup, so if the new model is deployed before
 this revision is applied the table already exists; that case is tolerated (nothing is
-dropped or changed), so the order of the two cannot break either.
+dropped or changed), so the order of the two cannot break either. downgrade() is tolerant in
+the same way: it drops only what exists.
 
 Revision ID: 0057
 Revises: 0056
@@ -48,5 +49,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index(INDEX, table_name=TABLE)
-    op.drop_table(TABLE)
+    insp = sa.inspect(op.get_bind())
+    if insp.has_table(TABLE):
+        if INDEX in [i["name"] for i in insp.get_indexes(TABLE)]:
+            op.drop_index(INDEX, table_name=TABLE)
+        op.drop_table(TABLE)
