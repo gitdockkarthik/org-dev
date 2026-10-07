@@ -74,7 +74,11 @@ RESOLVED_LABELS = [
     ("recovered_by_notice", "Recovered (recovery notice received)", "outside"),
     ("self_healed", "Self-healed (found closed in OpsGenie)", "outside"),
     ("other", "Other", "outside"),
+    ("pre_launch_test", "Pre-launch test data (cleaned up before launch; not counted)", "test"),
 ]
+
+# Test-era resolution types: shown separately and left out of the total so they do not pass as real resolutions.
+PRE_LAUNCH_TYPES = ("pre_launch_bulk_cleanup", "pre_launch_cleanup_2026-09-16", "closure_alert_correlation_backfill")
 
 DEFINITIONS = {
     "ESCALATED": "The incident is open: an alert that needs attention was raised and no recovery has been recorded yet.",
@@ -89,6 +93,8 @@ def _iso(v):
 
 def bucket_of(outcome, resolution_type):
     o = (outcome or "").strip().upper()
+    if resolution_type in PRE_LAUNCH_TYPES:
+        return "pre_launch_test"
     if resolution_type == "action_resolved":
         return {"SUCCESS": "fixed_by_action", "ALREADY_HEALTHY": "already_healthy",
                 "CLOSED_IN_OPSGENIE": "closed_in_opsgenie"}.get(o, "agent_other")
@@ -151,7 +157,7 @@ def build_report(opens_rows, event_rows, source_rows, schedule_rows, run_rows, r
             "sources": {"enabled": sorted(enabled_sources), "alerts_24h": alerts_24h},
             "open": {"total": len(incidents), "by_reason": dict(Counter(i["reason_code"] for i in incidents)), "incidents": incidents},
             "closure_job": {"mode": mode, "schedule": cron, "runs": runs},
-            "resolved_30d": {"total": sum(b["count"] for b in buckets), "buckets": buckets},
+            "resolved_30d": {"total": sum(b["count"] for b in buckets if b["kind"] != "test"), "buckets": buckets},
             "definitions": DEFINITIONS}
 
 

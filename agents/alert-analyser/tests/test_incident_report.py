@@ -142,12 +142,16 @@ def test_runs_are_newest_first_limited_and_labelled():
 def test_resolved_incidents_are_split_by_how_they_were_resolved():
     rows = [ResRow("SUCCESS", "action_resolved", 3), ResRow("ALREADY_HEALTHY", "action_resolved", 2), ResRow("CLOSED_IN_OPSGENIE", "action_resolved", 54),
             ResRow("FAILED", "closure_alert_correlation", 4), ResRow(None, "closure_alert_correlation", 100), ResRow(None, "self_healed", 7),
-            ResRow(None, "pre_launch_bulk_cleanup", 5)]
+            ResRow(None, "pre_launch_bulk_cleanup", 5), ResRow(None, "pre_launch_cleanup_2026-09-16", 3), ResRow(None, "closure_alert_correlation_backfill", 1),
+            ResRow(None, "some_new_type", 2)]
     r = build(resolved_rows=rows)["resolved_30d"]
     got = {b["key"]: (b["count"], b["kind"]) for b in r["buckets"]}
     assert got == {"fixed_by_action": (3, "pipeline"), "already_healthy": (2, "outside"), "closed_in_opsgenie": (54, "outside"),
-                   "recovered_after_failed_fix": (4, "outside"), "recovered_by_notice": (100, "outside"), "self_healed": (7, "outside"), "other": (5, "outside")}, got
-    assert r["total"] == 175 and "agent_other" not in got, "empty buckets are left out"
+                   "recovered_after_failed_fix": (4, "outside"), "recovered_by_notice": (100, "outside"), "self_healed": (7, "outside"), "other": (2, "outside"),
+                   "pre_launch_test": (9, "test")}, got
+    assert r["total"] == 172 and "agent_other" not in got, "empty buckets are left out and test data is not counted in the total"
+    assert [b["key"] for b in r["buckets"]][-1] == "pre_launch_test", "test data is listed last"
+    assert all(bucket_of(None, t) == "pre_launch_test" for t in ("pre_launch_bulk_cleanup", "pre_launch_cleanup_2026-09-16", "closure_alert_correlation_backfill"))
     assert bucket_of("WEIRD", "action_resolved") == "agent_other" and bucket_of(None, "action_resolved") == "agent_other"
     assert [b["key"] for b in r["buckets"]][0] == "fixed_by_action", "buckets keep their fixed order"
 
