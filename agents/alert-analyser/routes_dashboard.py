@@ -1854,7 +1854,9 @@ async def get_resolved_incidents_list(
             return {"incidents": [], "total": 0, "error": "Date range too wide - maximum 90 days"}
 
     try:
-        conditions = ["status IN ('RESOLVED', 'MANUAL')"]
+        conditions = ["status IN ('RESOLVED', 'MANUAL')",
+                      # Closed-notice audit records are not incidents: keep them out of the list (they stay in the table)
+                      "resolution_type IS DISTINCT FROM 'noise_suspect_audit_record'"]
         params = {}
         if from_date or to_date:
             if from_date:
