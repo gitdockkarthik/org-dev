@@ -163,6 +163,26 @@ Also: `docker compose ps`, `docker compose logs -f <service>`, `docker compose u
 `docker compose restart <agent>`. First run: `setup-env.sh` → `up -d postgres backend portal` →
 wizard at `http://<host>:3000/setup.html` → `up -d <agents>`.
 
+## Database changes (Alembic)
+
+- **Chain:** `backend/migrations/versions/` (one file per change, numbered; head `0056` as of 2026-10-07),
+  config in `backend/alembic.ini`. All agents (alert, cur, kafka) use this one chain; the backend owns it.
+- **Coverage by agent:** Platform 0001-0007, 0019, 0038; CUR 0008-0010; Alert analyser 0005, 0011, 0041,
+  0042, 0044-0048; Kafka analyser 0012-0018, 0023-0037, 0039-0040, 0043, 0049-0056.
+  There are no files 0020-0022 (checked with `ls` on 2026-10-07).
+- **Add a revision:** next number after head (never reuse one), `down_revision` = the previous file,
+  `upgrade()` and `downgrade()`, a docstring saying why; run `python3 -m py_compile` on it.
+  `0056_kafka_watchdog_events.py` is a working example.
+- **Apply:** `make migrate`, or `docker compose exec backend alembic upgrade head`; check with
+  `alembic current`. Do not apply to a live system without a go-ahead; the first apply should be a new
+  empty table or a nullable column.
+- **ORM:** add the matching ORM class or column to the agent's `models.py` in the same change.
+- **Prefer a revision** for new tables and columns; startup `create_all` / `ADD COLUMN IF NOT EXISTS`
+  exist only for older tables (0049's docstring notes the Kafka breaker tables moved into the chain).
+- **Caveat:** the alert analyser's base incident table is created by
+  `agents/alert-analyser/migrations/incident_management.sql` (`CREATE SCHEMA IF NOT EXISTS
+  incident_management`); 0044-0047 add columns to it. UNVERIFIED which runs first on a fresh database.
+
 ## Conventions & Patterns
 
 - **FastAPI + Pydantic Settings everywhere**; system prompts live in each agent's `config.py`.
