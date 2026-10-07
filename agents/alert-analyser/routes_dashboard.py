@@ -1555,7 +1555,8 @@ async def get_mttx_summary(from_date: str | None = None, to_date: str | None = N
     MTTA (Mean Time To Acknowledge): alert's real OpsGenie createdAt ->
     first status change away from ESCALATED (from incident_status_history).
     MTTR (Mean Time To Resolve): ticket created_at -> resolved_at, for
-    verified resolutions only (resolution_type IS NOT NULL).
+    verified resolutions only (resolution_type IS NOT NULL, excluding the
+    noise_suspect_audit_record records, which are not incidents).
     """
     from database import SessionLocal
     from sqlalchemy import text
@@ -1592,7 +1593,7 @@ async def get_mttx_summary(from_date: str | None = None, to_date: str | None = N
     try:
         async with SessionLocal() as sess:
             # MTTD: alert_payload's createdAt -> incidents.created_at
-            mttd_sql = "SELECT alert_payload, created_at FROM incident_management.incidents WHERE alert_payload IS NOT NULL"
+            mttd_sql = "SELECT alert_payload, created_at FROM incident_management.incidents WHERE alert_payload IS NOT NULL AND resolution_type IS DISTINCT FROM 'noise_suspect_audit_record'"
             mttd_params = {}
             if from_date:
                 mttd_sql += " AND created_at >= :from_date"
@@ -1648,7 +1649,7 @@ async def get_mttx_summary(from_date: str | None = None, to_date: str | None = N
             # MTTR: created_at -> resolved_at, verified resolutions only
             mttr_sql = ("SELECT EXTRACT(EPOCH FROM (resolved_at - created_at))/60 as mttr_minutes"
                         " FROM incident_management.incidents"
-                        " WHERE resolution_type IS NOT NULL AND resolved_at IS NOT NULL")
+                        " WHERE resolution_type IS NOT NULL AND resolution_type <> 'noise_suspect_audit_record' AND resolved_at IS NOT NULL")
             mttr_params = {}
             if from_date:
                 mttr_sql += " AND resolved_at >= :from_date"
