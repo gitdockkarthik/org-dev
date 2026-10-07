@@ -193,3 +193,29 @@ NEXT (in order)
 4. Audit additions: C6 allowed status / resolution_type values (see finding 18); C7 unparseable Zabbix titles in the last 24 h; show accepted fast-closing alerts as informational.
 5. Audit-event table and search page (30-day retention); recurrence report grouped by alert title; INCIDENT_SCHEMA.md vocabulary; reconciliation redesign; dashboard UI items from findings 28-29; contract note; migration file gaps (finding 19); New Relic scoping.
 6. Needs input: someone with Zabbix access to check whether the hosts behind the 34 old keeps are still down; the Zabbix template that leaves "{$PRIMARY_HOSTGROUP1}" unexpanded.
+
+## Alert-analyser update 2026-10-07 (part 5): pass 2, Resolved Incidents list, corrections
+
+CODE (committed and pushed)
+- 3027f0d BACKLOG part 4.
+- 449964f /dashboard/incidents/resolved-list hides noise_suspect_audit_record (condition resolution_type IS DISTINCT FROM 'noise_suspect_audit_record'; IS DISTINCT FROM keeps rows with an empty resolution_type such as MANUAL). Deployed 05:34 UTC. The endpoint's total is len(items), so one condition fixes list and total. The closed_by filter options never selected the audit records. Window 06 Oct 05:12 - 07 Oct 05:12: items 268 -> 113 (155 audit records removed; all remaining closure_alert_correlation; 0 [Closed] titles). 7-day window: 500 -> 500 (186 audit records -> 0). Known limit, not changed: the query has LIMIT 500 and total is the number of returned rows, so it cannot exceed 500 and the page shows 500 when more exist. Fix idea: a real COUNT(*) and a "showing 500 of N" label. The closed_by=self_healed filter returned 0 items in the 24 h window (no before measurement; the earlier resolution_type breakdown of that window held only audit records and closure_alert_correlation).
+
+CORRECTION to part 4: the 05:27 rebuild did put tools/zabbix_recovery.py into the image (the container's tools/ directory lists it). The scripts import it directly; sending it ahead on stdin is no longer needed. Both ways work.
+
+DATA OPERATION: cleanup pass 2, 2026-10-07 05:37:55 UTC (database only)
+- Rehearsal 05:36 (97 incidents judged, MAX_GAP_HOURS=300): resolve 45 (44 closed_exact + 1 closed_prefix), keep 37, review 15 (7 ambiguous_prefix, 4 older_open_superseded, 4 unparsed_title), held 0, skipped 0, 3 s. Run with CONFIRM=RESOLVE: 45 resolved, 0 skipped, COMMITTED, about 1 s, exit code 0.
+- Decision list: /data/backups/recovery_cleanup_pass2_20261007_053755.csv (28,873 bytes, mode 600 from creation via umask 077), SHA-256 bf125f2ee91f140c4cb07c376eda4dfd7659831cae9254abb19f9a62848b2d4b.
+- Verified from the database: one updated_at group of 45 rows (2026-10-07 05:37:56.503207+00); all RESOLVED with closure_alert_correlation and message_parse; 0 non-Zabbix; 43 of the 45 have more than 24 h between the alert and its closure (the 43 held pairs of pass 1) and 2 are recoveries that arrived after 05:09 (latest resolved_at 05:19:20); 0 clamped to created_at; earliest resolved_at 2026-09-16 13:07:54; 45 history rows for 45 incidents.
+- State after pass 2: Zabbix incidents ESCALATED 52 (= 37 keep + 7 ambiguous_prefix + 4 older_open_superseded + 4 unparsed_title), RESOLVED 24,793. Audit 24h (05:38): C1 2, C2 0, C3 0, C4 7 (all prefix-dependent: the ambiguous RDS pairs the audit still counts as recovered), keep_active 37, merge_duplicate 4, host not parsed 4, C5 8 in 6 host/check groups.
+- Revert (not built): same procedure as pass 1, using the pass 2 CSV and updated_at 2026-10-07 05:37:56.503207+00.
+
+OWNER DECISIONS 2026-10-07 (additions)
+- The owner cannot judge the UI visually and relies on endpoint-level checks; display decisions follow the assistant's recommendation (hide the audit records from the Resolved list; the cards exclude them).
+- Pass 2 executed on the assistant's recommendation (the Closed notice is the agreed recovery signal; a multi-day MTTR is a true number).
+
+NEXT (in order)
+1. Going-forward closure job (stops the stuck incidents regrowing at about 130/day): every 5 min, database only, per-job lock and timeout, uses tools/zabbix_recovery.decide with resolution_type closure_alert_correlation, no new status, MAX_GAP_HOURS handling to be decided; a dry-run mode first, compared with audit C4; creation also skips an Open when a later Closed already exists. The one-off script scripts/recovery_cleanup.py already contains the plan, guard and write logic and is the starting point.
+2. Audit additions: C6 allowed status / resolution_type values (finding 18); C7 unparseable Zabbix titles in the last 24 h; accepted fast-closing alerts shown as informational.
+3. Resolved list: real COUNT(*) and a "showing N of M" label; Pipeline Reconciliation panel: show "Zabbix missing: N" and "other sources paused: M".
+4. Audit-event table and search page (30-day retention); recurrence report grouped by alert title; INCIDENT_SCHEMA.md vocabulary; reconciliation redesign; lane UI items (recurrence badge, truncated titles, raw ids); contract note; migration file gaps; New Relic scoping.
+5. Needs input: someone with Zabbix access to check whether the hosts behind the 34 old keeps are still down; the Zabbix template that leaves "{$PRIMARY_HOSTGROUP1}" unexpanded.
