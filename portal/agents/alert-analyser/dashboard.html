@@ -261,7 +261,7 @@
     }
 
     // ── Incident Report tab (read-only; data from /dashboard/incident-report) ──
-    var _irData = null, _irFilter = '';
+    var _irData = null, _irFilter = '', _irPage = 1, _irPageSize = 25;
     function _irEsc(s) {
       return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
@@ -302,8 +302,14 @@
       const r = _irReasons[code] || { label: code, bg: 'var(--navy-3)', fg: 'var(--text-muted)' };
       return `<span style="display:inline-block;padding:2px 9px;border-radius:999px;font-size:.72rem;font-weight:600;background:${r.bg};color:${r.fg};white-space:nowrap">${_irEsc(r.label)}</span>`;
     }
+    function _irFiltered() { return (_irData.open.incidents || []).filter(i => !_irFilter || i.reason_code === _irFilter); }
+    function _irClamp() {
+      const pages = Math.max(1, Math.ceil(_irFiltered().length / _irPageSize));
+      _irPage = Math.min(Math.max(1, _irPage), pages);
+    }
     function _irOpenRows() {
-      const list = (_irData.open.incidents || []).filter(i => !_irFilter || i.reason_code === _irFilter);
+      _irClamp();
+      const list = _irFiltered().slice((_irPage - 1) * _irPageSize, _irPage * _irPageSize);
       if (!list.length) return '<tr><td colspan="5" class="data-table__empty">No incidents in this view</td></tr>';
       return list.map(i => {
         const pri = (i.priority || '').toLowerCase();
@@ -319,11 +325,27 @@
         </tr>`;
       }).join('');
     }
-    function _irSetFilter(v) {
-      _irFilter = v;
-      const body = document.getElementById('ir-open-body');
-      if (body) body.innerHTML = _irOpenRows();
+    function _irPagerHtml() {
+      _irClamp();
+      const total = _irFiltered().length, pages = Math.max(1, Math.ceil(total / _irPageSize));
+      const from = total ? (_irPage - 1) * _irPageSize + 1 : 0, to = Math.min(total, _irPage * _irPageSize);
+      const sizes = [10, 25, 50, 100].map(n => `<option value="${n}" ${n === _irPageSize ? 'selected' : ''}>${n} per page</option>`).join('');
+      return `<span style="font-size:.78rem;color:var(--text-muted)">Showing ${from}–${to} of ${total}</span>
+        <span style="display:flex;gap:8px;align-items:center">
+          <button class="btn btn--secondary btn--sm" onclick="_irGo(${_irPage - 1})" ${_irPage <= 1 ? 'disabled' : ''}>‹ Previous</button>
+          <span style="font-size:.78rem">Page ${_irPage} of ${pages}</span>
+          <button class="btn btn--secondary btn--sm" onclick="_irGo(${_irPage + 1})" ${_irPage >= pages ? 'disabled' : ''}>Next ›</button>
+          <select class="dash-select" onchange="_irSetSize(this.value)" style="font-size:.78rem;padding:3px 6px">${sizes}</select>
+        </span>`;
     }
+    function _irRefreshOpen() {
+      const body = document.getElementById('ir-open-body'), pager = document.getElementById('ir-pager');
+      if (body) body.innerHTML = _irOpenRows();
+      if (pager) pager.innerHTML = _irPagerHtml();
+    }
+    function _irSetFilter(v) { _irFilter = v; _irPage = 1; _irRefreshOpen(); }
+    function _irGo(p) { _irPage = Number(p); _irRefreshOpen(); }
+    function _irSetSize(n) { _irPageSize = Number(n) || 25; _irPage = 1; _irRefreshOpen(); }
     async function renderIncidentReport() {
       const el = document.getElementById('tab-report');
       if (!_irData) el.innerHTML = '<div class="chart-card" style="color:var(--text-muted)">Loading the incident report…</div>';
@@ -375,6 +397,7 @@
           <div class="data-table-wrap" style="margin-bottom:0"><table class="data-table">
             <thead><tr><th>Alert</th><th>Priority</th><th>Open for</th><th>Why it is still open</th><th>Automated fix attempt</th></tr></thead>
             <tbody id="ir-open-body">${_irOpenRows()}</tbody></table></div>
+          <div id="ir-pager" style="display:flex;gap:10px;align-items:center;justify-content:space-between;margin-top:10px;flex-wrap:wrap">${_irPagerHtml()}</div>
         </div>
         <div class="chart-grid">
           <div class="chart-card"><div class="chart-card__title">Which sources create incidents</div>
