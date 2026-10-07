@@ -1027,6 +1027,10 @@ async def backfill_check_incidents(hours: float = 24, dry_run: bool = True) -> d
 
     missing_genuine = [a for a in classified if a.get("classification") == "genuine" and a.get("id") not in existing_ids]
 
+    # Source gate (2026-10-07): only enabled sources are reported or created; paused sources are counted.
+    skipped_source_not_enabled = len([a for a in missing_genuine if _incident_source_key(a) not in INCIDENT_ENABLED_SOURCES])
+    missing_genuine = [a for a in missing_genuine if _incident_source_key(a) in INCIDENT_ENABLED_SOURCES]
+
     created = 0
     if not dry_run and missing_genuine:
         async with SessionLocal() as sess:
@@ -1066,6 +1070,7 @@ async def backfill_check_incidents(hours: float = 24, dry_run: bool = True) -> d
         "missing": len(missing_genuine),
         "created": created,
         "dry_run": dry_run,
+        "skipped_source_not_enabled": skipped_source_not_enabled,
         "missing_samples": [{"alert_id": a.get("id"), "title": a.get("message", "")[:100], "createdAt": a.get("createdAt")} for a in missing_genuine[:20]],
     }
 
@@ -1255,6 +1260,9 @@ async def reconciliation_retrigger(alert_id: str) -> dict:
         "responders": raw.get("responders", []),
         "report": raw.get("report", {}),
     }
+    if _incident_source_key(mapped) not in INCIDENT_ENABLED_SOURCES:
+        return {"ok": True, "status": "source_not_enabled", "source": _incident_source_key(mapped)}
+
     classified = classify_alerts([mapped])[0]
 
     if classified.get("classification") != "genuine":

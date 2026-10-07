@@ -2047,6 +2047,11 @@ async def retrigger_incident_creation(failure_id: int) -> dict:
             priority = payload.get("priority", "P3")
             title = payload.get("message", "Unknown")[:200]
             source_tool = payload.get("source", "unknown")
+            # Source gate (2026-10-07): only enabled sources create incidents. The failure record is left
+            # untouched so it can be retriggered once the source is enabled.
+            from routes_settings import INCIDENT_ENABLED_SOURCES, _incident_source_key
+            if _incident_source_key(payload) not in INCIDENT_ENABLED_SOURCES:
+                return {"ok": True, "status": "source_not_enabled", "source": _incident_source_key(payload)}
 
             existing = await sess.execute(
                 text("SELECT id FROM incident_management.incidents WHERE alert_id = :alert_id LIMIT 1"),
