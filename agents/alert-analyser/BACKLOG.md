@@ -94,10 +94,58 @@ F. Reconciliation: intent is to detect incidents resolved outside the pipeline u
 G. Scope boundary: the incidents table is the contract with other agents. Write a short contract note (what a row means and when status changes) once the closure rule exists.
 
 NEXT (in order)
-1. Make the creation guard source-agnostic; measure with the audit.
+1. [SUPERSEDED - see "Alert-analyser update 2026-10-07 (part 2)" below: creation is gated to Zabbix only] Make the creation guard source-agnostic; measure with the audit.
 2. Audit-event table and writes at the existing decision points (no behaviour change), then the search page.
 3. Update the status readers for the chosen status model (no behaviour change).
 4. Closure job in dry-run, compared with audit C4; then enable; then clean the recovered backlog under its own resolution_type; then remove the old closure code from the sync loop (separate commit).
 5. Reconciliation redesign.
 6. Recurrence report and monthly rollup.
 7. Dashboard: exclude copies at query level; revisit the action_resolved card.
+
+## Alert-analyser update 2026-10-07 (part 2): source gate, non-Zabbix cleanup, decisions
+
+CODE (all committed and pushed)
+- a1ecff2 source gate in the sync loop: INCIDENT_ENABLED_SOURCES = {"zabbix"}; Zabbix is recognised by the [Zabbix] title tag (those alerts arrive with source "Email"); other sources get no incident, no closure handling and no audit row. LightStep is never enabled (tool is being sunset).
+- 19c3417 same gate on the manual insert paths: backfill_check_incidents (reports paused sources in skipped_source_not_enabled), reconciliation_retrigger and retrigger_incident_creation (return source_not_enabled before any write).
+- a89d431 migration: index idx_incidents_related_ticket_id.
+- Verified after the deploys (02:28 and 02:44 UTC): 0 non-Zabbix incident rows in 12 min (49 in the 30 min before); one Zabbix incident created at 02:40; no creation failures; backfill-check dry run over 24h: checked 4,341, missing 0, skipped_source_not_enabled 52; reconciliation-retrigger returned source_not_enabled for a New Relic incident and already_exists for a Zabbix one. retrigger_incident_creation is verified from the diff only (incident_creation_failures is empty).
+
+DATA OPERATIONS (database only, not in git)
+- Backup: /data/backups/incident_management_20261007_024817.dump (36,684,494 bytes, mode 600), SHA-256 d22e2058b6fe4dc4c56da477b52d3effd134cfc13c428986f071a465e463f9ac. Verified by restoring into a scratch database and comparing: non-Zabbix incident IDs 190,180 (md5 5ddc3be4bfb61b058487a12447a3247e) and their history rows 129,722 (md5 172abc48dc99ce73cbdd16ef98cc6e8e) matched. Second copy on the owner's Mac (OneDrive, Kafka Analyser/Databackup), same SHA-256. Only the checksums of the IDs and history rows were compared, not every column. To restore: pg_restore into a scratch database first and inspect.
+- Index idx_incidents_related_ticket_id was created by hand on the live database with CREATE INDEX CONCURRENTLY (251 ms, 2.4 MB). Reason: incidents.related_ticket_id is a self foreign key with no index, and each deleted row cost a table scan: 1,995 ms for 20 rows (~100 ms each) before, 1.4 ms for 20 rows after. A rehearsal without the index timed out at 300 s.
+- 2026-10-07 03:04 UTC: deleted all non-Zabbix incident rows (190,180) and their history rows (129,722) in one transaction, 12 s, guarded by the backup checksum. Left: 24,816 incidents (all Zabbix) and 17,475 history rows (17,474 + 1 pre-existing orphan). VACUUM ANALYZE run; table size is unchanged at 294 MB (no VACUUM FULL). Alert tables (alert_sync_history, alert_report_summary, alert_lifetime_totals) were not touched. The scripts used (/tmp/delete_non_zabbix.py, /tmp/backup_incidents.sh) live in /tmp on the box and are not in the repo.
+- Audit 24h at 03:04 UTC after the delete: C1 2, C2 0, C3 12, C4 1,797, C5 1,594. C3 should be the pre-deploy copy tail (the sampled chains ended before the 6 Oct 15:07 guard deploy) and should read 0 once the 24h window starts after ~04:10 UTC on 7 Oct. Check this; if copies remain, something is still creating them.
+
+OWNER DECISIONS 2026-10-07
+1. Incident creation is enabled one source at a time. Zabbix only for now; each next source gets its own logic and validation (a general rule introduces new constraints). New Relic is next, to be scoped.
+2. Zabbix [Severe] alerts are parked: they always arrive as P4 (230 alerts in 7 days, 0 incidents), and the classifier cannot make P4 genuine. If they should escalate, the Zabbix side should map Severe to a higher priority. No code change.
+3. No new status or resolution_type values until required; reuse existing ones. MARKED_FOR_CLOSURE is withdrawn; revisit only if measured flapping churn justifies it.
+4. Audit-event retention: 30 days.
+5. Communication to app-support-agent owners: only Zabbix creates incidents, as part of the fix in progress; other sources are enabled one at a time; do not mention the cleanup unless asked; they test after our side is validated. Their scope today is a few alerts with their own jobs (for example "Jetty service is down").
+6. Still open: should a Critical alert that closes within seconds create an incident? (2 of 111 Critical alerts in 24h had none: SSIS13 "Processor load is too high", closed in 19-26 s, score -3 + 3 = 0 -> noise-suspect.) Recommendation: escalate every Critical Zabbix Open. Not changed.
+7. Pending confirmation: the cleanup of recovered incidents reuses resolution_type closure_alert_correlation (default), with the list of resolved IDs and matched Closed notices written to /data/backups; the alternative is a dated value.
+
+FINDINGS (continuing the numbering above)
+16. Stale Zabbix stock: 1,842 ESCALATED incidents. Top check texts: CPU Utilization is greater than 90% 288, Lack of available memory is less than 10% 258, Disk Queue Depth 238, Jetty service is down 232, Analytics PBA service is down 173, Processor load is too high 161, Timeout Error in Apache Logs 139. Jetty: 229 of 232 have a later Closed notice for the same host and environment (host and environment match only; it does not prove that notice belongs to that particular Open, because flapping is possible), 3 have none, 0 hosts unparsed, median Open to first Closed 6 m 08 s, oldest 15 Sep. Hosts with most Jetty incidents: awo1-nvaprod2-api02 37, api01 35, o1ui04 13, o1ui03 11.
+17. Zabbix Open alerts, last 7 days: critical P1 genuine 1 (incident); critical P2 genuine 630 (incident); critical P2 noise-suspect 6 (no incident); severe P4 noise-suspect 227 and noise 3 (no incident).
+18. Vocabulary after the delete. status: ESCALATED 1,842; RESOLVED 22,975. resolution_type: self_healed 7,145; noise_suspect_audit_record 3,569; closure_alert_correlation 3,499; action_resolved 59; historical only: pre_launch_bulk_cleanup 8,145, pre_launch_cleanup_2026-09-16 515, closure_alert_correlation_backfill 43. detected_via: message_parse 8,874, manual_bulk_cleanup 8,145, empty 3,960, opsgenie_live 3,323, pre_launch_cleanup 515. History transitions: only creation->ESCALATED (8,891) and ESCALATED->RESOLVED (8,585). Code still references MANUAL, PURGED, INVESTIGATING, RCA_COMPLETE, REMEDIATING with no rows. Plan: write the allowed values and who writes/reads each into INCIDENT_SCHEMA.md (it documents no statuses today) and add audit check C6 that fails on any value outside the list. No database CHECK constraint yet (other agents write these columns; a rejected write could break them silently).
+19. Migration file gaps (migrations/incident_management.sql): it lacks 8 columns that exist on the live incidents table (resolution_type, reopened_at, reopen_reason, detected_via, opsgenie_sync_status, purged_at, purge_reason, last_reconciliation_check_at), the reconciliation index, and does not create incident_status_history or incident_creation_failures. A database rebuilt from this file alone would likely differ from live (the file itself was applied cleanly to a scratch PostgreSQL 15.18). The loader (_run_migrations) splits on ';' and skips any piece starting with '--', so a comment placed directly above a statement silently skips that statement; the pgcrypto line is skipped this way (harmless on PostgreSQL 13+).
+20. Not covered by the source gate: the Teams escalation block before the sync loop (Teams is not active) and the reconciliation block after the loop, which still scans existing rows (now Zabbix only).
+21. Ad hoc scripts that called routes_settings.load_config_from_db() re-encrypted the secret config keys (it ends with _upsert writes). No damage was observed; not proven. The audit script uses its own read-only config loader.
+22. Process: one change at a time; run the audit before and after; commit and push each change as a rollback point; Claude Code prompts must print the full git diff as text in the final message.
+
+SUPERSEDES (earlier text in this file)
+- NEXT item 1 above and the "Next: make it source-agnostic" part of finding 10: replaced by the source gate.
+- DESIGN C (status model): the new MARKED_FOR_CLOSURE status is withdrawn (decision 3). DESIGN B's hold-then-resolve step is deferred; the first closure job resolves when the Closed notice exists, and a later Open creates a new incident.
+
+NEXT (in order)
+1. Confirm C3 = 0 in a 24h audit run after ~04:10 UTC on 7 Oct.
+2. Write the allowed status/resolution_type list into INCIDENT_SCHEMA.md and add audit check C6.
+3. Recovery rule as a standalone function with unit tests (pytest is not installed in the container: use a throwaway container or an install that disappears on rebuild); dry run compared with audit C4 (1,797); then a rehearsed one-off cleanup script committed to scripts/: resolved_at = the Closed notice's time, one status-history row per incident, list of resolved IDs written to /data/backups, ambiguous o1stg RDS pairs and the incidents without a Closed notice held for review.
+4. Going-forward closure job (every 5 min, database only, per-job lock and timeout, no new status); creation also skips an Open when a later Closed already exists.
+5. Audit-event table and search page (30-day retention).
+6. Recurrence report grouped by alert title with status and severity tags stripped (reporting only); monthly rollup.
+7. Reconciliation redesign (owner decides which signals count as resolved outside the pipeline).
+8. Dashboard: exclude copies at query level; revisit the action_resolved card; owner to check the Incident Management tab on the Zabbix-only table (not yet seen).
+9. Next source after Zabbix sign-off (New Relic): its copy loop was the largest (17,130 copies since 22 Sep), so its creation guard and closure logic need their own design.
+10. Contract note for the incidents table (what a row means, when status changes) once the closure rule exists.
