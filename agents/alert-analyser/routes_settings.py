@@ -457,7 +457,14 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                                     None
                                 )
                                 _corr_rows = [_corr_title_hit] if _corr_title_hit else []
+                                # Zabbix recoveries are closed by the closure job from the problem's own ID (tools/zabbix_closure.py).
+                                # This title + live-status path closed 98 of 680 Zabbix incidents in 7 days (14%) without a recovery
+                                # notice of their own, or on average 94 minutes before it (audit of 8 Oct 2026), so it no longer
+                                # resolves. A matched recovery is still consumed as before: the commit below is unchanged.
+                                _legacy_title_closure_resolves = False
                                 for _corr_row in _corr_rows:
+                                    if not _legacy_title_closure_resolves:
+                                        continue
                                     # Live-status guard: title-based correlation can
                                     # match a stale "closed" alert (from an earlier,
                                     # already-resolved occurrence) to the CURRENT
