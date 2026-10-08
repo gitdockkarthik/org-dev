@@ -4,33 +4,38 @@ Independent of the closure job's code: it checks the result in the database, so 
 Checks (the creation side, "an alert with no incident", is scripts/audit_incidents.py C1-C3: run both):
   Z1  no open incident has a recovery notice carrying its own problem ID older than 15 minutes (the job missed it)
   Z2  every open incident older than 15 minutes has its alert details stored (problem ID)
-  Z3  no incident was closed since the ID rules went live without a notice of its own
+  Z3  no incident was closed since the old title-based closer was switched off (CLEAN_FROM) without a notice of its own
   Z4  no incident closed since then has a closing time more than 5 minutes off its own notice (never earlier than created_at)
   Z5  every Zabbix alert of the last 24 hours older than 15 minutes has its details stored
   Z6  the sync, closure and detail jobs ran in the last 24 hours without a failure and are not late
-Informational lines count the history from before the ID rules went live (closed by title matching).
+  Z7  no Zabbix incident was closed since CLEAN_FROM by the old title-based path (detected_via opsgenie_live)
+Informational lines count the closures of the last 30 days made before CLEAN_FROM (by title matching or the old live-status path), split by
+method; 30 days is the alert history's retention.
 Run on the box:  docker exec -i org-dev-alert-analyser-1 python - < agents/alert-analyser/scripts/audit_zabbix_ids.py
 Nothing is written.
 """
 import asyncio
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import text
 from database import SessionLocal
 
-ID_RULES_LIVE_AT = "2026-10-08 03:55:00+00"   # first scheduled live run of the closure job on problem IDs
+CLEAN_FROM = "2026-10-08 05:39:48+00"   # the agent restart that switched the old title-based closer (opsgenie_live) off; the closure job on problem IDs went live at 03:55
 GRACE = "15 minutes"
+# Both helpers of CTE are MATERIALIZED (computed once): without it PostgreSQL re-ran them for every closure row and the closure
+# query exceeded the role's 2 minute statement limit (8 Oct 2026).
 TIME_TOLERANCE_MIN = 5
 LATE = {"alert-opsgenie-sync": 10, "zabbix-closure": 15, "zabbix-detail": 15}   # minutes since the last run
 
 CTE = """
-WITH ev AS (
+WITH ev AS MATERIALIZED (
     SELECT alert_id, CASE WHEN alert_data->>'createdAt' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN (alert_data->>'createdAt')::timestamptz END AS at
     FROM alert_sync_history WHERE alert_data->>'message' ILIKE '%[Zabbix]%'
     UNION
     SELECT alert_id, CASE WHEN alert_payload->>'createdAt' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN (alert_payload->>'createdAt')::timestamptz END
     FROM incident_management.incidents WHERE alert_payload->>'message' ILIKE '%[Zabbix]%'
-), closed AS (
+), closed AS MATERIALIZED (
     SELECT d.problem_id, min(ev.at) AS closed_at
     FROM zabbix_alert_detail d JOIN ev ON ev.alert_id = d.alert_id
     WHERE d.kind = 'closed' AND d.problem_id IS NOT NULL AND ev.at IS NOT NULL
@@ -55,13 +60,19 @@ ORDER BY i.created_at
 """.replace("__GRACE__", GRACE)
 
 CLOSED_SQL = CTE + """
-SELECT i.id::text AS id, right(i.alert_payload->>'message', 58) AS alert, i.created_at, i.resolved_at, i.updated_at,
+SELECT i.id::text AS id, right(i.alert_payload->>'message', 58) AS alert, i.created_at, i.resolved_at, i.updated_at, i.detected_via,
        d.alert_id AS detail_alert, d.problem_id, c.closed_at
 FROM incident_management.incidents i
 LEFT JOIN zabbix_alert_detail d ON d.alert_id = i.alert_id
 LEFT JOIN closed c ON c.problem_id = d.problem_id
-WHERE i.status = 'RESOLVED' AND i.resolution_type = 'closure_alert_correlation' AND i.detected_via = 'message_parse'
-  AND i.alert_payload->>'message' ILIKE '%[Zabbix] [Open]%'
+WHERE i.status = 'RESOLVED' AND i.resolution_type = 'closure_alert_correlation' AND i.detected_via IN ('message_parse', 'opsgenie_live')
+  AND i.alert_payload->>'message' ILIKE '%[Zabbix] [Open]%' AND i.updated_at > now() - interval '30 days'
+"""
+
+Z7_SQL = """
+SELECT count(*) FROM incident_management.incidents
+WHERE status = 'RESOLVED' AND resolution_type = 'closure_alert_correlation' AND detected_via = 'opsgenie_live'
+  AND alert_payload->>'message' ILIKE '%[Zabbix] [Open]%' AND updated_at >= CAST(:since AS timestamptz)
 """
 
 Z5_SQL = """
@@ -86,15 +97,17 @@ def line(ok, name, detail=""):
 
 
 async def main():
-    live_at = datetime.fromisoformat(ID_RULES_LIVE_AT.replace("+00", "+00:00"))
+    live_at = datetime.fromisoformat(CLEAN_FROM.replace("+00", "+00:00"))
     results, out = [], []
     async with SessionLocal() as s:
+        await s.execute(text("SET LOCAL statement_timeout = '300s'"))   # read-only: a limit above the role's 2 minute default is safe
         z1 = (await s.execute(text(Z1_SQL))).fetchall()
         z2 = (await s.execute(text(Z2_SQL))).fetchall()
         closed = (await s.execute(text(CLOSED_SQL))).fetchall()
         z5 = (await s.execute(text(Z5_SQL))).scalar()
         dstat = (await s.execute(text(DETAIL_STATUS_SQL))).fetchall()
         z6 = (await s.execute(text(Z6_SQL))).fetchall()
+        z7 = (await s.execute(text(Z7_SQL), {"since": live_at})).scalar()
 
     out.append(line(not z1, "Z1 open incidents whose own recovery notice exists (the closure job missed them): %d" % len(z1)))
     results.append(not z1)
@@ -115,7 +128,7 @@ async def main():
             wrong_time[era].append(r)
         else:
             ok_n += 1
-    out.append(line(not no_own["new"], "Z3 incidents closed since the ID rules went live without a notice of their own: %d" % len(no_own["new"])))
+    out.append(line(not no_own["new"], "Z3 incidents closed since the old closer was switched off (%s) without a notice of their own: %d" % (CLEAN_FROM[:16], len(no_own["new"]))))
     results.append(not no_own["new"])
     out += ["       %s | created %s | resolved %s" % (r.alert, str(r.created_at)[:16], str(r.resolved_at)[:16]) for r in no_own["new"][:15]]
     out.append(line(not wrong_time["new"], "Z4 incidents closed since then with a closing time more than %d min off their own notice: %d" % (TIME_TOLERANCE_MIN, len(wrong_time["new"]))))
@@ -137,11 +150,18 @@ async def main():
                 problems.append("%s: last run %.0f min ago (limit %d)" % (job, r.minutes_since, late))
     out.append(line(not problems, "Z6 jobs ran in the last 24 h without failures and on time", "; ".join(problems)))
     results.append(not problems)
+    out.append(line(z7 == 0, "Z7 Zabbix incidents closed by the old title-based path (opsgenie_live) since %s: %d" % (CLEAN_FROM[:16], z7)))
+    results.append(z7 == 0)
 
     out.append("")
-    out.append("INFO closed by the closure job, checked against their own notice: %d fully consistent, %d unverifiable (no stored problem ID)" % (ok_n, unverifiable))
-    out.append("INFO closed before the ID rules went live (by title matching): %d with no notice of their own, %d with a closing time more than %d min off"
-               % (len(no_own["old"]), len(wrong_time["old"]), TIME_TOLERANCE_MIN))
+    def by_method(rows):
+        c = Counter(r.detected_via for r in rows)
+        return ", ".join("%s %d" % (k, c[k]) for k in sorted(c)) or "none"
+
+    out.append("INFO closures of the last 30 days checked against their own notice, any method: %d fully consistent, %d unverifiable (no stored problem ID)" % (ok_n, unverifiable))
+    out.append("INFO closed before %s with no notice of their own: %d (%s)" % (CLEAN_FROM[:16], len(no_own["old"]), by_method(no_own["old"])))
+    out.append("INFO closed before %s with a closing time more than %d min off their own notice: %d (%s)"
+               % (CLEAN_FROM[:16], TIME_TOLERANCE_MIN, len(wrong_time["old"]), by_method(wrong_time["old"])))
     out.append("INFO alert details by fetch status: " + ", ".join("%s %d" % (r.fetch_status, r.n) for r in dstat))
     out.append("SUMMARY: " + " ".join("Z%d=%s" % (i + 1, "PASS" if v else "FAIL") for i, v in enumerate(results)) + "  ->  " + ("PASS" if all(results) else "FAIL"))
     print("\n".join(out))
