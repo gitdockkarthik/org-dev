@@ -12,7 +12,9 @@ never raises, so it can never break the caller's own check/recycle logic.
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
 
+import httpx
 from sqlalchemy import bindparam, func, select, text
 
 from database import SessionLocal
@@ -950,6 +952,7 @@ async def _evaluate_broker_thresholds() -> None:
 CLUSTER_METRIC_TYPES = (
     "cluster.urp_total", "cluster.rf_below_min", "cluster.leader_skew", "cluster.msg_rate_in",
     "cluster.data_gb_max", "cluster.data_spread_pct", "cluster.zk_ensemble",
+    "cluster.connect_failed_connectors", "cluster.connect_failed_tasks", "cluster.connect_workers_down",
 )
 _CLUSTER_METRIC_SUBJECT = "cluster"
 # A cluster is evaluated only if its topic-structure job succeeded this recently.
@@ -1031,6 +1034,50 @@ _ZK_DEFAULT_PORT = 2181
 _ZK_URL_SQL = text(
     "SELECT id, zookeeper_url FROM kafka_clusters WHERE id IN :cids"
 ).bindparams(bindparam("cids", expanding=True))
+# cluster.connect_failed_connectors (rows with state FAILED) and
+# cluster.connect_failed_tasks (SUM(failed_tasks)), from the latest run of
+# kafka_connector_snapshots per cluster (collect_connector_snapshots, every
+# 2 min; all rows of a run share one collected_at). Own guard: a cluster is
+# ignored if kafka_connect_url is empty, it has no snapshot rows, its latest
+# run is older than _CONNECT_SNAPSHOT_MAX_AGE, or that run has fewer than half
+# the rows of the previous one (the collector silently skips a worker whose
+# collect fails, so a run can be partial).
+_CONNECT_FAILED_CONNECTORS_ALERT_TYPE = "cluster.connect_failed_connectors"
+_CONNECT_FAILED_TASKS_ALERT_TYPE = "cluster.connect_failed_tasks"
+_CONNECT_SNAPSHOT_ALERT_TYPES = (_CONNECT_FAILED_CONNECTORS_ALERT_TYPE, _CONNECT_FAILED_TASKS_ALERT_TYPE)
+_CONNECT_SNAPSHOT_MAX_AGE = timedelta(minutes=6)
+# Runs looked at to find the latest and the previous one (~7 runs at 2 min).
+_CONNECT_SNAPSHOT_WINDOW = timedelta(minutes=15)
+_CONNECT_NAMES_MAX = 5
+_CONNECT_URL_SQL = text(
+    "SELECT id, kafka_connect_url FROM kafka_clusters WHERE id IN :cids"
+).bindparams(bindparam("cids", expanding=True))
+# The latest run's rows per cluster, each carrying the latest and previous
+# run's row counts; the collected_at range uses ix_connector_snapshots_cluster_time.
+_CONNECT_SNAPSHOT_SQL = text(
+    "WITH runs AS ("
+    " SELECT cluster_id, collected_at, COUNT(*) AS run_rows,"
+    " ROW_NUMBER() OVER (PARTITION BY cluster_id ORDER BY collected_at DESC) AS rn"
+    " FROM kafka_connector_snapshots WHERE cluster_id IN :cids AND collected_at >= :since"
+    " GROUP BY cluster_id, collected_at"
+    ") "
+    "SELECT s.cluster_id, s.collected_at, s.connector_name, s.state, s.failed_tasks,"
+    " latest.run_rows AS run_rows, prev.run_rows AS previous_rows "
+    "FROM runs latest "
+    "JOIN kafka_connector_snapshots s ON s.cluster_id = latest.cluster_id AND s.collected_at = latest.collected_at "
+    "LEFT JOIN runs prev ON prev.cluster_id = latest.cluster_id AND prev.rn = 2 "
+    "WHERE latest.rn = 1"
+).bindparams(bindparam("cids", expanding=True))
+# cluster.connect_workers_down: number of Connect workers of
+# kafka_clusters.kafka_connect_url (comma-separated URLs with scheme) that do
+# not answer GET {worker}/ with HTTP 200 within _CONNECT_PROBE_TIMEOUT_SECS,
+# probed live after the read session has closed, once per distinct worker,
+# at most _CONNECT_PROBE_CONCURRENCY at a time, never retried in the same
+# run. Own guard: a cluster with an empty URL is ignored.
+_CONNECT_WORKERS_ALERT_TYPE = "cluster.connect_workers_down"
+_CONNECT_PROBE_TIMEOUT_SECS = 3
+_CONNECT_PROBE_CONCURRENCY = 10
+_CONNECT_WORKER_NAMES_MAX = 10
 _CLUSTER_METRIC_ACTIONS = {
     "cluster.urp_total": "Check broker health and replica sync.",
     "cluster.rf_below_min": "Check the topic replication factors with the Kafka team.",
@@ -1039,6 +1086,9 @@ _CLUSTER_METRIC_ACTIONS = {
     "cluster.data_gb_max": "Check disk capacity and retention with the Kafka team.",
     "cluster.data_spread_pct": "Check whether the low broker is replicating correctly (rebuilt, lost disks or not catching up).",
     "cluster.zk_ensemble": "Check the ZooKeeper nodes and ensemble quorum with the Kafka team.",
+    "cluster.connect_failed_connectors": "Check the failed connectors and their logs with the Kafka team.",
+    "cluster.connect_failed_tasks": "Check the failed tasks (restart or fix the connector) with the Kafka team.",
+    "cluster.connect_workers_down": "Check the Connect worker nodes with the Kafka team.",
 }
 
 
@@ -1084,6 +1134,53 @@ def _zk_ensemble_value(nodes: list[str], answers: dict[str, tuple[bool, str | No
     return value, f"ZooKeeper: {value} problem(s): " + "; ".join(parts)
 
 
+def _name_list(names: list[str], limit: int) -> str:
+    """The first `limit` names, comma-separated, then "and N more"."""
+    shown = ", ".join(names[:limit])
+    return f"{shown} and {len(names) - limit} more" if len(names) > limit else shown
+
+
+def _connect_workers(connect_url: str | None) -> list[str]:
+    """The distinct worker URLs of a kafka_connect_url (spaces and a trailing
+    slash stripped)."""
+    entries = [e.strip().rstrip("/") for e in (connect_url or "").split(",")]
+    return list(dict.fromkeys(e for e in entries if e))
+
+
+def _connect_worker_label(worker: str) -> str:
+    """host:port of a worker URL for the card (never any credentials in it)."""
+    try:
+        parts = urlsplit(worker)
+        if parts.hostname:
+            return f"{parts.hostname}:{parts.port}" if parts.port else parts.hostname
+    except ValueError:
+        pass
+    return worker
+
+
+async def _connect_probe(client: httpx.AsyncClient, worker: str, limit: asyncio.Semaphore) -> bool:
+    """One GET {worker}/ within _CONNECT_PROBE_TIMEOUT_SECS (waiting for the
+    semaphore not counted), no retry: True only on HTTP 200. Never raises."""
+    async with limit:
+        try:
+            resp = await asyncio.wait_for(client.get(f"{worker}/"), timeout=_CONNECT_PROBE_TIMEOUT_SECS)
+        except Exception:
+            return False
+    return resp.status_code == 200
+
+
+def _connect_workers_value(workers: list[str], up: dict[str, bool]) -> tuple[int, str]:
+    """(down worker count, card description without the tier suffix) for one cluster."""
+    down = [_connect_worker_label(w) for w in workers if not up[w]]
+    description = (
+        f"{len(down)} of {len(workers)} Connect worker(s) down: "
+        f"{_name_list(down, _CONNECT_WORKER_NAMES_MAX)}"
+    )
+    if down and len(down) == len(workers):
+        description += "; no worker reachable from the agent: check the network path first"
+    return len(down), description
+
+
 async def _evaluate_cluster_metrics() -> None:
     """Fire cluster.urp_total / cluster.rf_below_min / cluster.leader_skew alerts: one Teams card
     per (alert config, cluster) once the value sits in a tier on
@@ -1103,7 +1200,12 @@ async def _evaluate_cluster_metrics() -> None:
     cluster.data_gb_max / cluster.data_spread_pct use their own guard (every
     broker's data_gb_true set and fresh, at least two brokers).
     cluster.zk_ensemble probes ZooKeeper live, after the read session has
-    closed, and ignores clusters with an empty URL or fewer than two nodes."""
+    closed, and ignores clusters with an empty URL or fewer than two nodes.
+    cluster.connect_failed_connectors / cluster.connect_failed_tasks read the
+    latest connector snapshot with their own guard (fresh, not empty, not
+    partial, Connect URL set); cluster.connect_workers_down probes the Connect
+    workers live, after the read session has closed, and ignores clusters
+    with an empty Connect URL."""
     if SessionLocal is None:
         logger.info("evaluate_alerts: cluster metrics skipped: database not available")
         return
@@ -1165,6 +1267,7 @@ async def _evaluate_cluster_metrics() -> None:
                 if cfg.cluster_id is not None
                 and cfg.alert_type not in (
                     _LEADER_SKEW_ALERT_TYPE, _MSG_RATE_IN_ALERT_TYPE, *_DATA_GB_ALERT_TYPES, _ZK_ENSEMBLE_ALERT_TYPE,
+                    *_CONNECT_SNAPSHOT_ALERT_TYPES, _CONNECT_WORKERS_ALERT_TYPE,
                 )
             }
             fresh_cluster_ids: set[int] = set()
@@ -1317,6 +1420,81 @@ async def _evaluate_cluster_metrics() -> None:
                     r.id: r.zookeeper_url or ""
                     for r in (await session.execute(_ZK_URL_SQL, {"cids": sorted(zk_cluster_ids)})).all()
                 }
+
+            connect_snapshot_cluster_ids = {
+                cfg.cluster_id for cfg in configs
+                if cfg.alert_type in _CONNECT_SNAPSHOT_ALERT_TYPES and cfg.cluster_id is not None
+            }
+            connect_worker_cluster_ids = {
+                cfg.cluster_id for cfg in configs
+                if cfg.alert_type == _CONNECT_WORKERS_ALERT_TYPE and cfg.cluster_id is not None
+            }
+            connect_urls: dict[int, str] = {}
+            if connect_snapshot_cluster_ids or connect_worker_cluster_ids:
+                connect_urls = {
+                    r.id: r.kafka_connect_url or ""
+                    for r in (await session.execute(_CONNECT_URL_SQL, {
+                        "cids": sorted(connect_snapshot_cluster_ids | connect_worker_cluster_ids),
+                    })).all()
+                }
+            # cluster_id -> {failed_connectors, failed_tasks, failed_names, task_names} for clusters passing the guard
+            connect_snapshot_by_cluster: dict[int, dict] = {}
+            connect_snapshot_ignored: dict[int, str] = {}  # cluster_id -> reason
+            snapshot_url_cids = set()
+            for cid in sorted(connect_snapshot_cluster_ids):
+                if cid not in connect_urls:
+                    connect_snapshot_ignored[cid] = "cluster not found in kafka_clusters"
+                elif not _connect_workers(connect_urls[cid]):
+                    connect_snapshot_ignored[cid] = "kafka_connect_url is empty"
+                else:
+                    snapshot_url_cids.add(cid)
+            if snapshot_url_cids:
+                snapshot_now = datetime.now(timezone.utc)
+                snapshot_rows: dict[int, list] = {}
+                for r in (await session.execute(_CONNECT_SNAPSHOT_SQL, {
+                    "cids": sorted(snapshot_url_cids), "since": snapshot_now - _CONNECT_SNAPSHOT_WINDOW,
+                })).all():
+                    snapshot_rows.setdefault(r.cluster_id, []).append(r)
+                for cid in sorted(snapshot_url_cids):
+                    rows = snapshot_rows.get(cid, [])
+                    if not rows:
+                        connect_snapshot_ignored[cid] = (
+                            f"no connector snapshot rows in the last "
+                            f"{int(_CONNECT_SNAPSHOT_WINDOW.total_seconds() // 60)} min"
+                        )
+                        continue
+                    age = snapshot_now - rows[0].collected_at
+                    if age > _CONNECT_SNAPSHOT_MAX_AGE:
+                        connect_snapshot_ignored[cid] = (
+                            f"latest connector snapshot is {int(age.total_seconds() // 60)} min old "
+                            f"(max {int(_CONNECT_SNAPSHOT_MAX_AGE.total_seconds() // 60)})"
+                        )
+                        continue
+                    previous_rows = rows[0].previous_rows
+                    if previous_rows is not None and len(rows) * 2 < previous_rows:
+                        connect_snapshot_ignored[cid] = (
+                            f"latest connector snapshot looks partial: {len(rows)} rows "
+                            f"vs {previous_rows} in the previous one"
+                        )
+                        continue
+                    failed = sorted(r.connector_name for r in rows if r.state == "FAILED")
+                    with_failed_tasks = sorted(
+                        (r for r in rows if (r.failed_tasks or 0) > 0),
+                        key=lambda r: (-r.failed_tasks, r.connector_name),
+                    )
+                    connect_snapshot_by_cluster[cid] = {
+                        "failed_connectors": len(failed),
+                        "failed_tasks": sum(r.failed_tasks for r in with_failed_tasks),
+                        "failed_names": failed,
+                        "task_names": [f"{r.connector_name} ({r.failed_tasks})" for r in with_failed_tasks],
+                    }
+                for cfg in configs:
+                    if cfg.alert_type in _CONNECT_SNAPSHOT_ALERT_TYPES and cfg.cluster_id in connect_snapshot_by_cluster:
+                        snap = connect_snapshot_by_cluster[cfg.cluster_id]
+                        values[cfg.id] = (
+                            snap["failed_connectors"] if cfg.alert_type == _CONNECT_FAILED_CONNECTORS_ALERT_TYPE
+                            else snap["failed_tasks"]
+                        )
         last_resolved: dict[tuple[int, int, str], datetime] = {
             (r.alert_config_id, r.cluster_id, r.subject): r.last_resolved_at for r in resolved_rows
         }
@@ -1343,6 +1521,32 @@ async def _evaluate_cluster_metrics() -> None:
             for cfg in configs:
                 if cfg.alert_type == _ZK_ENSEMBLE_ALERT_TYPE and cfg.cluster_id in zk_by_cluster:
                     values[cfg.id] = zk_by_cluster[cfg.cluster_id][0]
+
+        # Connect worker probes: no DB session open, one GET per distinct worker.
+        connect_workers_by_cluster: dict[int, tuple[int, str]] = {}  # cluster_id -> (down, description)
+        connect_workers_ignored: dict[int, str] = {}  # cluster_id -> reason
+        if connect_worker_cluster_ids:
+            workers_by_cluster: dict[int, list[str]] = {}
+            for cid in sorted(connect_worker_cluster_ids):
+                workers = _connect_workers(connect_urls.get(cid))
+                if cid not in connect_urls:
+                    connect_workers_ignored[cid] = "cluster not found in kafka_clusters"
+                elif not workers:
+                    connect_workers_ignored[cid] = "kafka_connect_url is empty"
+                else:
+                    workers_by_cluster[cid] = workers
+            probe_workers = list(dict.fromkeys(w for workers in workers_by_cluster.values() for w in workers))
+            if probe_workers:
+                probe_limit = asyncio.Semaphore(_CONNECT_PROBE_CONCURRENCY)
+                async with httpx.AsyncClient(timeout=_CONNECT_PROBE_TIMEOUT_SECS) as client:
+                    worker_up = dict(zip(probe_workers, await asyncio.gather(
+                        *(_connect_probe(client, w, probe_limit) for w in probe_workers)
+                    )))
+                for cid, workers in workers_by_cluster.items():
+                    connect_workers_by_cluster[cid] = _connect_workers_value(workers, worker_up)
+            for cfg in configs:
+                if cfg.alert_type == _CONNECT_WORKERS_ALERT_TYPE and cfg.cluster_id in connect_workers_by_cluster:
+                    values[cfg.id] = connect_workers_by_cluster[cfg.cluster_id][0]
     except Exception as exc:
         logger.warning("_evaluate_cluster_metrics: setup failed: %s", exc)
         return
@@ -1382,6 +1586,12 @@ async def _evaluate_cluster_metrics() -> None:
         elif config.alert_type == _ZK_ENSEMBLE_ALERT_TYPE:
             if cluster_id not in zk_by_cluster:
                 continue  # reason logged from zk_ignored
+        elif config.alert_type in _CONNECT_SNAPSHOT_ALERT_TYPES:
+            if cluster_id not in connect_snapshot_by_cluster:
+                continue  # reason logged from connect_snapshot_ignored
+        elif config.alert_type == _CONNECT_WORKERS_ALERT_TYPE:
+            if cluster_id not in connect_workers_by_cluster:
+                continue  # reason logged from connect_workers_ignored
         elif cluster_id not in fresh_cluster_ids:
             stale_cluster_ids.add(cluster_id)
             continue
@@ -1425,6 +1635,19 @@ async def _evaluate_cluster_metrics() -> None:
                 )
             elif config.alert_type == _ZK_ENSEMBLE_ALERT_TYPE:
                 description = zk_by_cluster[cluster_id][1]
+            elif config.alert_type == _CONNECT_FAILED_CONNECTORS_ALERT_TYPE:
+                description = (
+                    f"{value} Connect connector(s) FAILED: "
+                    f"{_name_list(connect_snapshot_by_cluster[cluster_id]['failed_names'], _CONNECT_NAMES_MAX)}"
+                )
+            elif config.alert_type == _CONNECT_FAILED_TASKS_ALERT_TYPE:
+                task_names = connect_snapshot_by_cluster[cluster_id]["task_names"]
+                description = (
+                    f"{value} failed Connect task(s) across {len(task_names)} connector(s): "
+                    f"{_name_list(task_names, _CONNECT_NAMES_MAX)}"
+                )
+            elif config.alert_type == _CONNECT_WORKERS_ALERT_TYPE:
+                description = connect_workers_by_cluster[cluster_id][1]
             elif config.alert_type == _MSG_RATE_IN_ALERT_TYPE:
                 description = (
                     f"Cluster inflow is {value} msgs/sec over the last "
@@ -1517,6 +1740,16 @@ async def _evaluate_cluster_metrics() -> None:
         logger.info(
             "evaluate_alerts: ZooKeeper ensemble ignored clusters: %s",
             "; ".join(f"{cid}: {reason}" for cid, reason in sorted(zk_ignored.items())),
+        )
+    if connect_snapshot_ignored:
+        logger.info(
+            "evaluate_alerts: Connect connector snapshot ignored clusters: %s",
+            "; ".join(f"{cid}: {reason}" for cid, reason in sorted(connect_snapshot_ignored.items())),
+        )
+    if connect_workers_ignored:
+        logger.info(
+            "evaluate_alerts: Connect workers ignored clusters: %s",
+            "; ".join(f"{cid}: {reason}" for cid, reason in sorted(connect_workers_ignored.items())),
         )
     if skew_skipped_cluster_ids:
         logger.info(

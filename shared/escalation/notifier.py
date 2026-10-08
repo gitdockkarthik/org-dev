@@ -34,6 +34,9 @@ CATEGORY_LABEL = {
     "cluster.data_gb_max": "Data On Disk (Max Broker)",
     "cluster.data_spread_pct": "Data Spread Between Brokers",
     "cluster.zk_ensemble": "ZooKeeper Ensemble",
+    "cluster.connect_failed_connectors": "Connect Failed Connectors",
+    "cluster.connect_failed_tasks": "Connect Failed Tasks",
+    "cluster.connect_workers_down": "Connect Workers Down",
     "broker.cpu_pct": "Broker CPU %",
     "broker.heap_pct": "Broker Heap %",
 }
