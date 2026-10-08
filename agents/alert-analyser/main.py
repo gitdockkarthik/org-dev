@@ -445,6 +445,55 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Startup: Zabbix closure jobs not registered (agent will still start)")
 
+    # The stale-incident closure has its own try block, so that a problem with it can never stop the closure jobs above
+    # from registering. The dry run is enabled by default and the live job is disabled: enable the live job's schedule with
+    # PUT /jobs/zabbix-stale/schedules/<schedule_id> and a body with BOTH fields once the dry run's notes have been reviewed.
+    try:
+        import asyncio as _asyncio
+        import tools.zabbix_stale as _zs
+
+        async def _zabbix_stale_dry_run_job():
+            try:
+                _zabbix_stale_dry_run_job._last_result = await _zs.run_job(commit=False)
+            except _asyncio.TimeoutError:
+                raise RuntimeError("timed out after %ss" % _zs.RUN_TIMEOUT_SECONDS)
+
+        async def _zabbix_stale_live_job():
+            # The enabled schedule is the single on/off switch, as for the closure job: a manual trigger must not
+            # close incidents while this job's schedule is disabled.
+            async with SessionLocal() as _zschk:
+                _zson = (await _zschk.execute(
+                    _sel(AlertJobSchedule.id).where(AlertJobSchedule.job_id == "zabbix-stale", AlertJobSchedule.enabled == True)
+                )).first()
+            if not _zson:
+                _zabbix_stale_live_job._last_result = "skipped: this job's schedule is disabled (the dry-run job is the active one)"
+                return
+            try:
+                _zabbix_stale_live_job._last_result = await _zs.run_job(commit=True)
+            except _asyncio.TimeoutError:
+                raise RuntimeError("timed out after %ss" % _zs.RUN_TIMEOUT_SECONDS)
+
+        _jobs_module.register_job(
+            "zabbix-stale-dry-run",
+            "Zabbix stale closure (dry run)",
+            "Finds ESCALATED Zabbix incidents open for 7 days (14 in production) with no recovery notice and records what it would close; changes nothing",
+            _zabbix_stale_dry_run_job,
+        )
+        _jobs_module.register_job(
+            "zabbix-stale",
+            "Zabbix stale closure",
+            "Closes ESCALATED Zabbix incidents open for 7 days (14 in production) with no recovery notice, labelled stale_no_recovery or closure_recovery_inferred",
+            _zabbix_stale_live_job,
+        )
+        async with SessionLocal() as _zsess:
+            for _zid, _zenabled in (("zabbix-stale-dry-run", True), ("zabbix-stale", False)):
+                _zexisting = await _zsess.execute(_sel(AlertJobSchedule).where(AlertJobSchedule.job_id == _zid))
+                if not _zexisting.first():
+                    await _jobs_module.create_schedule(_zid, "30 2 * * *", enabled=_zenabled)
+                    logger.info("Created default schedule for %s (enabled=%s)", _zid, _zenabled)
+    except Exception:
+        logger.exception("Startup: Zabbix stale closure jobs not registered (agent will still start)")
+
     count = await _jobs_module.load_schedules()
     logger.info("Job scheduler: loaded %d schedule(s)", count)
     _jobs_module.start_scheduler()
