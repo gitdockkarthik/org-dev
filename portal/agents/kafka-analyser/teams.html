@@ -284,6 +284,9 @@
             <div class="hint hidden" id="af-tiers-data-max-hint">Fires when the largest broker's data on disk (GB) reaches a tier. The card names that broker. The rule is ignored while any broker of the cluster is not reporting.</div>
             <div class="hint hidden" id="af-tiers-data-spread-hint">Spread = (largest - smallest broker data) / largest x 100. Fires when a broker holds much less data than the others (rebuilt, lost disks or not replicating). Normal spread is under 1%. Ignored while any broker is not reporting.</div>
             <div class="hint hidden" id="af-tiers-zk-hint">Counts problems in the cluster's ZooKeeper ensemble: one per node that does not answer, plus one if there is not exactly one leader. Checked live every 5 minutes (one mntr per node) and confirmed over two checks. With three nodes, 1 = degraded and 2 = quorum at risk.</div>
+            <div class="hint hidden" id="af-tiers-connect-connectors-hint">Counts connectors in state FAILED in the latest Connect snapshot. The card names up to 5. Ignored if the snapshot is older than 6 minutes. Clusters without Kafka Connect (for example the External Staging cluster) are skipped.</div>
+            <div class="hint hidden" id="af-tiers-connect-tasks-hint">Sums failed tasks across the cluster's connectors in the latest snapshot. A RUNNING connector can hold failed tasks, so this differs from failed connectors. The card names up to 5.</div>
+            <div class="hint hidden" id="af-tiers-connect-workers-hint">Counts Connect worker nodes that do not answer a light request (GET /) within 3 seconds, checked live every 5 minutes and confirmed over two checks. The card names the workers. A worker with no connectors still counts as up.</div>
             <div class="hint hidden" id="af-tiers-skew-hint">Ratio of the busiest broker's leader partitions to the cluster average (1.0 = balanced). Does not detect a broker that has lost all its leaders.</div>
           </div>
           <div class="field hidden" id="af-min-rf-field">
@@ -585,6 +588,9 @@
       { value: 'cluster.data_gb_max', label: 'Data on disk (max broker)', group: 'Cluster', kind: 'tiers', unit: 'GB', resolves: true },
       { value: 'cluster.data_spread_pct', label: 'Data spread between brokers', group: 'Cluster', kind: 'tiers', unit: '%', resolves: true },
       { value: 'cluster.zk_ensemble', label: 'ZooKeeper ensemble problems', group: 'Cluster', kind: 'tiers', unit: 'problems', resolves: true },
+      { value: 'cluster.connect_failed_connectors', label: 'Connect failed connectors', group: 'Cluster', kind: 'tiers', unit: 'connectors', resolves: true },
+      { value: 'cluster.connect_failed_tasks', label: 'Connect failed tasks', group: 'Cluster', kind: 'tiers', unit: 'tasks', resolves: true },
+      { value: 'cluster.connect_workers_down', label: 'Connect workers down', group: 'Cluster', kind: 'tiers', unit: 'workers', resolves: true },
     ];
     const TIER_IDS = { info: 'af-tier-info', warning: 'af-tier-warning', critical: 'af-tier-critical' };
 
@@ -709,6 +715,9 @@
       $('af-tiers-data-max-hint').classList.toggle('hidden', t.value !== 'cluster.data_gb_max');
       $('af-tiers-data-spread-hint').classList.toggle('hidden', t.value !== 'cluster.data_spread_pct');
       $('af-tiers-zk-hint').classList.toggle('hidden', t.value !== 'cluster.zk_ensemble');
+      $('af-tiers-connect-connectors-hint').classList.toggle('hidden', t.value !== 'cluster.connect_failed_connectors');
+      $('af-tiers-connect-tasks-hint').classList.toggle('hidden', t.value !== 'cluster.connect_failed_tasks');
+      $('af-tiers-connect-workers-hint').classList.toggle('hidden', t.value !== 'cluster.connect_workers_down');
       $('af-tiers-above-hint').classList.toggle('hidden', !!t.below);
       $('af-tiers-below-hint').classList.toggle('hidden', !t.below);
       $('af-resolve-card').closest('.field').classList.toggle('hidden', !t.resolves);
