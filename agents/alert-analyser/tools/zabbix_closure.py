@@ -1,8 +1,11 @@
 """Going-forward closure of recovered Zabbix incidents (alert-analyser).
 
-Run as a scheduled job (registered in main.py). Uses tools/zabbix_recovery.decide() and only touches
-ESCALATED Zabbix incidents that have a recovery notice: a later Zabbix Closed notice for the same
-problem. There is no limit on how long after the Open the notice came: a recovery ends the problem.
+Run as a scheduled job (registered in main.py). Only touches ESCALATED Zabbix incidents that have a
+recovery notice. MATCHING decides how an Open is paired with its notice: "id" (default, from 8 Oct 2026)
+uses tools/zabbix_match.decide_by_id(), which pairs by Zabbix's own problem ID stored in zabbix_alert_detail,
+so an Open is never closed by another problem's notice; "title" is the earlier rule set,
+tools/zabbix_recovery.decide(), kept for the alerts that have no problem ID. There is no limit on how long
+after the Open the notice came: a recovery ends the problem.
 
 Two modes share this code. commit=False is the dry run: every write is performed inside one
 transaction that is rolled back, so the real SQL is checked on every run but nothing changes.
@@ -22,27 +25,35 @@ from collections import Counter
 
 try:
     from tools.zabbix_recovery import decide, parse_ts
+    from tools.zabbix_match import decide_by_id
 except ImportError:
-    pass  # the tests load zabbix_recovery.py and this file into one namespace
+    pass  # the tests load zabbix_recovery.py, zabbix_match.py and this file into one namespace
 
 RUN_TIMEOUT_SECONDS = 120
 MAX_ROWS_PER_RUN = 1000
+MATCHING = "id"
 
 OPENS_SQL = """
-SELECT id::text AS id, alert_id, alert_payload->>'message' AS message, alert_payload->>'createdAt' AS created_at,
-       action_outcome->'details'->>'outcome' AS outcome, (action_outcome IS NOT NULL) AS has_outcome
-FROM incident_management.incidents
-WHERE status = 'ESCALATED' AND alert_payload->>'message' ILIKE '%[Zabbix]%'
+SELECT i.id::text AS id, i.alert_id, i.alert_payload->>'message' AS message, i.alert_payload->>'createdAt' AS created_at,
+       i.action_outcome->'details'->>'outcome' AS outcome, (i.action_outcome IS NOT NULL) AS has_outcome,
+       d.problem_id, d.fetch_status AS detail_status, d.kind AS detail_kind, d.full_message
+FROM incident_management.incidents i
+LEFT JOIN zabbix_alert_detail d ON d.alert_id = i.alert_id
+WHERE i.status = 'ESCALATED' AND i.alert_payload->>'message' ILIKE '%[Zabbix]%'
 """
 
 EVENTS_SQL = """
-SELECT alert_id AS id, alert_payload->>'message' AS message, alert_payload->>'createdAt' AS created_at
-FROM incident_management.incidents
-WHERE alert_payload->>'message' ILIKE '%[Zabbix]%' AND alert_payload->>'createdAt' IS NOT NULL
-UNION
-SELECT alert_id, alert_data->>'message', alert_data->>'createdAt'
-FROM alert_sync_history
-WHERE alert_data->>'message' ILIKE '%[Zabbix]%' AND alert_data->>'createdAt' IS NOT NULL
+SELECT e.id, e.message, e.created_at, d.problem_id, d.fetch_status AS detail_status, d.kind AS detail_kind, d.full_message
+FROM (
+    SELECT alert_id AS id, alert_payload->>'message' AS message, alert_payload->>'createdAt' AS created_at
+    FROM incident_management.incidents
+    WHERE alert_payload->>'message' ILIKE '%[Zabbix]%' AND alert_payload->>'createdAt' IS NOT NULL
+    UNION
+    SELECT alert_id, alert_data->>'message', alert_data->>'createdAt'
+    FROM alert_sync_history
+    WHERE alert_data->>'message' ILIKE '%[Zabbix]%' AND alert_data->>'createdAt' IS NOT NULL
+) e
+LEFT JOIN zabbix_alert_detail d ON d.alert_id = e.id
 """
 
 UPDATE_SQL = """
@@ -65,16 +76,24 @@ STAMPED_OTHER_SQL = ("SELECT count(*) FROM incident_management.incidents "
                      "WHERE updated_at = now() AND alert_payload->>'message' NOT ILIKE '%[Zabbix]%'")
 
 
-def plan(opens_rows, event_rows):
-    """One row per ESCALATED Zabbix incident. action: resolve / skip_agent_outcome / keep / review."""
+def _detail(r):
+    """The stored alert details of a row, whose columns are missing (None) on rows read without the details join."""
+    return {"problem_id": getattr(r, "problem_id", None), "detail_status": getattr(r, "detail_status", None),
+            "detail_kind": getattr(r, "detail_kind", None), "full_message": getattr(r, "full_message", None)}
+
+
+def plan(opens_rows, event_rows, matching=None):
+    """One row per ESCALATED Zabbix incident. action: resolve / skip_agent_outcome / keep / review.
+    matching: "id" or "title" (default: the module setting MATCHING)."""
+    matching = matching or MATCHING
     events_by_id = {}
     for r in event_rows:
-        events_by_id.setdefault(r.id, {"id": r.id, "message": r.message, "createdAt": r.created_at})
+        events_by_id.setdefault(r.id, dict({"id": r.id, "message": r.message, "createdAt": r.created_at}, **_detail(r)))
     events = list(events_by_id.values())
-    opens = [{"id": r.id, "alert_id": r.alert_id, "message": r.message, "createdAt": r.created_at} for r in opens_rows]
+    opens = [dict({"id": r.id, "alert_id": r.alert_id, "message": r.message, "createdAt": r.created_at}, **_detail(r)) for r in opens_rows]
     meta = {r.id: r for r in opens_rows}
     rows = []
-    for d in decide(opens, events):
+    for d in (decide_by_id(opens, events) if matching == "id" else decide(opens, events)):
         m = meta[d["id"]]
         action = d["decision"]
         if action == "resolve" and m.has_outcome and (m.outcome or "").strip().upper() != "FAILED":
@@ -148,8 +167,8 @@ def summarise(rows, commit, stats):
     reasons = Counter(r["reason"] for r in rows if r["action"] == "resolve")
     verb = "resolved" if commit else "would resolve"
     n = stats["updated"] if commit else c.get("resolve", 0)
-    return ("%s: %s %d (exact %d, prefix %d) | judged %d: keep %d, review %d, agent outcome not FAILED %d | skipped (no longer ESCALATED) %d"
-            % ("live" if commit else "dry run", verb, n, reasons.get("closed_exact", 0), reasons.get("closed_prefix", 0),
+    return ("%s: %s %d (by id %d, exact %d, prefix %d) | judged %d: keep %d, review %d, agent outcome not FAILED %d | skipped (no longer ESCALATED) %d"
+            % ("live" if commit else "dry run", verb, n, reasons.get("closed_by_id", 0), reasons.get("closed_exact", 0), reasons.get("closed_prefix", 0),
                len(rows), c.get("keep", 0), c.get("review", 0), c.get("skip_agent_outcome", 0), stats["skipped"]))
 
 

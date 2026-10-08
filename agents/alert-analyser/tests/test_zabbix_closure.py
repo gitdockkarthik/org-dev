@@ -4,14 +4,17 @@ Run from the repo root:  python3 -B agents/alert-analyser/tests/test_zabbix_clos
 The SQL statements themselves are NOT exercised here; the dry-run job does that on every cycle."""
 import asyncio
 import os
+import re
 import sys
 import uuid
 from collections import namedtuple
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ns = {"__name__": "zabbix_closure_under_test"}
-for _p in (os.path.join(_HERE, "..", "tools", "zabbix_recovery.py"), os.path.join(_HERE, "..", "tools", "zabbix_closure.py")):
+for _p in (os.path.join(_HERE, "..", "tools", "zabbix_recovery.py"), os.path.join(_HERE, "..", "tools", "zabbix_match.py"),
+           os.path.join(_HERE, "..", "tools", "zabbix_closure.py")):
     exec(compile(open(_p, encoding="utf-8").read(), _p, "exec"), _ns)
+_ns["MATCHING"] = "title"  # the tests down to the ID section were written for the title rules; the module default is "id"
 plan, apply, run_job, summarise, parse_ts = _ns["plan"], _ns["apply"], _ns["run_job"], _ns["summarise"], _ns["parse_ts"]
 
 OpenRow = namedtuple("OpenRow", "id alert_id message created_at outcome has_outcome")
@@ -164,7 +167,7 @@ def test_dry_run_rolls_back_but_runs_every_write():
     w = world()
     s = go(False, w)
     assert w.outcome == "ROLLBACK" and len(w.updated) == 4 and len(w.history) == 4, (w.outcome, w.updated)
-    assert s.startswith("dry run: would resolve 4 (exact 4, prefix 0)"), s
+    assert s.startswith("dry run: would resolve 4 (by id 0, exact 4, prefix 0)"), s
 
 
 def test_live_run_commits_only_resolve_rows():
@@ -172,7 +175,7 @@ def test_live_run_commits_only_resolve_rows():
     s = go(True, w)
     ids = {iid(1), iid(2), iid(3), iid(6)}
     assert w.outcome == "COMMIT" and {u[0] for u in w.updated} == ids and set(w.history) == ids, (w.outcome, w.updated)
-    assert s.startswith("live: resolved 4 (exact 4, prefix 0)") and "agent outcome not FAILED 2" in s, s
+    assert s.startswith("live: resolved 4 (by id 0, exact 4, prefix 0)") and "agent outcome not FAILED 2" in s, s
 
 
 def test_nothing_to_resolve_writes_nothing():
@@ -265,6 +268,77 @@ def test_sql_keeps_its_guards_and_reads_the_agent_outcome():
     assert "resolution_type = 'closure_alert_correlation'" in u and "detected_via = 'message_parse'" in u
     assert "action_outcome" in _ns["OPENS_SQL"] and "ESCALATED" in _ns["OPENS_SQL"] and "[Zabbix]" in _ns["OPENS_SQL"]
     assert "RESOLVED" in _ns["HISTORY_SQL"]
+
+
+# ---- the ID rules (the module default from 8 Oct 2026) ---------------------
+OpenRowD = namedtuple("OpenRowD", "id alert_id message created_at outcome has_outcome problem_id detail_status detail_kind full_message")
+EvRowD = namedtuple("EvRowD", "id message created_at problem_id detail_status detail_kind full_message")
+
+
+def id_scenario():
+    """1 recovered by its own notice, 2 recovered but the other agent recorded SUCCESS, 3 recovered after a FAILED outcome,
+    4 only another problem's notice exists (same host, same title), 5 details not stored yet, 6 nothing at all."""
+    o, e = [], []
+
+    def add(n, host, problem, closed_problem=None, outcome=None, has=False, status="ok"):
+        m = om(host, "Jetty service is down")
+        o.append(OpenRowD(iid(n), "alert-%d" % n, m, "2026-10-06T10:00:00Z", outcome, has, problem, status, "open" if status else None, None))
+        e.append(EvRowD("alert-%d" % n, m, "2026-10-06T10:00:00Z", problem, status, "open" if status else None, None))
+        if closed_problem:
+            e.append(EvRowD("closed-%d" % n, cm(host, "Jetty service is down"), "2026-10-06T10:20:00Z", closed_problem, "ok", "closed", None))
+
+    add(1, "h1", "101", "101")
+    add(2, "h2", "102", "102", "SUCCESS", True)
+    add(3, "h3", "103", "103", "FAILED", True)
+    add(4, "h4", "104", "999")
+    add(5, "h5", None, "105", status=None)
+    add(6, "h6", "106")
+    return o, e
+
+
+def test_the_module_default_is_the_id_rules():
+    src = open(os.path.join(_HERE, "..", "tools", "zabbix_closure.py"), encoding="utf-8").read()
+    assert re.search(r'^MATCHING = "id"$', src, re.M), "the default matching must be by problem ID"
+
+
+def test_plan_by_problem_id_applies_the_agent_outcome_rule_and_never_uses_another_problems_notice():
+    o, e = id_scenario()
+    r = {x["alert_id"]: x for x in plan(o, e, matching="id")}
+    assert r["alert-1"]["action"] == "resolve" and r["alert-1"]["reason"] == "closed_by_id", r["alert-1"]
+    assert r["alert-2"]["action"] == "skip_agent_outcome" and r["alert-3"]["action"] == "resolve", "FAILED still resolves, SUCCESS is the other agent's"
+    assert r["alert-4"]["action"] == "keep" and r["alert-4"]["reason"] == "no_recovery_for_problem", r["alert-4"]
+    assert r["alert-5"]["action"] == "keep" and r["alert-5"]["reason"] == "details_pending", r["alert-5"]
+    assert r["alert-6"]["action"] == "keep", r["alert-6"]
+    # the same rows through the title rules show what the ID rules prevent: the other problem's notice would have closed alert-4
+    t = {x["alert_id"]: x for x in plan(o, e, matching="title")}
+    assert t["alert-4"]["action"] == "resolve", t["alert-4"]
+
+
+def test_rows_read_without_the_details_columns_still_work_in_title_mode():
+    o, e = scenario()
+    assert {r["alert_id"]: r["action"] for r in plan(o, e, matching="title")}["alert-1"] == "resolve"
+    waiting = {r["reason"] for r in plan(o, e, matching="id")}
+    assert waiting == {"details_pending"}, "without stored details nothing is resolved in ID mode"
+
+
+def test_the_job_runs_on_problem_ids_when_the_setting_is_id():
+    o, e = id_scenario()
+    w = World(o, e)
+    _ns["MATCHING"] = "id"
+    try:
+        s = go(False, w)
+    finally:
+        _ns["MATCHING"] = "title"
+    assert s.startswith("dry run: would resolve 2 (by id 2, exact 0, prefix 0)") and "agent outcome not FAILED 1" in s, s
+    assert w.outcome == "ROLLBACK" and {u[0] for u in w.updated} == {iid(1), iid(3)}, (w.outcome, w.updated)
+
+
+def test_the_sql_joins_the_details_table_and_reads_only():
+    for name in ("OPENS_SQL", "EVENTS_SQL"):
+        sql = _ns[name]
+        assert "LEFT JOIN zabbix_alert_detail" in sql and "problem_id" in sql and "detail_status" in sql, name
+        assert sql.strip().upper().startswith("SELECT") and not re.search(r"\b(insert|update|delete|drop|alter|truncate)\b", sql, re.I), name
+    assert "UNION" in _ns["EVENTS_SQL"] and "alert_sync_history" in _ns["EVENTS_SQL"]
 
 
 if __name__ == "__main__":

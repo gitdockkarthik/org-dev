@@ -22,12 +22,14 @@ CACHE_SECONDS = 60
 MAX_RUNS = 10
 
 OPENS_SQL = """
-SELECT id::text AS id, alert_id, alert_payload->>'message' AS message, alert_payload->>'createdAt' AS created_at,
-       action_outcome->'details'->>'outcome' AS outcome, (action_outcome IS NOT NULL) AS has_outcome,
-       action_outcome->>'action_taken_at' AS action_taken_at, left(action_outcome->>'fix_applied', 120) AS fix_applied,
-       priority, created_at AS incident_created_at
-FROM incident_management.incidents
-WHERE status = 'ESCALATED' AND alert_payload->>'message' ILIKE '%[Zabbix]%'
+SELECT i.id::text AS id, i.alert_id, i.alert_payload->>'message' AS message, i.alert_payload->>'createdAt' AS created_at,
+       i.action_outcome->'details'->>'outcome' AS outcome, (i.action_outcome IS NOT NULL) AS has_outcome,
+       i.action_outcome->>'action_taken_at' AS action_taken_at, left(i.action_outcome->>'fix_applied', 120) AS fix_applied,
+       i.priority, i.created_at AS incident_created_at,
+       d.problem_id, d.fetch_status AS detail_status, d.kind AS detail_kind, d.full_message
+FROM incident_management.incidents i
+LEFT JOIN zabbix_alert_detail d ON d.alert_id = i.alert_id
+WHERE i.status = 'ESCALATED' AND i.alert_payload->>'message' ILIKE '%[Zabbix]%'
 """
 
 SOURCES_SQL = """
@@ -58,7 +60,10 @@ GROUP BY 1, 2
 
 REASON_TEXT = {
     "pending_closure": "A recovery notice was received; the closure job closes it at its next run (within 5 minutes).",
-    "no_recovery": "No recovery notice has been received yet.",
+    "no_recovery": "No recovery notice for this problem has been received yet.",
+    "details_pending": "Waiting for this alert's details (its Zabbix problem ID) to be fetched; this takes a few minutes.",
+    "kind_conflict": "The alert and its stored details disagree about whether it is an Open or a Closed notice; a person needs to review it.",
+    "prefix_without_id": "This alert has no stored problem ID and its title was cut, so its recovery notice cannot be matched safely; a person needs to confirm.",
     "ambiguous_prefix": "The alert title was cut off by OpsGenie and matches recovery notices for different thresholds; a person needs to confirm.",
     "older_open_superseded": "A newer alert for the same problem replaced this one; it closes when that problem recovers.",
     "unparsed_title": "The alert title could not be read (for example an unexpanded Zabbix placeholder); a person needs to review it.",
@@ -109,7 +114,7 @@ def _reason(action, reason, outcome):
     if action == "resolve":
         code = "pending_closure"
     elif action == "keep":
-        code = "no_recovery"
+        code = "details_pending" if reason == "details_pending" else "no_recovery"
     elif action == "skip_agent_outcome":
         return "agent_outcome", ("The automation agent recorded an outcome (%s); its status is left to that agent." % (outcome or "unknown"))
     else:

@@ -13,9 +13,10 @@ from datetime import datetime, timedelta, timezone
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ns = {"__name__": "incident_report_under_test"}
-for _f in ("zabbix_recovery.py", "zabbix_closure.py", "incident_report.py"):
+for _f in ("zabbix_recovery.py", "zabbix_match.py", "zabbix_closure.py", "incident_report.py"):
     _p = os.path.join(_HERE, "..", "tools", _f)
     exec(compile(open(_p, encoding="utf-8").read(), _p, "exec"), _ns)
+_ns["MATCHING"] = "title"  # the scenario below was written for the title rules; the ID rules have their own test at the end
 build_report, get_report, get_report_cached, bucket_of = _ns["build_report"], _ns["get_report"], _ns["get_report_cached"], _ns["bucket_of"]
 
 OpenRow = namedtuple("OpenRow", "id alert_id message created_at outcome has_outcome action_taken_at fix_applied priority incident_created_at")
@@ -212,6 +213,37 @@ def test_the_report_is_cached_for_a_minute():
     call()
     assert len(w["executed"]) == 2 * n, "after the TTL the report is rebuilt"
     _ns["_cache"].update({"at": None, "data": None})
+
+
+OpenRowD = namedtuple("OpenRowD", "id alert_id message created_at outcome has_outcome action_taken_at fix_applied priority incident_created_at problem_id detail_status detail_kind full_message")
+EvRowD = namedtuple("EvRowD", "id message created_at problem_id detail_status detail_kind full_message")
+
+
+def test_reasons_follow_the_id_rules():
+    def op(n, host, pid, status="ok", dkind="open"):
+        m = om(host, "Jetty service is down")
+        at = NOW - timedelta(hours=n)
+        return (OpenRowD(iid(n), "alert-%d" % n, m, at.strftime("%Y-%m-%dT%H:%M:%SZ"), None, False, None, None, "P2", at, pid, status, dkind, None),
+                EvRowD("alert-%d" % n, m, at.strftime("%Y-%m-%dT%H:%M:%SZ"), pid, status, dkind, None))
+    (o1, e1), (o2, e2), (o3, e3), (o4, e4) = op(1, "h1", "11"), op(2, "h2", "12"), op(3, "h3", None, status=None, dkind=None), op(4, "h4", "14", dkind="closed")
+    closed = [EvRowD("c1", cm("h1", "Jetty service is down"), (NOW - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ"), "11", "ok", "closed", None),
+              EvRowD("c2", cm("h2", "Jetty service is down"), (NOW - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ"), "99", "ok", "closed", None)]
+    _ns["MATCHING"] = "id"
+    try:
+        r = build(opens_rows=[o1, o2, o3, o4], event_rows=[e1, e2, e3, e4] + closed)
+    finally:
+        _ns["MATCHING"] = "title"
+    by = {i["alert_id"]: i for i in r["open"]["incidents"]}
+    assert by["alert-1"]["reason_code"] == "pending_closure", by["alert-1"]
+    assert by["alert-2"]["reason_code"] == "no_recovery" and "for this problem" in by["alert-2"]["reason"], "another problem's notice does not close it"
+    assert by["alert-3"]["reason_code"] == "details_pending" and "problem ID" in by["alert-3"]["reason"], by["alert-3"]
+    assert by["alert-4"]["reason_code"] == "kind_conflict", by["alert-4"]
+    assert r["open"]["by_reason"] == {"pending_closure": 1, "no_recovery": 1, "details_pending": 1, "kind_conflict": 1}, r["open"]["by_reason"]
+
+
+def test_the_open_incidents_query_joins_the_details_table():
+    sql = _ns["OPENS_SQL"]
+    assert "LEFT JOIN zabbix_alert_detail" in sql and "problem_id" in sql and "detail_status" in sql
 
 
 def test_every_sql_statement_is_read_only():
