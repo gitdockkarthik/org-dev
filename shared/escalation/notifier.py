@@ -37,6 +37,8 @@ CATEGORY_LABEL = {
     "cluster.connect_failed_connectors": "Connect Failed Connectors",
     "cluster.connect_failed_tasks": "Connect Failed Tasks",
     "cluster.connect_workers_down": "Connect Workers Down",
+    "cluster.sr_nodes_down": "Schema Registry Nodes Down",
+    "cluster.sr_soft_deleted": "Schema Registry Soft-Deleted Subjects",
     "broker.cpu_pct": "Broker CPU %",
     "broker.heap_pct": "Broker Heap %",
 }

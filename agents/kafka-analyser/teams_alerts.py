@@ -10,6 +10,7 @@ on a real operational job: each one logs a warning and swallows on failure,
 never raises, so it can never break the caller's own check/recycle logic.
 """
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
@@ -953,6 +954,7 @@ CLUSTER_METRIC_TYPES = (
     "cluster.urp_total", "cluster.rf_below_min", "cluster.leader_skew", "cluster.msg_rate_in",
     "cluster.data_gb_max", "cluster.data_spread_pct", "cluster.zk_ensemble",
     "cluster.connect_failed_connectors", "cluster.connect_failed_tasks", "cluster.connect_workers_down",
+    "cluster.sr_nodes_down", "cluster.sr_soft_deleted",
 )
 _CLUSTER_METRIC_SUBJECT = "cluster"
 # A cluster is evaluated only if its topic-structure job succeeded this recently.
@@ -1078,6 +1080,30 @@ _CONNECT_WORKERS_ALERT_TYPE = "cluster.connect_workers_down"
 _CONNECT_PROBE_TIMEOUT_SECS = 3
 _CONNECT_PROBE_CONCURRENCY = 10
 _CONNECT_WORKER_NAMES_MAX = 10
+# cluster.sr_nodes_down: number of Schema Registry nodes of
+# kafka_clusters.schema_registry_url (comma-separated; http:// added when no
+# scheme) that do not answer GET {node}/ with a status below 500 within
+# _SR_PROBE_TIMEOUT_SECS (401/403/422 = up: the node answers), probed live
+# after the read session has closed, once per distinct node, at most
+# _SR_PROBE_CONCURRENCY at a time, never retried in the same run.
+# cluster.sr_soft_deleted: len(GET /subjects?deleted=true) - len(GET /subjects)
+# (as sets, floor 0) on the first node of the cluster that answered the probe,
+# each request bounded by _SR_SUBJECTS_TIMEOUT_SECS and _SR_SUBJECTS_MAX_BYTES.
+# Credentials in the URL are dropped: no request sends any. Own guard: a
+# cluster with an empty URL is ignored; for soft-deleted also one with no
+# node answering, or where either request is not HTTP 200 with a JSON list.
+_SR_NODES_ALERT_TYPE = "cluster.sr_nodes_down"
+_SR_SOFT_DELETED_ALERT_TYPE = "cluster.sr_soft_deleted"
+_SR_ALERT_TYPES = (_SR_NODES_ALERT_TYPE, _SR_SOFT_DELETED_ALERT_TYPE)
+_SR_PROBE_TIMEOUT_SECS = 3
+_SR_PROBE_CONCURRENCY = 10
+_SR_NODE_NAMES_MAX = 10
+_SR_SUBJECTS_TIMEOUT_SECS = 10
+_SR_SUBJECTS_MAX_BYTES = 20 * 1024 * 1024
+_SR_SUBJECT_NAMES_MAX = 5
+_SR_URL_SQL = text(
+    "SELECT id, schema_registry_url FROM kafka_clusters WHERE id IN :cids"
+).bindparams(bindparam("cids", expanding=True))
 _CLUSTER_METRIC_ACTIONS = {
     "cluster.urp_total": "Check broker health and replica sync.",
     "cluster.rf_below_min": "Check the topic replication factors with the Kafka team.",
@@ -1089,6 +1115,8 @@ _CLUSTER_METRIC_ACTIONS = {
     "cluster.connect_failed_connectors": "Check the failed connectors and their logs with the Kafka team.",
     "cluster.connect_failed_tasks": "Check the failed tasks (restart or fix the connector) with the Kafka team.",
     "cluster.connect_workers_down": "Check the Connect worker nodes with the Kafka team.",
+    "cluster.sr_nodes_down": "Check the Schema Registry nodes.",
+    "cluster.sr_soft_deleted": "Check the soft-deleted subjects in Schema Registry.",
 }
 
 
@@ -1181,6 +1209,100 @@ def _connect_workers_value(workers: list[str], up: dict[str, bool]) -> tuple[int
     return len(down), description
 
 
+def _sr_nodes(sr_url: str | None) -> list[str]:
+    """The distinct node URLs of a schema_registry_url: spaces and a trailing
+    slash stripped, http:// added when no scheme, credentials dropped."""
+    nodes = []
+    for entry in (sr_url or "").split(","):
+        entry = entry.strip().rstrip("/")
+        if not entry:
+            continue
+        if "://" not in entry:
+            entry = f"http://{entry}"
+        try:
+            parts = urlsplit(entry)
+            netloc = parts.netloc.rpartition("@")[2]
+            entry = parts._replace(netloc=netloc).geturl() if netloc else entry
+        except ValueError:
+            pass
+        nodes.append(entry)
+    return list(dict.fromkeys(nodes))
+
+
+async def _sr_probe(client: httpx.AsyncClient, node: str, limit: asyncio.Semaphore) -> bool:
+    """One GET {node}/ within _SR_PROBE_TIMEOUT_SECS (waiting for the
+    semaphore not counted), no retry: True on any status below 500. Never raises."""
+    async with limit:
+        try:
+            resp = await asyncio.wait_for(client.get(f"{node}/"), timeout=_SR_PROBE_TIMEOUT_SECS)
+        except Exception:
+            return False
+    return resp.status_code < 500
+
+
+def _sr_nodes_value(nodes: list[str], up: dict[str, bool]) -> tuple[int, str]:
+    """(down node count, card description without the tier suffix) for one cluster."""
+    down = [_connect_worker_label(n) for n in nodes if not up[n]]
+    description = (
+        f"{len(down)} of {len(nodes)} Schema Registry node(s) down: "
+        f"{_name_list(down, _SR_NODE_NAMES_MAX)}"
+    )
+    if down and len(down) == len(nodes):
+        description += "; no Schema Registry node reachable from the agent: check the network path first"
+    return len(down), description
+
+
+async def _sr_subject_set(client: httpx.AsyncClient, url: str) -> tuple[set[str] | None, str | None]:
+    """GET url within _SR_SUBJECTS_TIMEOUT_SECS, reading at most
+    _SR_SUBJECTS_MAX_BYTES: (subject names, None) on HTTP 200 with a JSON
+    list of strings, else (None, reason). Never raises."""
+    max_mb = _SR_SUBJECTS_MAX_BYTES // (1024 * 1024)
+
+    async def _get() -> tuple[set[str] | None, str | None]:
+        async with client.stream("GET", url) as resp:
+            if resp.status_code != 200:
+                return None, f"returned HTTP {resp.status_code}"
+            length = resp.headers.get("content-length")
+            if length and length.isdigit() and int(length) > _SR_SUBJECTS_MAX_BYTES:
+                return None, f"response larger than {max_mb} MB"
+            body = bytearray()
+            async for chunk in resp.aiter_bytes():
+                body += chunk
+                if len(body) > _SR_SUBJECTS_MAX_BYTES:
+                    return None, f"response larger than {max_mb} MB"
+        try:
+            data = json.loads(body)
+        except ValueError:
+            return None, "did not return JSON"
+        if not isinstance(data, list) or not all(isinstance(s, str) for s in data):
+            return None, "did not return a JSON list of subjects"
+        return set(data), None
+
+    try:
+        return await asyncio.wait_for(_get(), timeout=_SR_SUBJECTS_TIMEOUT_SECS)
+    except asyncio.TimeoutError:
+        return None, f"no answer within {_SR_SUBJECTS_TIMEOUT_SECS} s"
+    except Exception as exc:
+        return None, f"failed ({type(exc).__name__})"
+
+
+async def _sr_soft_deleted_value(client: httpx.AsyncClient, node: str) -> tuple[int | None, str]:
+    """(soft-deleted count, card description without the tier suffix), or
+    (None, reason the cluster is ignored)."""
+    label = _connect_worker_label(node)
+    live, reason = await _sr_subject_set(client, f"{node}/subjects")
+    if live is None:
+        return None, f"GET /subjects on {label} {reason}"
+    with_deleted, reason = await _sr_subject_set(client, f"{node}/subjects?deleted=true")
+    if with_deleted is None:
+        return None, f"GET /subjects?deleted=true on {label} {reason}"
+    value = max(len(with_deleted) - len(live), 0)
+    names = sorted(with_deleted - live)
+    return value, (
+        f"{value} soft-deleted subject(s) in Schema Registry: {_name_list(names, _SR_SUBJECT_NAMES_MAX)}"
+    )
+
+
 async def _evaluate_cluster_metrics() -> None:
     """Fire cluster.urp_total / cluster.rf_below_min / cluster.leader_skew alerts: one Teams card
     per (alert config, cluster) once the value sits in a tier on
@@ -1205,7 +1327,10 @@ async def _evaluate_cluster_metrics() -> None:
     latest connector snapshot with their own guard (fresh, not empty, not
     partial, Connect URL set); cluster.connect_workers_down probes the Connect
     workers live, after the read session has closed, and ignores clusters
-    with an empty Connect URL."""
+    with an empty Connect URL. cluster.sr_nodes_down / cluster.sr_soft_deleted
+    probe Schema Registry live, after the read session has closed, and
+    ignore clusters with an empty URL; soft-deleted also ignores a cluster
+    whose subject lists cannot be read."""
     if SessionLocal is None:
         logger.info("evaluate_alerts: cluster metrics skipped: database not available")
         return
@@ -1267,7 +1392,7 @@ async def _evaluate_cluster_metrics() -> None:
                 if cfg.cluster_id is not None
                 and cfg.alert_type not in (
                     _LEADER_SKEW_ALERT_TYPE, _MSG_RATE_IN_ALERT_TYPE, *_DATA_GB_ALERT_TYPES, _ZK_ENSEMBLE_ALERT_TYPE,
-                    *_CONNECT_SNAPSHOT_ALERT_TYPES, _CONNECT_WORKERS_ALERT_TYPE,
+                    *_CONNECT_SNAPSHOT_ALERT_TYPES, _CONNECT_WORKERS_ALERT_TYPE, *_SR_ALERT_TYPES,
                 )
             }
             fresh_cluster_ids: set[int] = set()
@@ -1495,6 +1620,23 @@ async def _evaluate_cluster_metrics() -> None:
                             snap["failed_connectors"] if cfg.alert_type == _CONNECT_FAILED_CONNECTORS_ALERT_TYPE
                             else snap["failed_tasks"]
                         )
+
+            sr_nodes_cluster_ids = {
+                cfg.cluster_id for cfg in configs
+                if cfg.alert_type == _SR_NODES_ALERT_TYPE and cfg.cluster_id is not None
+            }
+            sr_soft_cluster_ids = {
+                cfg.cluster_id for cfg in configs
+                if cfg.alert_type == _SR_SOFT_DELETED_ALERT_TYPE and cfg.cluster_id is not None
+            }
+            sr_urls: dict[int, str] = {}
+            if sr_nodes_cluster_ids or sr_soft_cluster_ids:
+                sr_urls = {
+                    r.id: r.schema_registry_url or ""
+                    for r in (await session.execute(_SR_URL_SQL, {
+                        "cids": sorted(sr_nodes_cluster_ids | sr_soft_cluster_ids),
+                    })).all()
+                }
         last_resolved: dict[tuple[int, int, str], datetime] = {
             (r.alert_config_id, r.cluster_id, r.subject): r.last_resolved_at for r in resolved_rows
         }
@@ -1547,6 +1689,64 @@ async def _evaluate_cluster_metrics() -> None:
             for cfg in configs:
                 if cfg.alert_type == _CONNECT_WORKERS_ALERT_TYPE and cfg.cluster_id in connect_workers_by_cluster:
                     values[cfg.id] = connect_workers_by_cluster[cfg.cluster_id][0]
+
+        # Schema Registry probes: no DB session open, one GET per distinct node
+        # of the clusters with either rule; then the subject lists of the first
+        # answering node of each soft-deleted cluster.
+        sr_nodes_by_cluster: dict[int, tuple[int, str]] = {}  # cluster_id -> (down, description)
+        sr_soft_by_cluster: dict[int, tuple[int, str]] = {}  # cluster_id -> (soft-deleted, description)
+        sr_nodes_ignored: dict[int, str] = {}  # cluster_id -> reason
+        sr_soft_ignored: dict[int, str] = {}  # cluster_id -> reason
+        if sr_nodes_cluster_ids or sr_soft_cluster_ids:
+            sr_node_lists: dict[int, list[str]] = {}
+            for cid in sorted(sr_nodes_cluster_ids | sr_soft_cluster_ids):
+                nodes = _sr_nodes(sr_urls.get(cid))
+                reason = None
+                if cid not in sr_urls:
+                    reason = "cluster not found in kafka_clusters"
+                elif not nodes:
+                    reason = "schema_registry_url is empty"
+                else:
+                    sr_node_lists[cid] = nodes
+                if reason is not None:
+                    if cid in sr_nodes_cluster_ids:
+                        sr_nodes_ignored[cid] = reason
+                    if cid in sr_soft_cluster_ids:
+                        sr_soft_ignored[cid] = reason
+            probe_nodes = list(dict.fromkeys(n for nodes in sr_node_lists.values() for n in nodes))
+            if probe_nodes:
+                probe_limit = asyncio.Semaphore(_SR_PROBE_CONCURRENCY)
+                async with httpx.AsyncClient(timeout=_SR_PROBE_TIMEOUT_SECS) as client:
+                    node_up = dict(zip(probe_nodes, await asyncio.gather(
+                        *(_sr_probe(client, n, probe_limit) for n in probe_nodes)
+                    )))
+                for cid, nodes in sr_node_lists.items():
+                    if cid in sr_nodes_cluster_ids:
+                        sr_nodes_by_cluster[cid] = _sr_nodes_value(nodes, node_up)
+                soft_nodes: dict[int, str] = {}
+                for cid, nodes in sr_node_lists.items():
+                    if cid not in sr_soft_cluster_ids:
+                        continue
+                    first_up = next((n for n in nodes if node_up[n]), None)
+                    if first_up is None:
+                        sr_soft_ignored[cid] = "no Schema Registry node answered"
+                    else:
+                        soft_nodes[cid] = first_up
+                if soft_nodes:
+                    async with httpx.AsyncClient(timeout=_SR_SUBJECTS_TIMEOUT_SECS) as client:
+                        soft_results = await asyncio.gather(
+                            *(_sr_soft_deleted_value(client, n) for n in soft_nodes.values())
+                        )
+                    for cid, (value, detail) in zip(soft_nodes, soft_results):
+                        if value is None:
+                            sr_soft_ignored[cid] = detail
+                        else:
+                            sr_soft_by_cluster[cid] = (value, detail)
+            for cfg in configs:
+                if cfg.alert_type == _SR_NODES_ALERT_TYPE and cfg.cluster_id in sr_nodes_by_cluster:
+                    values[cfg.id] = sr_nodes_by_cluster[cfg.cluster_id][0]
+                elif cfg.alert_type == _SR_SOFT_DELETED_ALERT_TYPE and cfg.cluster_id in sr_soft_by_cluster:
+                    values[cfg.id] = sr_soft_by_cluster[cfg.cluster_id][0]
     except Exception as exc:
         logger.warning("_evaluate_cluster_metrics: setup failed: %s", exc)
         return
@@ -1592,6 +1792,12 @@ async def _evaluate_cluster_metrics() -> None:
         elif config.alert_type == _CONNECT_WORKERS_ALERT_TYPE:
             if cluster_id not in connect_workers_by_cluster:
                 continue  # reason logged from connect_workers_ignored
+        elif config.alert_type == _SR_NODES_ALERT_TYPE:
+            if cluster_id not in sr_nodes_by_cluster:
+                continue  # reason logged from sr_nodes_ignored
+        elif config.alert_type == _SR_SOFT_DELETED_ALERT_TYPE:
+            if cluster_id not in sr_soft_by_cluster:
+                continue  # reason logged from sr_soft_ignored
         elif cluster_id not in fresh_cluster_ids:
             stale_cluster_ids.add(cluster_id)
             continue
@@ -1648,6 +1854,10 @@ async def _evaluate_cluster_metrics() -> None:
                 )
             elif config.alert_type == _CONNECT_WORKERS_ALERT_TYPE:
                 description = connect_workers_by_cluster[cluster_id][1]
+            elif config.alert_type == _SR_NODES_ALERT_TYPE:
+                description = sr_nodes_by_cluster[cluster_id][1]
+            elif config.alert_type == _SR_SOFT_DELETED_ALERT_TYPE:
+                description = sr_soft_by_cluster[cluster_id][1]
             elif config.alert_type == _MSG_RATE_IN_ALERT_TYPE:
                 description = (
                     f"Cluster inflow is {value} msgs/sec over the last "
@@ -1750,6 +1960,16 @@ async def _evaluate_cluster_metrics() -> None:
         logger.info(
             "evaluate_alerts: Connect workers ignored clusters: %s",
             "; ".join(f"{cid}: {reason}" for cid, reason in sorted(connect_workers_ignored.items())),
+        )
+    if sr_nodes_ignored:
+        logger.info(
+            "evaluate_alerts: Schema Registry nodes ignored clusters: %s",
+            "; ".join(f"{cid}: {reason}" for cid, reason in sorted(sr_nodes_ignored.items())),
+        )
+    if sr_soft_ignored:
+        logger.info(
+            "evaluate_alerts: Schema Registry soft-deleted subjects ignored clusters: %s",
+            "; ".join(f"{cid}: {reason}" for cid, reason in sorted(sr_soft_ignored.items())),
         )
     if skew_skipped_cluster_ids:
         logger.info(

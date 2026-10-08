@@ -30,6 +30,7 @@ _THRESHOLD_ALERT_TYPES = (
     "broker.cpu_pct", "broker.heap_pct", "cluster.urp_total", "cluster.rf_below_min", "cluster.leader_skew",
     "cluster.msg_rate_in", "cluster.data_gb_max", "cluster.data_spread_pct", "cluster.zk_ensemble",
     "cluster.connect_failed_connectors", "cluster.connect_failed_tasks", "cluster.connect_workers_down",
+    "cluster.sr_nodes_down", "cluster.sr_soft_deleted",
 )
 # Threshold types that fire when the value drops BELOW a tier: tiers are
 # >= 0 (zero allowed) and descending (info > warning > critical), and the
@@ -39,6 +40,7 @@ _TIERS = ("info", "warning", "critical")  # ascending
 # Threshold types whose tiers are counts: whole numbers > 0 only.
 _WHOLE_TIER_ALERT_TYPES = (
     "cluster.connect_failed_connectors", "cluster.connect_failed_tasks", "cluster.connect_workers_down",
+    "cluster.sr_nodes_down", "cluster.sr_soft_deleted",
 )
 
 # The one type whose config also holds "min_rf" (integer >= 2), stored next to
@@ -65,6 +67,8 @@ _TYPE_LABELS = {
     "cluster.connect_failed_connectors": "Connect failed connectors",
     "cluster.connect_failed_tasks": "Connect failed tasks",
     "cluster.connect_workers_down": "Connect workers down",
+    "cluster.sr_nodes_down": "Schema Registry nodes down",
+    "cluster.sr_soft_deleted": "Schema Registry soft-deleted subjects",
 }
 
 # Fields that map to NOT NULL columns -- an explicit null for these in a PUT
