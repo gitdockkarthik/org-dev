@@ -1180,6 +1180,50 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Kafka Connect alert rules and default rules (2026-10-08)
+DONE (deployed 09:04 UTC, form checked in the browser): three cluster
+metrics, all firing ABOVE a tier with whole-number tiers.
+cluster.connect_failed_connectors = connectors in state FAILED in the latest
+kafka_connector_snapshots run; cluster.connect_failed_tasks = SUM(failed_tasks)
+of that run (a RUNNING connector can hold failed tasks); cards name up to 5
+offenders. cluster.connect_workers_down = Connect workers failing a light
+GET / (3 s timeout, at most 10 in flight, one probe per distinct worker, no
+retry in the run, after the read session closes; KafkaConnectCollector is not
+used because it fetches every connector); cards name down workers by host:port
+(up to 10); a worker with no connectors counts as up; if every worker fails the
+card says to check the network path. Confirmation over 2 evaluations (in
+memory). Guards: a cluster is ignored (no fire/resolve/counter change, INFO
+line) if its latest snapshot is older than 6 minutes, it has no rows, it has
+no kafka_connect_url, or the snapshot has less than half the rows of the
+previous run (a failing worker URL is skipped silently by the collector and
+would undercount). Cluster 4 has no Connect URL and DevQA is disabled, so
+neither has Connect rules. Light probe tested read-only on one worker per
+cluster (8, 9, 10): HTTP 200 in about 4 ms.
+DEFAULT RULES (all DISABLED, clusters 8, 9, 10, cooldown 30, resolve card on):
+ids 62-64 (cluster 8), 65-67 (cluster 9), 68-70 (cluster 10) = failed
+connectors (warning 1, critical 5), failed tasks (warning 1, critical 10),
+workers down (warning 1, critical 3). Placeholders only; the Kafka team sets
+real values. Today (2026-10-08): cluster 8 has 1 FAILED connector and 1 failed
+task, cluster 10 has 6 failed tasks, cluster 9 has none, so those rules would
+fire if enabled with the placeholders. Paused connectors (15 to 23 per
+cluster) are deliberately not alerted. NOT verified: a real card.
+LIMITATIONS: a connector whose status call fails is stored as UNKNOWN with 0
+failed tasks, so neither failure rule counts it; the half-rows partial rule
+only trips when one worker URL fails and the others do not list its
+connectors; the comment at the top of routes_alerts.py still says
+"cluster.* not evaluated yet" (stale); the ZooKeeper form stub expects
+ZooKeeper to be the last option under Cluster (now three Connect types follow).
+ALL DEFAULT RULES NOW: 20-27, 28-35, 37-40, 42-45, 48-55, 57-60, 62-70; 3 is
+disabled (CLOSE_WAIT) and 5 is the only enabled rule. TEAMS FLOW: the live
+Power Automate flow posts as Flow bot on karthikeyan.gopalan's connection (both
+branches), co-owners added; a generic sintecmedia account is planned after
+months of stable cards (the webhook URL does not change when the connection
+does); a test flow and channel exist (Test Webhook Channel).
+STILL OPEN: Schema Registry, MirrorMaker and SLI/SLO inventories; Consumer
+Groups per-group lag rule (last); batch test session script; Teams runbook for
+changing the connection; Excel export of all rules for the Kafka team;
+email wiring once the mailbox exists.
+
 ### Alert rules table, Recent Triggers, trigger purge, CLOSE_WAIT rule off (2026-10-06)
 DONE (deployed 2026-10-06): rules table filters (type, state, name search,
 cluster, count line, Reset filters, x for the name box); Thresholds block
