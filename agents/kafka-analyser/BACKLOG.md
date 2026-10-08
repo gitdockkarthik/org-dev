@@ -1180,6 +1180,50 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Schema Registry alert rules and default rules (2026-10-08)
+DONE (deployed 09:43 UTC, form checked in the browser): two cluster metrics,
+both firing ABOVE a tier with whole-number tiers, confirmed over 2
+evaluations, with NEUTRAL card wording by decision (no TOC, escalation or
+impact text; the Kafka team decides whether to look or pass it on; specific
+wording can be added later if they ask).
+cluster.sr_nodes_down = registry nodes failing a light GET / (3 s timeout, at
+most 10 in flight, one probe per distinct node, after the read session
+closes); any HTTP status below 500 counts as up (401, 403, 422 included); the
+card names down nodes by host:port, up to 10; if every node is down it says to
+check the network path. cluster.sr_soft_deleted = count of GET
+/subjects?deleted=true minus GET /subjects (soft-deleted but not purged), read
+from the first node that answered the probe, no credentials, 10 s timeout and
+a 20 MB response cap; the card names up to 5. Credentials in a URL
+(user:pw@host) are stripped before any request and never shown on a card. A
+cluster whose subject requests return anything other than HTTP 200 with a JSON
+list (cluster 4: HTTP 422, its registry needs credentials) is ignored with an
+INFO line and never fires or resolves.
+FINDINGS 2026-10-08: GET / answered 200 in 3 to 11 ms on all 8 nodes (2 per
+cluster). Subjects (live / with deleted): cluster 8 21,893 / 21,908 (15
+soft-deleted), cluster 9 6,802 / 6,802, cluster 10 2,978 / 2,978; calls took
+0.04 to 0.16 s. _schemas is not in kafka_topic_metrics or the rate snapshots.
+The link between soft-deleted subjects and the past incident (a failed
+deletion job) is an inference, not confirmed.
+DEFAULT RULES (all DISABLED, cooldown 120, resolve card on): ids 72-75 = nodes
+down on clusters 4, 8, 9, 10 (warning 1, critical 2); ids 76-78 = soft-deleted
+on clusters 8 (warning 50, critical 200), 9 and 10 (warning 5, critical 50).
+No soft-deleted rule for cluster 4. Placeholders are guesses from single
+readings; the Kafka team sets real values. NOT verified: a real card.
+LIMITS: versions piling up under one subject are NOT covered (needs a call
+per subject, heavy on cluster 8's 22,000 subjects); each soft-deleted rule
+makes two full subject-list reads every 5 minutes; a subject-count trend would
+need stored history, a new table and an Alembic revision (0058 is free; tell
+the alert chat first); the shared "-- ESCALATED from warning" tier marker
+appears on these cards too (left alone, it is shared by every type); stale
+form-stub expectations: the ZooKeeper form stub (ZooKeeper last under
+Cluster) and the Connect form stub (Connect types last under Cluster).
+ALL DEFAULT RULES NOW: 20-27, 28-35, 37-40, 42-45, 48-55, 57-60, 62-70, 72-78;
+3 is disabled (CLOSE_WAIT) and 5 is the only enabled rule.
+STILL OPEN: MirrorMaker and SLI/SLO inventories; Consumer Groups per-group lag
+rule (last); batch test session script; Teams runbook for changing the
+connection; Excel export of all rules for the Kafka team; email wiring once
+the mailbox exists.
+
 ### Kafka Connect alert rules and default rules (2026-10-08)
 DONE (deployed 09:04 UTC, form checked in the browser): three cluster
 metrics, all firing ABOVE a tier with whole-number tiers.
