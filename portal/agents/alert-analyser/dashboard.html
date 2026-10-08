@@ -2106,6 +2106,12 @@
       if (_activeFromDate || _activeToDate) return (_activeFromDate || 'the start') + ' \u2192 ' + (_activeToDate || 'now') + ' UTC';
       return 'the last 24 hours';
     }
+    // The Resolved / Closed list names who closed each incident with this helper. The portal scripts do not define it, and
+    // the list stayed empty (ReferenceError) as soon as it had rows; a definition from the portal, if one ever appears, wins.
+    window.fmtResolvedBy = window.fmtResolvedBy || function (v) {
+      const names = { self_healed: 'Resolved Externally', rca_assisted: 'RCA-Assisted', action_resolved: 'Agentic Pipeline', manual: 'Manual' };
+      return names[v] || (v ? _irEsc(String(v).replace(/_/g, ' ')) : '-');
+    };
     async function renderOpenIncidentsSection() {
       const container = document.getElementById('open-incidents-section');
       if (!container) return;
