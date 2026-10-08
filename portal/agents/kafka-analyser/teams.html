@@ -287,6 +287,8 @@
             <div class="hint hidden" id="af-tiers-connect-connectors-hint">Counts connectors in state FAILED in the latest Connect snapshot. The card names up to 5. Ignored if the snapshot is older than 6 minutes. Clusters without Kafka Connect (for example the External Staging cluster) are skipped.</div>
             <div class="hint hidden" id="af-tiers-connect-tasks-hint">Sums failed tasks across the cluster's connectors in the latest snapshot. A RUNNING connector can hold failed tasks, so this differs from failed connectors. The card names up to 5.</div>
             <div class="hint hidden" id="af-tiers-connect-workers-hint">Counts Connect worker nodes that do not answer a light request (GET /) within 3 seconds, checked live every 5 minutes and confirmed over two checks. The card names the workers. A worker with no connectors still counts as up.</div>
+            <div class="hint hidden" id="af-tiers-sr-nodes-hint">Counts Schema Registry nodes that do not answer a light request (GET /) within 3 seconds, checked live every 5 minutes and confirmed over two checks. Any HTTP answer below 500 counts as up.</div>
+            <div class="hint hidden" id="af-tiers-sr-soft-deleted-hint">Counts subjects that are soft-deleted but not purged (subjects listed with deleted=true minus live subjects). The card names up to 5. It does not count versions per subject. Clusters whose registry requires credentials (for example External Staging) are skipped.</div>
             <div class="hint hidden" id="af-tiers-skew-hint">Ratio of the busiest broker's leader partitions to the cluster average (1.0 = balanced). Does not detect a broker that has lost all its leaders.</div>
           </div>
           <div class="field hidden" id="af-min-rf-field">
@@ -591,6 +593,8 @@
       { value: 'cluster.connect_failed_connectors', label: 'Connect failed connectors', group: 'Cluster', kind: 'tiers', unit: 'connectors', resolves: true },
       { value: 'cluster.connect_failed_tasks', label: 'Connect failed tasks', group: 'Cluster', kind: 'tiers', unit: 'tasks', resolves: true },
       { value: 'cluster.connect_workers_down', label: 'Connect workers down', group: 'Cluster', kind: 'tiers', unit: 'workers', resolves: true },
+      { value: 'cluster.sr_nodes_down', label: 'Schema Registry nodes down', group: 'Cluster', kind: 'tiers', unit: 'nodes', resolves: true },
+      { value: 'cluster.sr_soft_deleted', label: 'Schema Registry soft-deleted subjects', group: 'Cluster', kind: 'tiers', unit: 'subjects', resolves: true },
     ];
     const TIER_IDS = { info: 'af-tier-info', warning: 'af-tier-warning', critical: 'af-tier-critical' };
 
@@ -718,6 +722,8 @@
       $('af-tiers-connect-connectors-hint').classList.toggle('hidden', t.value !== 'cluster.connect_failed_connectors');
       $('af-tiers-connect-tasks-hint').classList.toggle('hidden', t.value !== 'cluster.connect_failed_tasks');
       $('af-tiers-connect-workers-hint').classList.toggle('hidden', t.value !== 'cluster.connect_workers_down');
+      $('af-tiers-sr-nodes-hint').classList.toggle('hidden', t.value !== 'cluster.sr_nodes_down');
+      $('af-tiers-sr-soft-deleted-hint').classList.toggle('hidden', t.value !== 'cluster.sr_soft_deleted');
       $('af-tiers-above-hint').classList.toggle('hidden', !!t.below);
       $('af-tiers-below-hint').classList.toggle('hidden', !t.below);
       $('af-resolve-card').closest('.field').classList.toggle('hidden', !t.resolves);
