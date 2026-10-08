@@ -297,6 +297,9 @@
       unparsed_title:        { label: 'Needs a person',          bg: 'var(--danger-bg)',   fg: 'var(--danger)' },
       unparsed_time:         { label: 'Needs a person',          bg: 'var(--danger-bg)',   fg: 'var(--danger)' },
       older_open_superseded: { label: 'Replaced by newer alert', bg: 'var(--navy-3)',      fg: 'var(--text-muted)' },
+      details_pending:       { label: 'Waiting for details',     bg: 'var(--navy-3)',      fg: 'var(--text-muted)' },
+      kind_conflict:         { label: 'Needs a person',          bg: 'var(--danger-bg)',   fg: 'var(--danger)' },
+      prefix_without_id:     { label: 'Needs a person',          bg: 'var(--danger-bg)',   fg: 'var(--danger)' },
     };
     function _irChip(code) {
       const r = _irReasons[code] || { label: code, bg: 'var(--navy-3)', fg: 'var(--text-muted)' };
@@ -383,16 +386,16 @@
           <button class="btn btn--secondary btn--sm" onclick="renderIncidentReport()">Refresh</button>
         </div>
         <div class="kpi-grid">
-          <div class="kpi"><div class="kpi__label">Open incidents</div><div class="kpi__value">${d.open.total.toLocaleString()}</div><div class="kpi__sub">ESCALATED, no recovery recorded</div></div>
+          <div class="kpi"><div class="kpi__label">Open now, all ages</div><div class="kpi__value">${d.open.total.toLocaleString()}</div><div class="kpi__sub">ESCALATED, no recovery recorded</div></div>
           <div class="kpi ${jobCls}"><div class="kpi__label">Closure job</div><div class="kpi__value" style="text-transform:capitalize">${_irEsc(job.mode)}</div><div class="kpi__sub">${_irEsc(jobSub)} · ${_irEsc(_irCron(job.schedule))}</div></div>
           <div class="kpi"><div class="kpi__label">Resolved, last 30 days</div><div class="kpi__value">${res.total.toLocaleString()}</div><div class="kpi__sub">pre-launch test data not counted</div></div>
           <div class="kpi"><div class="kpi__label">Alerts not yet turned into incidents</div><div class="kpi__value">${paused.toLocaleString()}</div><div class="kpi__sub">genuine alerts, last 24 h, paused sources</div></div>
         </div>
         <div class="chart-card" style="margin-bottom:16px">
-          <div class="chart-card__title">Open incidents</div>
+          <div class="chart-card__title">Why each incident is still open</div>
           <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
             <select class="dash-select" onchange="_irSetFilter(this.value)" style="font-size:.82rem;padding:4px 8px"><option value="">All reasons (${d.open.total})</option>${reasonOpts}</select>
-            <span style="font-size:.75rem;color:var(--text-muted)">Oldest first. Hover a title for its alert id, the age for the time it opened.</span>
+            <span style="font-size:.75rem;color:var(--text-muted)">Every open incident, whatever its age, oldest first. The Open Incidents list in the Incident Management tab shows the timings (MTTD, MTTA, MTTR). Hover a title for its alert id.</span>
           </div>
           <div class="data-table-wrap" style="margin-bottom:0"><table class="data-table">
             <thead><tr><th>Alert</th><th>Priority</th><th>Open for</th><th>Why it is still open</th><th>Automated fix attempt</th></tr></thead>
@@ -2096,18 +2099,28 @@
       if (el) el.innerHTML = html;
     }
 
+    // The Open Incidents list shows every open incident by default; the date range only narrows it when asked to.
+    var _openIncRangeOnly = false;
+    function _rangeLabel() {
+      if (_isLifetimeView) return 'all time';
+      if (_activeFromDate || _activeToDate) return (_activeFromDate || 'the start') + ' \u2192 ' + (_activeToDate || 'now') + ' UTC';
+      return 'the last 24 hours';
+    }
     async function renderOpenIncidentsSection() {
       const container = document.getElementById('open-incidents-section');
       if (!container) return;
       const search = document.getElementById('openIncSearch')?.value || '';
       const statusFilter = document.getElementById('openIncStatusFilter')?.value || '';
-      const params = _buildDateParams();
-      if (!params.has('from_date') && !params.has('to_date')) {
+      const params = _openIncRangeOnly ? _buildDateParams() : new URLSearchParams();
+      if (!_openIncRangeOnly) {
+        params.set('hours', '0');
+      } else if (!params.has('from_date') && !params.has('to_date')) {
         params.set('hours', _isLifetimeView ? '0' : '24');
       }
       if (search) params.set('search', search);
       if (statusFilter) params.set('status', statusFilter);
-      const data = await api('/dashboard/incidents/open-list?' + params.toString()).catch(() => ({ incidents: [], total: 0 }));
+      const data = await api('/dashboard/incidents/open-list?' + params.toString()).catch(() => ({ incidents: [], total: 0, error: 'Could not load the list from the server' }));
+      const openScope = (_openIncRangeOnly && !_isLifetimeView) ? 'created ' + _rangeLabel() : 'all ages';
       const incidents = data.incidents || [];
 
       const statusColors = { 'ESCALATED': '#ea580c', 'INVESTIGATING': '#f59e0b', 'RCA_COMPLETE': '#a855f7', 'REMEDIATING': '#0EA5E9' };
@@ -2119,7 +2132,7 @@
       const pagedIncidents = _paginate(incidents, _incPageState.open, _incPageSize);
       const rows = pagedIncidents.map(i => `
         <tr>
-          <td class="msg-cell"><span class="msg-text">${(i.title || '').substring(0, 60)}</span></td>
+          <td class="msg-cell"><span class="msg-text">${(i.title || '').substring(0, 140)}</span></td>
           <td>${i.alert_created_at ? i.alert_created_at.replace('T', ' ').slice(0, 16) : '—'}</td>
           <td><a href="#" onclick="openFlowModal('${i.id}');return false;" style="color:var(--accent);text-decoration:underline">${i.id.slice(0, 8)}</a></td>
           <td>${i.incident_created_at.replace('T', ' ').slice(0, 16)}</td>
@@ -2128,7 +2141,7 @@
           <td>${fmtDuration(i.mttd_minutes)}</td>
           <td>${fmtDuration(i.mtta_minutes)}</td>
           <td>${fmtDuration(i.mttr_elapsed_minutes)}</td>
-        </tr>`).join('') || '<tr><td colspan="8" class="data-table__empty">No open incidents in this period</td></tr>';
+        </tr>`).join('') || (data.error ? '<tr><td colspan="8" class="data-table__empty" style="color:var(--danger)">' + _irEsc(data.error) + '</td></tr>' : '<tr><td colspan="8" class="data-table__empty">No open incidents' + (_openIncRangeOnly ? ' created in this period' : '') + '</td></tr>');
 
       container.innerHTML = `
         <div class="section-title" style="margin-top:24px">Open Incidents</div>
@@ -2145,7 +2158,8 @@
             <option value="REMEDIATING" ${statusFilter==='REMEDIATING'?'selected':''}>REMEDIATING</option>
           </select>
           <button class="btn btn--primary" onclick="renderOpenIncidentsSection()" style="padding:6px 14px">Search</button>
-          <span style="font-size:.78rem;color:var(--text-muted)">${data.total} open (last 24h)</span>
+          <label style="display:flex;align-items:center;gap:6px;font-size:.8rem;color:var(--text);cursor:pointer"><input type="checkbox" id="openIncRangeOnly" ${_openIncRangeOnly ? 'checked' : ''} onchange="_openIncRangeOnly=this.checked;_incPageState.open=1;renderOpenIncidentsSection()"> Only incidents created in the selected range</label>
+          <span style="font-size:.78rem;color:var(--text-muted)">${data.total} open &middot; ${openScope}${incidents.length < data.total ? ' (showing the newest ' + incidents.length + ')' : ''}</span>
         </div>
         <div class="chart-card">
           <div class="data-table-wrap" style="max-height:600px;overflow-y:auto"><table class="data-table" style="font-size:.8rem">
@@ -2169,7 +2183,7 @@
       }
       if (search) params.set('search', search);
       if (closedByFilter) params.set('closed_by', closedByFilter);
-      const data = await api('/dashboard/incidents/resolved-list?' + params.toString()).catch(() => ({ incidents: [], total: 0 }));
+      const data = await api('/dashboard/incidents/resolved-list?' + params.toString()).catch(() => ({ incidents: [], total: 0, error: 'Could not load the list from the server' }));
       const incidents = data.incidents || [];
 
       const priCounts = {};
@@ -2187,7 +2201,7 @@
       const pagedIncidents = _paginate(incidents, _incPageState.resolved, _incPageSize);
       const rows = pagedIncidents.map(i => `
         <tr>
-          <td class="msg-cell"><span class="msg-text">${(i.title || '').substring(0, 55)}</span></td>
+          <td class="msg-cell"><span class="msg-text">${(i.title || '').substring(0, 140)}</span></td>
           <td>${i.alert_created_at ? i.alert_created_at.replace('T', ' ').slice(0, 16) : '—'}</td>
           <td><a href="#" onclick="openFlowModal('${i.id}');return false;" style="color:var(--accent);text-decoration:underline">${i.id.slice(0, 8)}</a></td>
           <td>${i.incident_created_at.replace('T', ' ').slice(0, 16)}</td>
@@ -2197,7 +2211,7 @@
           <td>${fmtDuration(i.mttd_minutes)}</td>
           <td>${fmtDuration(i.mtta_minutes)}</td>
           <td>${fmtDuration(i.mttr_minutes)}</td>
-        </tr>`).join('') || '<tr><td colspan="9" class="data-table__empty">No resolved incidents in this period</td></tr>';
+        </tr>`).join('') || (data.error ? '<tr><td colspan="9" class="data-table__empty" style="color:var(--danger)">' + _irEsc(data.error) + '</td></tr>' : '<tr><td colspan="9" class="data-table__empty">No resolved incidents in this period</td></tr>');
 
       container.innerHTML = `
         <div class="section-title" style="margin-top:24px">Resolved / Closed Incidents</div>
@@ -2213,7 +2227,7 @@
             <option value="manual" ${closedByFilter==='manual'?'selected':''}>Manual (Reserved)</option>
           </select>
           <button class="btn btn--primary" onclick="renderResolvedIncidentsSection()" style="padding:6px 14px">Search</button>
-          <span style="font-size:.78rem;color:var(--text-muted)">${data.total} resolved (last 24h)</span>
+          <span style="font-size:.78rem;color:var(--text-muted)">${data.total} resolved &middot; ${_rangeLabel()}</span>
         </div>
         <div class="chart-grid">
           <div class="chart-card" style="grid-column:span 2">
