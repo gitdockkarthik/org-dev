@@ -1180,6 +1180,43 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### MirrorMaker and SLI/SLO inventories: no rules built, lag planning next (2026-10-08)
+DECISION: no MirrorMaker or SLO alert rules today. Both depend on consumer
+group lag, which needs a planning session (together with connector lag and the
+per-group lag rule) on 2026-10-09. Nothing was built or created.
+MIRRORMAKER FINDINGS: kafka_clusters.mirror_mode is mm1 only on cluster 4 (8,
+9, 10 and DevQA are none; mirror_source_cluster_id is empty everywhere), but
+detect_mirrormaker() (tools/mirrormaker.py) detects by consumer group NAME
+patterns, not by the setting, and does not probe any MirrorMaker process.
+Status is hard-coded: "healthy" if total_lag < 10000 else "lagging" (sum over
+the matching groups). The route reads kafka_consumer_group_lag with no time
+filter, so frozen rows of groups that no longer exist can count. A stopped
+MirrorMaker whose groups vanish shows as "no MirrorMaker", not as an outage.
+A 2026-08-31 note recorded 13,619,878 lag on mirror_maker_consumer11 on
+cluster 9, where mirror_mode is none (not re-checked).
+SLO FINDINGS: kafka_slo_targets has one row per cluster (connector
+availability 99%, consumer lag 10000, broker availability 100%, URP 0, max
+CPU 85%, max heap 80%, min task health 95%, max failed tasks 0); these are
+separate from alert rule thresholds. kafka_slo_compliance has one row per
+cluster per hour (uq cluster_id, hour_bucket) with per-SLO percentages and
+overall_compliance_pct. 2026-10-08 09:00 bucket: clusters 8, 9, 10 overall
+about 83% with consumer_lag_compliance_pct 0 and everything else 97 to 100;
+cluster 4 overall 100 (no connectors). Every non-lag component is already
+covered by a built rule; a compliance rule would double-alert and would fire
+today for lag. Rows arrive once an hour, so a rule would be slow.
+LAG FACTS FOR THE PLANNING SESSION (2026-10-08 10:05 UTC, 20-minute freshness,
+target 10000): groups over target, fresh / stale: cluster 4 0 / 0, cluster 8
+6 / 7, cluster 9 11 / 12, cluster 10 4 / 0; largest fresh lag: 4: 30, 8:
+28,135,434, 9: 2,315,665,841, 10: 303,516. The 0% lag compliance is real lag,
+not frozen rows (cluster 10 has no stale rows). The group behind cluster 9's
+2.3 billion is not identified. Open questions: which groups matter, opt-in per
+group, sustained lag vs growth, how to treat MirrorMaker and connector lag,
+whether the SLO figure should exclude stale rows, and the stale-row cleanup
+(backlog, 90-day idea).
+STILL OPEN: Consumer Groups per-group lag rule; batch test session script;
+Teams runbook for changing the connection; Excel export of all rules for the
+Kafka team; email wiring once the mailbox exists.
+
 ### Schema Registry alert rules and default rules (2026-10-08)
 DONE (deployed 09:43 UTC, form checked in the browser): two cluster metrics,
 both firing ABOVE a tier with whole-number tiers, confirmed over 2
