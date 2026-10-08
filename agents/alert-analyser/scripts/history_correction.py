@@ -10,12 +10,13 @@ opsgenie_live) between WINDOW_DAYS ago and CLEAN_FROM, and judges each against t
   reopen            no notice of its own, no later activity, younger than 7 days (14 in production): nothing shows it recovered, so
                     it goes back to ESCALATED (history row RESOLVED -> ESCALATED); the stale job closes it later if nothing happens.
   held_*            not touched: no stored details or problem ID, not exactly one history row, or no evidence and already old.
-Only the groups named in GROUPS are applied (default fix_time,relabel_inferred; reopen must be asked for).
+Only the groups named in GROUPS are applied (default fix_time,relabel_inferred). The reopening must be asked for: reopen (all of them) or
+reopen_production (only the incidents whose [Env:...] tag ends in prod).
 REHEARSAL by default: every write runs in one transaction that is then rolled back. CONFIRM=CORRECT commits.
 
 Run (stdout is the full decision list as CSV with the old values, written BEFORE any database write; stderr is the summary):
   docker exec -i org-dev-alert-analyser-1 python - < agents/alert-analyser/scripts/history_correction.py > /data/backups/history_correction_$(date -u +%Y%m%d_%H%M%S).csv
-  add  -e CONFIRM=CORRECT  after -i to commit, and  -e GROUPS=fix_time,relabel_inferred,reopen  to include the reopening.
+  add  -e CONFIRM=CORRECT  after -i to commit, and  -e GROUPS=reopen_production  (or reopen) to apply only the reopening.
 Env: WINDOW_DAYS (default 30), MAX_ROWS (default 500: refuse to change more). A row is changed only while it still has the values read.
 """
 import asyncio
@@ -96,7 +97,7 @@ STAMPED_SQL = "SELECT count(*) FROM incident_management.incidents WHERE updated_
 STAMPED_OTHER_SQL = ("SELECT count(*) FROM incident_management.incidents "
                      "WHERE updated_at = now() AND alert_payload->>'message' NOT ILIKE '%[Zabbix]%'")
 
-CSV_COLUMNS = ["incident_id", "alert_id", "action", "selected", "old_detected_via", "old_resolved_at", "new_resolved_at", "created_at",
+CSV_COLUMNS = ["incident_id", "alert_id", "action", "selected", "production", "old_detected_via", "old_resolved_at", "new_resolved_at", "created_at",
                "own_notice_at", "later_activity_at", "host", "check", "problem_id", "applied", "open_message"]
 
 
@@ -143,7 +144,9 @@ def plan(rows, groups, now=None):
                 row["action"] = "held_old_no_evidence"
             else:
                 row["action"] = "reopen"
-        row["selected"] = "yes" if row["action"] in groups else "no"
+        production = is_production(r.message)
+        row["production"] = "yes" if production else "no"
+        row["selected"] = "yes" if (row["action"] in groups or (row["action"] == "reopen" and production and "reopen_production" in groups)) else "no"
         out.append(row)
     return out
 
@@ -235,7 +238,8 @@ def summarise(rows, commit, note, stats, groups, window_days):
         if sel:
             log("--- %s: %d ---" % (title, len(sel)))
             for r in sel[:25]:
-                log("  closed %s | created %s | %s | %s" % (str(r["old_resolved_at"])[:16], str(r["created_at"])[:16], r["old_detected_via"], short(r["open_message"])))
+                log("  closed %s | created %s | %s | %s | %s" % (str(r["old_resolved_at"])[:16], str(r["created_at"])[:16], r["old_detected_via"],
+                                                         "PRODUCTION" if r["production"] == "yes" else "other", short(r["open_message"])))
             log("")
     log(note)
 

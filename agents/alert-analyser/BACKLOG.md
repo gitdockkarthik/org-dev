@@ -451,3 +451,9 @@ NEXT (in order)
 2. Decide the 16 (decision 3); then after two clean dry-run notes enable the live stale job (decision 4).
 3. AS MATERIALIZED in tools/zabbix_stale.py (finding 59); the "nothing to fetch" shortcut of zabbix-detail (finding 52 of part 11); what recurrence_count counts (finding 54 of part 11); optionally the closure job start offset (finding 61).
 4. After a few days: remove the disabled title-based loop from the sync loop (routes_settings.py, the block that now only consumes the notice); the Alembic gap review (part 9 NEXT 4); the other open items of parts 6 to 11. Then validate Zabbix completely (audit_zabbix_ids.py plus audit_incidents.py C1 to C3) and move to the next source.
+
+## Alert-analyser update 2026-10-08 (part 13): the production-only reopening
+
+- scripts/history_correction.py gets a production-only switch (274 lines, md5 5c762460e008c84cb9aa82b25adb6ec8, no backslash): GROUPS=reopen_production reopens only the incidents of the reopen group whose [Env:...] tag ends in prod; GROUPS=reopen still reopens all of them; the decision list has a new production column and the rehearsal marks each reopen row PRODUCTION or other. Tested on PostgreSQL 16 with 17 checks and 12 deliberate breakages, all caught.
+- Owner decision 3 of part 12, made on 2026-10-08: reopen only the production ones (the 8 nvaprod "Lack of available memory is less than 10% on server" incidents closed 2 to 4 minutes after creation, two after 46 and 90 minutes); the 8 o1conf "Database Memory Usage Percentage is Greater than 90%" incidents stay closed (a flapping trigger that is open on the umredis hosts). The rule treats an [Env:...] tag ending in prod as production, so o1conf, o1stg and o1pre are not; the owner confirmed that this is fine.
+- Not run yet: the rehearsal and the live run of the production reopening (GROUPS=reopen_production, MAX_ROWS=8).
