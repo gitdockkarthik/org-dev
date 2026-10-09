@@ -1180,6 +1180,43 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Lag rules, email sender and agent-owner emails (2026-10-09)
+DONE (committed 688c6d0, 985e488; deployed 06:24 UTC, form checked in the
+browser): cluster.consumer_lag and cluster.connector_lag, level thresholds
+only. Config: generic tiers plus custom (exact names with own tiers, max 200),
+blacklist (exact names, max 500) and reminder_hours (default 6, 1 to 168).
+Precedence per name: custom, then blacklist, then generic; exact names only,
+so a new or renamed group falls under the generic tiers. Only rows updated in
+the last 20 minutes count; a connector maps to connect-<name> (override groups
+are skipped; the override is not stored); a cluster with no fresh rows is
+ignored. 2 consecutive evaluations before a trigger; one grouped Teams card per
+rule per run (top 10 with "and N more") and one email with ALL offenders by
+lag; sent on a new trigger, a tier rise, or after reminder_hours with groups
+still above; grouped resolves; a group that becomes blacklisted or stale is
+resolved silently. After a restart the first run with anything above a tier
+sends one reminder (the clock is in memory).
+DEFAULT RULES (all DISABLED): ids 80-83 consumer lag on clusters 4, 8, 9, 10;
+ids 84-86 connector lag on clusters 8, 9, 10 (cluster 4 has no Connect);
+warning 10000, critical 100000, reminder 6 h, cooldown 30, resolve card on.
+Clusters 8, 9 and 10 already have groups over 10000 (2026-10-08: fresh over
+target 6, 11, 4; largest lag 28 million on 8, 2.3 billion on 9), so these
+would fire when enabled; the Kafka team sets tiers and the blacklist first.
+EMAIL (committed 45ac771, e466e14): see the email entry. Agent-owner messages
+(hourly health summary, 10-minute follow-up, watchdog notices) go by email to
+health_email_recipients with Teams as the fallback; alert rule emails go to
+the alert rule recipients when a rule's Email toggle and the global email
+switch are on. A deploy restart causes one health summary email at once and
+can mark one cleared job as failed, so it may read [ISSUE].
+LESSONS / LIMITS: the form's connector names come from live Connect while the
+evaluator reads stored snapshots; stubs cannot see layout overlaps (the lag
+block was overlapped by the Cooldown field until it spanned a full row; a
+browser check is needed for layout); stale stub checks (stub_sr_form type
+list, and the older ones listed in earlier entries).
+NOT YET BUILT: growth alerting (needs a lag-history table, Alembic revision
+0058 and a retention job; tell the alert chat first); the daily stale-group
+report to the alert rule recipients (7 days, last lag above 0); a daily Teams
+heartbeat; custom/blacklist handling for override connector groups.
+
 ### Email sender, agent-owner emails and Teams fallback (2026-10-09)
 DONE (deployed 2026-10-09, uncommitted until the first real email is
 confirmed): shared/escalation/email_notifier.py (send_email: smtplib in a
