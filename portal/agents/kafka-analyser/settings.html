@@ -600,12 +600,14 @@
           <div class="field">
             <label for="smtp-username">SMTP Username</label>
             <input type="text" id="smtp-username" placeholder="username" style="max-width:320px" />
+            <div class="hint">Leave both empty for an internal relay that needs no login (for example mail.operative.com port 25).</div>
           </div>
 
           <div class="field">
             <label for="smtp-password">SMTP Password</label>
             <input type="password" id="smtp-password" placeholder="••••••••" style="max-width:320px" autocomplete="new-password" />
             <div class="hint">Stored encrypted at rest</div>
+            <div class="hint">Leave both empty for an internal relay that needs no login (for example mail.operative.com port 25).</div>
           </div>
 
           <div class="field">
@@ -614,9 +616,39 @@
           </div>
 
           <div class="field">
-            <label for="email-recipients">Recipients</label>
+            <label for="email-recipients">Alert rule recipients</label>
             <input type="text" id="email-recipients" placeholder="you@example.com, teammate@example.com" style="max-width:480px" />
             <div class="hint">Comma-separated list</div>
+            <div class="hint">Recipients of alert rule emails. A rule sends email only when its Email toggle is on (Alert Rules) and Email Escalation is enabled above.</div>
+          </div>
+
+          <div class="field">
+            <label for="health-email-recipients">Agent owner recipients</label>
+            <input type="text" id="health-email-recipients" placeholder="you@example.com, teammate@example.com" style="max-width:480px" />
+            <div class="hint">Comma-separated list</div>
+            <div class="hint">Messages about the agent itself (hourly health summary, follow-up and watchdog notices) go to these addresses by email first, and to Teams if the email fails. Leave empty to keep sending them to Teams only.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-section">
+          <div class="card-section-title">Test email</div>
+          <div class="field">
+            <label for="email-test-to">Send to</label>
+            <input type="text" id="email-test-to" placeholder="you@operative.com" style="max-width:320px" />
+            <div class="hint">One @operative.com or @sintecmedia.com address for all three buttons (test email, sample health email, sample alert email). They use the saved SMTP settings, so click Save first. One test every 10 seconds across the three.</div>
+          </div>
+          <div class="field">
+            <button class="btn btn-secondary" id="btn-test-email" type="button">Send test email</button>
+            <button class="btn btn-secondary" id="btn-test-health-email" type="button">Send sample health email</button>
+            <select id="email-test-kind" aria-label="Sample alert kind" style="max-width:140px">
+              <option value="fire">Fire</option>
+              <option value="escalate">Escalate</option>
+              <option value="resolve">Resolve</option>
+            </select>
+            <button class="btn btn-secondary" id="btn-test-alert-email" type="button">Send sample alert email</button>
+            <span id="email-test-msg" class="action-msg hidden"></span>
           </div>
         </div>
       </div>
@@ -816,6 +848,7 @@
         smtp_password: $('smtp-password') ? $('smtp-password').value : '',
         smtp_from_address: $('smtp-from-address') ? $('smtp-from-address').value.trim() : '',
         email_recipients: $('email-recipients') ? $('email-recipients').value.trim() : '',
+        health_email_recipients: $('health-email-recipients') ? $('health-email-recipients').value.trim() : '',
       };
     }
 
@@ -903,6 +936,50 @@
       } catch (err) {
         showMsg(msgEl, '❌ Failed — check URL', 'err');
       }
+    });
+
+    // Both test-email buttons: same request shape, result shown inline via
+    // showMsg (textContent, so server text is never parsed as HTML).
+    async function sendTestEmail(path, label, extra = {}) {
+      const msgEl = $('email-test-msg');
+      const to = $('email-test-to').value.trim();
+      if (!to) { showMsg(msgEl, 'Enter an address first', 'err'); return; }
+      const buttons = [$('btn-test-email'), $('btn-test-health-email'), $('btn-test-alert-email')];
+      buttons.forEach(b => { b.disabled = true; });
+      showMsg(msgEl, 'Sending…', 'info', 120000);
+      try {
+        const res = await fetch(`${PROXY}${path}`, {
+          method: 'POST',
+          headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to, ...extra }),
+        });
+        const body = await res.json().catch(() => ({}));
+        const detail = typeof body.detail === 'string' ? body.detail : '';
+        if (res.ok && body.ok) {
+          showMsg(msgEl, `✅ ${label} sent to ${to}` + (body.error ? ` (${body.error})` : ''), 'ok', 15000);
+        } else if (res.ok) {
+          showMsg(msgEl, '❌ Send failed: ' + (body.error || 'unknown error'), 'err', 15000);
+        } else if (res.status === 429) {
+          showMsg(msgEl, '❌ Too many test emails: wait 10 seconds and try again', 'err', 15000);
+        } else if (res.status === 422) {
+          showMsg(msgEl, '❌ ' + (detail || 'SMTP settings incomplete') + ' (save the SMTP settings first)', 'err', 15000);
+        } else if (res.status === 400) {
+          showMsg(msgEl, '❌ ' + (detail || 'Invalid address'), 'err', 15000);
+        } else {
+          showMsg(msgEl, `❌ Failed (HTTP ${res.status})` + (detail ? ': ' + detail : ''), 'err', 15000);
+        }
+      } catch (err) {
+        showMsg(msgEl, '❌ Request failed: ' + err.message, 'err', 15000);
+      } finally {
+        buttons.forEach(b => { b.disabled = false; });
+      }
+    }
+
+    $('btn-test-email')?.addEventListener('click', () => sendTestEmail('/settings/email/test', 'Test email'));
+    $('btn-test-health-email')?.addEventListener('click', () => sendTestEmail('/settings/email/test-health', 'Sample health email'));
+    $('btn-test-alert-email')?.addEventListener('click', () => {
+      const kind = $('email-test-kind').value;
+      return sendTestEmail('/settings/email/test-alert', `Sample alert email (${kind})`, { kind });
     });
 
     async function renderPerClusterSyncStatus() {
@@ -1005,11 +1082,14 @@
         }
         if ($('smtp-from-address')) $('smtp-from-address').value = cfg.smtp_from_address || '';
         if ($('email-recipients')) $('email-recipients').value = cfg.email_recipients || '';
+        if ($('health-email-recipients')) $('health-email-recipients').value = cfg.health_email_recipients || '';
 
-        $('sync-status').innerHTML = '';
-        renderPerClusterSyncStatus();
+        if ($('sync-status')) {
+          $('sync-status').innerHTML = '';
+          renderPerClusterSyncStatus();
+        }
       } catch (err) {
-        $('sync-status').innerHTML =
+        if ($('sync-status')) $('sync-status').innerHTML =
           '<span style="color:#b91c1c;font-size:.875rem">Failed to load settings: ' + err.message + '</span>';
         $('last-synced-label').textContent = '';
       }

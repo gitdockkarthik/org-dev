@@ -1180,6 +1180,48 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Email sender, agent-owner emails and Teams fallback (2026-10-09)
+DONE (deployed 2026-10-09, uncommitted until the first real email is
+confirmed): shared/escalation/email_notifier.py (send_email: smtplib in a
+thread, 10 s timeout per step, no retry, STARTTLS and login only if the server
+offers them, CR/LF stripped, max 20 recipients, password never logged or
+returned); POST /settings/email/test and /settings/email/test-health (one
+@operative.com or @sintecmedia.com address, 10 s shared rate limit, ignore
+email_enabled); notify_owner(): with health_email_recipients set and host and
+from address configured, agent-owner messages go by email first and to Teams if
+the email fails; otherwise Teams only. Owner messages = the hourly health
+summary (also the 10-minute follow-up after a red one) and the process-count
+and data-freshness watchdog notices (sent before os._exit(1); email cap 5 s for
+the summary, 2 s for watchdogs). No startup card exists. Settings page: Agent
+owner recipients field, Alert rule recipients relabelled (not wired yet),
+login hints, Test email block.
+RELAY: mail.operative.com:25, no AUTH, no STARTTLS (plain text inside the
+network), sender ai_agent_alerts@sintecmedia.com (mail shows an External
+Sender banner, accepted). The KPI box and the container both reach it. The
+sintecmedia mailbox itself has no licence or mailbox (OWA
+OwaUserHasNoMailboxAndNoLicenseAssignedException; SMTP AUTH on
+smtp.office365.com gave 535 5.7.3), so the relay is used instead. If the box
+IP (10.51.2.101) changes, the relay's allowed list needs updating.
+TO DO / OPEN: (1) DAILY TEAMS HEARTBEAT as a backup (not built): one short
+Teams card per day saying the agent is alive and that hourly summaries go by
+email; the fallback only triggers when a send fails, not when the relay
+accepts and drops a message. Time of day and skip-if-Teams-already-sent rule
+not decided. (2) Email for alert rules (step 3): send next to each Teams
+card using Alert rule recipients and the per-rule Email toggle; template to
+agree with Karthikeyan first; per-rule recipients would need a new column
+and an Alembic revision (0058 is free; tell the alert chat first). (3) Email
+list in the health email could show "none" instead of every broker with :0
+(cosmetic, optional). (4) The freshness watchdog text lists only stale
+clusters, so a restart caused only by a paused cluster reads "failed for 0
+cluster(s): []". (5) settings.html loadSettings() writes to #sync-status,
+which is not in the page, so it throws after filling the fields (existing
+bug). (6) The test routes have no authentication of their own (limited by
+domain, one address, 10 s rate limit). (7) A saved SMTP password cannot be
+cleared from the page. (8) The Kafka team will stop seeing the hourly summary
+in Teams once the owner list is set.
+OUTSTANDING CHECK: the first automated hourly summary by email (about :39) and
+no card in Teams.
+
 ### MirrorMaker and SLI/SLO inventories: no rules built, lag planning next (2026-10-08)
 DECISION: no MirrorMaker or SLO alert rules today. Both depend on consumer
 group lag, which needs a planning session (together with connector lag and the

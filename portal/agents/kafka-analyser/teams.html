@@ -211,7 +211,7 @@
 
     <div class="page-header">
       <h1>Kafka Analyser — Notifications</h1>
-      <p>Configure alert rules and scheduled reminders across notification channels (Teams, and Email once configured)</p>
+      <p>Configure alert rules and scheduled reminders across notification channels (Teams and Email)</p>
     </div>
 
     <nav class="tab-nav" role="tablist">
@@ -1211,7 +1211,7 @@
               </label>
             </td>
             <td class="nowrap">
-              <label class="toggle-wrap" style="opacity:0.65" title="${c.email_enabled ? 'Enabled' : 'Disabled'}. Email sending is not yet configured (no SMTP details set up) -- this toggle is safe to set now and will take effect once it is.">
+              <label class="toggle-wrap" title="${c.email_enabled ? 'Enabled' : 'Disabled'}. Sends an email to the Alert rule recipients (Settings) when this rule fires, escalates or resolves. Needs Email Escalation enabled and recipients set.">
                 <input type="checkbox" class="toggle-input config-email-toggle" data-id="${esc(c.id)}" ${c.email_enabled ? 'checked' : ''} />
                 <span class="toggle-slider"></span>
               </label>
