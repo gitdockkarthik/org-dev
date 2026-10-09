@@ -1180,6 +1180,28 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Environment-based recipients (email and Teams): test and production (2026-10-09)
+REQUEST: the Kafka team created two distribution lists, one for test and one
+for production. Alert rule emails should go to the DL of the environment the
+cluster belongs to. Done by configuration on the Settings page only.
+DESIGN IDEA (not built, not decided): a Settings section mapping clusters to
+recipient groups (for example Test and Production), each with its own
+recipient list; an alert on a cluster emails the group it belongs to; a
+cluster in no group uses the existing Alert rule recipients as the default.
+Agent-owner emails keep their own list. Which clusters are test and which are
+production is not decided. Storage is probably an agent_config key holding
+structured data (no migration expected; to confirm). Recipients stay limited to
+@operative.com and @sintecmedia.com in notify_rule_email.
+DECIDED: Teams gets the same test and production split (separate channels or
+webhooks per environment; today there is one webhook), built together with the
+email change. How are DL addresses validated (the domain limit still applies)?
+Per-rule overrides are not requested.
+Test the change with only Karthikeyan's address in both groups; add the DLs
+only after the Kafka team approves.
+TIMING: a placeholder, not immediate. Do it later, after the Kafka team has
+been receiving notifications in both channels and has validated them, and when
+further requirements (for example new alert rules) come back. Do not lose it.
+
 ### Lag rules, email sender and agent-owner emails (2026-10-09)
 DONE (committed 688c6d0, 985e488; deployed 06:24 UTC, form checked in the
 browser): cluster.consumer_lag and cluster.connector_lag, level thresholds
