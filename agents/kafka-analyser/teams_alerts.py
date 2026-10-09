@@ -88,6 +88,83 @@ async def _send_resolve_cards(items: list[dict]) -> None:
         logger.warning("_send_resolve_cards failed: %s", exc)
 
 
+# Alert rule emails ride along with the Teams cards (step 3a, 2026-10-09).
+# Each evaluator run collects them and hands them to one background task
+# once its Teams posts are done, outside any DB session, so a slow or failing
+# mail server can never delay a Teams card, a later evaluator or a DB write.
+# Only rules with email_enabled are queued, so with no such rule nothing here
+# runs. Strong references keep the tasks alive until they finish.
+_rule_email_tasks: set = set()
+
+
+def _rule_email(config, cluster_name, kind, severity, description="", recommended_action="", **extra) -> dict | None:
+    """One queued rule email, or None when the rule has email off. Takes a
+    plain snapshot of the rule so no ORM object outlives its session. Never
+    raises."""
+    try:
+        if not getattr(config, "email_enabled", False):
+            return None
+        from types import SimpleNamespace
+        return {
+            "config_row": SimpleNamespace(
+                id=config.id, name=config.name, alert_type=config.alert_type, email_enabled=True,
+            ),
+            "cluster_name": cluster_name,
+            "kind": kind,
+            "severity": severity,
+            "description": description,
+            "recommended_action": recommended_action,
+            "extra": {k: v for k, v in extra.items() if v is not None},
+        }
+    except Exception as exc:
+        logger.warning("_rule_email: could not queue %s email: %s", kind, exc)
+        return None
+
+
+def _resolve_emails(items: list[dict]) -> list[dict | None]:
+    """Resolve emails for the resolved_items passed to _send_resolve_cards:
+    one per trigger actually resolved, whether or not its Teams card was
+    sent (no teams_post_success or send_resolve_card gating)."""
+    emails = []
+    for item in items:
+        try:
+            config, trigger = item["config"], item["trigger"]
+            open_minutes = None
+            if trigger.triggered_at is not None and trigger.resolved_at is not None:
+                open_minutes = (trigger.resolved_at - trigger.triggered_at).total_seconds() / 60
+            emails.append(_rule_email(
+                config, item.get("cluster_name", ""), "resolve", trigger.severity or config.severity,
+                subject=trigger.subject, open_minutes=open_minutes,
+            ))
+        except Exception as exc:
+            logger.warning("_resolve_emails: item failed: %s", exc)
+    return emails
+
+
+async def _send_rule_emails(emails: list[dict]) -> None:
+    from routes_settings import _config
+    from shared.escalation.email_notifier import notify_rule_email
+    for email in emails:
+        try:
+            await notify_rule_email(**email, settings=_config)
+        except Exception as exc:
+            logger.warning("_send_rule_emails: item failed: %s", exc)
+
+
+def _queue_rule_emails(emails: list[dict | None]) -> None:
+    """Start one background task sending these rule emails in order. Never
+    raises and never waits."""
+    try:
+        emails = [e for e in emails if e]
+        if not emails:
+            return
+        task = asyncio.create_task(_send_rule_emails(emails))
+        _rule_email_tasks.add(task)
+        task.add_done_callback(_rule_email_tasks.discard)
+    except Exception as exc:
+        logger.warning("_queue_rule_emails failed: %s", exc)
+
+
 async def resolve_cleared_close_wait_triggers(close_wait_by_cluster_id: dict[int, int]) -> None:
     """Mark open close_wait_spike triggers resolved once their OWN config's
     threshold is no longer met for their cluster -- not merely once the
@@ -151,6 +228,7 @@ async def resolve_cleared_close_wait_triggers(close_wait_by_cluster_id: dict[int
             await _send_resolve_cards(items)
         except Exception as exc:
             logger.warning("resolve_cleared_close_wait_triggers: resolve cards failed: %s", exc)
+        _queue_rule_emails(_resolve_emails(items))
 
 
 async def fire_close_wait_alerts(close_wait_by_cluster_id: dict[int, int]) -> None:
@@ -218,6 +296,7 @@ async def fire_close_wait_alerts(close_wait_by_cluster_id: dict[int, int]) -> No
     # ---- Decide who fires, entirely in memory, no DB session open ----
     now = datetime.now(timezone.utc)
     to_insert: list[KafkaAlertTrigger] = []
+    emails: list[dict | None] = []
 
     for config in configs:
         for cluster_id, count in close_wait_by_cluster_id.items():
@@ -243,6 +322,9 @@ async def fire_close_wait_alerts(close_wait_by_cluster_id: dict[int, int]) -> No
                     " -- RECURRING: this same issue resolved recently and has now fired again"
                     if is_recurrence else ""
                 )
+                recommended_action = ("Use the Breaker Status tab's Clear Stale "
+                                      "Connections button, or wait roughly 5 minutes "
+                                      "for this to clear automatically.")
                 card = build_adaptive_card(
                     agent_name="Kafka Analyser",
                     cluster_name=cluster_names.get(cluster_id, str(cluster_id)),
@@ -250,9 +332,7 @@ async def fire_close_wait_alerts(close_wait_by_cluster_id: dict[int, int]) -> No
                         "severity": config.severity,
                         "category": CLOSE_WAIT_ALERT_TYPE,
                         "description": description,
-                        "recommended_action": "Use the Breaker Status tab's Clear Stale "
-                                              "Connections button, or wait roughly 5 minutes "
-                                              "for this to clear automatically.",
+                        "recommended_action": recommended_action,
                     },
                 )
 
@@ -277,11 +357,17 @@ async def fire_close_wait_alerts(close_wait_by_cluster_id: dict[int, int]) -> No
                     resolved_at=None,
                     is_recurrence=is_recurrence,
                 ))
+                emails.append(_rule_email(
+                    config, cluster_names.get(cluster_id, str(cluster_id)), "fire",
+                    config.severity, description, recommended_action,
+                ))
             except Exception as exc:
                 logger.warning(
                     "fire_close_wait_alerts: alert_config_id=%s cluster_id=%s failed: %s",
                     config.id, cluster_id, exc,
                 )
+
+    _queue_rule_emails(emails)
 
     if not to_insert:
         return
@@ -427,6 +513,7 @@ async def _evaluate_broker_reachability() -> None:
     to_insert: list[KafkaAlertTrigger] = []
     to_resolve: list[int] = []
     resolve_context: dict[int, tuple[KafkaAlertConfig, str]] = {}
+    emails: list[dict | None] = []
     brokers_checked = 0
     brokers_unreachable = 0
     skipped_clusters = 0
@@ -485,6 +572,7 @@ async def _evaluate_broker_reachability() -> None:
                         " -- RECURRING: this same issue resolved recently and has now fired again"
                         if is_recurrence else ""
                     )
+                    recommended_action = "Check the broker process/host and the network path to it."
                     card = build_adaptive_card(
                         agent_name="Kafka Analyser",
                         cluster_name=cluster_name,
@@ -492,7 +580,7 @@ async def _evaluate_broker_reachability() -> None:
                             "severity": config.severity,
                             "category": BROKER_UNREACHABLE_ALERT_TYPE,
                             "description": description,
-                            "recommended_action": "Check the broker process/host and the network path to it.",
+                            "recommended_action": recommended_action,
                         },
                     )
 
@@ -518,6 +606,10 @@ async def _evaluate_broker_reachability() -> None:
                         resolved_at=None,
                         is_recurrence=is_recurrence,
                     ))
+                    emails.append(_rule_email(
+                        config, cluster_name, "fire", config.severity, description, recommended_action,
+                        subject=subject,
+                    ))
                 except Exception as exc:
                     logger.warning(
                         "_evaluate_broker_reachability: alert_config_id=%s cluster_id=%s subject=%s failed: %s",
@@ -530,6 +622,8 @@ async def _evaluate_broker_reachability() -> None:
         len(cluster_ids) - skipped_clusters, brokers_checked,
         brokers_unreachable, skipped_clusters, len(to_insert), len(to_resolve),
     )
+
+    _queue_rule_emails(emails)
 
     if not to_insert and not to_resolve:
         return
@@ -587,6 +681,7 @@ async def _evaluate_broker_reachability() -> None:
             await _send_resolve_cards(resolved_items)
         except Exception as exc:
             logger.warning("_evaluate_broker_reachability: resolve cards failed: %s", exc)
+        _queue_rule_emails(_resolve_emails(resolved_items))
 
 
 # Threshold rules (Simple mode): alert_type -> (kafka_broker_metrics column,
@@ -834,8 +929,10 @@ async def _evaluate_broker_thresholds() -> None:
         except Exception as exc:
             logger.warning("_evaluate_broker_thresholds: cluster name lookup failed: %s", exc)
             cluster_names = {}
+    emails: list[dict | None] = []
     for config, cluster_id, subject, tier, description, trigger in to_post:
         try:
+            recommended_action = "Check load on the broker and recent traffic changes."
             card = build_adaptive_card(
                 agent_name="Kafka Analyser",
                 cluster_name=cluster_names.get(cluster_id, str(cluster_id)),
@@ -843,7 +940,7 @@ async def _evaluate_broker_thresholds() -> None:
                     "severity": tier,
                     "category": config.alert_type,
                     "description": description,
-                    "recommended_action": "Check load on the broker and recent traffic changes.",
+                    "recommended_action": recommended_action,
                 },
             )
             webhook_url = config.webhook_url or _config.get("teams_webhook_url", "")
@@ -864,11 +961,17 @@ async def _evaluate_broker_thresholds() -> None:
                     "alert_config_id=%s cluster_id=%s subject=%s: %s",
                     config.id, cluster_id, subject, error_detail or "Teams post failed",
                 )
+            emails.append(_rule_email(
+                config, cluster_names.get(cluster_id, str(cluster_id)),
+                "fire" if trigger is not None else "escalate", tier, description, recommended_action,
+                subject=subject,
+            ))
         except Exception as exc:
             logger.warning(
                 "_evaluate_broker_thresholds: Teams post for alert_config_id=%s cluster_id=%s subject=%s failed: %s",
                 config.id, cluster_id, subject, exc,
             )
+    _queue_rule_emails(emails)
 
     if not to_insert and not to_update and not to_resolve:
         return
@@ -945,6 +1048,7 @@ async def _evaluate_broker_thresholds() -> None:
             await _send_resolve_cards(resolved_items)
         except Exception as exc:
             logger.warning("_evaluate_broker_thresholds: resolve cards failed: %s", exc)
+        _queue_rule_emails(_resolve_emails(resolved_items))
 
 
 # Cluster threshold rules (Simple mode, same config as the broker thresholds):
@@ -1990,8 +2094,10 @@ async def _evaluate_cluster_metrics() -> None:
         except Exception as exc:
             logger.warning("_evaluate_cluster_metrics: cluster name lookup failed: %s", exc)
             cluster_names = {}
+    emails: list[dict | None] = []
     for config, cluster_id, subject, tier, description, trigger in to_post:
         try:
+            recommended_action = _CLUSTER_METRIC_ACTIONS[config.alert_type]
             card = build_adaptive_card(
                 agent_name="Kafka Analyser",
                 cluster_name=cluster_names.get(cluster_id, str(cluster_id)),
@@ -1999,7 +2105,7 @@ async def _evaluate_cluster_metrics() -> None:
                     "severity": tier,
                     "category": config.alert_type,
                     "description": description,
-                    "recommended_action": _CLUSTER_METRIC_ACTIONS[config.alert_type],
+                    "recommended_action": recommended_action,
                 },
             )
             webhook_url = config.webhook_url or _config.get("teams_webhook_url", "")
@@ -2018,11 +2124,17 @@ async def _evaluate_cluster_metrics() -> None:
                     "alert_config_id=%s cluster_id=%s: %s",
                     config.id, cluster_id, error_detail or "Teams post failed",
                 )
+            emails.append(_rule_email(
+                config, cluster_names.get(cluster_id, str(cluster_id)),
+                "fire" if trigger is not None else "escalate", tier, description, recommended_action,
+                subject=subject,
+            ))
         except Exception as exc:
             logger.warning(
                 "_evaluate_cluster_metrics: Teams post for alert_config_id=%s cluster_id=%s failed: %s",
                 config.id, cluster_id, exc,
             )
+    _queue_rule_emails(emails)
 
     if not to_insert and not to_update and not to_resolve:
         return
@@ -2098,3 +2210,4 @@ async def _evaluate_cluster_metrics() -> None:
             await _send_resolve_cards(resolved_items)
         except Exception as exc:
             logger.warning("_evaluate_cluster_metrics: resolve cards failed: %s", exc)
+        _queue_rule_emails(_resolve_emails(resolved_items))

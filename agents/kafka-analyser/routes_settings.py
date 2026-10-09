@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
@@ -9,6 +10,9 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from config import settings
 from encryption import decrypt, encrypt, is_secret_key
+from shared.escalation.email_notifier import (
+    build_alert_email, build_email_test, build_health_summary_email, is_valid_address, send_email,
+)
 from tools.real_kafka import RealKafkaCollector
 from storage import get_backend
 import kafka_store
@@ -69,6 +73,9 @@ _DEFAULTS: dict = {
     "smtp_password": "",
     "smtp_from_address": "",
     "email_recipients": "",
+    # Agent-owner notices (hourly health summary, watchdog restarts): emailed
+    # here when set, with Teams as the fallback; blank keeps them Teams-only.
+    "health_email_recipients": "",
     # Message-rate CSV cold archive to MinIO (rollup_hourly_to_daily Step 2)
     "message_rate_archive_enabled": False,
 }
@@ -159,6 +166,7 @@ class SettingsPayload(BaseModel):
     smtp_password: str = ""
     smtp_from_address: str = ""
     email_recipients: str = ""
+    health_email_recipients: str = ""
 
     # Message-rate CSV cold archive to MinIO (rollup_hourly_to_daily Step 2)
     message_rate_archive_enabled: bool = False
@@ -273,6 +281,211 @@ async def test_teams_webhook(request: Request) -> dict:
     else:
         from fastapi import HTTPException
         raise HTTPException(status_code=502, detail="Failed to send test message")
+
+
+# The test-email route only mails internal addresses, so it cannot be used to
+# send mail to outsiders, and is throttled to one send per interval.
+EMAIL_TEST_ALLOWED_DOMAINS = ("@operative.com", "@sintecmedia.com")
+_EMAIL_TEST_MIN_INTERVAL_SECS = 10
+_last_email_test_at: float | None = None
+
+
+@router.post("/email/test")
+async def test_email(request: Request) -> dict:
+    global _last_email_test_at
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    if not isinstance(body, dict):
+        body = {}
+
+    to = str(body.get("to") or "").strip()
+    if not to:
+        raise HTTPException(status_code=400, detail="to required")
+    if not is_valid_address(to):
+        raise HTTPException(status_code=400, detail="to must be a single valid email address")
+    if not to.lower().endswith(EMAIL_TEST_ALLOWED_DOMAINS):
+        raise HTTPException(
+            status_code=400,
+            detail="test emails can only be sent to " + " or ".join(EMAIL_TEST_ALLOWED_DOMAINS) + " addresses",
+        )
+
+    # Deliberately ignores email_enabled: the test is run before enabling.
+    await load_config_from_db()
+    missing = [k for k in ("smtp_host", "smtp_from_address") if not str(_config.get(k) or "").strip()]
+    if missing:
+        raise HTTPException(status_code=422, detail="not configured: " + ", ".join(missing))
+
+    now = time.monotonic()
+    if _last_email_test_at is not None and now - _last_email_test_at < _EMAIL_TEST_MIN_INTERVAL_SECS:
+        wait = _EMAIL_TEST_MIN_INTERVAL_SECS - (now - _last_email_test_at)
+        raise HTTPException(status_code=429, detail=f"test email rate limit: try again in {wait:.0f}s")
+    _last_email_test_at = now
+
+    from_address = str(_config.get("smtp_from_address") or "")
+    subject, text_body, html_body = build_email_test(from_address)
+    ok, error = await send_email(
+        host=str(_config.get("smtp_host") or ""),
+        port=_config.get("smtp_port") or 587,
+        username=str(_config.get("smtp_username") or ""),
+        password=str(_config.get("smtp_password") or ""),
+        from_address=from_address,
+        recipients=[to],
+        subject=subject,
+        text_body=text_body,
+        html_body=html_body,
+    )
+    return {"ok": ok, "error": error}
+
+
+@router.post("/email/test-health")
+async def test_health_email(request: Request) -> dict:
+    """Sends one sample health summary email, built from current data, to a
+    single internal address. Same checks as /email/test, and shares its
+    rate-limit slot so the two routes together send at most one per
+    interval."""
+    global _last_email_test_at
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    if not isinstance(body, dict):
+        body = {}
+
+    to = str(body.get("to") or "").strip()
+    if not to:
+        raise HTTPException(status_code=400, detail="to required")
+    if not is_valid_address(to):
+        raise HTTPException(status_code=400, detail="to must be a single valid email address")
+    if not to.lower().endswith(EMAIL_TEST_ALLOWED_DOMAINS):
+        raise HTTPException(
+            status_code=400,
+            detail="test emails can only be sent to " + " or ".join(EMAIL_TEST_ALLOWED_DOMAINS) + " addresses",
+        )
+
+    # Deliberately ignores email_enabled and health_email_recipients.
+    await load_config_from_db()
+    missing = [k for k in ("smtp_host", "smtp_from_address") if not str(_config.get(k) or "").strip()]
+    if missing:
+        raise HTTPException(status_code=422, detail="not configured: " + ", ".join(missing))
+
+    now = time.monotonic()
+    if _last_email_test_at is not None and now - _last_email_test_at < _EMAIL_TEST_MIN_INTERVAL_SECS:
+        wait = _EMAIL_TEST_MIN_INTERVAL_SECS - (now - _last_email_test_at)
+        raise HTTPException(status_code=429, detail=f"test email rate limit: try again in {wait:.0f}s")
+    _last_email_test_at = now
+
+    from collectors import _current_process_count, _gather_health_summary
+    try:
+        gathered = await _gather_health_summary()
+    except Exception as exc:
+        logger.warning("test_health_email: gathering health data failed: %s", exc)
+        gathered = None
+    if gathered is None:
+        return {"ok": False, "error": "health data unavailable"}
+    data_time, health_status, rows = gathered
+
+    subject, text_body, html_body = build_health_summary_email(
+        "Kafka Analyser", _current_process_count(), health_status, rows, now=data_time,
+    )
+    ok, error = await send_email(
+        host=str(_config.get("smtp_host") or ""),
+        port=_config.get("smtp_port") or 587,
+        username=str(_config.get("smtp_username") or ""),
+        password=str(_config.get("smtp_password") or ""),
+        from_address=str(_config.get("smtp_from_address") or ""),
+        recipients=[to],
+        subject="[TEST] " + subject,
+        text_body=text_body,
+        html_body=html_body,
+    )
+    return {"ok": ok, "error": error}
+
+
+# Sample values for /email/test-alert -- never live data.
+_TEST_ALERT_SAMPLES = {
+    "fire": {
+        "severity": "warning",
+        "description": "Broker 1 CPU is 87.5% (warning, threshold 80). Sample values for a TEST email.",
+        "recommended_action": "Check load on the broker and recent traffic changes.",
+    },
+    "escalate": {
+        "severity": "critical",
+        "description": "Broker 1 CPU is 96.2% (critical, threshold 95) -- ESCALATED from warning. "
+                       "Sample values for a TEST email.",
+        "recommended_action": "Check load on the broker and recent traffic changes.",
+    },
+    "resolve": {
+        "severity": "critical",
+        "description": "",
+        "recommended_action": "",
+    },
+}
+
+
+@router.post("/email/test-alert")
+async def test_alert_email(request: Request) -> dict:
+    """Sends one sample alert rule email (kind fire, escalate or resolve),
+    marked TEST and built from fixed sample values, to a single internal
+    address. Same checks as /email/test and shares its rate-limit slot;
+    ignores email_enabled and every rule's own email toggle."""
+    global _last_email_test_at
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    if not isinstance(body, dict):
+        body = {}
+
+    to = str(body.get("to") or "").strip()
+    kind = str(body.get("kind") or "").strip()
+    if not to:
+        raise HTTPException(status_code=400, detail="to required")
+    if kind not in _TEST_ALERT_SAMPLES:
+        raise HTTPException(status_code=400, detail="kind must be fire, escalate or resolve")
+    if not is_valid_address(to):
+        raise HTTPException(status_code=400, detail="to must be a single valid email address")
+    if not to.lower().endswith(EMAIL_TEST_ALLOWED_DOMAINS):
+        raise HTTPException(
+            status_code=400,
+            detail="test emails can only be sent to " + " or ".join(EMAIL_TEST_ALLOWED_DOMAINS) + " addresses",
+        )
+
+    await load_config_from_db()
+    missing = [k for k in ("smtp_host", "smtp_from_address") if not str(_config.get(k) or "").strip()]
+    if missing:
+        raise HTTPException(status_code=422, detail="not configured: " + ", ".join(missing))
+
+    now = time.monotonic()
+    if _last_email_test_at is not None and now - _last_email_test_at < _EMAIL_TEST_MIN_INTERVAL_SECS:
+        wait = _EMAIL_TEST_MIN_INTERVAL_SECS - (now - _last_email_test_at)
+        raise HTTPException(status_code=429, detail=f"test email rate limit: try again in {wait:.0f}s")
+    _last_email_test_at = now
+
+    sample = _TEST_ALERT_SAMPLES[kind]
+    extra = {"test": True, "rule_name": "TEST sample rule (broker CPU)", "subject": "Broker 1"}
+    if kind == "resolve":
+        extra["open_minutes"] = 42
+    subject, text_body, html_body = build_alert_email(
+        kind, "broker.cpu_pct", "sample-cluster", sample["severity"],
+        sample["description"], sample["recommended_action"], extra,
+    )
+    ok, error = await send_email(
+        host=str(_config.get("smtp_host") or ""),
+        port=_config.get("smtp_port") or 587,
+        username=str(_config.get("smtp_username") or ""),
+        password=str(_config.get("smtp_password") or ""),
+        from_address=str(_config.get("smtp_from_address") or ""),
+        recipients=[to],
+        subject=subject,
+        text_body=text_body,
+        html_body=html_body,
+    )
+    return {"ok": ok, "error": error}
 
 
 @router.post("/test-connection")

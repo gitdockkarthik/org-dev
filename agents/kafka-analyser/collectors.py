@@ -1996,6 +1996,12 @@ _last_health_card_had_issue: bool = False
 # Epoch seconds of the window boundary of the last health card that was
 # actually sent; the next card's job window starts here.
 _health_card_window_start: float | None = None
+# Owner notices try email first (when health_email_recipients is set) and
+# fall back to Teams. The email attempt is capped so the Teams fallback
+# still fits inside each caller's existing deadline: 15 s for the health
+# summary, 5 s for a watchdog notice sent just before a restart.
+_OWNER_EMAIL_TIMEOUT_SUMMARY_SECS = 5
+_OWNER_EMAIL_TIMEOUT_WATCHDOG_SECS = 2
 # Holds a strong reference to the in-flight drain task -- asyncio's own
 # docs warn that a task created via asyncio.create_task() with no
 # reference kept anywhere can be garbage-collected before it completes.
@@ -2266,27 +2272,31 @@ async def check_and_recycle_close_wait() -> dict:
     return {"action": "recycled", "close_wait_found": close_wait_by_cluster, "shared_refresh": shared_result}
 
 
-async def _post_to_teams(
+async def _post_watchdog_notice(
     severity: str,
     description: str,
     category: str = "process_watchdog",
     source: str = "check_process_count_watchdog",
 ) -> None:
-    """Direct Teams post shared by the watchdogs (bypasses teams_alerts.py
-    entirely, independent of the CLOSE_WAIT alert path). Extracted to
-    module level from check_process_count_watchdog so
+    """Owner notice shared by the watchdogs (bypasses teams_alerts.py
+    entirely, independent of the CLOSE_WAIT alert path): emailed to
+    health_email_recipients when configured, otherwise -- or if the email
+    fails -- the same direct Teams card as before. Extracted to module
+    level from check_process_count_watchdog so
     check_data_freshness_watchdog reuses the exact same logic; the
     defaults preserve the original closure's category and log prefix
     unchanged."""
     # Best-effort, never allowed to affect the caller's own outcome --
-    # wrapped so a Teams/config failure can't prevent a watchdog's
+    # wrapped so a notify/config failure can't prevent a watchdog's
     # emergency exit path from running.
     try:
         from routes_settings import _config
-        webhook_url = _config.get("teams_webhook_url", "")
-        if not _config.get("teams_enabled") or not webhook_url:
+        from shared.escalation.email_notifier import (
+            build_watchdog_email, notify_owner, owner_email_configured, owner_teams_configured,
+        )
+        if not owner_email_configured(_config) and not owner_teams_configured(_config):
             return
-        from shared.escalation.notifier import build_adaptive_card, send_to_teams
+        from shared.escalation.notifier import build_adaptive_card
         card = build_adaptive_card(
             agent_name="Kafka Analyser",
             cluster_name="(agent-wide, not cluster-specific)",
@@ -2297,179 +2307,214 @@ async def _post_to_teams(
                 "recommended_action": "",
             },
         )
-        await send_to_teams(webhook_url=webhook_url, card=card)
+        subject, text_body, html_body = build_watchdog_email("Kafka Analyser", severity, category, description)
+        await notify_owner(
+            subject, text_body, html_body, card,
+            config=_config, email_timeout=_OWNER_EMAIL_TIMEOUT_WATCHDOG_SECS,
+        )
     except Exception as _notify_exc:
-        logger.warning("%s: Teams post failed: %s", source, _notify_exc)
+        logger.warning("%s: owner notice failed: %s", source, _notify_exc)
 
 
-async def _send_health_summary_to_teams(process_count: int) -> bool | None:
+def _current_process_count() -> int:
+    """Same /proc count check_process_count_watchdog uses."""
+    import os as _os
+    return sum(1 for pid in _os.listdir("/proc") if pid.isdigit())
+
+
+async def _gather_health_summary() -> tuple | None:
     """Gathers per-cluster data freshness (same signal
     check_data_freshness_watchdog uses), recent job success/failure
     counts, overall scheduler health, and per-cluster broker status
     (both our own collector's view and a real, live TCP check, plus
-    per-broker CLOSE_WAIT counts), then sends a single multi-cluster
-    health summary table card -- built per explicit request
-    (2026-09-28, extended 2026-09-29) so the periodic routine status
-    update actually shows enough to spot a problem developing (data
-    going stale, jobs starting to fail, a broker genuinely down, or a
-    connection leak accumulating) without needing to check the
-    dashboard directly. Best-effort throughout -- never allowed to
-    raise, since this must never affect the caller's own timing/exit
-    behavior. The broker-level checks reuse the exact same,
-    already-proven functions the dashboard itself uses
-    (routes_dashboard.get_broker_reachability, .get_broker_connections)
-    rather than duplicating their logic. Returns whether the card had
-    anything red (health_card_has_issue), or None if no card was sent."""
+    per-broker CLOSE_WAIT counts) for the health summary. The
+    broker-level checks reuse the exact same, already-proven functions
+    the dashboard itself uses (routes_dashboard.get_broker_reachability,
+    .get_broker_connections) rather than duplicating their logic.
+    Returns (now, health_status, rows) in the shape
+    build_health_summary_card takes, or None without a database. May
+    raise; callers handle that."""
+    from database import SessionLocal
+    from sqlalchemy import text as _hs_text
+    from datetime import datetime, timezone, timedelta
+    from jobs import _parse_any_cluster_job_id, _last_job_dispatched_at
+
+    if SessionLocal is None:
+        return None
+
+    now = datetime.now(timezone.utc)
+    # Same 180s threshold as /livez. Note: this function itself runs
+    # inside a scheduled job, so the scheduler necessarily dispatched
+    # something moments ago -- in practice this reads "alive"
+    # whenever the card is sent at all; a real stall shows up as the
+    # card NOT arriving, and via /livez externally.
+    health_status = "alive"
+    if _last_job_dispatched_at is not None and (time.time() - _last_job_dispatched_at) > 180:
+        health_status = "stale"
+
+    # Covers the runs since the previous card was sent, at most
+    # _WATCHDOG_STATUS_INTERVAL_MINUTES (the full hour for the first
+    # card after a start, or after a long gap), so a 10-minute
+    # follow-up counts only the runs since the card before it. Bound
+    # as a timestamp cutoff (same :cutoff style as the retention/
+    # rollup queries in this file) rather than interpolated into an
+    # interval literal.
+    since = now - timedelta(minutes=_WATCHDOG_STATUS_INTERVAL_MINUTES)
+    if _health_card_window_start is not None:
+        since = max(since, datetime.fromtimestamp(_health_card_window_start, timezone.utc))
+    async with SessionLocal() as session:
+        clusters_result = await session.execute(_hs_text(
+            "SELECT id, name FROM kafka_clusters WHERE enabled = true ORDER BY id"
+        ))
+        clusters = clusters_result.fetchall()
+
+        freshness_result = await session.execute(_hs_text(
+            "SELECT cluster_id, max(time) as latest FROM kafka_broker_metrics "
+            "WHERE cluster_id = ANY(:ids) GROUP BY cluster_id"
+        ), {"ids": [c.id for c in clusters]})
+        freshness_by_cluster = {r.cluster_id: r.latest for r in freshness_result.fetchall()}
+
+        # Per-broker freshness count -- how many distinct brokers this
+        # agent's OWN collector has fresh data for right now, out of
+        # how many it has seen for that cluster in the last 24 hours.
+        # Same 6-minute freshness window routes_dashboard.py already
+        # uses for its per-broker "unreachable" status. The 24h bound
+        # on the total (rather than all history) keeps this query
+        # cheap on a table with no retention cleanup, and keeps a
+        # long-decommissioned broker from counting as permanently
+        # "offline".
+        per_broker_result = await session.execute(_hs_text(
+            "SELECT cluster_id, "
+            "  count(DISTINCT broker_id) FILTER (WHERE time > now() - interval '6 minutes') as fresh_count, "
+            "  count(DISTINCT broker_id) as total_count "
+            "FROM kafka_broker_metrics WHERE cluster_id = ANY(:ids) "
+            "AND time > now() - interval '24 hours' GROUP BY cluster_id"
+        ), {"ids": [c.id for c in clusters]})
+        per_broker_by_cluster = {r.cluster_id: (r.fresh_count, r.total_count) for r in per_broker_result.fetchall()}
+
+        # 'failed' already includes timeouts (jobs.py records a
+        # timed-out-then-failed-retry run as status='failed');
+        # 'skipped' (breaker-paused) and in-flight runs are excluded.
+        jobs_result = await session.execute(_hs_text(
+            "SELECT job_id, status FROM kafka_job_runs "
+            "WHERE started_at > :since "
+            "AND status IN ('success', 'failed')"
+        ), {"since": since})
+        job_rows = jobs_result.fetchall()
+
+    counts_by_cluster: dict[int, dict[str, int]] = {}
+    for jr in job_rows:
+        cid = _parse_any_cluster_job_id(jr.job_id)
+        if cid is None:
+            continue
+        bucket = counts_by_cluster.setdefault(cid, {"success": 0, "failed": 0})
+        bucket[jr.status] += 1
+
+    # Real, live checks -- reuse the dashboard's own, already-proven
+    # functions directly rather than duplicating their logic. Run
+    # concurrently across all clusters (each function already runs
+    # its own per-broker checks concurrently internally) so total
+    # time stays bounded regardless of cluster count.
+    from routes_dashboard import get_broker_reachability, get_broker_connections
+    reachability_results, connections_results = await asyncio.gather(
+        asyncio.gather(*[get_broker_reachability(str(c.id)) for c in clusters], return_exceptions=True),
+        asyncio.gather(*[get_broker_connections(str(c.id)) for c in clusters], return_exceptions=True),
+    )
+    reachability_by_cluster = {
+        c.id: r for c, r in zip(clusters, reachability_results) if not isinstance(r, BaseException)
+    }
+    connections_by_cluster = {
+        c.id: r for c, r in zip(clusters, connections_results) if not isinstance(r, BaseException)
+    }
+
+    def _broker_label(host: str | None, fallback: str) -> str:
+        # Short hostname (first DNS label) -- the real identity of the
+        # broker, unlike a positional index, while staying compact
+        # enough for the card on mobile. IP literals are kept whole,
+        # since their first octet alone would be meaningless.
+        if not host:
+            return fallback
+        if host.replace(".", "").isdigit():
+            return host
+        return host.split(".", 1)[0]
+
+    rows = []
+    for c in clusters:
+        latest = freshness_by_cluster.get(c.id)
+        age_minutes = (now - latest).total_seconds() / 60 if latest else None
+        counts = counts_by_cluster.get(c.id, {"success": 0, "failed": 0})
+
+        fresh_count, total_count = per_broker_by_cluster.get(c.id, (None, None))
+        brokers_online_agent = f"{fresh_count}/{total_count}" if total_count else None
+
+        reach = reachability_by_cluster.get(c.id, {})
+        brokers_online_real = None
+        if reach and reach.get("total"):
+            brokers_online_real = f"{reach.get('reachable_count', 0)}/{reach.get('total')}"
+
+        conns = connections_by_cluster.get(c.id, {})
+        broker_connections = None
+        if conns and conns.get("brokers"):
+            broker_connections = [
+                {"label": _broker_label(b.get("host"), f"B{i+1}"), "close_wait": b.get("close_wait", 0)}
+                for i, b in enumerate(conns["brokers"])
+            ]
+
+        rows.append({
+            "name": c.name,
+            "data_age_minutes": age_minutes,
+            "success_count": counts["success"],
+            "failed_count": counts["failed"],
+            "brokers_online_agent": brokers_online_agent,
+            "brokers_online_real": brokers_online_real,
+            "broker_connections": broker_connections,
+        })
+
+    return now, health_status, rows
+
+
+async def _send_health_summary(process_count: int) -> bool | None:
+    """Sends a single multi-cluster health summary (data from
+    _gather_health_summary) to the agent owner -- built per explicit
+    request (2026-09-28, extended 2026-09-29) so the periodic routine
+    status update actually shows enough to spot a problem developing
+    (data going stale, jobs starting to fail, a broker genuinely down, or
+    a connection leak accumulating) without needing to check the
+    dashboard directly. Emailed to health_email_recipients when
+    configured, otherwise -- or if the email fails -- posted as the Teams
+    table card. Best-effort throughout -- never allowed to raise, since
+    this must never affect the caller's own timing/exit behavior. Returns
+    whether the summary had anything red (health_card_has_issue), or None
+    if nothing was sent."""
     global _health_card_window_start
     try:
-        from database import SessionLocal
-        from sqlalchemy import text as _hs_text
-        from datetime import datetime, timezone, timedelta
         from routes_settings import _config
-        from shared.escalation.notifier import build_health_summary_card, health_card_has_issue, send_to_teams
-        from jobs import _parse_any_cluster_job_id, _last_job_dispatched_at
-
-        webhook_url = _config.get("teams_webhook_url", "")
-        if not _config.get("teams_enabled") or not webhook_url:
-            return
-
-        if SessionLocal is None:
-            return
-
-        now = datetime.now(timezone.utc)
-        # Same 180s threshold as /livez. Note: this function itself runs
-        # inside a scheduled job, so the scheduler necessarily dispatched
-        # something moments ago -- in practice this reads "alive"
-        # whenever the card is sent at all; a real stall shows up as the
-        # card NOT arriving, and via /livez externally.
-        health_status = "alive"
-        if _last_job_dispatched_at is not None and (time.time() - _last_job_dispatched_at) > 180:
-            health_status = "stale"
-
-        # Covers the runs since the previous card was sent, at most
-        # _WATCHDOG_STATUS_INTERVAL_MINUTES (the full hour for the first
-        # card after a start, or after a long gap), so a 10-minute
-        # follow-up counts only the runs since the card before it. Bound
-        # as a timestamp cutoff (same :cutoff style as the retention/
-        # rollup queries in this file) rather than interpolated into an
-        # interval literal.
-        since = now - timedelta(minutes=_WATCHDOG_STATUS_INTERVAL_MINUTES)
-        if _health_card_window_start is not None:
-            since = max(since, datetime.fromtimestamp(_health_card_window_start, timezone.utc))
-        async with SessionLocal() as session:
-            clusters_result = await session.execute(_hs_text(
-                "SELECT id, name FROM kafka_clusters WHERE enabled = true ORDER BY id"
-            ))
-            clusters = clusters_result.fetchall()
-
-            freshness_result = await session.execute(_hs_text(
-                "SELECT cluster_id, max(time) as latest FROM kafka_broker_metrics "
-                "WHERE cluster_id = ANY(:ids) GROUP BY cluster_id"
-            ), {"ids": [c.id for c in clusters]})
-            freshness_by_cluster = {r.cluster_id: r.latest for r in freshness_result.fetchall()}
-
-            # Per-broker freshness count -- how many distinct brokers this
-            # agent's OWN collector has fresh data for right now, out of
-            # how many it has seen for that cluster in the last 24 hours.
-            # Same 6-minute freshness window routes_dashboard.py already
-            # uses for its per-broker "unreachable" status. The 24h bound
-            # on the total (rather than all history) keeps this query
-            # cheap on a table with no retention cleanup, and keeps a
-            # long-decommissioned broker from counting as permanently
-            # "offline".
-            per_broker_result = await session.execute(_hs_text(
-                "SELECT cluster_id, "
-                "  count(DISTINCT broker_id) FILTER (WHERE time > now() - interval '6 minutes') as fresh_count, "
-                "  count(DISTINCT broker_id) as total_count "
-                "FROM kafka_broker_metrics WHERE cluster_id = ANY(:ids) "
-                "AND time > now() - interval '24 hours' GROUP BY cluster_id"
-            ), {"ids": [c.id for c in clusters]})
-            per_broker_by_cluster = {r.cluster_id: (r.fresh_count, r.total_count) for r in per_broker_result.fetchall()}
-
-            # 'failed' already includes timeouts (jobs.py records a
-            # timed-out-then-failed-retry run as status='failed');
-            # 'skipped' (breaker-paused) and in-flight runs are excluded.
-            jobs_result = await session.execute(_hs_text(
-                "SELECT job_id, status FROM kafka_job_runs "
-                "WHERE started_at > :since "
-                "AND status IN ('success', 'failed')"
-            ), {"since": since})
-            job_rows = jobs_result.fetchall()
-
-        counts_by_cluster: dict[int, dict[str, int]] = {}
-        for jr in job_rows:
-            cid = _parse_any_cluster_job_id(jr.job_id)
-            if cid is None:
-                continue
-            bucket = counts_by_cluster.setdefault(cid, {"success": 0, "failed": 0})
-            bucket[jr.status] += 1
-
-        # Real, live checks -- reuse the dashboard's own, already-proven
-        # functions directly rather than duplicating their logic. Run
-        # concurrently across all clusters (each function already runs
-        # its own per-broker checks concurrently internally) so total
-        # time stays bounded regardless of cluster count.
-        from routes_dashboard import get_broker_reachability, get_broker_connections
-        reachability_results, connections_results = await asyncio.gather(
-            asyncio.gather(*[get_broker_reachability(str(c.id)) for c in clusters], return_exceptions=True),
-            asyncio.gather(*[get_broker_connections(str(c.id)) for c in clusters], return_exceptions=True),
+        from shared.escalation.notifier import build_health_summary_card, health_card_has_issue
+        from shared.escalation.email_notifier import (
+            build_health_summary_email, notify_owner, owner_email_configured, owner_teams_configured,
         )
-        reachability_by_cluster = {
-            c.id: r for c, r in zip(clusters, reachability_results) if not isinstance(r, BaseException)
-        }
-        connections_by_cluster = {
-            c.id: r for c, r in zip(clusters, connections_results) if not isinstance(r, BaseException)
-        }
 
-        def _broker_label(host: str | None, fallback: str) -> str:
-            # Short hostname (first DNS label) -- the real identity of the
-            # broker, unlike a positional index, while staying compact
-            # enough for the card on mobile. IP literals are kept whole,
-            # since their first octet alone would be meaningless.
-            if not host:
-                return fallback
-            if host.replace(".", "").isdigit():
-                return host
-            return host.split(".", 1)[0]
+        if not owner_email_configured(_config) and not owner_teams_configured(_config):
+            return
 
-        rows = []
-        for c in clusters:
-            latest = freshness_by_cluster.get(c.id)
-            age_minutes = (now - latest).total_seconds() / 60 if latest else None
-            counts = counts_by_cluster.get(c.id, {"success": 0, "failed": 0})
-
-            fresh_count, total_count = per_broker_by_cluster.get(c.id, (None, None))
-            brokers_online_agent = f"{fresh_count}/{total_count}" if total_count else None
-
-            reach = reachability_by_cluster.get(c.id, {})
-            brokers_online_real = None
-            if reach and reach.get("total"):
-                brokers_online_real = f"{reach.get('reachable_count', 0)}/{reach.get('total')}"
-
-            conns = connections_by_cluster.get(c.id, {})
-            broker_connections = None
-            if conns and conns.get("brokers"):
-                broker_connections = [
-                    {"label": _broker_label(b.get("host"), f"B{i+1}"), "close_wait": b.get("close_wait", 0)}
-                    for i, b in enumerate(conns["brokers"])
-                ]
-
-            rows.append({
-                "name": c.name,
-                "data_age_minutes": age_minutes,
-                "success_count": counts["success"],
-                "failed_count": counts["failed"],
-                "brokers_online_agent": brokers_online_agent,
-                "brokers_online_real": brokers_online_real,
-                "broker_connections": broker_connections,
-            })
+        gathered = await _gather_health_summary()
+        if gathered is None:
+            return
+        now, health_status, rows = gathered
 
         card = build_health_summary_card("Kafka Analyser", process_count, health_status, rows)
-        if await send_to_teams(webhook_url, card):
+        subject, text_body, html_body = build_health_summary_email(
+            "Kafka Analyser", process_count, health_status, rows, now=now,
+        )
+        _channel, sent = await notify_owner(
+            subject, text_body, html_body, card,
+            config=_config, email_timeout=_OWNER_EMAIL_TIMEOUT_SUMMARY_SECS,
+        )
+        if sent:
             _health_card_window_start = now.timestamp()
         return health_card_has_issue(health_status, rows)
     except Exception as _hs_exc:
-        logger.warning("_send_health_summary_to_teams failed: %s", _hs_exc)
+        logger.warning("_send_health_summary failed: %s", _hs_exc)
         return None
 
 
@@ -2503,7 +2548,8 @@ async def check_process_count_watchdog() -> dict:
     this session, just triggered by a real, independent condition
     instead of a blind schedule.
 
-    Also posts directly to Teams (bypassing teams_alerts.py entirely,
+    Also notifies the agent owner directly -- email to
+    health_email_recipients if set, else Teams (bypassing teams_alerts.py entirely,
     independent of the CLOSE_WAIT alert path, since this is a separate,
     minimal safety mechanism): an immediate critical alert if the
     threshold is breached, and a periodic (every
@@ -2526,15 +2572,15 @@ async def check_process_count_watchdog() -> dict:
         )
         # The restart itself must be completely unconditional -- bounded,
         # best-effort attempt to notify first, but os._exit(1) below runs
-        # in `finally` no matter what happens to the Teams post (success,
-        # failure, or timeout). Without this, a slow/unreachable Teams
+        # in `finally` no matter what happens to the owner notice (success,
+        # failure, or timeout). Without this, a slow/unreachable mail or Teams
         # endpoint could let the job's own outer timeout cancel this
         # coroutine before the restart ever happens -- silently disabling
         # the watchdog's one essential function exactly when network
         # trouble (a likely trigger condition) makes it most needed.
         try:
             await asyncio.wait_for(
-                _post_to_teams(
+                _post_watchdog_notice(
                     "critical",
                     f"Process count {count} exceeded the safety threshold of {PROCESS_COUNT_THRESHOLD} -- "
                     "forcing an immediate restart. No action needed, Docker will bring the container "
@@ -2559,7 +2605,7 @@ async def check_process_count_watchdog() -> dict:
         _last_watchdog_status_sent_at = now
         had_issue = None
         try:
-            had_issue = await asyncio.wait_for(_send_health_summary_to_teams(count), timeout=15)
+            had_issue = await asyncio.wait_for(_send_health_summary(count), timeout=15)
         except Exception:
             pass
         _last_health_card_had_issue = bool(had_issue)
@@ -2638,7 +2684,7 @@ async def check_data_freshness_watchdog() -> dict:
     this is a clear, direct signal something is silently broken --
     forces the exact same safe, already-proven fix as
     check_process_count_watchdog: an immediate, unconditional
-    os._exit(1) (never blocked or delayed by the Teams notification
+    os._exit(1) (never blocked or delayed by the owner notification
     attempt, same reasoning as that function), letting Docker's
     restart: unless-stopped policy bring the container back up cleanly.
     """
@@ -2729,11 +2775,11 @@ async def check_data_freshness_watchdog() -> dict:
             _reason = "+".join(
                 r for r, hit in (("stale_data", stale_clusters), ("stuck_paused", stuck_paused_clusters)) if hit
             )
-            # Teams post and event record run concurrently under the same
+            # Owner notice and event record run concurrently under the same
             # 5-second cap, so recording adds no delay before the restart.
             await asyncio.wait_for(
                 asyncio.gather(
-                    _post_to_teams(
+                    _post_watchdog_notice(
                         "critical",
                         f"Data freshness check failed for {len(stale_clusters)} cluster(s): "
                         f"{stale_clusters} -- broker metrics have gone stale despite active "
