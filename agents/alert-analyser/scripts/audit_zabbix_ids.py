@@ -5,6 +5,7 @@ Checks (the creation side, "an alert with no incident", is scripts/audit_inciden
   Z1  no open incident has a recovery notice carrying its own problem ID older than 15 minutes (the job missed it)
   Z2  every open incident older than 15 minutes has its alert details stored (problem ID)
   Z3  no incident was closed since the old title-based closer was switched off (CLEAN_FROM) without a notice of its own
+      (a closure's date is its resolved_at: the incident row's updated_at is also moved by corrections)
   Z4  no incident closed since then has a closing time more than 5 minutes off its own notice (never earlier than created_at)
   Z5  every Zabbix alert of the last 24 hours older than 15 minutes has its details stored
   Z6  the sync, closure and detail jobs ran in the last 24 hours without a failure and are not late
@@ -61,7 +62,8 @@ ORDER BY i.created_at
 
 CLOSED_SQL = CTE + """
 SELECT i.id::text AS id, right(i.alert_payload->>'message', 58) AS alert, i.created_at, i.resolved_at, i.updated_at, i.detected_via,
-       d.alert_id AS detail_alert, d.problem_id, c.closed_at
+       d.alert_id AS detail_alert, d.problem_id, c.closed_at,
+       (SELECT count(*) FROM zabbix_alert_detail x WHERE x.problem_id = d.problem_id AND x.kind = 'closed') AS closed_rows
 FROM incident_management.incidents i
 LEFT JOIN zabbix_alert_detail d ON d.alert_id = i.alert_id
 LEFT JOIN closed c ON c.problem_id = d.problem_id
@@ -72,7 +74,7 @@ WHERE i.status = 'RESOLVED' AND i.resolution_type = 'closure_alert_correlation' 
 Z7_SQL = """
 SELECT count(*) FROM incident_management.incidents
 WHERE status = 'RESOLVED' AND resolution_type = 'closure_alert_correlation' AND detected_via = 'opsgenie_live'
-  AND alert_payload->>'message' ILIKE '%[Zabbix] [Open]%' AND updated_at >= CAST(:since AS timestamptz)
+  AND alert_payload->>'message' ILIKE '%[Zabbix] [Open]%' AND resolved_at >= CAST(:since AS timestamptz)
 """
 
 Z5_SQL = """
@@ -118,10 +120,13 @@ async def main():
 
     tol = timedelta(minutes=TIME_TOLERANCE_MIN)
     no_own, wrong_time, unverifiable, ok_n = {"new": [], "old": []}, {"new": [], "old": []}, 0, 0
+    aged_out = {"new": 0, "old": 0}
     for r in closed:
-        era = "new" if r.updated_at >= live_at else "old"
+        era = "new" if r.resolved_at >= live_at else "old"
         if r.detail_alert is None or r.problem_id is None:
             unverifiable += 1
+        elif r.closed_at is None and r.closed_rows > 0:
+            aged_out[era] += 1   # a notice with their problem ID exists but is older than the alert history: its time cannot be checked
         elif r.closed_at is None:
             no_own[era].append(r)
         elif abs(r.resolved_at - max(r.closed_at, r.created_at)) > tol:
@@ -159,6 +164,7 @@ async def main():
         return ", ".join("%s %d" % (k, c[k]) for k in sorted(c)) or "none"
 
     out.append("INFO closures of the last 30 days checked against their own notice, any method: %d fully consistent, %d unverifiable (no stored problem ID)" % (ok_n, unverifiable))
+    out.append("INFO closures whose own notice is older than the alert history (its time cannot be checked): %d before %s, %d since" % (aged_out["old"], CLEAN_FROM[:16], aged_out["new"]))
     out.append("INFO closed before %s with no notice of their own: %d (%s)" % (CLEAN_FROM[:16], len(no_own["old"]), by_method(no_own["old"])))
     out.append("INFO closed before %s with a closing time more than %d min off their own notice: %d (%s)"
                % (CLEAN_FROM[:16], TIME_TOLERANCE_MIN, len(wrong_time["old"]), by_method(wrong_time["old"])))
