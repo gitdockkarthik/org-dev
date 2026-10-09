@@ -68,13 +68,30 @@
     .hint { margin-top: 0.3rem; font-size: 0.75rem; color: #94a3b8; }
     .field-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr)); gap: 0 1rem; }
     .field-grid .field:last-child { margin-bottom: 1rem; }
-    /* Thresholds take a full row of the field grid; the three tiers wrap on narrow screens. */
-    .field-grid #af-tiers-field { grid-column: 1 / -1; }
+    /* Thresholds and the lag block take a full row of the field grid; the three tiers wrap on narrow screens. */
+    .field-grid #af-tiers-field, .field-grid #af-lag-field { grid-column: 1 / -1; }
     .af-tiers-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 14rem)); gap: 0.5rem 1rem; align-items: end; }
     .af-tiers-grid label { display: block; white-space: nowrap; font-size: 0.8125rem; color: #475569; margin-bottom: 0.25rem; }
     .af-tier-input { display: flex; align-items: center; gap: 0.375rem; }
     .field .af-tier-input input[type="number"] { flex: 1 1 6rem; min-width: 6rem; }
     .af-tier-unit { white-space: nowrap; font-size: 0.8125rem; color: #64748b; }
+    /* Lag rules: custom thresholds, blacklist, reminder. */
+    .af-lag-section { margin-top: 1rem; }
+    .af-lag-section > label { display: block; font-size: 0.8125rem; color: #475569; margin-bottom: 0.25rem; }
+    .af-lag-picks { display: flex; flex-wrap: wrap; gap: 0.25rem 0.5rem; margin: 0.375rem 0; }
+    /* Narrow screens scroll the table sideways instead of overflowing the form. */
+    .af-lag-table-wrap { max-width: 44rem; overflow-x: auto; }
+    .af-lag-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; margin-top: 0.375rem; }
+    .af-lag-table th { text-align: left; font-weight: 600; color: #475569; padding: 0.25rem 0.375rem; border-bottom: 1px solid #e2e8f0; }
+    .af-lag-table td { padding: 0.25rem 0.375rem; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+    /* Names keep at least 16rem and wrap at hyphens, breaking inside a word only when one part is longer than the column. */
+    .af-lag-table th:first-child, .af-lag-table td.af-lag-name { min-width: 16rem; }
+    .af-lag-table td.af-lag-name { word-break: normal; overflow-wrap: break-word; }
+    /* The remove column is only as wide as its button. */
+    .af-lag-table th:last-child, .af-lag-table td:last-child { width: 1%; white-space: nowrap; text-align: right; }
+    .field .af-lag-table input[type="number"] { width: 8rem; min-width: 6rem; }
+    .field textarea#af-lag-blacklist { width: 100%; max-width: 44rem; min-height: 5rem; font-family: inherit; font-size: 0.8125rem; }
+    .af-lag-unknown { color: #b45309; font-size: 0.8125rem; }
     /* Alert rules and Recent Triggers filters: one row that wraps on narrow screens. */
     .configs-filters, .triggers-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0 1rem; }
     .configs-filters .field, .triggers-filters .field { flex: 0 1 12rem; min-width: 9rem; margin-bottom: 0.75rem; }
@@ -290,6 +307,35 @@
             <div class="hint hidden" id="af-tiers-sr-nodes-hint">Counts Schema Registry nodes that do not answer a light request (GET /) within 3 seconds, checked live every 5 minutes and confirmed over two checks. Any HTTP answer below 500 counts as up.</div>
             <div class="hint hidden" id="af-tiers-sr-soft-deleted-hint">Counts subjects that are soft-deleted but not purged (subjects listed with deleted=true minus live subjects). The card names up to 5. It does not count versions per subject. Clusters whose registry requires credentials (for example External Staging) are skipped.</div>
             <div class="hint hidden" id="af-tiers-skew-hint">Ratio of the busiest broker's leader partitions to the cluster average (1.0 = balanced). Does not detect a broker that has lost all its leaders.</div>
+          </div>
+          <div class="field hidden" id="af-lag-field">
+            <div class="hint">The thresholds above apply to every <span class="af-lag-noun">consumer group</span> of the cluster, except the ones listed below.</div>
+            <div class="hint" id="af-lag-names-state"></div>
+            <div class="af-lag-section">
+              <label for="af-lag-search">Custom thresholds</label>
+              <input type="text" id="af-lag-search" placeholder="Search consumer groups to add" autocomplete="off" style="max-width:28rem" />
+              <div class="hint" id="af-lag-search-count"></div>
+              <div class="af-lag-picks" id="af-lag-picks"></div>
+              <div class="af-lag-table-wrap">
+                <table class="af-lag-table hidden" id="af-lag-custom-table">
+                  <thead><tr><th>Name</th><th>Warning at</th><th>Critical at</th><th></th></tr></thead>
+                  <tbody id="af-lag-custom-body"></tbody>
+                </table>
+              </div>
+              <div class="hint" id="af-lag-custom-count"></div>
+            </div>
+            <div class="af-lag-section">
+              <label for="af-lag-blacklist">Not alerted (blacklist)</label>
+              <textarea id="af-lag-blacklist" placeholder="One name per line"></textarea>
+              <div class="hint" id="af-lag-blacklist-status"></div>
+              <div id="af-lag-blacklist-unknown"></div>
+            </div>
+            <div class="af-lag-section">
+              <label for="af-lag-reminder">Reminder every (hours)</label>
+              <input type="number" id="af-lag-reminder" min="1" max="168" step="1" value="6" style="max-width:8rem" />
+              <div class="hint">While a group stays above its tier, a reminder is sent at this interval.</div>
+            </div>
+            <div class="hint">Names must match exactly. A new or renamed group is covered by the generic thresholds.</div>
           </div>
           <div class="field hidden" id="af-min-rf-field">
             <label for="af-min-rf">Minimum replication factor</label>
@@ -595,7 +641,22 @@
       { value: 'cluster.connect_workers_down', label: 'Connect workers down', group: 'Cluster', kind: 'tiers', unit: 'workers', resolves: true },
       { value: 'cluster.sr_nodes_down', label: 'Schema Registry nodes down', group: 'Cluster', kind: 'tiers', unit: 'nodes', resolves: true },
       { value: 'cluster.sr_soft_deleted', label: 'Schema Registry soft-deleted subjects', group: 'Cluster', kind: 'tiers', unit: 'subjects', resolves: true },
+      { value: 'cluster.consumer_lag', label: 'Consumer group lag', group: 'Cluster', kind: 'tiers', unit: 'messages', resolves: true, lag: true },
+      { value: 'cluster.connector_lag', label: 'Connector lag', group: 'Cluster', kind: 'tiers', unit: 'messages', resolves: true, lag: true },
     ];
+    // Lag rules (lag: true): custom thresholds, blacklist and reminder, limits as in routes_alerts.py.
+    const LAG_CUSTOM_MAX = 200;
+    const LAG_BLACKLIST_MAX = 500;
+    const LAG_PICKS_SHOWN = 5;
+    const LAG_REMINDER_DEFAULT = 6;
+    // Lag form state: the custom rows ({name, tiers} with tier values as typed),
+    // and the selected cluster's group or connector names (null = not loaded).
+    let _lagCustom = [];
+    let _lagNames = null;
+    let _lagNamesLoading = false;
+    let _lagNamesError = null;
+    let _lagNamesSeq = 0;  // only the latest request renders
+    let _lagPicks = [];
     const TIER_IDS = { info: 'af-tier-info', warning: 'af-tier-warning', critical: 'af-tier-critical' };
 
     // Recent Triggers: the newest TRIGGERS_FETCH_LIMIT firings of the last
@@ -728,8 +789,195 @@
       $('af-tiers-below-hint').classList.toggle('hidden', !t.below);
       $('af-resolve-card').closest('.field').classList.toggle('hidden', !t.resolves);
       document.querySelectorAll('.af-tier-unit').forEach(el => { el.textContent = t.unit ? ` (${t.unit})` : ''; });
+      $('af-lag-field').classList.toggle('hidden', !t.lag);
+      document.querySelectorAll('.af-lag-noun').forEach(el => { el.textContent = lagNoun(); });
+      $('af-lag-search').placeholder = `Search ${lagNoun()}s to add`;
       applyClusterOption();
+      loadLagNames();
     }
+
+    // ── Lag rules: custom thresholds, blacklist, reminder ────────────────
+    function lagNoun() {
+      return $('af-alert-type').value === 'cluster.connector_lag' ? 'connector' : 'consumer group';
+    }
+
+    // Blacklist textarea: one name per line, trimmed, blank lines ignored,
+    // duplicates dropped (the first is kept).
+    function parseLagBlacklist() {
+      const seen = new Set();
+      const names = [];
+      for (const line of $('af-lag-blacklist').value.split(/\r?\n/)) {
+        const name = line.trim();
+        if (!name || seen.has(name)) continue;
+        seen.add(name);
+        names.push(name);
+      }
+      return names;
+    }
+
+    // The selected cluster's consumer groups (Consumer Groups tab endpoint) or
+    // connectors (Kafka Connect tab endpoint), for the picker and the
+    // blacklist check. Typing still works while loading or after a failure.
+    async function loadLagNames() {
+      const seq = ++_lagNamesSeq;
+      const t = selectedAlertType();
+      const clusterId = $('af-cluster').value;
+      _lagNames = null;
+      _lagNamesError = null;
+      _lagNamesLoading = !!(t.lag && clusterId);
+      renderLagNames();
+      if (!_lagNamesLoading) return;
+      try {
+        let names;
+        if (t.value === 'cluster.connector_lag') {
+          const d = await api(`/dashboard/kafka-connect?cluster_id=${encodeURIComponent(clusterId)}`);
+          names = (d.connectors || []).map(c => c && c.name);
+        } else {
+          const d = await api(`/dashboard/consumer-groups?cluster_id=${encodeURIComponent(clusterId)}`);
+          names = (d.consumer_groups || []).map(g => g && g.group_id);
+        }
+        if (seq !== _lagNamesSeq) return;
+        _lagNames = [...new Set(names.filter(n => n !== undefined && n !== null && n !== '').map(String))]
+          .sort((a, b) => a.localeCompare(b));
+      } catch (err) {
+        if (seq !== _lagNamesSeq) return;
+        _lagNamesError = err.message;
+      }
+      _lagNamesLoading = false;
+      renderLagNames();
+    }
+
+    function renderLagNames() {
+      const state = $('af-lag-names-state');
+      const noun = lagNoun();
+      if (!selectedAlertType().lag) {
+        state.textContent = '';
+      } else if (!$('af-cluster').value) {
+        state.textContent = `Select a cluster to list its ${noun}s.`;
+      } else if (_lagNamesLoading) {
+        state.textContent = 'Loading names…';
+      } else if (_lagNamesError) {
+        state.textContent = `Could not load names (${_lagNamesError}). You can still type names.`;
+      } else if (_lagNames) {
+        state.textContent = `${_lagNames.length} ${noun}${_lagNames.length === 1 ? '' : 's'} on this cluster.`;
+      } else {
+        state.textContent = '';
+      }
+      renderLagPicks();
+      renderLagBlacklistStatus();
+    }
+
+    // Up to LAG_PICKS_SHOWN matches of the search text, leaving out names
+    // already in the table or the blacklist. When nothing matches (or the
+    // names did not load), the typed name itself can be added, marked
+    // "not found" when the names are loaded.
+    function renderLagPicks() {
+      const box = $('af-lag-picks');
+      const q = $('af-lag-search').value.trim();
+      const used = new Set([..._lagCustom.map(r => r.name), ...parseLagBlacklist()]);
+      const full = _lagCustom.length >= LAG_CUSTOM_MAX;
+      $('af-lag-search').disabled = full;
+      let matches = [];
+      if (q && _lagNames) {
+        const ql = q.toLowerCase();
+        matches = _lagNames.filter(n => !used.has(n) && n.toLowerCase().includes(ql));
+      }
+      _lagPicks = full ? [] : matches.slice(0, LAG_PICKS_SHOWN);
+      const typed = !full && q && !matches.length && !used.has(q) && !(_lagNames || []).includes(q) ? q : null;
+      $('af-lag-search-count').textContent = full
+        ? `Limit reached: at most ${LAG_CUSTOM_MAX} custom thresholds`
+        : (q && _lagNames ? `${matches.length} matching` : '');
+      box.innerHTML = _lagPicks.map((n, i) =>
+        `<button type="button" class="btn btn-secondary btn-sm af-lag-pick" data-idx="${i}">${esc(n)}</button>`
+      ).join('') + (typed
+        ? `<button type="button" class="btn btn-secondary btn-sm af-lag-pick-typed">Add "${esc(typed)}"${_lagNames ? ' (not found)' : ''}</button>`
+        : '');
+      box.querySelectorAll('.af-lag-pick').forEach(btn => {
+        btn.addEventListener('click', () => addLagCustom(_lagPicks[parseInt(btn.dataset.idx, 10)]));
+      });
+      box.querySelectorAll('.af-lag-pick-typed').forEach(btn => {
+        btn.addEventListener('click', () => addLagCustom(typed));
+      });
+    }
+
+    // A new row starts with the generic warning and critical values.
+    function addLagCustom(name) {
+      if (!name || _lagCustom.length >= LAG_CUSTOM_MAX) return;
+      if (_lagCustom.some(r => r.name === name) || parseLagBlacklist().includes(name)) return;
+      const tiers = {};
+      for (const tier of ['warning', 'critical']) {
+        const raw = $(TIER_IDS[tier]).value.trim();
+        if (raw !== '') tiers[tier] = raw;
+      }
+      _lagCustom.push({ name, tiers });
+      $('af-lag-search').value = '';
+      renderLagCustom();
+      renderLagPicks();
+      renderLagBlacklistStatus();
+    }
+
+    function renderLagCustom() {
+      const body = $('af-lag-custom-body');
+      $('af-lag-custom-table').classList.toggle('hidden', !_lagCustom.length);
+      body.innerHTML = _lagCustom.map((r, i) => `
+        <tr>
+          <td class="af-lag-name">${esc(r.name)}</td>
+          <td><input type="number" class="af-lag-row-tier" data-idx="${i}" data-tier="warning" min="1" step="1" value="${esc(r.tiers.warning ?? '')}" /></td>
+          <td><input type="number" class="af-lag-row-tier" data-idx="${i}" data-tier="critical" min="1" step="1" value="${esc(r.tiers.critical ?? '')}" /></td>
+          <td><button type="button" class="btn btn-secondary btn-sm af-lag-row-remove" data-idx="${i}" title="Remove" aria-label="Remove ${esc(r.name)}">×</button></td>
+        </tr>`).join('');
+      body.querySelectorAll('.af-lag-row-tier').forEach(input => {
+        input.addEventListener('input', () => {
+          const row = _lagCustom[parseInt(input.dataset.idx, 10)];
+          if (!row) return;
+          const raw = input.value.trim();
+          if (raw === '') delete row.tiers[input.dataset.tier];
+          else row.tiers[input.dataset.tier] = raw;
+        });
+      });
+      body.querySelectorAll('.af-lag-row-remove').forEach(btn => {
+        btn.addEventListener('click', () => {
+          _lagCustom.splice(parseInt(btn.dataset.idx, 10), 1);
+          renderLagCustom();
+          renderLagPicks();
+          renderLagBlacklistStatus();
+        });
+      });
+      $('af-lag-custom-count').textContent = _lagCustom.length
+        ? `${_lagCustom.length} of at most ${LAG_CUSTOM_MAX}`
+        : 'None: search above to add one.';
+    }
+
+    // "N of M found on this cluster", each unknown name marked "(not found)"
+    // (unknown names are still saved).
+    function renderLagBlacklistStatus() {
+      const names = parseLagBlacklist();
+      const status = $('af-lag-blacklist-status');
+      const unknownEl = $('af-lag-blacklist-unknown');
+      const over = names.length > LAG_BLACKLIST_MAX ? ` (too many: at most ${LAG_BLACKLIST_MAX})` : '';
+      if (!names.length) {
+        status.textContent = '';
+        unknownEl.innerHTML = '';
+        return;
+      }
+      if (!_lagNames) {
+        status.textContent = `${names.length} name${names.length === 1 ? '' : 's'}` + over
+          + (_lagNamesLoading ? '' : _lagNamesError ? ' (names could not be checked)' : '');
+        unknownEl.innerHTML = '';
+        return;
+      }
+      const known = new Set(_lagNames);
+      const unknown = names.filter(n => !known.has(n));
+      status.textContent = `${names.length - unknown.length} of ${names.length} found on this cluster` + over;
+      unknownEl.innerHTML = unknown.map(n => `<div class="af-lag-unknown">${esc(n)} (not found)</div>`).join('');
+    }
+
+    $('af-lag-search').addEventListener('input', renderLagPicks);
+    $('af-lag-blacklist').addEventListener('input', () => {
+      renderLagBlacklistStatus();
+      renderLagPicks();
+    });
+    $('af-cluster').addEventListener('change', loadLagNames);
 
     // "All clusters" ('' option) is offered for general rules only. For a
     // cluster rule it is hidden and, if selected, nothing is selected instead.
@@ -796,6 +1044,11 @@
       $('af-all-clusters').checked = false;
       Object.values(TIER_IDS).forEach(id => { $(id).value = ''; });
       $('af-min-rf').value = '';
+      _lagCustom = [];
+      $('af-lag-search').value = '';
+      $('af-lag-blacklist').value = '';
+      $('af-lag-reminder').value = String(LAG_REMINDER_DEFAULT);
+      renderLagCustom();
       applyTypeFields();
       hideMsg($('alert-form-msg'));
     }
@@ -871,6 +1124,16 @@
         $(id).value = config[tier] !== undefined && config[tier] !== null ? String(config[tier]) : '';
       }
       if (alertTypeOf(c.alert_type).minRf) $('af-min-rf').value = c.min_rf != null ? String(c.min_rf) : '';
+      if (alertTypeOf(c.alert_type).lag) {
+        _lagCustom = (config.custom || []).map(r => ({
+          name: String(r.name),
+          tiers: Object.fromEntries(Object.entries(r.tiers || {}).map(([tier, v]) => [tier, String(v)])),
+        }));
+        $('af-lag-blacklist').value = (config.blacklist || []).join('\n');
+        $('af-lag-reminder').value = String(config.reminder_hours ?? LAG_REMINDER_DEFAULT);
+        renderLagCustom();
+        loadLagNames();
+      }
       $('af-cooldown').value = String(c.cooldown_minutes);
       $('af-webhook').value = c.webhook_url || '';
       $('af-resolve-card').checked = c.send_resolve_card !== false;
@@ -975,6 +1238,42 @@
         }
         payload.tiers = tiers;
       }
+      // Lag types only: custom rows, blacklist and reminder go with the generic tiers.
+      if (selectedAlertType().lag) {
+        const blacklist = parseLagBlacklist();
+        if (blacklist.length > LAG_BLACKLIST_MAX) {
+          showMsg(msgEl, `✗ Not alerted lists ${blacklist.length} names; at most ${LAG_BLACKLIST_MAX}`, 'err', 0); return;
+        }
+        const custom = [];
+        for (const row of _lagCustom) {
+          const rowTiers = {};
+          for (const [tier, raw] of Object.entries(row.tiers)) {
+            const text = String(raw).trim();
+            if (text === '') continue;
+            const value = Number(text);
+            if (!Number.isFinite(value) || value <= 0) {
+              showMsg(msgEl, `✗ Custom threshold "${row.name}": ${tier} at must be a number greater than 0`, 'err', 0); return;
+            }
+            rowTiers[tier] = value;
+          }
+          if (!Object.keys(rowTiers).length) {
+            showMsg(msgEl, `✗ Custom threshold "${row.name}" needs a warning or critical value`, 'err', 0); return;
+          }
+          custom.push({ name: row.name, tiers: rowTiers });
+        }
+        const both = custom.find(r => blacklist.includes(r.name));
+        if (both) {
+          showMsg(msgEl, `✗ "${both.name}" is in both Custom thresholds and Not alerted; remove it from one`, 'err', 0); return;
+        }
+        const reminderRaw = $('af-lag-reminder').value.trim();
+        const reminderHours = /^\d+$/.test(reminderRaw) ? parseInt(reminderRaw, 10) : NaN;
+        if (!Number.isInteger(reminderHours) || reminderHours < 1 || reminderHours > 168) {
+          showMsg(msgEl, '✗ Reminder every (hours) must be a whole number from 1 to 168', 'err', 0); return;
+        }
+        payload.custom = custom;
+        payload.blacklist = blacklist;
+        payload.reminder_hours = reminderHours;
+      }
       // Sent for minRf types only; copies made by "Create for every cluster"
       // inherit it from the first rule's config.
       if (selectedAlertType().minRf) {
@@ -1053,7 +1352,14 @@
       // minRf types lead with the stored minimum: "RF < 3 · warn 5 · crit 20 topics".
       if (t.minRf && c.min_rf != null) parts.unshift(`RF < ${c.min_rf}`);
       if (!parts.length) return '—';
-      return parts.join(' · ') + (t.unit ? ` ${t.unit}` : '');
+      const text = parts.join(' · ') + (t.unit ? ` ${t.unit}` : '');
+      // Lag types: "warn 1000 · crit 10000 messages +2 custom, 3 not alerted".
+      if (t.lag) {
+        const custom = (config.custom || []).length;
+        const blacklist = (config.blacklist || []).length;
+        if (custom || blacklist) return `${text} +${custom} custom, ${blacklist} not alerted`;
+      }
+      return text;
     }
 
     // View-only filter: '' = all rules, 'general' = general types, else a cluster id.
