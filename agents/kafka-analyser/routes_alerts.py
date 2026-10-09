@@ -48,6 +48,20 @@ _WHOLE_TIER_ALERT_TYPES = (
 _MIN_RF_ALERT_TYPE = "cluster.rf_below_min"
 _MIN_RF_ERROR = "min_rf must be a whole number of at least 2"
 
+# Cluster lag rules (level thresholds): one trigger per consumer group or
+# connector, evaluated by teams_alerts._evaluate_cluster_lag. Config holds the
+# generic tiers flat like the threshold types ({"mode": "simple", <tier>: n}),
+# plus "custom" ([{"name", "tiers"}], exact names with their own tiers),
+# "blacklist" ([name], exact names never evaluated unless also custom -- which
+# is rejected) and "reminder_hours". All tiers are whole numbers > 0.
+_LAG_ALERT_TYPES = ("cluster.consumer_lag", "cluster.connector_lag")
+_LAG_CUSTOM_MAX = 200
+_LAG_BLACKLIST_MAX = 500
+_LAG_NAME_MAX = 256
+_LAG_REMINDER_DEFAULT_HOURS = 6
+_LAG_REMINDER_MAX_HOURS = 168
+_LAG_REMINDER_ERROR = f"reminder_hours must be a whole number from 1 to {_LAG_REMINDER_MAX_HOURS}"
+
 # General rules apply to all clusters; every other type is a cluster rule
 # (one per cluster per type, cluster required).
 _GENERAL_ALERT_TYPES = ("close_wait_spike", "broker_unreachable")
@@ -69,6 +83,8 @@ _TYPE_LABELS = {
     "cluster.connect_workers_down": "Connect workers down",
     "cluster.sr_nodes_down": "Schema Registry nodes down",
     "cluster.sr_soft_deleted": "Schema Registry soft-deleted subjects",
+    "cluster.consumer_lag": "Consumer group lag",
+    "cluster.connector_lag": "Connector lag",
 }
 
 # Fields that map to NOT NULL columns -- an explicit null for these in a PUT
@@ -89,6 +105,10 @@ class AlertConfigPayload(BaseModel):
     tiers: dict | None = None
     send_resolve_card: bool | None = None
     min_rf: int | None = None
+    # Lag rule parts (_LAG_ALERT_TYPES only; validated by _lag_config).
+    custom: list | None = None
+    blacklist: list | None = None
+    reminder_hours: int | None = None
 
     @field_validator("severity")
     @classmethod
@@ -104,6 +124,14 @@ class AlertConfigPayload(BaseModel):
         # turned into 1, an error and 3. The >= 2 check is per type (see _min_rf).
         if v is not None and (isinstance(v, bool) or not isinstance(v, int)):
             raise ValueError(_MIN_RF_ERROR)
+        return v
+
+    @field_validator("reminder_hours", mode="before")
+    @classmethod
+    def _check_reminder_hours_type(cls, v):
+        # Same as min_rf: no coercion of true, 2.5 or "3"; range in _lag_config.
+        if v is not None and (isinstance(v, bool) or not isinstance(v, int)):
+            raise ValueError(_LAG_REMINDER_ERROR)
         return v
 
 
@@ -120,6 +148,10 @@ class AlertConfigUpdatePayload(BaseModel):
     tiers: dict | None = None
     send_resolve_card: bool | None = None
     min_rf: int | None = None
+    # Lag rule parts (_LAG_ALERT_TYPES only; validated by _lag_config).
+    custom: list | None = None
+    blacklist: list | None = None
+    reminder_hours: int | None = None
 
     @field_validator("severity")
     @classmethod
@@ -135,6 +167,14 @@ class AlertConfigUpdatePayload(BaseModel):
         # turned into 1, an error and 3. The >= 2 check is per type (see _min_rf).
         if v is not None and (isinstance(v, bool) or not isinstance(v, int)):
             raise ValueError(_MIN_RF_ERROR)
+        return v
+
+    @field_validator("reminder_hours", mode="before")
+    @classmethod
+    def _check_reminder_hours_type(cls, v):
+        # Same as min_rf: no coercion of true, 2.5 or "3"; range in _lag_config.
+        if v is not None and (isinstance(v, bool) or not isinstance(v, int)):
+            raise ValueError(_LAG_REMINDER_ERROR)
         return v
 
 
@@ -183,6 +223,69 @@ def _threshold_config(tiers: dict | None, below: bool = False, whole: bool = Fal
         if lower_value >= higher_value:
             raise HTTPException(status_code=422, detail=f"tiers.{lower} must be less than tiers.{higher}")
     return {"mode": "simple", **dict(given)}
+
+
+def _lag_names(value, field: str, limit: int) -> list[str]:
+    """Trimmed, unique, non-empty names of at most _LAG_NAME_MAX characters."""
+    if not isinstance(value, list):
+        raise HTTPException(status_code=422, detail=f"{field} must be a list")
+    if len(value) > limit:
+        raise HTTPException(status_code=422, detail=f"{field} allows at most {limit} entries")
+    names: list[str] = []
+    for raw in value:
+        if not isinstance(raw, str) or not raw.strip():
+            raise HTTPException(status_code=422, detail=f"{field} names must be non-empty strings")
+        name = raw.strip()
+        if len(name) > _LAG_NAME_MAX:
+            raise HTTPException(status_code=422, detail=f"{field} name longer than {_LAG_NAME_MAX} characters: {name[:40]}...")
+        if name in names:
+            raise HTTPException(status_code=422, detail=f"{field} lists {name!r} more than once")
+        names.append(name)
+    return names
+
+
+def _lag_config(previous: dict | None, tiers=None, custom=None, blacklist=None, reminder_hours=None) -> dict:
+    """Validate a lag rule's parts and return its stored config. Each part
+    left as None is carried over from previous (an existing lag rule's
+    config), so a partial update keeps the rest. 422 unless: generic tiers
+    valid like the whole-number threshold types; custom rows {"name",
+    "tiers"} with unique names and valid tiers, at most _LAG_CUSTOM_MAX;
+    blacklist unique, at most _LAG_BLACKLIST_MAX; no name in both lists;
+    reminder_hours a whole number from 1 to _LAG_REMINDER_MAX_HOURS."""
+    previous = previous or {}
+    if tiers is None:
+        tiers = {t: previous[t] for t in _TIERS if t in previous} or None
+    config = _threshold_config(tiers, whole=True)
+
+    if custom is None:
+        custom = previous.get("custom", [])
+    if not isinstance(custom, list):
+        raise HTTPException(status_code=422, detail="custom must be a list")
+    for row in custom:
+        if not isinstance(row, dict) or set(row) - {"name", "tiers"}:
+            raise HTTPException(status_code=422, detail='custom rows must be {"name": ..., "tiers": {...}}')
+    custom_names = _lag_names([row.get("name") for row in custom], "custom", _LAG_CUSTOM_MAX)
+    custom_rows = []
+    for name, row in zip(custom_names, custom):
+        try:
+            row_tiers = _threshold_config(row.get("tiers"), whole=True)
+        except HTTPException as exc:
+            raise HTTPException(status_code=422, detail=f"custom {name!r}: {exc.detail}")
+        custom_rows.append({"name": name, "tiers": {t: row_tiers[t] for t in _TIERS if t in row_tiers}})
+
+    blacklist_names = _lag_names(previous.get("blacklist", []) if blacklist is None else blacklist, "blacklist", _LAG_BLACKLIST_MAX)
+    both = next((n for n in custom_names if n in set(blacklist_names)), None)
+    if both is not None:
+        raise HTTPException(status_code=422, detail=f"{both!r} is in both custom and blacklist")
+
+    if reminder_hours is None:
+        reminder_hours = previous.get("reminder_hours", _LAG_REMINDER_DEFAULT_HOURS)
+    if (isinstance(reminder_hours, bool) or not isinstance(reminder_hours, int)
+            or not 1 <= reminder_hours <= _LAG_REMINDER_MAX_HOURS):
+        raise HTTPException(status_code=422, detail=_LAG_REMINDER_ERROR)
+
+    config.update({"custom": custom_rows, "blacklist": blacklist_names, "reminder_hours": reminder_hours})
+    return config
 
 
 def _min_rf(value) -> int:
@@ -300,7 +403,9 @@ async def create_alert_config(payload: AlertConfigPayload) -> dict:
         _check_cluster_required(payload.alert_type, payload.cluster_id)
         cluster_names = await _get_cluster_names()
         await _check_cluster_exists(payload.cluster_id, cluster_names)
-        if payload.alert_type in _THRESHOLD_ALERT_TYPES:
+        if payload.alert_type in _LAG_ALERT_TYPES:
+            config = _lag_config(None, payload.tiers, payload.custom, payload.blacklist, payload.reminder_hours)
+        elif payload.alert_type in _THRESHOLD_ALERT_TYPES:
             config = _threshold_config(
                 payload.tiers, payload.alert_type in _BELOW_ALERT_TYPES, payload.alert_type in _WHOLE_TIER_ALERT_TYPES,
             )
@@ -459,12 +564,19 @@ async def update_alert_config(config_id: int, payload: AlertConfigUpdatePayload)
             tiers = updates.pop("tiers", None)
             send_resolve_card = updates.pop("send_resolve_card", None)
             min_rf = updates.pop("min_rf", None)
+            lag_parts = {k: updates.pop(k, None) for k in ("custom", "blacklist", "reminder_hours")}
             previous_config = cfg.config or {}
             # Validated before any config is replaced: an rf_below_min rule
             # must end up with min_rf, either given here or carried over.
             if updates.get("alert_type", cfg.alert_type) == _MIN_RF_ALERT_TYPE:
                 min_rf = _min_rf(min_rf if min_rf is not None else previous_config.get("min_rf"))
-            if updates.get("alert_type", cfg.alert_type) in _THRESHOLD_ALERT_TYPES:
+            if updates.get("alert_type", cfg.alert_type) in _LAG_ALERT_TYPES:
+                # Parts not in the body are kept; a rule switched to a lag
+                # type starts empty and must bring its tiers.
+                updates.pop("threshold", None)
+                same_type = updates.get("alert_type", cfg.alert_type) == cfg.alert_type
+                cfg.config = _lag_config(previous_config if same_type else None, tiers, **lag_parts)
+            elif updates.get("alert_type", cfg.alert_type) in _THRESHOLD_ALERT_TYPES:
                 # Tiers replace the whole config; a rule switched to a
                 # threshold type must bring its tiers with it.
                 updates.pop("threshold", None)
@@ -476,6 +588,9 @@ async def update_alert_config(config_id: int, payload: AlertConfigUpdatePayload)
             elif "threshold" in updates:
                 # Reassign (not mutate in place) so SQLAlchemy detects the JSONB change.
                 cfg.config = {**(cfg.config or {}), "threshold": updates.pop("threshold")}
+            if cfg.alert_type in _LAG_ALERT_TYPES and updates.get("alert_type", cfg.alert_type) not in _LAG_ALERT_TYPES:
+                # Leaving a lag type: its lag-only parts no longer apply.
+                cfg.config = {k: v for k, v in (cfg.config or {}).items() if k not in ("custom", "blacklist", "reminder_hours")}
             # send_resolve_card lives in config: write it when given, otherwise
             # carry the existing value over a replaced (tiers) config.
             if send_resolve_card is not None:

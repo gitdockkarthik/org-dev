@@ -39,6 +39,8 @@ CATEGORY_LABEL = {
     "cluster.connect_workers_down": "Connect Workers Down",
     "cluster.sr_nodes_down": "Schema Registry Nodes Down",
     "cluster.sr_soft_deleted": "Schema Registry Soft-Deleted Subjects",
+    "cluster.consumer_lag": "Consumer Group Lag",
+    "cluster.connector_lag": "Connector Lag",
     "broker.cpu_pct": "Broker CPU %",
     "broker.heap_pct": "Broker Heap %",
 }
@@ -124,6 +126,71 @@ def _format_open_duration(open_minutes: float) -> str:
         return f"{total} min"
     hours, minutes = divmod(total, 60)
     return f"{hours} h {minutes} min" if minutes else f"{hours} h"
+
+
+def build_lag_card(
+    agent_name: str,
+    cluster_name: str,
+    category: str,
+    severity: str,
+    summary: str,
+    rows: list[dict],
+    recommended_action: str = "",
+    resolved: bool = False,
+    max_rows: int = 10,
+) -> dict:
+    """One grouped card for a lag rule (cluster.consumer_lag /
+    cluster.connector_lag) per run: the first max_rows rows, in the order
+    given, then "... and N more". Firing rows are {"name", "lag", "tier",
+    "source"} ("custom" or "generic" thresholds); resolved rows are {"name",
+    "was"} (the tier the group was at)."""
+    cat_label = CATEGORY_LABEL.get(category, category.replace("_", " ").title())
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    if resolved:
+        colour, emoji = "good", "✅"
+        facts = [{"title": "Status", "value": "RESOLVED"}]
+    else:
+        colour, emoji = SEVERITY_COLOUR.get(severity, "default"), SEVERITY_EMOJI.get(severity, "⚪")
+        facts = [{"title": "Severity", "value": str(severity).upper()}]
+    facts += [
+        {"title": "Category", "value": cat_label},
+        {"title": "Cluster", "value": cluster_name},
+        {"title": "Time", "value": timestamp},
+    ]
+    shown = rows[:max_rows]
+    if resolved:
+        row_facts = [{"title": str(r.get("name", "")), "value": f"cleared (was {str(r.get('was') or '?')})"} for r in shown]
+    else:
+        row_facts = [
+            {"title": str(r.get("name", "")), "value": f"{int(r.get('lag') or 0):,} · {r.get('tier')} · {r.get('source')}"}
+            for r in shown
+        ]
+    body = [
+        {"type": "TextBlock", "text": f"{emoji} Operative Intelligence — {agent_name}",
+         "weight": "Bolder", "size": "Medium", "color": colour},
+        {"type": "FactSet", "facts": facts},
+        {"type": "TextBlock", "text": summary, "wrap": True, "spacing": "Medium"},
+        {"type": "FactSet", "facts": row_facts},
+    ]
+    if len(rows) > max_rows:
+        body.append({"type": "TextBlock", "text": f"... and {len(rows) - max_rows} more", "wrap": True, "isSubtle": True})
+    if recommended_action and not resolved:
+        body.append({"type": "TextBlock", "text": f"💡 {recommended_action}", "wrap": True, "color": "accent", "spacing": "Small"})
+    return {
+        "type": "message",
+        "attachments": [
+            {
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": {
+                    "type": "AdaptiveCard",
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "version": "1.4",
+                    "body": body,
+                    "actions": [],
+                },
+            }
+        ],
+    }
 
 
 def build_resolve_card(

@@ -412,6 +412,10 @@ async def evaluate_alerts() -> None:
         await _evaluate_cluster_metrics()
     except Exception as exc:
         logger.warning("evaluate_alerts: cluster metric check failed: %s", exc)
+    try:
+        await _evaluate_cluster_lag()
+    except Exception as exc:
+        logger.warning("evaluate_alerts: cluster lag check failed: %s", exc)
 
 
 async def _evaluate_broker_reachability() -> None:
@@ -2211,3 +2215,464 @@ async def _evaluate_cluster_metrics() -> None:
         except Exception as exc:
             logger.warning("_evaluate_cluster_metrics: resolve cards failed: %s", exc)
         _queue_rule_emails(_resolve_emails(resolved_items))
+
+
+# ── Cluster lag rules: cluster.consumer_lag / cluster.connector_lag ─────────
+# Level thresholds only (growth is a later phase). One trigger per (rule,
+# cluster, name), subject = the consumer group id or the connector name,
+# severity = its tier. Per name, in this order: a "custom" row (its own
+# tiers) -> "blacklist" (skipped: never fires or resolves) -> the generic
+# tiers. Exact names only. Unlike the one-value cluster metrics, each rule
+# sends ONE grouped card (and email) per run, when a trigger is created or
+# its tier rises, or as a reminder every reminder_hours while anything is
+# still above its tier; and one grouped resolve card/email per run. Not in
+# CLUSTER_METRIC_TYPES, so the structure-job guard never applies; its own
+# guard ignores a cluster with no fresh rows.
+_CONSUMER_LAG_ALERT_TYPE = "cluster.consumer_lag"
+_CONNECTOR_LAG_ALERT_TYPE = "cluster.connector_lag"
+CLUSTER_LAG_TYPES = (_CONSUMER_LAG_ALERT_TYPE, _CONNECTOR_LAG_ALERT_TYPE)
+# A kafka_consumer_group_lag row counts only if updated this recently (the
+# same 20 minutes the dashboard uses); the latest connector snapshot too.
+_LAG_MAX_AGE = timedelta(minutes=20)
+_LAG_CARD_MAX_ROWS = 10
+_LAG_REMINDER_DEFAULT_HOURS = 6
+_LAG_ACTION = "Check the consumers or connectors with the Kafka team."
+_LAG_NOUNS = {_CONSUMER_LAG_ALERT_TYPE: "consumer group", _CONNECTOR_LAG_ALERT_TYPE: "connector"}
+_LAG_FRESH_SQL = text(
+    "SELECT cluster_id, group_id, total_lag FROM kafka_consumer_group_lag "
+    "WHERE cluster_id IN :cids AND updated_at >= :since"
+).bindparams(bindparam("cids", expanding=True))
+# Time of the last grouped card per rule id (in memory: after a restart the
+# first run with anything still above its tier sends one reminder).
+_lag_last_card_at: dict[int, datetime] = {}
+
+
+def _lag_rule_parts(config: KafkaAlertConfig) -> tuple[dict, dict[str, dict], set[str]]:
+    """(generic tiers, custom name -> tiers, blacklist) from a lag rule's config."""
+    cfg = config.config or {}
+    generic = {t: cfg[t] for t in _THRESHOLD_TIERS if t in cfg}
+    custom = {
+        row["name"]: row.get("tiers") or {}
+        for row in cfg.get("custom") or [] if isinstance(row, dict) and row.get("name")
+    }
+    return generic, custom, set(cfg.get("blacklist") or [])
+
+
+def _plural(n: int, noun: str) -> str:
+    return f"{n} {noun}{'' if n == 1 else 's'}"
+
+
+async def _evaluate_cluster_lag() -> None:
+    """Fire, escalate, remind and resolve cluster.consumer_lag /
+    cluster.connector_lag rules (see the comment above). Same four-stage
+    structure as _evaluate_cluster_metrics: one read session, decide in
+    memory, Teams posts with no DB session open, one write session with
+    each row in its own savepoint, then grouped resolve cards. Never raises.
+
+    Names: consumer lag uses every kafka_consumer_group_lag row updated in
+    the last _LAG_MAX_AGE; connector lag maps each connector of the latest
+    snapshot (within the same window, not partial) to its group
+    "connect-<name>" (the snapshots do not store consumer.override.group.id)
+    and skips a connector with no fresh group row. A cluster with no fresh
+    names is ignored (no fire, no resolve). An open trigger whose name is
+    blacklisted, has no fresh row or no tiers any more is resolved silently."""
+    if SessionLocal is None:
+        logger.info("evaluate_alerts: cluster lag skipped: database not available")
+        return
+    try:
+        from routes_settings import _config
+        if not _config.get("teams_enabled"):
+            logger.info("evaluate_alerts: cluster lag skipped: teams_enabled is off")
+            return
+
+        # ---- Single read session: configs, triggers, fresh lag rows, connector snapshots ----
+        async with SessionLocal() as session:
+            configs = (await session.execute(
+                select(KafkaAlertConfig).where(
+                    KafkaAlertConfig.alert_type.in_(list(CLUSTER_LAG_TYPES)),
+                    KafkaAlertConfig.enabled == True,
+                )
+            )).scalars().all()
+            if not configs:
+                logger.info("evaluate_alerts: cluster lag skipped: no enabled lag rules")
+                return
+            config_ids = [c.id for c in configs]
+
+            open_rows = (await session.execute(
+                select(
+                    KafkaAlertTrigger.id,
+                    KafkaAlertTrigger.alert_config_id,
+                    KafkaAlertTrigger.cluster_id,
+                    KafkaAlertTrigger.subject,
+                    KafkaAlertTrigger.severity,
+                ).where(
+                    KafkaAlertTrigger.alert_config_id.in_(config_ids),
+                    KafkaAlertTrigger.resolved_at.is_(None),
+                )
+            )).all()
+
+            # Most recent resolved_at per (config, cluster, subject), computed by the DB.
+            resolved_rows = (await session.execute(
+                select(
+                    KafkaAlertTrigger.alert_config_id,
+                    KafkaAlertTrigger.cluster_id,
+                    KafkaAlertTrigger.subject,
+                    func.max(KafkaAlertTrigger.resolved_at).label("last_resolved_at"),
+                ).where(
+                    KafkaAlertTrigger.alert_config_id.in_(config_ids),
+                    KafkaAlertTrigger.resolved_at.is_not(None),
+                ).group_by(
+                    KafkaAlertTrigger.alert_config_id,
+                    KafkaAlertTrigger.cluster_id,
+                    KafkaAlertTrigger.subject,
+                )
+            )).all()
+
+            since = datetime.now(timezone.utc) - _LAG_MAX_AGE
+            cluster_ids = sorted({c.cluster_id for c in configs if c.cluster_id is not None})
+            group_lag: dict[int, dict[str, int]] = {}
+            if cluster_ids:
+                for r in (await session.execute(_LAG_FRESH_SQL, {"cids": cluster_ids, "since": since})).all():
+                    group_lag.setdefault(r.cluster_id, {})[r.group_id] = int(r.total_lag or 0)
+            connector_cluster_ids = sorted({
+                c.cluster_id for c in configs
+                if c.alert_type == _CONNECTOR_LAG_ALERT_TYPE and c.cluster_id is not None
+            })
+            snapshot_rows: dict[int, list] = {}
+            if connector_cluster_ids:
+                for r in (await session.execute(
+                    _CONNECT_SNAPSHOT_SQL, {"cids": connector_cluster_ids, "since": since},
+                )).all():
+                    snapshot_rows.setdefault(r.cluster_id, []).append(r)
+        open_triggers: dict[tuple[int, int, str], tuple[int, str | None]] = {
+            (r.alert_config_id, r.cluster_id, r.subject): (r.id, r.severity) for r in open_rows
+        }
+        last_resolved: dict[tuple[int, int, str], datetime] = {
+            (r.alert_config_id, r.cluster_id, r.subject): r.last_resolved_at for r in resolved_rows
+        }
+    except Exception as exc:
+        logger.warning("_evaluate_cluster_lag: setup failed: %s", exc)
+        return
+
+    # ---- Names and their lag per (type, cluster); a cluster without any is ignored ----
+    window_min = int(_LAG_MAX_AGE.total_seconds() // 60)
+    lag_names: dict[tuple[str, int], dict[str, int]] = {}
+    lag_ignored: dict[tuple[str, int], str] = {}
+    for alert_type, cid in sorted({(c.alert_type, c.cluster_id) for c in configs if c.cluster_id is not None}):
+        groups = group_lag.get(cid, {})
+        if alert_type == _CONSUMER_LAG_ALERT_TYPE:
+            if groups:
+                lag_names[(alert_type, cid)] = dict(groups)
+            else:
+                lag_ignored[(alert_type, cid)] = f"no consumer group lag rows updated in the last {window_min} min"
+            continue
+        rows = snapshot_rows.get(cid, [])
+        if not rows:
+            lag_ignored[(alert_type, cid)] = f"no connector snapshot in the last {window_min} min"
+            continue
+        previous_rows = rows[0].previous_rows
+        if previous_rows is not None and len(rows) * 2 < previous_rows:
+            lag_ignored[(alert_type, cid)] = (
+                f"latest connector snapshot looks partial: {len(rows)} rows vs {previous_rows} in the previous one"
+            )
+            continue
+        names = {
+            r.connector_name: groups[f"connect-{r.connector_name}"]
+            for r in rows if f"connect-{r.connector_name}" in groups
+        }
+        if names:
+            lag_names[(alert_type, cid)] = names
+        else:
+            lag_ignored[(alert_type, cid)] = (
+                f"no connector has a consumer group row (connect-<name>) updated in the last {window_min} min"
+            )
+
+    # ---- Decide, entirely in memory, no DB session open ----
+    now = datetime.now(timezone.utc)
+    to_insert: list[KafkaAlertTrigger] = []
+    to_update: list[tuple[int, str | None, str]] = []  # (trigger id, new severity or None, metric_value)
+    to_resolve: dict[int, KafkaAlertConfig] = {}  # trigger id -> rule: grouped resolve card/email
+    to_resolve_silently: list[int] = []
+    # (config, kind, severity, summary, offenders, new triggers) -- one grouped card per rule
+    to_post: list[tuple[KafkaAlertConfig, str, str, str, list[dict], list[KafkaAlertTrigger]]] = []
+    names_evaluated = 0
+
+    for config in configs:
+        cluster_id = config.cluster_id
+        if cluster_id is None:
+            logger.warning("_evaluate_cluster_lag: alert_config_id=%s has no cluster_id; skipped", config.id)
+            continue
+        names = lag_names.get((config.alert_type, cluster_id))
+        if names is None:
+            continue  # reason logged from lag_ignored
+        try:
+            noun = _LAG_NOUNS[config.alert_type]
+            generic, custom, blacklist = _lag_rule_parts(config)
+            rule_open = {
+                subject: value for (cfg_id, cid, subject), value in open_triggers.items()
+                if cfg_id == config.id and cid == cluster_id
+            }
+            offenders: list[dict] = []
+            new_triggers: list[KafkaAlertTrigger] = []
+            escalations = 0
+            evaluated: set[str] = set()
+            for name, lag in names.items():
+                if name in custom:
+                    tiers, source = custom[name], "custom"
+                elif name in blacklist:
+                    continue
+                elif generic:
+                    tiers, source = generic, "generic"
+                else:
+                    continue
+                evaluated.add(name)
+                names_evaluated += 1
+                key = (config.id, cluster_id, name)
+                tier = _threshold_tier(tiers, lag)
+                open_trigger = rule_open.get(name)
+                if tier is None:
+                    _threshold_breach_counts.pop(key, None)
+                    if open_trigger is not None:
+                        to_resolve[open_trigger[0]] = config
+                    continue
+
+                metric_value = str(lag)
+                description = f"{noun.capitalize()} {name} lag is {lag:,} ({tier}, {source} threshold {float(tiers[tier]):g})"
+                if open_trigger is not None:
+                    trigger_id, open_severity = open_trigger
+                    old_tier = open_severity or config.severity
+                    old_rank = _TIER_RANK.get(old_tier, -1)
+                    if _TIER_RANK[tier] > old_rank:
+                        escalations += 1
+                        to_update.append((trigger_id, tier, metric_value))
+                    elif _TIER_RANK[tier] < old_rank:
+                        to_update.append((trigger_id, tier, metric_value))
+                    else:
+                        to_update.append((trigger_id, None, metric_value))
+                    offenders.append({"name": name, "lag": lag, "tier": tier, "source": source})
+                    continue
+
+                _threshold_breach_counts[key] = _threshold_breach_counts.get(key, 0) + 1
+                if _threshold_breach_counts[key] < _THRESHOLD_CONFIRM_CHECKS:
+                    continue
+                last_resolved_at = last_resolved.get(key)
+                since_resolved = (now - last_resolved_at) if last_resolved_at is not None else None
+                if since_resolved is not None and since_resolved < timedelta(minutes=config.cooldown_minutes):
+                    continue  # still in cooldown
+                is_recurrence = (
+                    since_resolved is not None
+                    and since_resolved <= timedelta(hours=RECURRENCE_LOOKBACK_HOURS)
+                )
+                if is_recurrence:
+                    description += " -- RECURRING: this same issue resolved recently and has now fired again"
+                trigger = KafkaAlertTrigger(
+                    alert_config_id=config.id,
+                    cluster_id=cluster_id,
+                    subject=name,
+                    severity=tier,
+                    triggered_at=now,
+                    metric_value=metric_value,
+                    message_sent=description,
+                    teams_post_success=False,
+                    error_detail=None,
+                    resolved_at=None,
+                    is_recurrence=is_recurrence,
+                )
+                to_insert.append(trigger)
+                new_triggers.append(trigger)
+                offenders.append({"name": name, "lag": lag, "tier": tier, "source": source})
+
+            # Open but no longer evaluated (blacklisted, no fresh row, no tiers): silent.
+            for name, (trigger_id, _severity) in rule_open.items():
+                if name not in evaluated:
+                    to_resolve_silently.append(trigger_id)
+
+            if not offenders:
+                continue
+            reminder_hours = (config.config or {}).get("reminder_hours") or _LAG_REMINDER_DEFAULT_HOURS
+            last_card_at = _lag_last_card_at.get(config.id)
+            reminder_due = last_card_at is None or now - last_card_at >= timedelta(hours=reminder_hours)
+            if not new_triggers and not escalations and not reminder_due:
+                continue
+            offenders.sort(key=lambda o: (-o["lag"], o["name"]))
+            severity = max((o["tier"] for o in offenders), key=lambda t: _TIER_RANK[t])
+            kind = "fire" if new_triggers else "escalate" if escalations else "reminder"
+            parts = [f"{len(new_triggers)} new"] if new_triggers else []
+            if escalations:
+                parts.append(f"{escalations} escalated")
+            summary = f"{_plural(len(offenders), noun)} above their lag tiers" + (
+                f" ({', '.join(parts)})" if parts else f" (reminder: still above after {reminder_hours} h)"
+            )
+            to_post.append((config, kind, severity, summary, offenders, new_triggers))
+        except Exception as exc:
+            logger.warning(
+                "_evaluate_cluster_lag: alert_config_id=%s cluster_id=%s failed: %s",
+                config.id, cluster_id, exc,
+            )
+
+    for (alert_type, cid), reason in sorted(lag_ignored.items()):
+        logger.info("evaluate_alerts: %s ignored cluster %s: %s", alert_type, cid, reason)
+    logger.info(
+        "evaluate_alerts: cluster lag rules=%d names=%d fired=%d cards=%d resolved=%d resolved_silently=%d",
+        len(configs), names_evaluated, len(to_insert), len(to_post), len(to_resolve), len(to_resolve_silently),
+    )
+
+    # ---- Grouped Teams cards, no DB session open ----
+    cluster_names: dict[int, str] = {}
+    if to_post or to_resolve:
+        try:
+            cluster_names = await _get_cluster_names()
+        except Exception as exc:
+            logger.warning("_evaluate_cluster_lag: cluster name lookup failed: %s", exc)
+    emails: list[dict | None] = []
+    for config, kind, severity, summary, offenders, new_triggers in to_post:
+        try:
+            cluster_name = cluster_names.get(config.cluster_id, str(config.cluster_id))
+            from shared.escalation.notifier import build_lag_card
+            card = build_lag_card(
+                "Kafka Analyser", cluster_name, config.alert_type, severity, summary, offenders,
+                _LAG_ACTION, max_rows=_LAG_CARD_MAX_ROWS,
+            )
+            webhook_url = config.webhook_url or _config.get("teams_webhook_url", "")
+            if webhook_url:
+                success = await send_to_teams(webhook_url=webhook_url, card=card)
+                error_detail = None
+            else:
+                success = False
+                error_detail = "No webhook URL configured (per-alert or agent-level)"
+            for trigger in new_triggers:
+                trigger.teams_post_success = success
+                trigger.error_detail = error_detail
+            if not success and not new_triggers:
+                logger.warning(
+                    "_evaluate_cluster_lag: %s card not sent for alert_config_id=%s: %s",
+                    kind, config.id, error_detail or "Teams post failed",
+                )
+            # The reminder clock restarts on every grouped notice, sent or not,
+            # so a failing webhook does not turn reminders into every run.
+            _lag_last_card_at[config.id] = now
+            emails.append(_rule_email(
+                config, cluster_name, kind, severity, summary, _LAG_ACTION, offenders=offenders,
+            ))
+        except Exception as exc:
+            logger.warning("_evaluate_cluster_lag: card for alert_config_id=%s failed: %s", config.id, exc)
+    _queue_rule_emails(emails)
+
+    if not to_insert and not to_update and not to_resolve and not to_resolve_silently:
+        return
+
+    # ---- Single write session: each row in its own savepoint ----
+    # Grouped resolve cards are sent after this session has closed, from plain
+    # snapshots taken before each commit (a later rollback expires ORM objects).
+    cleared: dict[int, list[dict]] = {}  # rule id -> cleared groups
+    try:
+        async with SessionLocal() as session:
+            for trigger in to_insert:
+                try:
+                    async with session.begin_nested():
+                        session.add(trigger)
+                    await session.commit()
+                except Exception as exc:
+                    await session.rollback()
+                    logger.warning(
+                        "_evaluate_cluster_lag: failed to record trigger for alert_config_id=%s "
+                        "cluster_id=%s subject=%s (card was already sent): %s",
+                        trigger.alert_config_id, trigger.cluster_id, trigger.subject, exc,
+                    )
+            for trigger_id, severity, metric_value in to_update:
+                try:
+                    async with session.begin_nested():
+                        trigger = await session.get(KafkaAlertTrigger, trigger_id)
+                        if trigger is not None and trigger.resolved_at is None:
+                            if severity is not None:
+                                trigger.severity = severity
+                            trigger.metric_value = metric_value
+                    await session.commit()
+                except Exception as exc:
+                    await session.rollback()
+                    logger.warning("_evaluate_cluster_lag: failed to update trigger id=%s: %s", trigger_id, exc)
+            for trigger_id in [*to_resolve, *to_resolve_silently]:
+                try:
+                    snapshot = None
+                    async with session.begin_nested():
+                        trigger = await session.get(KafkaAlertTrigger, trigger_id)
+                        if trigger is not None and trigger.resolved_at is None:
+                            trigger.resolved_at = now
+                            open_minutes = (
+                                (now - trigger.triggered_at).total_seconds() / 60
+                                if trigger.triggered_at is not None else None
+                            )
+                            snapshot = {
+                                "name": trigger.subject,
+                                "was": trigger.severity,
+                                "open_minutes": open_minutes,
+                                "teams_post_success": trigger.teams_post_success,
+                            }
+                    await session.commit()
+                    if snapshot is not None and trigger_id in to_resolve:
+                        config = to_resolve[trigger_id]
+                        snapshot["was"] = snapshot["was"] or config.severity
+                        cleared.setdefault(config.id, []).append(snapshot)
+                except Exception as exc:
+                    await session.rollback()
+                    logger.warning("_evaluate_cluster_lag: failed to resolve trigger id=%s: %s", trigger_id, exc)
+    except Exception as exc:
+        logger.warning("_evaluate_cluster_lag: write session failed entirely: %s", exc)
+
+    if cleared:
+        await _send_lag_resolves(
+            {c.id: c for c in to_resolve.values()}, cleared, cluster_names,
+            _config.get("teams_webhook_url", ""),
+        )
+
+
+async def _send_lag_resolves(
+    configs: dict[int, KafkaAlertConfig],
+    cleared: dict[int, list[dict]],
+    cluster_names: dict[int, str],
+    default_webhook_url: str,
+) -> None:
+    """One grouped resolve card per rule (only the groups whose opening card
+    reached Teams, and only if the rule's send_resolve_card allows it; capped
+    at _RESOLVE_CARDS_TIMEOUT_SECS in total) and one grouped resolve email
+    per rule listing every group cleared. Never raises."""
+    emails: list[dict | None] = []
+    cards: list[tuple[str, dict]] = []
+    for rule_id, items in cleared.items():
+        try:
+            config = configs[rule_id]
+            items = sorted(items, key=lambda i: str(i["name"]))
+            noun = _LAG_NOUNS.get(config.alert_type, "group")
+            cluster_name = cluster_names.get(config.cluster_id, str(config.cluster_id))
+            was = max((i["was"] for i in items if i["was"] in _TIER_RANK), key=lambda t: _TIER_RANK[t], default=config.severity)
+            emails.append(_rule_email(
+                config, cluster_name, "resolve", was,
+                f"{_plural(len(items), noun)} back below their lag tiers.",
+                cleared=[{k: i[k] for k in ("name", "was", "open_minutes")} for i in items],
+            ))
+            card_items = [i for i in items if i["teams_post_success"] is True]
+            webhook_url = config.webhook_url or default_webhook_url
+            if card_items and webhook_url and (config.config or {}).get("send_resolve_card", True):
+                from shared.escalation.notifier import build_lag_card
+                cards.append((webhook_url, build_lag_card(
+                    "Kafka Analyser", cluster_name, config.alert_type, was,
+                    f"{_plural(len(card_items), noun)} back below their lag tiers.",
+                    [{"name": i["name"], "was": i["was"]} for i in card_items],
+                    resolved=True, max_rows=_LAG_CARD_MAX_ROWS,
+                )))
+        except Exception as exc:
+            logger.warning("_send_lag_resolves: rule %s failed: %s", rule_id, exc)
+
+    async def _post_all() -> None:
+        for webhook_url, card in cards:
+            try:
+                await send_to_teams(webhook_url=webhook_url, card=card)
+            except Exception as exc:
+                logger.warning("_send_lag_resolves: card failed: %s", exc)
+    try:
+        await asyncio.wait_for(_post_all(), timeout=_RESOLVE_CARDS_TIMEOUT_SECS)
+    except asyncio.TimeoutError:
+        logger.warning("_send_lag_resolves: stopped after %s s cap", _RESOLVE_CARDS_TIMEOUT_SECS)
+    except Exception as exc:
+        logger.warning("_send_lag_resolves failed: %s", exc)
+    _queue_rule_emails(emails)

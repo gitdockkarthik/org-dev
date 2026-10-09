@@ -442,7 +442,7 @@ async def notify_owner(
 # Rule emails only go to internal addresses; others in email_recipients are
 # dropped with a warning.
 RULE_EMAIL_ALLOWED_DOMAINS = ("@operative.com", "@sintecmedia.com")
-_ALERT_KINDS = ("fire", "escalate", "resolve")
+_ALERT_KINDS = ("fire", "escalate", "resolve", "reminder")
 
 
 def _format_open_minutes(minutes: Optional[float]) -> Optional[str]:
@@ -466,6 +466,21 @@ def _affected_value(value) -> Optional[str]:
     return text
 
 
+def _alert_group_table(extra: dict) -> Tuple[list, list]:
+    """(header, rows as strings) of a grouped lag email's table, or ([], [])."""
+    if extra.get("offenders"):
+        return ["Name", "Lag", "Tier", "Thresholds"], [
+            [str(o.get("name", "")), f"{int(o.get('lag') or 0):,}", str(o.get("tier") or ""), str(o.get("source") or "")]
+            for o in extra["offenders"]
+        ]
+    if extra.get("cleared"):
+        return ["Name", "Was", "Open for"], [
+            [str(c.get("name", "")), str(c.get("was") or "").upper(), _format_open_minutes(c.get("open_minutes")) or ""]
+            for c in extra["cleared"]
+        ]
+    return [], []
+
+
 def build_alert_email(
     kind: str,
     alert_type: str,
@@ -482,6 +497,10 @@ def build_alert_email(
     resolve carries the build_resolve_card fields (rule, cluster, subject,
     was, open for, time). extra may hold rule_name, subject (e.g. a
     broker), open_minutes (resolve) and test (marks a sample email).
+    Grouped lag rules add "reminder" (still firing, no change) and a full
+    table: extra["offenders"] ({"name", "lag", "tier", "source"}) or, on a
+    resolve, extra["cleared"] ({"name", "was", "open_minutes"}), each shown
+    in the order given.
     Subject: "[SEVERITY] Kafka Analyser - <label> - <cluster>", or
     "[RESOLVED] ..." for a resolve; CR/LF stripped, every value escaped."""
     from shared.escalation.notifier import CATEGORY_LABEL
@@ -500,7 +519,7 @@ def build_alert_email(
     subject = _strip_crlf(subject)
     when = _utc_text(now)
 
-    status = {"fire": "FIRING", "escalate": "ESCALATED", "resolve": "RESOLVED"}[kind]
+    status = {"fire": "FIRING", "escalate": "ESCALATED", "resolve": "RESOLVED", "reminder": "REMINDER"}[kind]
     rows = [("Status", status)]
     if extra.get("rule_name"):
         rows.append(("Rule", str(extra["rule_name"])))
@@ -538,6 +557,12 @@ def build_alert_email(
     lines += [f"{k.ljust(width)}  {v}" for k, v in rows]
     if message:
         lines += ["", message]
+    group_head, group_rows = _alert_group_table(extra)
+    if group_rows:
+        widths = [max(len(h), *(len(r[i]) for r in group_rows)) for i, h in enumerate(group_head)]
+        lines += ["", "  ".join(h.ljust(w) for h, w in zip(group_head, widths)).rstrip(),
+                  "  ".join("-" * w for w in widths)]
+        lines += ["  ".join(c.ljust(w) for c, w in zip(r, widths)).rstrip() for r in group_rows]
     if recommended_action and kind != "resolve":
         lines += ["", f"Recommended action: {recommended_action}"]
     text_body = "\n".join(lines) + "\n"
@@ -557,6 +582,15 @@ def build_alert_email(
         + (f"<p style=\"{_HTML_RED}\">{esc(test_note)}</p>" if test_note else "")
         + f"<table style=\"{_HTML_STYLE_TABLE}\">{table_rows}</table>"
         + (f"<p>{esc(message)}</p>" if message else "")
+        + (
+            f"<table style=\"{_HTML_STYLE_TABLE}\"><tr>"
+            + "".join(f"<th style=\"{_HTML_STYLE_CELL};background:#f3f3f3\">{esc(h)}</th>" for h in group_head)
+            + "</tr>"
+            + "".join("<tr>" + "".join(f"<td style=\"{_HTML_STYLE_CELL}\">{esc(c)}</td>" for c in r) + "</tr>"
+                      for r in group_rows)
+            + "</table>"
+            if group_rows else ""
+        )
         + (f"<p><em>Recommended action:</em> {esc(recommended_action)}</p>"
            if recommended_action and kind != "resolve" else "")
         + "</body></html>"
