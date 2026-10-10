@@ -1180,6 +1180,46 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Admin client busy loop and unreadable logs: fixed (2026-10-10)
+FOUND 2026-10-10: kafka.client "Unable to send to wakeup socket!" made about
+14,000 log lines a second (140,767 in 30 s; 9.75 million in the 9 Oct saved
+log, 11.3 million by 05:40 on 10 Oct). Docker keeps 3 x 10 MB of log
+(json-file), so the retained log covered about 30 seconds and every WARNING
+and INFO line was rotated out almost at once; the log saver's 5-minute copies
+were mostly blind. Two agent threads each burned about 50% CPU (1,786,536 and
+1,186,500 ticks, about 8 CPU-hours between them) and the process ran at about
+80% CPU, load about 3.9 on 8 cores.
+CAUSE (reproduced in a throwaway container with a fake broker): a caller that
+fetched the shared KafkaAdminClient was using it when another path closed it
+(refresh_all_shared_clients, or acquire_admin_lock's timeout path calling
+invalidate_client). The closed client's wakeup socketpair is gone, so each
+wakeup() write fails, and _send_request_to_node loops on ready()/poll() with
+no exit. Each spinner also held one of the 12 kafka-io threads and an admin
+lock. UNPROVEN: a link to the broker-health stalls and the watchdog restarts
+of 7 Oct 22:41, 8 Oct 14:51 and 9 Oct 19:00 UTC, and to the 03:27 UTC fallback
+of the hourly summary email; the loop is a plausible cause (CPU and thread
+starvation) and the soak check will show whether the stalls stop.
+FIX (a6d5ff3): _FailFastAdminClient raises KafkaConnectionError when the
+client is closed, so a use-after-close fails once and the existing
+invalidate-and-recreate handling recovers; kafka-python-ng pinned to 2.2.3 (a
+private method is overridden); tests/test_shared_admin_closed.py with a fake
+broker (15 checks, 8 fail loudly if the library contract changes; the old code
+fails with about 320,000 wakeup lines). The audit of the other client uses
+(process-pool workers, warm-up, per-call consumers) found them safe.
+RESULT after the 06:13 UTC deploy: wakeup lines 0 in 10 s, the agent's top
+threads 0% CPU, our own WARNING and INFO lines visible for the first time.
+OPEN: soak check at about 07:15 UTC and again after a day (flood stays at 0
+through several client refresh cycles; no watchdog restarts; summary emails
+on time); a burst of "socket disconnected" errors for External Staging's
+third bootstrap broker (stg-datastream-kafka03) in the first second after
+each restart, and the UnrecognizedBrokerVersion warm-up warning for that
+cluster (not investigated); the log saver should be re-checked now that logs
+are readable; consider a larger log retention for the container.
+RELATED: the notification outbox (design approved 2026-10-10; step 1 models,
+migration 0058 and shadow recording built, not yet committed or 0058 applied;
+next the delivery worker). The 03:27 fallback cause stays unprovable because
+its log was rotated out; the outbox records the reason from now on.
+
 ### Environment-based recipients (email and Teams): test and production (2026-10-09)
 REQUEST: the Kafka team created two distribution lists, one for test and one
 for production. Alert rule emails should go to the DL of the environment the
