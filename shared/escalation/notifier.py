@@ -1,6 +1,7 @@
 import httpx
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -451,18 +452,41 @@ def health_card_has_issue(health_status: str, rows: list[dict]) -> bool:
     return False
 
 
-async def send_to_teams(webhook_url: str, card: dict) -> bool:
+def _teams_report(report, started_at, t0, status, error=None, http_status=None) -> None:
+    """Fill the caller's optional report dict (see send_to_teams). error is
+    short and never contains the webhook URL."""
+    if report is None:
+        return
+    report.update({
+        "status": status,
+        "error": error,
+        "started_at": started_at,
+        "duration_ms": int((time.monotonic() - t0) * 1000),
+        "detail": {"http_status": http_status} if http_status is not None else {},
+    })
+
+
+async def send_to_teams(webhook_url: str, card: dict, report: dict | None = None) -> bool:
+    """POST card to webhook_url; True on HTTP 200/202. Never raises. When
+    report (a dict) is given it is filled with status ("sent" or "failed"),
+    a short error that never contains the URL, started_at, duration_ms and
+    detail.http_status."""
+    started_at, t0 = datetime.now(timezone.utc), time.monotonic()
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(webhook_url, json=card)
             if resp.status_code in (200, 202):
                 logger.info("Teams notification sent successfully")
+                _teams_report(report, started_at, t0, "sent", http_status=resp.status_code)
                 return True
             else:
                 logger.error("Teams webhook returned %s: %s", resp.status_code, resp.text)
+                _teams_report(report, started_at, t0, "failed", f"HTTP {resp.status_code}", resp.status_code)
                 return False
     except Exception as exc:
         logger.exception("Teams notification failed: %s", exc)
+        error = "timed out after 10s" if isinstance(exc, httpx.TimeoutException) else f"post failed ({type(exc).__name__})"
+        _teams_report(report, started_at, t0, "failed", error)
         return False
 
 

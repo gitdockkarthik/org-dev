@@ -2,6 +2,7 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -76,6 +77,11 @@ _DEFAULTS: dict = {
     # Agent-owner notices (hourly health summary, watchdog restarts): emailed
     # here when set, with Teams as the fallback; blank keeps them Teams-only.
     "health_email_recipients": "",
+    # Notification outbox (outbox.py): "off" records nothing; "shadow"
+    # records one kafka_notification_outbox row per inline owner or rule
+    # send, without changing the send; "on" behaves as "shadow" until the
+    # delivery worker exists.
+    "notification_outbox_mode": "shadow",
     # Message-rate CSV cold archive to MinIO (rollup_hourly_to_daily Step 2)
     "message_rate_archive_enabled": False,
 }
@@ -167,6 +173,8 @@ class SettingsPayload(BaseModel):
     smtp_from_address: str = ""
     email_recipients: str = ""
     health_email_recipients: str = ""
+    # See the matching comment in _DEFAULTS above.
+    notification_outbox_mode: Literal["off", "shadow", "on"] = "shadow"
 
     # Message-rate CSV cold archive to MinIO (rollup_hourly_to_daily Step 2)
     message_rate_archive_enabled: bool = False

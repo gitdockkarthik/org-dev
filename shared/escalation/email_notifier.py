@@ -21,6 +21,7 @@ import re
 import smtplib
 import socket
 import ssl
+import time
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
@@ -371,6 +372,46 @@ def owner_teams_configured(config: dict) -> bool:
     return bool(config.get("teams_enabled") and config.get("teams_webhook_url"))
 
 
+def _elapsed_ms(t0: float) -> int:
+    return int((time.monotonic() - t0) * 1000)
+
+
+def _owner_email_skip(config: dict) -> dict:
+    """Report entry for an owner email that is not attempted. A blank
+    health_email_recipients is a setting (Teams-only), not a fault."""
+    if not str(config.get("health_email_recipients") or "").strip():
+        return {"status": "skipped", "reason": "health_email_recipients is blank (Teams-only)", "config_problem": False}
+    missing = [k for k in ("smtp_host", "smtp_from_address") if not str(config.get(k) or "").strip()]
+    return {"status": "skipped", "reason": f"not configured: {', '.join(missing)} missing", "config_problem": True}
+
+
+def owner_unconfigured_report(config: dict) -> dict:
+    """notify_owner-style report for a notice not sent because neither
+    owner channel is configured (callers return before notify_owner)."""
+    return {
+        "email": _owner_email_skip(config),
+        "teams": {"status": "skipped", "reason": "not configured: teams_enabled off or no teams_webhook_url",
+                  "config_problem": True},
+    }
+
+
+def describe_channel(entry: Optional[dict]) -> str:
+    """One channel of a report dict as log text, e.g. "failed in 5003 ms
+    (timed out after 5s)". Never raises."""
+    try:
+        entry = entry or {}
+        status = entry.get("status") or "not attempted"
+        if status == "skipped":
+            return f"skipped ({entry.get('reason') or 'no reason given'})"
+        text = status
+        if entry.get("duration_ms") is not None:
+            text += f" in {entry['duration_ms']} ms"
+        note = entry.get("error") or entry.get("warning")
+        return f"{text} ({note})" if note else text
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
 async def notify_owner(
     subject: str,
     text_body: str,
@@ -378,6 +419,7 @@ async def notify_owner(
     teams_card: dict,
     config: dict,
     email_timeout: float = SMTP_TIMEOUT_SECS,
+    report: Optional[dict] = None,
 ) -> Tuple[Optional[str], bool]:
     """Agent-owner notice: email first, Teams as the fallback.
 
@@ -394,9 +436,20 @@ async def notify_owner(
     background, so the owner may get both the email and the Teams card.
 
     Returns (channel_used, ok): channel_used is "email", "teams" or None
-    (nothing configured). Never raises."""
+    (nothing configured). Never raises.
+
+    Logs one INFO line per notice with the channel used, the email result
+    or error and each attempt's duration. When report (a dict) is given it
+    is filled with "email" and "teams" entries: status ("sent", "failed" or
+    "skipped"), error, warning, started_at and duration_ms for an attempt,
+    reason and config_problem for a skip. No password or webhook URL."""
+    rep = report if report is not None else {}
+    rep["email"] = {"status": "skipped", "reason": "not reached", "config_problem": False}
+    rep["teams"] = {"status": "skipped", "reason": "not reached", "config_problem": False}
+    channel, sent = None, False
     try:
         if owner_email_configured(config):
+            started_at, t0 = datetime.now(timezone.utc), time.monotonic()
             try:
                 ok, error = await asyncio.wait_for(
                     send_email(
@@ -415,26 +468,50 @@ async def notify_owner(
                 )
             except asyncio.TimeoutError:
                 ok, error = False, f"timed out after {email_timeout:g}s"
+            rep["email"] = {
+                "status": "sent" if ok else "failed",
+                "error": None if ok else error,
+                "warning": error if ok else None,
+                "started_at": started_at,
+                "duration_ms": _elapsed_ms(t0),
+            }
             if ok:
                 if error:
                     logger.warning("notify_owner: email sent with warning: %s", error)
-                logger.info("owner notice sent via email")
-                return "email", True
+                rep["teams"] = {"status": "skipped", "reason": "fallback not needed: email sent", "config_problem": False}
+                channel, sent = "email", True
+                return channel, sent
             logger.warning("notify_owner: email failed (%s); falling back to Teams", error)
-            email_failed = True
         else:
-            email_failed = False
+            rep["email"] = _owner_email_skip(config)
 
         if not owner_teams_configured(config):
-            return None, False
+            rep["teams"] = {
+                "status": "skipped",
+                "reason": "not configured: teams_enabled off or no teams_webhook_url",
+                "config_problem": True,
+            }
+            return channel, sent
         from shared.escalation import notifier as _notifier
-        ok = await _notifier.send_to_teams(webhook_url=config.get("teams_webhook_url"), card=teams_card)
-        if ok:
-            logger.info("owner notice sent via teams%s", " (email failed)" if email_failed else "")
-        return "teams", bool(ok)
+        teams_report: dict = {}
+        ok = await _notifier.send_to_teams(
+            webhook_url=config.get("teams_webhook_url"), card=teams_card, report=teams_report,
+        )
+        rep["teams"] = teams_report or {"status": "sent" if ok else "failed"}
+        channel, sent = "teams", bool(ok)
+        return channel, sent
     except Exception as exc:  # noqa: BLE001 -- contract: never raise
         logger.warning("notify_owner: failed (%s)", type(exc).__name__)
-        return None, False
+        channel, sent = None, False
+        return channel, sent
+    finally:
+        try:
+            logger.info(
+                "notify_owner: channel=%s ok=%s email=%s teams=%s",
+                channel or "none", sent, describe_channel(rep.get("email")), describe_channel(rep.get("teams")),
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
 
 # ── Alert rule emails (fire / escalate / resolve) ───────────────────────────
@@ -608,6 +685,7 @@ async def notify_rule_email(
     extra: Optional[dict] = None,
     *,
     settings: dict,
+    report: Optional[dict] = None,
 ) -> Optional[bool]:
     """Email for one alert rule event, sent next to the Teams card.
 
@@ -618,15 +696,29 @@ async def notify_rule_email(
     agent's settings dict (this shared module cannot import it). Logs one
     INFO "rule email sent" or WARNING "rule email failed" line with the
     rule id, kind and recipient count only. Returns True/False for a send
-    attempt. Never raises."""
+    attempt. Never raises.
+
+    When report (a dict) is given it is filled like notify_owner's channel
+    entries: status "sent", "failed" or "skipped", error, warning,
+    started_at, duration_ms, or reason and config_problem for a skip."""
     rule_id = getattr(config_row, "id", None)
+    rep = report if report is not None else {}
+    rep.update({"status": "failed", "error": "not reached"})
     try:
-        if not getattr(config_row, "email_enabled", False) or not settings.get("email_enabled"):
+        if not getattr(config_row, "email_enabled", False):
+            rep.update({"status": "skipped", "reason": "rule email off", "config_problem": False, "error": None})
+            return None
+        if not settings.get("email_enabled"):
+            rep.update({"status": "skipped", "reason": "email_enabled (global) off", "config_problem": False, "error": None})
             return None
         host = str(settings.get("smtp_host") or "").strip()
         from_address = str(settings.get("smtp_from_address") or "").strip()
         candidates = parse_recipients(settings.get("email_recipients") or "")
         if not candidates or not host or not from_address:
+            missing = [k for k, v in (("email_recipients", candidates), ("smtp_host", host),
+                                      ("smtp_from_address", from_address)) if not v]
+            rep.update({"status": "skipped", "reason": f"not configured: {', '.join(missing)} missing",
+                        "config_problem": True, "error": None})
             return None
 
         allowed = [a for a in candidates if a.lower().endswith(RULE_EMAIL_ALLOWED_DOMAINS)]
@@ -637,6 +729,7 @@ async def notify_rule_email(
             )
         if not allowed:
             logger.warning("rule email failed: rule_id=%s kind=%s: no allowed recipients", rule_id, kind)
+            rep.update({"status": "failed", "error": "no allowed recipients", "config_problem": True})
             return False
 
         extra = dict(extra or {})
@@ -645,6 +738,7 @@ async def notify_rule_email(
             kind, getattr(config_row, "alert_type", ""), cluster_name, severity,
             description, recommended_action, extra,
         )
+        started_at, t0 = datetime.now(timezone.utc), time.monotonic()
         ok, error = await send_email(
             host=host,
             port=settings.get("smtp_port") or 587,
@@ -657,6 +751,14 @@ async def notify_rule_email(
             html_body=html_body,
             timeout=SMTP_TIMEOUT_SECS,
         )
+        rep.update({
+            "status": "sent" if ok else "failed",
+            "error": None if ok else error,
+            "warning": error if ok else None,
+            "started_at": started_at,
+            "duration_ms": _elapsed_ms(t0),
+            "detail": {"recipients": len(allowed)},
+        })
         if ok:
             logger.info(
                 "rule email sent: rule_id=%s kind=%s recipients=%d%s",
@@ -667,4 +769,5 @@ async def notify_rule_email(
         return False
     except Exception as exc:  # noqa: BLE001 -- contract: never raise
         logger.warning("rule email failed: rule_id=%s kind=%s: %s", rule_id, kind, type(exc).__name__)
+        rep.update({"status": "failed", "error": f"send failed ({type(exc).__name__})"})
         return False

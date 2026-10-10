@@ -2272,6 +2272,49 @@ async def check_and_recycle_close_wait() -> dict:
     return {"action": "recycled", "close_wait_found": close_wait_by_cluster, "shared_refresh": shared_result}
 
 
+def _log_owner_notice(label: str, channel, ok, report: dict) -> None:
+    """One INFO line per owner notice in this module's logger: channel
+    used, email result or error, and each attempt's duration. Never raises."""
+    try:
+        from shared.escalation.email_notifier import describe_channel
+        logger.info(
+            "owner notice (%s): channel=%s ok=%s email=%s teams=%s",
+            label, channel or "none", ok,
+            describe_channel(report.get("email")), describe_channel(report.get("teams")),
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _owner_record_args(kind: str, source: str, dedupe_key: str, severity, title: str, report: dict) -> dict:
+    """record_inline arguments for one owner notice from its report."""
+    import outbox
+    return dict(
+        kind=kind, routing="owner", dedupe_key=dedupe_key, alert_config_id=None, cluster_id=None,
+        trigger_ids=None, severity=severity, subject_or_title=title, source=source,
+        channel_results={
+            "email": outbox.from_report(report.get("email")),
+            "teams": outbox.from_report(report.get("teams")),
+        },
+    )
+
+
+async def _record_watchdog_notice(source: str, severity: str, title: str, report: dict) -> None:
+    """Awaited (the restart follows at once), capped at
+    outbox.RECORD_TIMEOUT_SECS inside the caller's existing 5 s cap. Never
+    raises."""
+    try:
+        import outbox
+        if not outbox.enabled():
+            return
+        args = _owner_record_args(
+            "owner_watchdog", source, f"inline:owner_watchdog:{source}:{outbox.BOOT_ID}", severity, title, report,
+        )
+        await asyncio.wait_for(outbox.record_inline(None, **args), timeout=outbox.RECORD_TIMEOUT_SECS)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("%s: owner notice not recorded: %s", source, type(exc).__name__)
+
+
 async def _post_watchdog_notice(
     severity: str,
     description: str,
@@ -2295,6 +2338,10 @@ async def _post_watchdog_notice(
             build_watchdog_email, notify_owner, owner_email_configured, owner_teams_configured,
         )
         if not owner_email_configured(_config) and not owner_teams_configured(_config):
+            from shared.escalation.email_notifier import owner_unconfigured_report
+            report = owner_unconfigured_report(_config)
+            _log_owner_notice(category, None, False, report)
+            await _record_watchdog_notice(source, severity, f"{category}: {description}", report)
             return
         from shared.escalation.notifier import build_adaptive_card
         card = build_adaptive_card(
@@ -2308,10 +2355,13 @@ async def _post_watchdog_notice(
             },
         )
         subject, text_body, html_body = build_watchdog_email("Kafka Analyser", severity, category, description)
-        await notify_owner(
+        report: dict = {}
+        channel, ok = await notify_owner(
             subject, text_body, html_body, card,
-            config=_config, email_timeout=_OWNER_EMAIL_TIMEOUT_WATCHDOG_SECS,
+            config=_config, email_timeout=_OWNER_EMAIL_TIMEOUT_WATCHDOG_SECS, report=report,
         )
+        _log_owner_notice(category, channel, ok, report)
+        await _record_watchdog_notice(source, severity, subject, report)
     except Exception as _notify_exc:
         logger.warning("%s: owner notice failed: %s", source, _notify_exc)
 
@@ -2495,6 +2545,16 @@ async def _send_health_summary(process_count: int) -> bool | None:
         )
 
         if not owner_email_configured(_config) and not owner_teams_configured(_config):
+            import outbox
+            from datetime import datetime, timezone
+            from shared.escalation.email_notifier import owner_unconfigured_report
+            report = owner_unconfigured_report(_config)
+            _log_owner_notice("health summary", None, False, report)
+            outbox.record_inline_soon(**_owner_record_args(
+                "owner_summary", "_send_health_summary",
+                f"inline:owner_summary:{datetime.now(timezone.utc).isoformat()}", None,
+                "Kafka Analyser health summary", report,
+            ))
             return
 
         gathered = await _gather_health_summary()
@@ -2506,10 +2566,20 @@ async def _send_health_summary(process_count: int) -> bool | None:
         subject, text_body, html_body = build_health_summary_email(
             "Kafka Analyser", process_count, health_status, rows, now=now,
         )
+        report: dict = {}
         _channel, sent = await notify_owner(
             subject, text_body, html_body, card,
-            config=_config, email_timeout=_OWNER_EMAIL_TIMEOUT_SUMMARY_SECS,
+            config=_config, email_timeout=_OWNER_EMAIL_TIMEOUT_SUMMARY_SECS, report=report,
         )
+        _log_owner_notice("health summary", _channel, sent, report)
+        try:
+            import outbox
+            outbox.record_inline_soon(**_owner_record_args(
+                "owner_summary", "_send_health_summary", f"inline:owner_summary:{now.isoformat()}",
+                None, subject, report,
+            ))
+        except Exception as _rec_exc:  # noqa: BLE001
+            logger.warning("_send_health_summary: not recorded: %s", type(_rec_exc).__name__)
         if sent:
             _health_card_window_start = now.timestamp()
         return health_card_has_issue(health_status, rows)

@@ -18,6 +18,7 @@ from urllib.parse import urlsplit
 import httpx
 from sqlalchemy import bindparam, func, select, text
 
+import outbox
 from database import SessionLocal
 from models import KafkaAlertConfig, KafkaAlertTrigger, KafkaBrokerMetrics
 from shared.escalation.notifier import build_adaptive_card, build_resolve_card, send_to_teams
@@ -53,17 +54,22 @@ async def _send_resolve_cards(items: list[dict]) -> None:
     async def _send_all() -> None:
         from routes_settings import _config
         if not _config.get("teams_enabled"):
+            for item in items:
+                item["_outbox_teams"] = outbox.skipped("teams_enabled off")
             return
         for item in items:
             try:
                 config = item["config"]
                 trigger = item["trigger"]
                 if trigger.teams_post_success is not True:
+                    item["_outbox_teams"] = outbox.skipped("opening card did not reach Teams")
                     continue
                 if not (config.config or {}).get("send_resolve_card", True):
+                    item["_outbox_teams"] = outbox.skipped("resolve card off for this rule")
                     continue
                 webhook_url = config.webhook_url or _config.get("teams_webhook_url", "")
                 if not webhook_url:
+                    item["_outbox_teams"] = outbox.skipped(_NO_WEBHOOK, config_problem=True)
                     continue
                 open_minutes = None
                 if trigger.triggered_at is not None and trigger.resolved_at is not None:
@@ -76,14 +82,18 @@ async def _send_resolve_cards(items: list[dict]) -> None:
                     severity=trigger.severity or config.severity,
                     open_minutes=open_minutes,
                 )
-                await send_to_teams(webhook_url=webhook_url, card=card)
+                _sent, item["_outbox_teams"] = await _post_card(webhook_url, card)
             except Exception as exc:
                 logger.warning("_send_resolve_cards: item failed: %s", exc)
+                item["_outbox_teams"] = outbox.failed(f"card failed ({type(exc).__name__})")
 
     try:
         await asyncio.wait_for(_send_all(), timeout=_RESOLVE_CARDS_TIMEOUT_SECS)
     except asyncio.TimeoutError:
         logger.warning("_send_resolve_cards: stopped after %s s cap", _RESOLVE_CARDS_TIMEOUT_SECS)
+        for item in items:
+            item.setdefault("_outbox_teams", outbox.failed(
+                f"not sent or outcome unknown: stopped at the {_RESOLVE_CARDS_TIMEOUT_SECS} s cap"))
     except Exception as exc:
         logger.warning("_send_resolve_cards failed: %s", exc)
 
@@ -95,6 +105,66 @@ async def _send_resolve_cards(items: list[dict]) -> None:
 # Only rules with email_enabled are queued, so with no such rule nothing here
 # runs. Strong references keep the tasks alive until they finish.
 _rule_email_tasks: set = set()
+
+# Shadow-mode outbox records (outbox.py). Each rule notification -- its
+# Teams card and its email -- becomes one kafka_notification_outbox row. The
+# card's result is known first; the row is written once the queued email is
+# done (_send_rule_emails), or at once when no email is queued. Recording is
+# a background step and never changes a send, a trigger write or timing.
+_NO_WEBHOOK = "no webhook URL configured (per-alert or agent-level)"
+
+
+async def _post_card(webhook_url: str, card: dict) -> tuple[bool, dict]:
+    """send_to_teams, plus its channel result for the outbox record."""
+    report: dict = {}
+    success = await send_to_teams(webhook_url=webhook_url, card=card, report=report)
+    if report:
+        return success, outbox.from_report(report)
+    return success, outbox.sent() if success else outbox.failed("Teams post failed")
+
+
+def _shadow(email: dict | None, teams: dict | None, kind: str, config, cluster_id, subject, severity,
+            title: str, at: datetime, source: str, **payload) -> dict | None:
+    """Attach the outbox record of one rule notification to its queued email
+    (written by _send_rule_emails after the send), or record it now when no
+    email is queued. Returns email unchanged. Never raises."""
+    try:
+        if not outbox.enabled():
+            return email
+        config_id = getattr(config, "id", None)
+        meta = {
+            "kind": kind,
+            "routing": "rule",
+            # The cluster name too: resolve items carry no cluster id, and an
+            # all-clusters rule resolves several clusters at the same instant.
+            "dedupe_key": (f"inline:{kind}:{config_id}:{cluster_id}:{payload.get('cluster_name')}:"
+                           f"{subject or '-'}:{at.isoformat()}"),
+            "alert_config_id": config_id,
+            "cluster_id": cluster_id,
+            "trigger_ids": None,
+            "severity": severity,
+            "subject_or_title": title,
+            "source": source,
+            "payload": {"rule_name": getattr(config, "name", None), "subject": subject,
+                        **{k: v for k, v in payload.items() if v is not None}},
+            "teams": teams or outbox.failed("no card result recorded"),
+        }
+        if email is None:
+            _record_rule_notice(meta, outbox.skipped("rule email off (not queued)"))
+            return None
+        email["_outbox"] = meta
+    except Exception as exc:
+        logger.warning("_shadow: %s not recorded: %s", kind, type(exc).__name__)
+    return email
+
+
+def _record_rule_notice(meta: dict, email_result: dict) -> None:
+    try:
+        meta = dict(meta)
+        teams = meta.pop("teams")
+        outbox.record_inline_soon(**meta, channel_results={"email": email_result, "teams": teams})
+    except Exception as exc:
+        logger.warning("_record_rule_notice: not recorded: %s", type(exc).__name__)
 
 
 def _rule_email(config, cluster_name, kind, severity, description="", recommended_action="", **extra) -> dict | None:
@@ -132,9 +202,16 @@ def _resolve_emails(items: list[dict]) -> list[dict | None]:
             open_minutes = None
             if trigger.triggered_at is not None and trigger.resolved_at is not None:
                 open_minutes = (trigger.resolved_at - trigger.triggered_at).total_seconds() / 60
-            emails.append(_rule_email(
+            email = _rule_email(
                 config, item.get("cluster_name", ""), "resolve", trigger.severity or config.severity,
                 subject=trigger.subject, open_minutes=open_minutes,
+            )
+            emails.append(_shadow(
+                email, item.get("_outbox_teams"), "rule_resolve", config, getattr(config, "cluster_id", None),
+                trigger.subject, trigger.severity or config.severity, f"{config.name} resolved",
+                trigger.resolved_at or datetime.now(timezone.utc), "_send_resolve_cards",
+                cluster_name=item.get("cluster_name"),
+                open_minutes=round(open_minutes, 1) if open_minutes is not None else None,
             ))
         except Exception as exc:
             logger.warning("_resolve_emails: item failed: %s", exc)
@@ -145,10 +222,15 @@ async def _send_rule_emails(emails: list[dict]) -> None:
     from routes_settings import _config
     from shared.escalation.email_notifier import notify_rule_email
     for email in emails:
+        meta = email.pop("_outbox", None) if isinstance(email, dict) else None
+        report: dict = {}
         try:
-            await notify_rule_email(**email, settings=_config)
+            await notify_rule_email(**email, settings=_config, report=report)
         except Exception as exc:
             logger.warning("_send_rule_emails: item failed: %s", exc)
+            report = {"status": "failed", "error": f"send failed ({type(exc).__name__})"}
+        if meta is not None:
+            _record_rule_notice(meta, outbox.from_report(report))
 
 
 def _queue_rule_emails(emails: list[dict | None]) -> None:
@@ -340,11 +422,12 @@ async def fire_close_wait_alerts(close_wait_by_cluster_id: dict[int, int]) -> No
                 if webhook_url:
                     # Isolated per (config, cluster): one pair's slow/failed
                     # post never blocks or is rolled back by another's.
-                    success = await send_to_teams(webhook_url=webhook_url, card=card)
+                    success, teams_result = await _post_card(webhook_url, card)
                     error_detail = None
                 else:
                     success = False
                     error_detail = "No webhook URL configured (per-alert or agent-level)"
+                    teams_result = outbox.skipped(_NO_WEBHOOK, config_problem=True)
 
                 to_insert.append(KafkaAlertTrigger(
                     alert_config_id=config.id,
@@ -357,9 +440,13 @@ async def fire_close_wait_alerts(close_wait_by_cluster_id: dict[int, int]) -> No
                     resolved_at=None,
                     is_recurrence=is_recurrence,
                 ))
-                emails.append(_rule_email(
-                    config, cluster_names.get(cluster_id, str(cluster_id)), "fire",
-                    config.severity, description, recommended_action,
+                emails.append(_shadow(
+                    _rule_email(
+                        config, cluster_names.get(cluster_id, str(cluster_id)), "fire",
+                        config.severity, description, recommended_action,
+                    ),
+                    teams_result, "rule_fire", config, cluster_id, None, config.severity, description, now,
+                    "fire_close_wait_alerts", cluster_name=cluster_names.get(cluster_id, str(cluster_id)),
                 ))
             except Exception as exc:
                 logger.warning(
@@ -592,11 +679,12 @@ async def _evaluate_broker_reachability() -> None:
                     if webhook_url:
                         # Isolated per (config, cluster, broker): one slow/failed
                         # post never blocks or is rolled back by another's.
-                        success = await send_to_teams(webhook_url=webhook_url, card=card)
+                        success, teams_result = await _post_card(webhook_url, card)
                         error_detail = None
                     else:
                         success = False
                         error_detail = "No webhook URL configured (per-alert or agent-level)"
+                        teams_result = outbox.skipped(_NO_WEBHOOK, config_problem=True)
 
                     to_insert.append(KafkaAlertTrigger(
                         alert_config_id=config.id,
@@ -610,9 +698,13 @@ async def _evaluate_broker_reachability() -> None:
                         resolved_at=None,
                         is_recurrence=is_recurrence,
                     ))
-                    emails.append(_rule_email(
-                        config, cluster_name, "fire", config.severity, description, recommended_action,
-                        subject=subject,
+                    emails.append(_shadow(
+                        _rule_email(
+                            config, cluster_name, "fire", config.severity, description, recommended_action,
+                            subject=subject,
+                        ),
+                        teams_result, "rule_fire", config, cluster_id, subject, config.severity, description, now,
+                        "_evaluate_broker_reachability", cluster_name=cluster_name,
                     ))
                 except Exception as exc:
                     logger.warning(
@@ -951,11 +1043,12 @@ async def _evaluate_broker_thresholds() -> None:
             if webhook_url:
                 # Isolated per (config, cluster, broker): one slow/failed
                 # post never blocks or is rolled back by another's.
-                success = await send_to_teams(webhook_url=webhook_url, card=card)
+                success, teams_result = await _post_card(webhook_url, card)
                 error_detail = None
             else:
                 success = False
                 error_detail = "No webhook URL configured (per-alert or agent-level)"
+                teams_result = outbox.skipped(_NO_WEBHOOK, config_problem=True)
             if trigger is not None:
                 trigger.teams_post_success = success
                 trigger.error_detail = error_detail
@@ -965,10 +1058,15 @@ async def _evaluate_broker_thresholds() -> None:
                     "alert_config_id=%s cluster_id=%s subject=%s: %s",
                     config.id, cluster_id, subject, error_detail or "Teams post failed",
                 )
-            emails.append(_rule_email(
-                config, cluster_names.get(cluster_id, str(cluster_id)),
-                "fire" if trigger is not None else "escalate", tier, description, recommended_action,
-                subject=subject,
+            emails.append(_shadow(
+                _rule_email(
+                    config, cluster_names.get(cluster_id, str(cluster_id)),
+                    "fire" if trigger is not None else "escalate", tier, description, recommended_action,
+                    subject=subject,
+                ),
+                teams_result, "rule_fire" if trigger is not None else "rule_escalate", config, cluster_id,
+                subject, tier, description, now, "_evaluate_broker_thresholds",
+                cluster_name=cluster_names.get(cluster_id, str(cluster_id)),
             ))
         except Exception as exc:
             logger.warning(
@@ -2114,11 +2212,12 @@ async def _evaluate_cluster_metrics() -> None:
             )
             webhook_url = config.webhook_url or _config.get("teams_webhook_url", "")
             if webhook_url:
-                success = await send_to_teams(webhook_url=webhook_url, card=card)
+                success, teams_result = await _post_card(webhook_url, card)
                 error_detail = None
             else:
                 success = False
                 error_detail = "No webhook URL configured (per-alert or agent-level)"
+                teams_result = outbox.skipped(_NO_WEBHOOK, config_problem=True)
             if trigger is not None:
                 trigger.teams_post_success = success
                 trigger.error_detail = error_detail
@@ -2128,10 +2227,15 @@ async def _evaluate_cluster_metrics() -> None:
                     "alert_config_id=%s cluster_id=%s: %s",
                     config.id, cluster_id, error_detail or "Teams post failed",
                 )
-            emails.append(_rule_email(
-                config, cluster_names.get(cluster_id, str(cluster_id)),
-                "fire" if trigger is not None else "escalate", tier, description, recommended_action,
-                subject=subject,
+            emails.append(_shadow(
+                _rule_email(
+                    config, cluster_names.get(cluster_id, str(cluster_id)),
+                    "fire" if trigger is not None else "escalate", tier, description, recommended_action,
+                    subject=subject,
+                ),
+                teams_result, "rule_fire" if trigger is not None else "rule_escalate", config, cluster_id,
+                subject, tier, description, now, "_evaluate_cluster_metrics",
+                cluster_name=cluster_names.get(cluster_id, str(cluster_id)),
             ))
         except Exception as exc:
             logger.warning(
@@ -2535,11 +2639,12 @@ async def _evaluate_cluster_lag() -> None:
             )
             webhook_url = config.webhook_url or _config.get("teams_webhook_url", "")
             if webhook_url:
-                success = await send_to_teams(webhook_url=webhook_url, card=card)
+                success, teams_result = await _post_card(webhook_url, card)
                 error_detail = None
             else:
                 success = False
                 error_detail = "No webhook URL configured (per-alert or agent-level)"
+                teams_result = outbox.skipped(_NO_WEBHOOK, config_problem=True)
             for trigger in new_triggers:
                 trigger.teams_post_success = success
                 trigger.error_detail = error_detail
@@ -2551,8 +2656,11 @@ async def _evaluate_cluster_lag() -> None:
             # The reminder clock restarts on every grouped notice, sent or not,
             # so a failing webhook does not turn reminders into every run.
             _lag_last_card_at[config.id] = now
-            emails.append(_rule_email(
-                config, cluster_name, kind, severity, summary, _LAG_ACTION, offenders=offenders,
+            emails.append(_shadow(
+                _rule_email(config, cluster_name, kind, severity, summary, _LAG_ACTION, offenders=offenders),
+                teams_result, f"rule_{kind}", config, config.cluster_id, None, severity, summary, now,
+                "_evaluate_cluster_lag", cluster_name=cluster_name, offenders=len(offenders),
+                new_triggers=len(new_triggers),
             ))
         except Exception as exc:
             logger.warning("_evaluate_cluster_lag: card for alert_config_id=%s failed: %s", config.id, exc)
@@ -2637,7 +2745,12 @@ async def _send_lag_resolves(
     at _RESOLVE_CARDS_TIMEOUT_SECS in total) and one grouped resolve email
     per rule listing every group cleared. Never raises."""
     emails: list[dict | None] = []
-    cards: list[tuple[str, dict]] = []
+    cards: list[tuple[int, str, dict]] = []
+    # Outbox records: (rule id, email, config, cluster name, was, groups) and
+    # each rule's card result, matched after the posts below.
+    shadows: list[tuple] = []
+    teams_results: dict[int, dict] = {}
+    eval_at = datetime.now(timezone.utc)
     for rule_id, items in cleared.items():
         try:
             config = configs[rule_id]
@@ -2645,16 +2758,24 @@ async def _send_lag_resolves(
             noun = _LAG_NOUNS.get(config.alert_type, "group")
             cluster_name = cluster_names.get(config.cluster_id, str(config.cluster_id))
             was = max((i["was"] for i in items if i["was"] in _TIER_RANK), key=lambda t: _TIER_RANK[t], default=config.severity)
-            emails.append(_rule_email(
+            email = _rule_email(
                 config, cluster_name, "resolve", was,
                 f"{_plural(len(items), noun)} back below their lag tiers.",
                 cleared=[{k: i[k] for k in ("name", "was", "open_minutes")} for i in items],
-            ))
+            )
+            emails.append(email)
+            shadows.append((len(emails) - 1, rule_id, config, cluster_name, was, len(items)))
             card_items = [i for i in items if i["teams_post_success"] is True]
             webhook_url = config.webhook_url or default_webhook_url
+            if not card_items:
+                teams_results[rule_id] = outbox.skipped("no opening card reached Teams")
+            elif not (config.config or {}).get("send_resolve_card", True):
+                teams_results[rule_id] = outbox.skipped("resolve card off for this rule")
+            elif not webhook_url:
+                teams_results[rule_id] = outbox.skipped(_NO_WEBHOOK, config_problem=True)
             if card_items and webhook_url and (config.config or {}).get("send_resolve_card", True):
                 from shared.escalation.notifier import build_lag_card
-                cards.append((webhook_url, build_lag_card(
+                cards.append((rule_id, webhook_url, build_lag_card(
                     "Kafka Analyser", cluster_name, config.alert_type, was,
                     f"{_plural(len(card_items), noun)} back below their lag tiers.",
                     [{"name": i["name"], "was": i["was"]} for i in card_items],
@@ -2664,15 +2785,26 @@ async def _send_lag_resolves(
             logger.warning("_send_lag_resolves: rule %s failed: %s", rule_id, exc)
 
     async def _post_all() -> None:
-        for webhook_url, card in cards:
+        for rule_id, webhook_url, card in cards:
             try:
-                await send_to_teams(webhook_url=webhook_url, card=card)
+                _sent, teams_results[rule_id] = await _post_card(webhook_url, card)
             except Exception as exc:
                 logger.warning("_send_lag_resolves: card failed: %s", exc)
+                teams_results[rule_id] = outbox.failed(f"card failed ({type(exc).__name__})")
     try:
         await asyncio.wait_for(_post_all(), timeout=_RESOLVE_CARDS_TIMEOUT_SECS)
     except asyncio.TimeoutError:
         logger.warning("_send_lag_resolves: stopped after %s s cap", _RESOLVE_CARDS_TIMEOUT_SECS)
     except Exception as exc:
         logger.warning("_send_lag_resolves failed: %s", exc)
+    carded = {rule_id for rule_id, _url, _card in cards}
+    for index, rule_id, config, cluster_name, was, count in shadows:
+        emails[index] = _shadow(
+            emails[index],
+            teams_results.get(rule_id) or outbox.failed(
+                f"not sent or outcome unknown: stopped at the {_RESOLVE_CARDS_TIMEOUT_SECS} s cap"
+                if rule_id in carded else "no card result recorded"),
+            "rule_resolve", config, config.cluster_id, None, was, f"{config.name}: {count} cleared",
+            eval_at, "_send_lag_resolves", cluster_name=cluster_name, cleared=count,
+        )
     _queue_rule_emails(emails)
