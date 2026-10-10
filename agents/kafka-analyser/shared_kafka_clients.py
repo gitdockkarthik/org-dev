@@ -6,8 +6,31 @@ import threading
 import time
 import logging
 from kafka import KafkaAdminClient
+from kafka.errors import KafkaConnectionError
 
 logger = logging.getLogger(__name__)
+
+
+class _FailFastAdminClient(KafkaAdminClient):
+    """KafkaAdminClient whose requests raise once the client is closed.
+
+    kafka-python-ng's _send_request_to_node loops `while not ready(node):
+    poll()` with no exit. Once another thread closes the client
+    (invalidate_client, refresh_all_shared_clients), poll() returns at once
+    and ready() calls wakeup() on the closed socketpair, so the caller spins
+    at 100% CPU logging "Unable to send to wakeup socket!" forever, holding
+    its kafka-io thread and its admin lock. Reproduced 2026-10-10 (about 20k
+    lines/s). Raising instead makes a use-after-close fail once, which every
+    caller already handles (invalidate_client, then a fresh client)."""
+
+    def _send_request_to_node(self, node_id, request, wakeup=True):
+        while True:
+            if getattr(self._client, "_closed", False):
+                raise KafkaConnectionError("KafkaAdminClient was closed while in use")
+            if self._client.ready(node_id):
+                return self._client.send(node_id, request, wakeup)
+            self._client.poll()
+
 
 _clients: dict[str, KafkaAdminClient] = {}
 _locks: dict[str, threading.Lock] = {}
@@ -98,7 +121,7 @@ def get_shared_admin_client(cluster_id: str, cluster_config: dict) -> tuple[Kafk
     with _registry_lock:
         if cluster_id not in _clients:
             security = _security_kwargs(cluster_config)
-            _clients[cluster_id] = KafkaAdminClient(
+            _clients[cluster_id] = _FailFastAdminClient(
                 bootstrap_servers=cluster_config["bootstrap_servers"],
                 request_timeout_ms=15000,
                 # See kafka_process_pool.py's matching AdminClient
@@ -131,7 +154,10 @@ def acquire_admin_lock(cluster_id: str, lock: threading.Lock, timeout: float = 3
     job that shares the same cluster's AdminClient, for as long as the orphaned
     thread takes to finish. This bounds that blocking window and, on failure,
     invalidates the client so the next caller reconnects fresh rather than
-    potentially queuing behind the same stuck lock again.
+    potentially queuing behind the same stuck lock again. That closes the
+    client while the lock holder may still be using it; the holder then
+    fails once with KafkaConnectionError (_FailFastAdminClient) instead of
+    spinning.
 
     Usage: replace `with admin_lock:` with
     `with acquire_admin_lock(cluster_id_or_bootstrap_servers, admin_lock):`
@@ -235,8 +261,12 @@ def refresh_all_shared_clients() -> dict:
     admin_lock -- there's a narrow window between those two steps where
     this function could acquire the same (still-technically-free) lock
     first and discard that client. The caller would then acquire its own
-    already-held reference to the old lock, use the now-closed client, and
-    fail once. Its own exception handler (e.g. tools/real_kafka.py) calls
+    already-held reference to the old lock and use the now-closed client.
+    It fails once, with KafkaConnectionError, only because the client is a
+    _FailFastAdminClient: before that (until 2026-10-10) the stock
+    KafkaAdminClient did not fail here but spun forever at 100% CPU,
+    logging "Unable to send to wakeup socket!" (see _FailFastAdminClient).
+    Its own exception handler (e.g. tools/real_kafka.py) calls
     invalidate_client immediately on that failure, not on a later retry --
     which can itself discard a fresh client a DIFFERENT caller has since
     created in the meantime, costing one extra close/create cycle beyond
