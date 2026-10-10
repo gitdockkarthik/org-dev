@@ -1,8 +1,8 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, Integer, String, Text, UniqueConstraint, ForeignKey, text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, Float, Index, Integer, SmallInteger, String, Text, UniqueConstraint, ForeignKey, text
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -359,3 +359,112 @@ class KafkaWatchdogEvent(Base):
     watchdog: Mapped[str] = mapped_column(Text, nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     details: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+
+# Notification outbox (design 2.1). Step 1 writes only origin='inline' rows:
+# a record of what an inline owner or rule send did (shadow mode), always
+# finished on insert. The CHECK lists below are repeated verbatim in Alembic
+# 0058; keep the two in step.
+_OUTBOX_STATUS_SQL = "('pending', 'standby', 'sending', 'sent', 'failed', 'skipped', 'abandoned', 'superseded')"
+
+
+class KafkaNotificationOutbox(Base):
+    """One row per owner notice or rule notification. Per-channel status for
+    email and Teams; *_last_error holds a short, secret-free error or the
+    reason a channel was skipped. state: delivered (every wanted channel
+    sent), degraded (sent, but a channel failed, was not configured or sent
+    with a warning), failed (nothing sent although something was wanted),
+    suppressed (nothing wanted: every channel skipped by a setting or rule),
+    pending (not finished; outbox-driven rows only)."""
+    __tablename__ = "kafka_notification_outbox"
+    __table_args__ = (
+        UniqueConstraint("dedupe_key", name="uq_kafka_notification_outbox_dedupe_key"),
+        CheckConstraint(
+            "kind IN ('owner_summary', 'owner_watchdog', 'rule_fire', 'rule_escalate', "
+            "'rule_reminder', 'rule_resolve', 'heartbeat', 'deadman')",
+            name="ck_kafka_notification_outbox_kind",
+        ),
+        CheckConstraint("routing IN ('owner', 'rule')", name="ck_kafka_notification_outbox_routing"),
+        CheckConstraint("origin IN ('inline', 'outbox')", name="ck_kafka_notification_outbox_origin"),
+        CheckConstraint(f"email_status IN {_OUTBOX_STATUS_SQL}", name="ck_kafka_notification_outbox_email_status"),
+        CheckConstraint(f"teams_status IN {_OUTBOX_STATUS_SQL}", name="ck_kafka_notification_outbox_teams_status"),
+        CheckConstraint(
+            "state IN ('pending', 'delivered', 'degraded', 'failed', 'suppressed')",
+            name="ck_kafka_notification_outbox_state",
+        ),
+        Index(
+            "ix_kafka_notification_outbox_due", "priority", "next_attempt_at",
+            postgresql_where=text("finished_at IS NULL"),
+        ),
+        Index("ix_kafka_notification_outbox_created_at", "created_at"),
+        Index("ix_kafka_notification_outbox_config_created", "alert_config_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False)  # producing function
+    routing: Mapped[str] = mapped_column(Text, nullable=False)  # owner: email first, Teams fallback; rule: each channel
+    origin: Mapped[str] = mapped_column(Text, nullable=False)  # inline: record of an inline send; outbox: sent by the worker
+    dedupe_key: Mapped[str] = mapped_column(Text, nullable=False)
+    priority: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default=text("2"))
+    alert_config_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # no FK: purges never block
+    cluster_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    trigger_ids: Mapped[list[int] | None] = mapped_column(ARRAY(Integer), nullable=True)
+    depends_on_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    severity: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    email_status: Mapped[str] = mapped_column(Text, nullable=False)
+    teams_status: Mapped[str] = mapped_column(Text, nullable=False)
+    email_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    teams_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    email_last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    teams_last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    email_warning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    email_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    teams_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    email_message_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    claimed_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class KafkaNotificationAttempt(Base):
+    """One row per channel attempt of a kafka_notification_outbox row.
+    attempt_no 0 with outcome 'skipped' records a channel that was not
+    attempted, with the reason in error. outcome NULL means in flight."""
+    __tablename__ = "kafka_notification_attempts"
+    __table_args__ = (
+        CheckConstraint("channel IN ('email', 'teams')", name="ck_kafka_notification_attempts_channel"),
+        CheckConstraint(
+            "outcome IS NULL OR outcome IN ('sent', 'failed_transient', 'failed_config', "
+            "'failed_permanent', 'timeout', 'unknown', 'skipped')",
+            name="ck_kafka_notification_attempts_outcome",
+        ),
+        Index("ix_kafka_notification_attempts_outbox_id", "outbox_id"),
+        Index("ix_kafka_notification_attempts_started_at", "started_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    outbox_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("kafka_notification_outbox.id", ondelete="CASCADE", name="fk_kafka_notification_attempts_outbox_id"),
+        nullable=False,
+    )
+    channel: Mapped[str] = mapped_column(Text, nullable=False)
+    attempt_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    boot_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    phase_reached: Mapped[str | None] = mapped_column(Text, nullable=True)
+    outcome: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    detail: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
