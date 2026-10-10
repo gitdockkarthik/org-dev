@@ -51,6 +51,8 @@ logger = logging.getLogger(__name__)
 # becomes a real source of cross-thread contention, unrelated to actual Kafka I/O
 # time. This is internal library noise, not useful operational signal.
 logging.getLogger("kafka.consumer.fetcher").setLevel(logging.ERROR)
+# kafka-python-ng logs its full config, including sasl_plain_password, at DEBUG when a KafkaAdminClient starts.
+logging.getLogger("kafka.admin.client").setLevel(logging.INFO)
 
 # ── Agent setup ───────────────────────────────────────────────────────────────
 _runner = AgentRunner(
@@ -882,26 +884,21 @@ async def lifespan(app: FastAPI):
             from storage import get_backend as _gwb
             _wclusters = await _gwb().get_clusters(settings.agent_slug)
             _wenabled = [c for c in _wclusters if c.get("enabled") and c.get("bootstrap_servers")]
+            from shared_kafka_clients import warm_up_admin_connection, safe_failure_reason
             for _wc in _wenabled:
                 try:
                     import functools
                     loop = asyncio.get_event_loop()
-                    def _connect(bs):
-                        from kafka import KafkaAdminClient
-                        # api_version_auto_timeout_ms bounds this client's
-                        # own version-probe, set explicitly to the library's
-                        # current default (2000ms) -- not a behavior change.
-                        # See kafka_process_pool.py's AdminClient
-                        # construction for the full reasoning.
-                        a = KafkaAdminClient(
-                            bootstrap_servers=bs, request_timeout_ms=10000,
-                            api_version=(2, 3, 0), api_version_auto_timeout_ms=2000,
-                        )
-                        a.close()
-                    await loop.run_in_executor(None, functools.partial(_connect, _wc["bootstrap_servers"]))
+                    # Same constructor kwargs (security, api_version,
+                    # timeouts) as the shared AdminClient, so a SASL/TLS
+                    # cluster is not probed over plaintext.
+                    await loop.run_in_executor(None, functools.partial(warm_up_admin_connection, _wc))
                     logger.info("Warm-up connection OK for cluster %s", _wc["name"])
                 except Exception as _we:
-                    logger.warning("Warm-up connection failed for %s: %s", _wc.get("name"), _we)
+                    logger.warning(
+                        "Warm-up connection failed for cluster %s: %s",
+                        _wc.get("name"), safe_failure_reason(_we, _wc),
+                    )
         except Exception as _wue:
             logger.warning("Warm-up failed: %s", _wue)
     asyncio.create_task(_warmup_connections())

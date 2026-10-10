@@ -111,6 +111,50 @@ def _security_kwargs(cluster_config: dict) -> dict:
     return security
 
 
+def admin_client_kwargs(cluster_config: dict, request_timeout_ms: int = 15000) -> dict:
+    """KafkaAdminClient constructor kwargs for a cluster: bootstrap servers,
+    timeouts, api_version and the security kwargs from its auth_type and
+    tls_enabled. The one place these are built for main-process admin
+    clients (the shared client and the startup warm-up), so a short-lived
+    client connects exactly the way the shared one does."""
+    return dict(
+        bootstrap_servers=cluster_config["bootstrap_servers"],
+        request_timeout_ms=request_timeout_ms,
+        # See kafka_process_pool.py's matching AdminClient
+        # construction for the full reasoning -- api_version
+        # alone does not skip this client's own probe;
+        # api_version_auto_timeout_ms is the actual bound on it,
+        # set explicitly to the library's current default (2000ms)
+        # -- not a behavior change.
+        api_version=(2, 3, 0),
+        api_version_auto_timeout_ms=2000,
+        **_security_kwargs(cluster_config),
+    )
+
+
+def warm_up_admin_connection(cluster: dict, request_timeout_ms: int = 10000) -> None:
+    """Open and close one short-lived AdminClient for a cluster (a storage
+    row with the decrypted sasl_password), built like the shared client.
+    Blocking -- run it in an executor. Raises on failure; describe the
+    exception with safe_failure_reason(), never by logging it directly."""
+    # RealKafkaCollector defaults a missing mechanism to PLAIN the same way
+    # before its config reaches get_shared_admin_client.
+    cfg = {**cluster, "sasl_mechanism": cluster.get("sasl_mechanism") or "PLAIN"}
+    KafkaAdminClient(**admin_client_kwargs(cfg, request_timeout_ms)).close()
+
+
+def safe_failure_reason(exc: BaseException, cluster: dict, limit: int = 200) -> str:
+    """One-line description of a connection failure for a log line: the
+    exception type and the first line of its message, with the cluster's
+    SASL username and password removed, cut to `limit` characters."""
+    msg = (str(exc).strip().splitlines() or [""])[0]
+    for secret in (cluster.get("sasl_password"), cluster.get("sasl_username")):
+        if secret:
+            msg = msg.replace(str(secret), "***")
+    reason = f"{type(exc).__name__}: {msg}" if msg else type(exc).__name__
+    return reason[:limit]
+
+
 def get_shared_admin_client(cluster_id: str, cluster_config: dict) -> tuple[KafkaAdminClient, threading.Lock]:
     """Return a persistent, shared KafkaAdminClient for this cluster, creating it
     on first use. Returns (client, lock) -- caller MUST acquire the lock before
@@ -120,20 +164,7 @@ def get_shared_admin_client(cluster_id: str, cluster_config: dict) -> tuple[Kafk
     _newly_created_bootstrap = None
     with _registry_lock:
         if cluster_id not in _clients:
-            security = _security_kwargs(cluster_config)
-            _clients[cluster_id] = _FailFastAdminClient(
-                bootstrap_servers=cluster_config["bootstrap_servers"],
-                request_timeout_ms=15000,
-                # See kafka_process_pool.py's matching AdminClient
-                # construction for the full reasoning -- api_version
-                # alone does not skip this client's own probe;
-                # api_version_auto_timeout_ms is the actual bound on it,
-                # set explicitly to the library's current default (2000ms)
-                # -- not a behavior change.
-                api_version=(2, 3, 0),
-                api_version_auto_timeout_ms=2000,
-                **security,
-            )
+            _clients[cluster_id] = _FailFastAdminClient(**admin_client_kwargs(cluster_config))
             _locks[cluster_id] = threading.Lock()
             _bootstrap_by_cluster[cluster_id] = cluster_config["bootstrap_servers"]
             logger.info("Created persistent shared AdminClient for cluster %s", cluster_id)
