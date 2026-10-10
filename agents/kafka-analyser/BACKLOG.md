@@ -1180,6 +1180,47 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Notification outbox, warm-up fix and the plan for Monday (2026-10-10)
+DONE 2026-10-10 (all pushed, deployed 07:36 UTC, agent healthy): admin client
+busy loop fixed (a6d5ff3); notification outbox step 1 in shadow mode (6c09b61,
+44515bc; Alembic 0058 applied on the live database 07:22 UTC after a targeted
+backup in /home/backups/manual, single head, the alert chat told); startup
+warm-up now builds its client like the shared one, so cluster 4 (sasl_scram,
+TLS) connects at every restart instead of logging "socket disconnected" and
+UnrecognizedBrokerVersion (6fa71ab); kafka.admin.client pinned at INFO so the
+SASL password is never logged at DEBUG. Verified after the 07:36 restart:
+Warm-up OK for all four clusters, 0 kafka.conn errors, 0 wakeup lines, 0% CPU.
+OUTBOX DESIGN (approved 2026-10-10, no new infra): durable outbox written in the
+same transaction as the trigger; delivery worker as a DB-only scheduled job
+(FOR UPDATE SKIP LOCKED, leases, own SMTP thread pool, backoff, max age,
+per-channel attempts with the exact error); owner routing email first with a
+Teams fallback; known failures retried and never double-sent, an unknown
+outcome resent once and labelled; watchdog notices survive os._exit(1) through a
+raw transaction and a spool file; dead-man checks inside the agent and a daily
+Teams heartbeat; retention in the daily purge job; portal delivery log; rollout
+off, shadow, on, owner notices first, then rule alerts one evaluator at a time;
+evaluators also run when only email is enabled (decided). The 03:27 UTC
+fallback of 10 Oct stays unproven (its log was rotated out by the wakeup flood).
+MONDAY, IN ORDER: (1) status check, the weekend's hourly emails, the outbox
+rows (each hour should be delivered by email; any fallback now has a recorded
+reason), flood and CPU soak after a day; (2) outbox step 2, the delivery worker
+and owner notices in mode on, with the failure-injection tests; (3) the SLO
+rule (warning below 75, critical below 60, one per cluster, confirmed over two
+hourly readings, four disabled default rules); (4) the batch test plan and run
+on both channels with only Karthikeyan's address, never touching rules 3 and 5,
+restoring each rule's original state, end state rule 5 enabled and the rest
+disabled; (5) lag follow-ups (stale-group report, growth alerting needing a lag
+history table and its own Alembic revision, tell the alert chat), the Teams
+runbook, the documents (Word files for Confluence under Kafka Analyser >
+Notifications), the Excel inventory, the walkthrough (Wednesday).
+SMALLER OPEN ITEMS: kafka_process_pool.py keeps its own copy of the security
+logic (_build_security_kwargs); the full Alembic chain fails at 0004 on an empty
+database (operative_users missing; the alert chat plans a scratch-database test);
+the log saver should be re-checked now that logs are readable; consider a
+larger container log retention; the environment split of recipients and Teams
+channels; a daily Teams heartbeat (part of the outbox design); stale stub checks
+listed in earlier entries.
+
 ### Admin client busy loop and unreadable logs: fixed (2026-10-10)
 FOUND 2026-10-10: kafka.client "Unable to send to wakeup socket!" made about
 14,000 log lines a second (140,767 in 30 s; 9.75 million in the 9 Oct saved
