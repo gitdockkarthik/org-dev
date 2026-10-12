@@ -21,6 +21,7 @@ from routes_slo import router as slo_router
 from routes_reports import router as reports_router
 from routes_settings import load_config_from_db, router as settings_router
 from routes_alerts import router as alerts_router
+from routes_notifications import router as notifications_router
 from storage import init_storage
 from kafka_store import save_to_db, restore_from_db, save_brokers, save_topics_structure, save_topics_metrics, save_groups
 from tools.kafka_tools import (
@@ -953,6 +954,7 @@ app.include_router(slo_router)
 app.include_router(reports_router)
 app.include_router(settings_router)
 app.include_router(alerts_router)
+app.include_router(notifications_router)
 
 
 # ── Job Management Endpoints ──────────────────────────────────────────────────
