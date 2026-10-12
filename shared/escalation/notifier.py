@@ -42,6 +42,7 @@ CATEGORY_LABEL = {
     "cluster.sr_soft_deleted": "Schema Registry Soft-Deleted Subjects",
     "cluster.consumer_lag": "Consumer Group Lag",
     "cluster.connector_lag": "Connector Lag",
+    "cluster.slo_compliance": "SLO Compliance",
     "broker.cpu_pct": "Broker CPU %",
     "broker.heap_pct": "Broker Heap %",
 }

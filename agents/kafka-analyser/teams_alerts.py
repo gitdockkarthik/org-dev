@@ -804,12 +804,13 @@ def _threshold_tier(tier_config: dict, value: float) -> str | None:
     return None
 
 
-def _threshold_tier_below(tier_config: dict, value: float) -> str | None:
+def _threshold_tier_below(tier_config: dict, value: float, strict: bool = False) -> str | None:
     """For "direction": "below" rules (descending tiers): the most severe
-    configured tier whose threshold the value is at or below, else None."""
+    configured tier whose threshold the value is at or below (strictly below
+    with strict=True), else None."""
     for tier in reversed(_THRESHOLD_TIERS):
         threshold = tier_config.get(tier)
-        if threshold is not None and value <= float(threshold):
+        if threshold is not None and (value < float(threshold) if strict else value <= float(threshold)):
             return tier
     return None
 
@@ -1160,7 +1161,7 @@ CLUSTER_METRIC_TYPES = (
     "cluster.urp_total", "cluster.rf_below_min", "cluster.leader_skew", "cluster.msg_rate_in",
     "cluster.data_gb_max", "cluster.data_spread_pct", "cluster.zk_ensemble",
     "cluster.connect_failed_connectors", "cluster.connect_failed_tasks", "cluster.connect_workers_down",
-    "cluster.sr_nodes_down", "cluster.sr_soft_deleted",
+    "cluster.sr_nodes_down", "cluster.sr_soft_deleted", "cluster.slo_compliance",
 )
 _CLUSTER_METRIC_SUBJECT = "cluster"
 # A cluster is evaluated only if its topic-structure job succeeded this recently.
@@ -1216,6 +1217,22 @@ _MSG_RATE_RUN_SQL = text(
 # Last inflow run seen per (config, cluster, subject): a msg_rate_in breach
 # counts only on a new run (in-memory, resets on restart).
 _msg_rate_last_run: dict[tuple[int, int, str], datetime] = {}
+# cluster.slo_compliance ("direction": "below"): overall_compliance_pct of the
+# latest kafka_slo_compliance row per cluster (one row per cluster per
+# hour_bucket, upserted by compute_slo_compliance), rounded to 1 decimal.
+# Fires strictly BELOW a tier, so a value at or above the warning tier
+# resolves. Own guard: a cluster is ignored if it has no row, its latest
+# hour_bucket is older than _SLO_MAX_AGE, or that row's
+# overall_compliance_pct is NULL. A breach counts only on a new hour_bucket,
+# like msg_rate_in's new run.
+_SLO_COMPLIANCE_ALERT_TYPE = "cluster.slo_compliance"
+_SLO_MAX_AGE = timedelta(hours=3)
+_SLO_LATEST_SQL = text(
+    "SELECT DISTINCT ON (cluster_id) cluster_id, hour_bucket, overall_compliance_pct "
+    "FROM kafka_slo_compliance WHERE cluster_id IN :cids ORDER BY cluster_id, hour_bucket DESC"
+).bindparams(bindparam("cids", expanding=True))
+# Last hour_bucket seen per (config, cluster, subject) (in-memory, resets on restart).
+_slo_last_hour: dict[tuple[int, int, str], datetime] = {}
 # cluster.data_gb_max (largest broker's data, GB) and cluster.data_spread_pct
 # ((max - min) / max * 100), from kafka_broker_metrics.data_gb_true (one
 # upserted row per broker, collect_broker_health). Own guard: a cluster is
@@ -1323,6 +1340,7 @@ _CLUSTER_METRIC_ACTIONS = {
     "cluster.connect_workers_down": "Check the Connect worker nodes with the Kafka team.",
     "cluster.sr_nodes_down": "Check the Schema Registry nodes.",
     "cluster.sr_soft_deleted": "Check the soft-deleted subjects in Schema Registry.",
+    "cluster.slo_compliance": "Check the SLI/SLO tab to see which component is below target.",
 }
 
 
@@ -1536,7 +1554,10 @@ async def _evaluate_cluster_metrics() -> None:
     with an empty Connect URL. cluster.sr_nodes_down / cluster.sr_soft_deleted
     probe Schema Registry live, after the read session has closed, and
     ignore clusters with an empty URL; soft-deleted also ignores a cluster
-    whose subject lists cannot be read."""
+    whose subject lists cannot be read. cluster.slo_compliance fires when
+    the latest hourly overall compliance is strictly BELOW a tier, with its
+    own guard (row present, at most _SLO_MAX_AGE old, value not NULL), and
+    counts a breach only once per new hour_bucket."""
     if SessionLocal is None:
         logger.info("evaluate_alerts: cluster metrics skipped: database not available")
         return
@@ -1599,6 +1620,7 @@ async def _evaluate_cluster_metrics() -> None:
                 and cfg.alert_type not in (
                     _LEADER_SKEW_ALERT_TYPE, _MSG_RATE_IN_ALERT_TYPE, *_DATA_GB_ALERT_TYPES, _ZK_ENSEMBLE_ALERT_TYPE,
                     *_CONNECT_SNAPSHOT_ALERT_TYPES, _CONNECT_WORKERS_ALERT_TYPE, *_SR_ALERT_TYPES,
+                    _SLO_COMPLIANCE_ALERT_TYPE,
                 )
             }
             fresh_cluster_ids: set[int] = set()
@@ -1695,6 +1717,36 @@ async def _evaluate_cluster_metrics() -> None:
                 for cfg in configs:
                     if cfg.alert_type == _MSG_RATE_IN_ALERT_TYPE and cfg.cluster_id in rate_by_cluster:
                         values[cfg.id] = rate_by_cluster[cfg.cluster_id]
+
+            slo_cluster_ids = {
+                cfg.cluster_id for cfg in configs
+                if cfg.alert_type == _SLO_COMPLIANCE_ALERT_TYPE and cfg.cluster_id is not None
+            }
+            # cluster_id -> (hour_bucket, value) of a latest row passing the guard
+            slo_by_cluster: dict[int, tuple[datetime, float]] = {}
+            slo_ignored: dict[int, str] = {}  # cluster_id -> reason
+            if slo_cluster_ids:
+                slo_rows = {
+                    r.cluster_id: r
+                    for r in (await session.execute(_SLO_LATEST_SQL, {"cids": sorted(slo_cluster_ids)})).all()
+                }
+                slo_now = datetime.now(timezone.utc)
+                for cid in sorted(slo_cluster_ids):
+                    r = slo_rows.get(cid)
+                    if r is None or r.hour_bucket is None:
+                        slo_ignored[cid] = "no kafka_slo_compliance rows"
+                    elif slo_now - r.hour_bucket > _SLO_MAX_AGE:
+                        slo_ignored[cid] = (
+                            f"latest hour_bucket {r.hour_bucket.isoformat()} is older than "
+                            f"{int(_SLO_MAX_AGE.total_seconds() // 3600)} h"
+                        )
+                    elif r.overall_compliance_pct is None:
+                        slo_ignored[cid] = f"overall_compliance_pct is NULL for hour_bucket {r.hour_bucket.isoformat()}"
+                    else:
+                        slo_by_cluster[cid] = (r.hour_bucket, round(float(r.overall_compliance_pct), 1))
+                for cfg in configs:
+                    if cfg.alert_type == _SLO_COMPLIANCE_ALERT_TYPE and cfg.cluster_id in slo_by_cluster:
+                        values[cfg.id] = slo_by_cluster[cfg.cluster_id][1]
 
             data_cluster_ids = {
                 cfg.cluster_id for cfg in configs
@@ -2004,6 +2056,9 @@ async def _evaluate_cluster_metrics() -> None:
         elif config.alert_type == _SR_SOFT_DELETED_ALERT_TYPE:
             if cluster_id not in sr_soft_by_cluster:
                 continue  # reason logged from sr_soft_ignored
+        elif config.alert_type == _SLO_COMPLIANCE_ALERT_TYPE:
+            if cluster_id not in slo_by_cluster:
+                continue  # reason logged from slo_ignored
         elif cluster_id not in fresh_cluster_ids:
             stale_cluster_ids.add(cluster_id)
             continue
@@ -2015,12 +2070,17 @@ async def _evaluate_cluster_metrics() -> None:
             rules_evaluated += 1
             tier_config = config.config or {}
             key = (config.id, cluster_id, subject)
-            # msg_rate_in: below-direction tiers, and a breach counts only on a new run.
+            # msg_rate_in / slo_compliance: below-direction tiers, and a breach
+            # counts only on a new run / hour_bucket.
             new_run = True
             if config.alert_type == _MSG_RATE_IN_ALERT_TYPE:
                 tier = _threshold_tier_below(tier_config, value)
                 new_run = _msg_rate_last_run.get(key) != rate_runs[cluster_id][0]
                 _msg_rate_last_run[key] = rate_runs[cluster_id][0]
+            elif config.alert_type == _SLO_COMPLIANCE_ALERT_TYPE:
+                tier = _threshold_tier_below(tier_config, value, strict=True)
+                new_run = _slo_last_hour.get(key) != slo_by_cluster[cluster_id][0]
+                _slo_last_hour[key] = slo_by_cluster[cluster_id][0]
             else:
                 tier = _threshold_tier(tier_config, value)
             open_trigger = open_triggers.get(key)
@@ -2069,6 +2129,8 @@ async def _evaluate_cluster_metrics() -> None:
                     f"Cluster inflow is {value} msgs/sec over the last "
                     f"{rate_runs[cluster_id][1] / 60:.1f} minutes"
                 )
+            elif config.alert_type == _SLO_COMPLIANCE_ALERT_TYPE:
+                description = f"SLO compliance is {value}% for the latest hour"
             else:
                 description = (
                     f"{value} topics have replication factor below {tier_config['min_rf']} "
@@ -2176,6 +2238,11 @@ async def _evaluate_cluster_metrics() -> None:
         logger.info(
             "evaluate_alerts: Schema Registry soft-deleted subjects ignored clusters: %s",
             "; ".join(f"{cid}: {reason}" for cid, reason in sorted(sr_soft_ignored.items())),
+        )
+    if slo_ignored:
+        logger.info(
+            "evaluate_alerts: SLO compliance ignored clusters: %s",
+            "; ".join(f"{cid}: {reason}" for cid, reason in sorted(slo_ignored.items())),
         )
     if skew_skipped_cluster_ids:
         logger.info(
