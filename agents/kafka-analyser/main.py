@@ -53,6 +53,9 @@ logger = logging.getLogger(__name__)
 logging.getLogger("kafka.consumer.fetcher").setLevel(logging.ERROR)
 # kafka-python-ng logs its full config, including sasl_plain_password, at DEBUG when a KafkaAdminClient starts.
 logging.getLogger("kafka.admin.client").setLevel(logging.INFO)
+# httpx logs the full request URL at INFO, and a Teams webhook URL contains a signature that lets anyone post to the channel.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 # ── Agent setup ───────────────────────────────────────────────────────────────
 _runner = AgentRunner(
@@ -873,6 +876,28 @@ async def lifespan(app: FastAPI):
                 _trigger_purge_job_id, "43 4 * * *", enabled=True, timeout_secs=60
             )
             logger.info("Created schedule for %s: daily (04:43 UTC)", _trigger_purge_job_id)
+
+    # Register the notification outbox delivery worker -- DB only, every minute.
+    # It delivers only rows in state pending; in shadow mode every row is an
+    # inline record finished on insert, so a run finds nothing to do.
+    import outbox_worker as _outbox_worker
+    _jobs_module.register_job(
+        _outbox_worker.JOB_ID,
+        "Notification Delivery",
+        "Delivers pending notification outbox rows (email and Teams) with retries; idle in shadow mode",
+        _outbox_worker.deliver_due_notifications,
+        default_timeout_secs=_outbox_worker.JOB_TIMEOUT_SECS,
+    )
+    async with SessionLocal() as _sess:
+        existing = await _sess.execute(
+            _sel(KafkaJobSchedule).where(KafkaJobSchedule.job_id == _outbox_worker.JOB_ID)
+        )
+        if not existing.scalar_one_or_none():
+            await _jobs_module.create_schedule(
+                _outbox_worker.JOB_ID, _outbox_worker.JOB_CRON, enabled=True,
+                timeout_secs=_outbox_worker.JOB_TIMEOUT_SECS,
+            )
+            logger.info("Created schedule for %s: every minute", _outbox_worker.JOB_ID)
 
     count = await _jobs_module.load_schedules()
     logger.info("Job scheduler: loaded %d schedule(s)", count)
