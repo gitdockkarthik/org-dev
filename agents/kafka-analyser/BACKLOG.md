@@ -1180,6 +1180,35 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Notification delivery log and open items (2026-10-12)
+DONE 2026-10-12 (b3c25ed, 301e118; deployed 09:15 UTC, checked in the browser): a
+read-only delivery log over the outbox. Backend: GET /alerts/notifications (since_hours
+default 24, max 168; kind, state, channel, channel_status, cluster_id, alert_config_id;
+limit default 25, max 200; offset; total_count), GET /alerts/notifications/{id} (with the
+attempt rows) and GET /alerts/notifications/summary; dashboard pool, 5 s statement
+timeout (503 on timeout), only named columns (never the payload body, addresses, webhook
+URLs or references, message ids, the dedupe key, the email warning or an attempt's
+detail); tested on a scratch Postgres with a marker leak check over 59 responses.
+Portal: a Delivery log card after Recent Triggers on the Alerts page with a summary line,
+filters (Period 24 h, 3 days, 7 days; Kind; Status; Channel; Channel status; Cluster),
+paging by offset, a row detail panel with attempts, origin shown as worker or inline,
+red for failed or abandoned and amber for degraded. Live on 2026-10-12: 35 notifications
+in 24 hours, all delivered by email, 0 failed, nothing waiting.
+OPEN: the daily heartbeat is not built, so the summary shows "heartbeat: not enabled yet";
+rule alert notices still go inline (the outbox carries owner notices; rule alerts are the
+next step of the outbox design, one evaluator at a time) so the log lists only owner
+notices and rule notices written in shadow mode; kafka_job_runs has about 831,000 rows,
+about 18,700 a day and no index beyond its primary key (the summary searches the newest
+50,000 ids), and no purge was found for it (check); the title of a worker row without
+email is the kind name (the card title is not stored separately); the log shows outbox
+data only, not firings without a notice (see Recent Triggers).
+NEXT: the audit trail for alert rule changes (create, modify, delete, who and when,
+kept long; who needs the backend to add an X-User-Email header when it proxies to the
+agent, accepted only from the backend; a new table and Alembic 0060 (0059 is the alert
+chat's); no secrets in the audit; tell the alert chat and check the portal and the alert
+applications are not disturbed); the batch test (Tuesday forenoon), documentation
+(afternoon), the SLO and lag follow-ups already recorded.
+
 ### SLO rule, owner outbox on, graceful stop, memory and retention findings (2026-10-12)
 DONE 2026-10-12 (all pushed, deployed 08:03 UTC, agent healthy):
 cluster.slo_compliance (63bf24b, fdc5321): overall SLO compliance percentage of
