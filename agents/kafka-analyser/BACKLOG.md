@@ -1180,6 +1180,55 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### SLO rule, owner outbox on, graceful stop, memory and retention findings (2026-10-12)
+DONE 2026-10-12 (all pushed, deployed 08:03 UTC, agent healthy):
+cluster.slo_compliance (63bf24b, fdc5321): overall SLO compliance percentage of
+the latest kafka_slo_compliance row per cluster, firing BELOW a tier (warning 75,
+critical 60 as placeholders, editable), strict comparison (75.0 is not a breach),
+two distinct hourly readings needed (about two hours), ignored if the latest row
+is older than 3 hours or NULL; four DISABLED default rules, ids 87-90 (clusters 4,
+8, 9, 10). hour_bucket is the hour the job ran in (the 10:00 row covers 09:00-10:00)
+and the dashboard's headline number is computed live and rounded, so it can differ
+slightly from the stored value the rule reads. Today's compliance is about 83% on
+clusters 8, 9, 10 (lag compliance 0%) and 100% on cluster 4, so none would fire.
+OUTBOX: step 2a (the delivery worker, 6548b73) and step 2b-1 (owner notices through
+the outbox, the durable watchdog path, startup and dead-man checks, a182a93 etc.)
+are deployed; notification_outbox_mode is ON since 06:50 UTC; the hourly summaries
+since 06:54 UTC (rows 63, 64, 65) went through the worker, delivered by email with
+Teams skipped, 1 attempt each, 0 failed worker runs. Switching back is one POST to
+/settings with {"notification_outbox_mode":"shadow"} (the route is POST, not PUT; a
+partial body only changes the keys sent). The failure paths are proven by tests only
+(not forced in production).
+GRACEFUL STOP (b02cb13): the Dockerfile CMD now uses exec so uvicorn receives
+SIGTERM, stop_grace_period 30 s; docker compose restart takes about 2 s; the
+lifespan writes a clean_shutdown marker (watchdog table) and the startup check
+treats it as a normal restart; verified on the 08:03 UTC deploy (marker 08:03:40, no
+startup notice). Process count in the summary is now 7. The same sh -c pattern was in
+other agents' Dockerfiles (alert-analyser fixed by its chat; backend, cur-analyser,
+infra-health, agent-template, mock-agent remain). Host stall watchdog restarts are
+now graceful when the loop is alive (marker written, no notice).
+MEMORY (965801e): container limit raised 2g to 4g; the old cgroup's max counter
+reached 203,423 with about 380 MB in swap; the main process is flat at about 490 MB
+(no leak); the six pool workers, re-forked at every CLOSE_WAIT recycle (about every
+10 minutes before; 1 in 31 minutes after the recreate), carry the weight; after the
+recreate 1.0 GB, swap 0, max counter 0. Recheck over a busy period.
+RETENTION (no change made): the retention jobs exist and work (snapshots 2 h, hourly
+rollup 7 days then daily plus a 30-day backstop, connector snapshots 30 days); the
+daily rollup has none (grows about 14 MB a day). Dead rows are small; the two big
+unique indexes are heavily used (71M and 60M scans). Size is topic count times
+retention. Options if wanted: drop two rarely used indexes (ix_topic_message_rate_
+cluster_topic_time 236 MB, ix_topic_rate_daily_rollup_cluster_time 193 MB, about 29
+and 23 scans) and add a 400-day retention to the daily rollup.
+OPEN: security: docker-compose.yml has a hard-coded UAP_AGENT_KEY for kafka-analyser
+(line about 373); move to an environment variable and rotate. Clean-up: seven older
+evaluator stubs fail because their fake Teams sender predates the outbox report
+argument; eight form stubs have stale type-list or above-hint checks. Hardening:
+other agents log URLs that could carry credentials at startup (cache, graph, vector).
+NEXT: the notification delivery log (backend, then portal); the audit trail for
+alert rule changes (needs who: the backend would add an X-User-Email header when it
+proxies, accepted only from the backend, a migration and 0060); batch test session
+(Tuesday forenoon), documentation (afternoon).
+
 ### Notification outbox, warm-up fix and the plan for Monday (2026-10-10)
 DONE 2026-10-10 (all pushed, deployed 07:36 UTC, agent healthy): admin client
 busy loop fixed (a6d5ff3); notification outbox step 1 in shadow mode (6c09b61,
