@@ -2366,6 +2366,187 @@ async def _post_watchdog_notice(
         logger.warning("%s: owner notice failed: %s", source, _notify_exc)
 
 
+# Outbox mode "on" (outbox_worker.py). A watchdog notice must be durable
+# before os._exit(1): its event row and outbox row are written in one raw
+# transaction, then it is sent inline within what is left of the 5 s cap.
+_WATCHDOG_NOTICE_BUDGET_SECS = 4.5
+_SUMMARY_GATHER_TIMEOUT_SECS = 8
+_OUTBOX_WORKER_STALL_SECS = 600
+_OUTBOX_WORKER_STALL_NOTICE_SECS = 3600
+_last_worker_stall_notice_at: float | None = None
+
+
+async def _watchdog_notice_and_event(severity: str, description: str, category: str, source: str,
+                                     event: tuple) -> None:
+    """A watchdog's owner notice and its kafka_watchdog_events row (event =
+    (watchdog, reason, details)), under the caller's 5 s cap just before
+    os._exit(1). Outbox mode shadow/off: the inline notice and the event row,
+    concurrently, as before. Mode on: _watchdog_notice_durable. Never raises."""
+    import outbox
+    try:
+        if not outbox.owner_via_outbox():
+            await asyncio.gather(
+                _post_watchdog_notice(severity, description, category=category, source=source),
+                _record_watchdog_event(*event),
+                return_exceptions=True,
+            )
+            return
+        await _watchdog_notice_durable(severity, description, category, source, event)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("%s: owner notice failed: %s", source, type(exc).__name__)
+
+
+async def _watchdog_notice_durable(severity: str, description: str, category: str, source: str,
+                                   event: tuple) -> None:
+    """Mode on: ONE raw transaction writes the event row and the owner outbox
+    row, claimed by this boot; the notice is then sent inline in the time left
+    (email capped as before so the Teams fallback still fits). If that write
+    fails (database down), the notice is sent inline as before and appended to
+    the spool file, which the next startup ingests."""
+    import outbox
+    import outbox_worker
+    from routes_settings import _config
+
+    t0 = time.monotonic()
+    email, card = outbox_worker.owner_content(severity, category, description)
+    dedupe_key = f"owner_watchdog:{source}:{outbox.BOOT_ID}"
+    try:
+        row_id, attempts = await outbox_worker.insert_claimed_with_event(
+            event, dedupe_key, email=email, teams_card=card, severity=severity, source=source,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("%s: notice and event not written (%s); sending inline and spooling",
+                       source, outbox._exc_text(exc))
+        from shared.escalation.email_notifier import (
+            notify_owner, owner_email_configured, owner_teams_configured, owner_unconfigured_report,
+        )
+        channel, ok, report = None, False, {}
+        if owner_email_configured(_config) or owner_teams_configured(_config):
+            remaining = _WATCHDOG_NOTICE_BUDGET_SECS - (time.monotonic() - t0) - 0.3
+            try:
+                channel, ok = await asyncio.wait_for(notify_owner(
+                    email["subject"], email["text"], email["html"], card,
+                    config=_config, email_timeout=_OWNER_EMAIL_TIMEOUT_WATCHDOG_SECS, report=report,
+                ), timeout=max(0.1, remaining))
+            except asyncio.TimeoutError:
+                pass
+        else:
+            report = owner_unconfigured_report(_config)
+        _log_owner_notice(category, channel, ok, report)
+        outbox_worker.append_spool(outbox_worker.spool_entry(
+            dedupe_key, source, severity, email["subject"], event, report,
+        ))
+        return
+    if row_id is None:
+        return
+    remaining = _WATCHDOG_NOTICE_BUDGET_SECS - (time.monotonic() - t0)
+    done = await outbox_worker.send_claimed(row_id, attempts, remaining, email_cap=_OWNER_EMAIL_TIMEOUT_WATCHDOG_SECS)
+    logger.info("owner notice (%s): outbox row %s %s", category, row_id,
+                "sent before the restart" if done else "not finished; the next boot completes it")
+
+
+async def _enqueue_health_summary(process_count: int) -> bool | None:
+    """Mode on: the health summary -- or, if gathering fails or times out, a
+    "Health summary could not be built" notice -- becomes one owner outbox
+    row sent by the worker. The next card's window starts when the row is
+    enqueued. If the row cannot be written, the notice is sent inline.
+    Returns whether it reports an issue (drives the 10-minute follow-up), or
+    None on an unexpected failure."""
+    global _health_card_window_start
+    import outbox
+    import outbox_worker
+    from datetime import datetime, timezone
+    try:
+        from routes_settings import _config
+        from shared.escalation.notifier import build_health_summary_card, health_card_has_issue
+        from shared.escalation.email_notifier import build_health_summary_email, notify_owner
+
+        gathered, reason = None, None
+        try:
+            gathered = await asyncio.wait_for(_gather_health_summary(), timeout=_SUMMARY_GATHER_TIMEOUT_SECS)
+            if gathered is None:
+                reason = "no database configured"
+        except asyncio.TimeoutError:
+            reason = f"gathering timed out after {_SUMMARY_GATHER_TIMEOUT_SECS}s"
+        except Exception as exc:  # noqa: BLE001
+            reason = (outbox.clean_error(f"{type(exc).__name__}: {exc}") or type(exc).__name__)[:200]
+        if gathered is not None:
+            now, health_status, rows = gathered
+            card = build_health_summary_card("Kafka Analyser", process_count, health_status, rows)
+            subject, text_body, html_body = build_health_summary_email(
+                "Kafka Analyser", process_count, health_status, rows, now=now,
+            )
+            email = {"subject": subject, "text": text_body, "html": html_body}
+            has_issue = health_card_has_issue(health_status, rows)
+        else:
+            now = datetime.now(timezone.utc)
+            email, card = outbox_worker.owner_content(
+                "warning", "health_summary", f"Health summary could not be built: {reason}",
+                subject="[ISSUE] Kafka Analyser health summary could not be built",
+            )
+            has_issue = True
+        try:
+            row_id = await outbox_worker.enqueue(
+                "owner_summary", "owner", f"owner_summary:{now:%Y-%m-%dT%H:%M}", email=email, teams_card=card,
+                source="_send_health_summary", payload={"process_count": process_count},
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("_send_health_summary: not enqueued (%s); sending inline", outbox._exc_text(exc))
+            report: dict = {}
+            channel, sent = await notify_owner(
+                email["subject"], email["text"], email["html"], card,
+                config=_config, email_timeout=_OWNER_EMAIL_TIMEOUT_SUMMARY_SECS, report=report,
+            )
+            _log_owner_notice("health summary", channel, sent, report)
+            if sent:
+                _health_card_window_start = now.timestamp()
+            return has_issue
+        _health_card_window_start = now.timestamp()
+        logger.info("owner notice (health summary): enqueued as outbox row %s%s", row_id,
+                    f" (could not be built: {reason})" if reason else "")
+        return has_issue
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("_send_health_summary failed: %s", exc)
+        return None
+
+
+async def _check_outbox_worker_stalled() -> None:
+    """Mode on: if the outbox worker has not completed a run for over 10 min,
+    log CRITICAL and send one DIRECT owner notice per hour, bypassing the
+    outbox (which is what is stuck). Never raises."""
+    global _last_worker_stall_notice_at
+    try:
+        import outbox
+        import outbox_worker
+        if not outbox.owner_via_outbox():
+            return
+        age = outbox_worker.last_success_age()
+        if age <= _OUTBOX_WORKER_STALL_SECS:
+            return
+        logger.critical("outbox worker stalled: no completed delivery run for %.0f min", age / 60)
+        now = time.time()
+        if _last_worker_stall_notice_at is not None and now - _last_worker_stall_notice_at < _OUTBOX_WORKER_STALL_NOTICE_SECS:
+            return
+        _last_worker_stall_notice_at = now
+        from routes_settings import _config
+        from shared.escalation.email_notifier import notify_owner
+        email, card = outbox_worker.owner_content(
+            "critical", "notification_delivery",
+            f"The notification delivery worker has not completed a run for {age / 60:.0f} min, so notices "
+            "queued in the outbox are not being sent. This notice bypasses the outbox. Check the agent log "
+            "for 'outbox worker'.",
+            subject="[ISSUE] Kafka Analyser notification delivery stalled",
+        )
+        report: dict = {}
+        channel, ok = await asyncio.wait_for(notify_owner(
+            email["subject"], email["text"], email["html"], card,
+            config=_config, email_timeout=_OWNER_EMAIL_TIMEOUT_SUMMARY_SECS, report=report,
+        ), timeout=15)
+        _log_owner_notice("outbox worker stalled", channel, ok, report)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("outbox worker stall check failed: %s", type(exc).__name__)
+
+
 def _current_process_count() -> int:
     """Same /proc count check_process_count_watchdog uses."""
     import os as _os
@@ -2535,8 +2716,12 @@ async def _send_health_summary(process_count: int) -> bool | None:
     table card. Best-effort throughout -- never allowed to raise, since
     this must never affect the caller's own timing/exit behavior. Returns
     whether the summary had anything red (health_card_has_issue), or None
-    if nothing was sent."""
+    if nothing was sent. In outbox mode "on" the summary is enqueued instead
+    (_enqueue_health_summary)."""
     global _health_card_window_start
+    import outbox
+    if outbox.owner_via_outbox():
+        return await _enqueue_health_summary(process_count)
     try:
         from routes_settings import _config
         from shared.escalation.notifier import build_health_summary_card, health_card_has_issue
@@ -2650,11 +2835,14 @@ async def check_process_count_watchdog() -> dict:
         # trouble (a likely trigger condition) makes it most needed.
         try:
             await asyncio.wait_for(
-                _post_watchdog_notice(
+                _watchdog_notice_and_event(
                     "critical",
                     f"Process count {count} exceeded the safety threshold of {PROCESS_COUNT_THRESHOLD} -- "
                     "forcing an immediate restart. No action needed, Docker will bring the container "
                     "back up automatically. If this recurs frequently, investigate.",
+                    "process_watchdog", "check_process_count_watchdog",
+                    ("process_count", "process_count",
+                     {"process_count": count, "threshold": PROCESS_COUNT_THRESHOLD}),
                 ),
                 timeout=5,
             )
@@ -2662,6 +2850,8 @@ async def check_process_count_watchdog() -> dict:
             pass
         finally:
             _os._exit(1)
+
+    await _check_outbox_worker_stalled()
 
     now = _time.time()
     status_interval_minutes = (
@@ -2845,30 +3035,23 @@ async def check_data_freshness_watchdog() -> dict:
             _reason = "+".join(
                 r for r, hit in (("stale_data", stale_clusters), ("stuck_paused", stuck_paused_clusters)) if hit
             )
-            # Owner notice and event record run concurrently under the same
-            # 5-second cap, so recording adds no delay before the restart.
+            # Owner notice and event record under the same 5-second cap
+            # (_watchdog_notice_and_event), so recording adds no delay before
+            # the restart.
             await asyncio.wait_for(
-                asyncio.gather(
-                    _post_watchdog_notice(
-                        "critical",
-                        f"Data freshness check failed for {len(stale_clusters)} cluster(s): "
-                        f"{stale_clusters} -- broker metrics have gone stale despite active "
-                        "dispatch, indicating a stale worker-pool client. Forcing an immediate "
-                        "restart. No action needed, Docker will bring the container back up "
-                        "automatically. If this recurs frequently, investigate.",
-                        category="data_freshness_watchdog",
-                        source="check_data_freshness_watchdog",
-                    ),
-                    _record_watchdog_event(
-                        "data_freshness",
-                        _reason,
-                        {
-                            "stale_clusters": stale_clusters,
-                            "stuck_paused_clusters": stuck_paused_clusters,
-                            "threshold_minutes": _DATA_FRESHNESS_THRESHOLD_MINUTES,
-                        },
-                    ),
-                    return_exceptions=True,
+                _watchdog_notice_and_event(
+                    "critical",
+                    f"Data freshness check failed for {len(stale_clusters)} cluster(s): "
+                    f"{stale_clusters} -- broker metrics have gone stale despite active "
+                    "dispatch, indicating a stale worker-pool client. Forcing an immediate "
+                    "restart. No action needed, Docker will bring the container back up "
+                    "automatically. If this recurs frequently, investigate.",
+                    "data_freshness_watchdog", "check_data_freshness_watchdog",
+                    ("data_freshness", _reason, {
+                        "stale_clusters": stale_clusters,
+                        "stuck_paused_clusters": stuck_paused_clusters,
+                        "threshold_minutes": _DATA_FRESHNESS_THRESHOLD_MINUTES,
+                    }),
                 ),
                 timeout=5,
             )

@@ -480,7 +480,7 @@ async def send_to_teams(webhook_url: str, card: dict, report: dict | None = None
                 _teams_report(report, started_at, t0, "sent", http_status=resp.status_code)
                 return True
             else:
-                logger.error("Teams webhook returned %s: %s", resp.status_code, resp.text)
+                logger.error("Teams webhook returned %s: %s", resp.status_code, resp.text[:200])
                 _teams_report(report, started_at, t0, "failed", f"HTTP {resp.status_code}", resp.status_code)
                 return False
     except Exception as exc:

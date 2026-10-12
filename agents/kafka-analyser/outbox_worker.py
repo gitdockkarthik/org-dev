@@ -45,13 +45,16 @@ import copy
 import functools
 import json
 import logging
+import os
 import random
+import re
 import smtplib
 import socket
 import ssl
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.policy import SMTP as SMTP_POLICY
 from email.utils import formatdate, make_msgid
@@ -78,6 +81,11 @@ BACKOFF_CAP_SECS = 900
 BACKOFF_JITTER = 0.2
 RETRY_AFTER_MAX_SECS = 3600
 RESEND_LABEL = "(re-sent after an unconfirmed delivery, may be a duplicate)"
+DEADMAN_UNFINISHED_MINUTES = 15
+DEADMAN_ROW_LIMIT = 50
+# Watchdog notices that could not be written (database down) are sent inline
+# and appended here; startup ingests them. Survives a container restart.
+SPOOL_PATH = os.environ.get("OUTBOX_SPOOL_PATH", "/app/.outbox_spool.jsonl")
 
 _CHANNELS = ("email", "teams")
 _OPEN = ("pending", "sending")
@@ -91,6 +99,8 @@ _run_again = False
 _kick_task = None
 _late_tasks: set = set()
 _late_futures: set = set()
+_started_at = time.time()
+_last_success = None  # time.time() of the last run that completed
 
 
 def _boot() -> str:
@@ -517,7 +527,7 @@ async def _record(row_id: int, channel: str, attempt_id: int, boot: str, res: di
     return bool(updated)
 
 
-async def _note_cap(row_id: int, attempt_id: int, boot: str, phase: str) -> None:
+async def _note_cap(row_id: int, attempt_id: int, boot: str, phase: str, cap: float = EMAIL_CAP_SECS) -> None:
     """The email send outlived EMAIL_CAP_SECS: note it on the attempt (still
     in flight; the late result is recorded when the thread ends) and start
     the owner Teams fallback."""
@@ -525,7 +535,7 @@ async def _note_cap(row_id: int, attempt_id: int, boot: str, phase: str) -> None
         await s.execute(text(
             "UPDATE kafka_notification_attempts SET detail = COALESCE(detail, '{}'::jsonb) || CAST(:det AS jsonb) "
             "WHERE id = :id"
-        ), {"id": attempt_id, "det": json.dumps({"cap_fired_after_s": EMAIL_CAP_SECS, "phase_at_cap": phase})})
+        ), {"id": attempt_id, "det": json.dumps({"cap_fired_after_s": cap, "phase_at_cap": phase})})
         now = await _db_now(s)
         rows = await _rows(s, "id = :id FOR UPDATE", id=row_id)
         if not rows:
@@ -536,7 +546,7 @@ async def _note_cap(row_id: int, attempt_id: int, boot: str, phase: str) -> None
             _settle(row, now)
             await _write(s, row)
     logger.warning("outbox worker: row %s email: no result within %ss (phase %s); waiting for the late result",
-                   row_id, EMAIL_CAP_SECS, phase)
+                   row_id, cap, phase)
 
 
 def _spawn(coro) -> None:
@@ -691,9 +701,9 @@ def _build_message(row: dict, from_address: str, recipients: list) -> bytes:
     return msg.as_bytes(policy=SMTP_POLICY)
 
 
-async def _send_email(row: dict, attempt_id: int, boot: str):
-    """The email result, or None when the cap fired and the late result will
-    be recorded by a done-callback."""
+async def _send_email(row: dict, attempt_id: int, boot: str, cap: float = None):
+    """The email result, or None when the cap (EMAIL_CAP_SECS unless given)
+    fired and the late result will be recorded by a done-callback."""
     from routes_settings import _config
 
     cfg = dict(_config)
@@ -710,10 +720,10 @@ async def _send_email(row: dict, attempt_id: int, boot: str):
         message, phase, SMTP_SOCKET_TIMEOUT_SECS,
     ))
     try:
-        return await asyncio.wait_for(asyncio.shield(fut), EMAIL_CAP_SECS)
+        return await asyncio.wait_for(asyncio.shield(fut), cap or EMAIL_CAP_SECS)
     except asyncio.TimeoutError:
         _record_when_done(fut, row["id"], "email", attempt_id, boot, t0)
-        await _note_cap(row["id"], attempt_id, boot, phase["phase"])
+        await _note_cap(row["id"], attempt_id, boot, phase["phase"], cap or EMAIL_CAP_SECS)
         return None
     except asyncio.CancelledError:
         _record_when_done(fut, row["id"], "email", attempt_id, boot, t0)
@@ -775,10 +785,10 @@ async def _send_teams(row: dict) -> dict:
 
 # ── The run ──────────────────────────────────────────────────────────────────
 
-async def _send_channel(row: dict, channel: str, attempt_id: int, boot: str) -> None:
+async def _send_channel(row: dict, channel: str, attempt_id: int, boot: str, email_cap: float = None) -> None:
     t0 = time.monotonic()
     try:
-        res = await (_send_email(row, attempt_id, boot) if channel == "email" else _send_teams(row))
+        res = await (_send_email(row, attempt_id, boot, email_cap) if channel == "email" else _send_teams(row))
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -789,11 +799,11 @@ async def _send_channel(row: dict, channel: str, attempt_id: int, boot: str) -> 
     await _record(row["id"], channel, attempt_id, boot, res)
 
 
-async def _process(row: dict, attempts: dict, boot: str, started: set) -> None:
+async def _process(row: dict, attempts: dict, boot: str, started: set, email_cap: float = None) -> None:
     for channel in _CHANNELS:
         if channel in attempts:
             started.add((row["id"], channel))
-            await _send_channel(row, channel, attempts[channel], boot)
+            await _send_channel(row, channel, attempts[channel], boot, email_cap)
     if row["routing"] == "owner":
         fresh, attempt_id = await _claim_fallback(row["id"])
         if fresh is not None:
@@ -821,7 +831,14 @@ async def run_once(claim_window: float = None) -> dict:
                          if (row["id"], c) not in started]
             if unstarted:
                 await asyncio.shield(_release(unstarted))
-    if stats["recovered"] or stats["claimed"]:
+    if outbox.owner_via_outbox():
+        try:
+            stats["deadman"] = await _deadman_check()
+        except Exception as exc:  # noqa: BLE001 -- never stops delivery
+            logger.warning("outbox dead-man check failed: %s", outbox._exc_text(exc))
+    global _last_success
+    _last_success = time.time()
+    if stats["recovered"] or stats["claimed"] or stats.get("deadman"):
         logger.info("outbox worker: run done in %.1fs: %s", time.monotonic() - t0, stats)
     return stats
 
@@ -869,14 +886,28 @@ async def drain(timeout: float = 60) -> None:
         await asyncio.sleep(0)
 
 
-async def enqueue(kind, routing, dedupe_key, *, email=None, teams_card=None, teams_ref=None, severity=None,
-                  alert_config_id=None, cluster_id=None, trigger_ids=None, source="", payload=None,
-                  kick_after=True):
-    """Insert one outbox-driven row (pending) and kick the worker after the
-    commit. email is {"subject", "text", "html"}; teams_card the card;
-    teams_ref "rule:<id>" or "agent_default" (rule routing). A channel with no
-    content is skipped. Returns the row id, or None when dedupe_key exists.
-    Not called by any live path in step 2a."""
+def last_success_age() -> float:
+    """Seconds since the last completed run (or since startup)."""
+    return time.time() - (_last_success or _started_at)
+
+
+# ── Enqueue ──────────────────────────────────────────────────────────────────
+
+_INSERT_SQL = (
+    "INSERT INTO kafka_notification_outbox (kind, source, routing, origin, dedupe_key, priority, "
+    "alert_config_id, cluster_id, trigger_ids, severity, payload, email_status, teams_status, "
+    "email_last_error, teams_last_error, email_message_id, next_attempt_at, expires_at, state) "
+    "VALUES (:kind, :source, :routing, 'outbox', :dedupe_key, :priority, :alert_config_id, :cluster_id, "
+    ":trigger_ids, :severity, CAST(:payload AS jsonb), :email_status, :teams_status, :email_skip, "
+    ":teams_skip, :message_id, now(), now() + make_interval(secs => :max_age), 'pending') "
+    "ON CONFLICT (dedupe_key) DO NOTHING RETURNING id"
+)
+
+
+def _row_values(kind, routing, dedupe_key, *, email=None, teams_card=None, teams_ref=None, severity=None,
+                alert_config_id=None, cluster_id=None, trigger_ids=None, source="", payload=None) -> dict:
+    """Parameters of _INSERT_SQL for one pending row. A channel with no
+    content is skipped; the owner Teams card waits in standby behind email."""
     email_status = "pending" if email else "skipped"
     if not teams_card:
         teams_status = "skipped"
@@ -891,25 +922,348 @@ async def enqueue(kind, routing, dedupe_key, *, email=None, teams_card=None, tea
     if teams_card:
         body["teams_card"] = teams_card
         body["teams_ref"] = teams_ref or "agent_default"
-    max_age = outbox._MAX_AGE.get(kind, timedelta(hours=24)).total_seconds()
+    return {
+        "kind": kind, "source": source or "outbox", "routing": routing, "dedupe_key": dedupe_key,
+        "priority": outbox.priority(kind, severity), "alert_config_id": alert_config_id,
+        "cluster_id": cluster_id, "trigger_ids": list(trigger_ids) if trigger_ids else None,
+        "severity": severity, "payload": json.dumps(body, default=str),
+        "email_status": email_status, "teams_status": teams_status,
+        "email_skip": None if email else "no email content", "teams_skip": None if teams_card else "no card content",
+        "message_id": make_msgid() if email else None,
+        "max_age": outbox._MAX_AGE.get(kind, timedelta(hours=24)).total_seconds(),
+    }
+
+
+def _positional(sql: str, values: dict) -> tuple:
+    """:name placeholders as $n for raw asyncpg."""
+    names: list = []
+
+    def sub(m):
+        if m.group(1) not in names:
+            names.append(m.group(1))
+        return f"${names.index(m.group(1)) + 1}"
+
+    return re.sub(r"(?<![:\w]):([a-z_]+)", sub, sql), [values[n] for n in names]
+
+
+async def enqueue(kind, routing, dedupe_key, *, email=None, teams_card=None, teams_ref=None, severity=None,
+                  alert_config_id=None, cluster_id=None, trigger_ids=None, source="", payload=None,
+                  kick_after=True):
+    """Insert one outbox-driven row (pending) and kick the worker after the
+    commit. email is {"subject", "text", "html"}; teams_card the card;
+    teams_ref "rule:<id>" or "agent_default" (rule routing). Returns the row
+    id, or None when dedupe_key exists. Raises on a database failure."""
+    values = _row_values(kind, routing, dedupe_key, email=email, teams_card=teams_card, teams_ref=teams_ref,
+                         severity=severity, alert_config_id=alert_config_id, cluster_id=cluster_id,
+                         trigger_ids=trigger_ids, source=source, payload=payload)
     async with _session() as s, s.begin():
-        row_id = (await s.execute(text(
-            "INSERT INTO kafka_notification_outbox (kind, source, routing, origin, dedupe_key, priority, "
-            "alert_config_id, cluster_id, trigger_ids, severity, payload, email_status, teams_status, "
-            "email_last_error, teams_last_error, email_message_id, next_attempt_at, expires_at, state) "
-            "VALUES (:kind, :source, :routing, 'outbox', :dedupe_key, :priority, :alert_config_id, :cluster_id, "
-            ":trigger_ids, :severity, CAST(:payload AS jsonb), :email_status, :teams_status, :email_skip, "
-            ":teams_skip, :message_id, now(), now() + make_interval(secs => :max_age), 'pending') "
-            "ON CONFLICT (dedupe_key) DO NOTHING RETURNING id"
-        ), {
-            "kind": kind, "source": source or "outbox", "routing": routing, "dedupe_key": dedupe_key,
-            "priority": outbox.priority(kind, severity), "alert_config_id": alert_config_id,
-            "cluster_id": cluster_id, "trigger_ids": list(trigger_ids) if trigger_ids else None,
-            "severity": severity, "payload": json.dumps(body, default=str),
-            "email_status": email_status, "teams_status": teams_status,
-            "email_skip": None if email else "no email content", "teams_skip": None if teams_card else "no card content",
-            "message_id": make_msgid() if email else None, "max_age": max_age,
-        })).scalar_one_or_none()
+        row_id = (await s.execute(text(_INSERT_SQL), values)).scalar_one_or_none()
     if row_id is not None and kick_after:
         kick()
     return row_id
+
+
+def owner_content(severity: str, category: str, description: str, subject: str = None) -> tuple:
+    """(email dict, Teams card) of an agent-wide owner notice, built like the
+    watchdog notices."""
+    from shared.escalation.email_notifier import build_watchdog_email
+    from shared.escalation.notifier import build_adaptive_card
+
+    card = build_adaptive_card(
+        agent_name="Kafka Analyser", cluster_name="(agent-wide, not cluster-specific)",
+        anomaly={"severity": severity, "category": category, "description": description, "recommended_action": ""},
+    )
+    default_subject, text_body, html_body = build_watchdog_email("Kafka Analyser", severity, category, description)
+    return {"subject": subject or default_subject, "text": text_body, "html": html_body}, card
+
+
+# ── Watchdog notices: durable before the exit ────────────────────────────────
+
+def _raw_dsn() -> str:
+    from config import settings
+    return (settings.database_url or "").replace("postgresql+asyncpg://", "postgresql://")
+
+
+async def insert_claimed_with_event(event: tuple, dedupe_key: str, *, email, teams_card, severity, source,
+                                    kind="owner_watchdog", payload=None) -> tuple:
+    """ONE raw asyncpg transaction (1 s connect timeout, 1 s statement
+    timeout): the kafka_watchdog_events row (event = (watchdog, reason,
+    details)) and the owner outbox row, already claimed by this boot for its
+    first channel, with that channel's attempt row -- so the worker cannot
+    send it too. Returns (row_id, {channel: attempt_id}), or (None, {}) when
+    the dedupe key exists. Raises on any failure; nothing is written then."""
+    import asyncpg
+
+    dsn = _raw_dsn()
+    if not dsn:
+        raise RuntimeError("database not configured")
+    sql, args = _positional(_INSERT_SQL, _row_values(kind, "owner", dedupe_key, email=email, teams_card=teams_card,
+                                                     severity=severity, source=source, payload=payload))
+    channel, boot = ("email" if email else "teams"), _boot()
+    watchdog, reason, details = event
+    conn = await asyncpg.connect(dsn, timeout=1)
+    try:
+        async with conn.transaction():
+            await conn.execute("SET LOCAL statement_timeout = 1000")
+            await conn.execute("INSERT INTO kafka_watchdog_events (watchdog, reason, details) VALUES ($1, $2, $3::jsonb)",
+                               watchdog, reason, json.dumps(details, default=str))
+            row_id = await conn.fetchval(sql, *args)
+            if row_id is None:
+                return None, {}
+            attempt_id = await conn.fetchval(
+                "INSERT INTO kafka_notification_attempts (outbox_id, channel, attempt_no, boot_id, started_at) "
+                "VALUES ($1, $2, 1, $3, now()) RETURNING id", row_id, channel, boot)
+            worker = {"due": {}, "inflight": {channel: attempt_id}, "resend": [], "config_problem": {}}
+            await conn.execute(
+                f"UPDATE kafka_notification_outbox SET payload = jsonb_set(payload, '{{worker}}', $2::jsonb), "
+                f"{channel}_status = 'sending', {channel}_attempts = 1, claimed_by = $3, "
+                f"claim_expires_at = now() + make_interval(secs => $4) WHERE id = $1",
+                row_id, json.dumps(worker), boot, float(LEASE_SECS))
+        return row_id, {channel: attempt_id}
+    finally:
+        conn.terminate()
+
+
+async def send_claimed(row_id: int, attempts: dict, budget: float, email_cap: float = None) -> bool:
+    """Send a row claimed by insert_claimed_with_event now, in the caller's
+    task, within budget seconds (the owner Teams fallback included). An email
+    still in flight at the end is recorded by its done-callback if the
+    process lives; otherwise the next boot resends it once, labelled. True
+    when the send finished in time. Never raises."""
+    boot = _boot()
+
+    async def go():
+        async with _session() as s:
+            rows = await _rows(s, "id = :id", id=row_id)
+        await _process(rows[0], attempts, boot, set(), email_cap)
+
+    try:
+        await asyncio.wait_for(go(), timeout=max(0.05, budget))
+        return True
+    except asyncio.TimeoutError:
+        logger.warning("outbox: row %s not finished within %.1fs; the next boot completes it", row_id, budget)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("outbox: row %s inline send failed: %s", row_id, outbox._exc_text(exc))
+    return False
+
+
+def spool_entry(dedupe_key: str, source: str, severity: str, title: str, event: tuple, report: dict) -> dict:
+    """One spool line: what the inline send did, and the event. No address,
+    password or URL (errors are cleaned like the outbox rows)."""
+    channels = {}
+    for channel in _CHANNELS:
+        r = outbox.from_report((report or {}).get(channel))
+        channels[channel] = {
+            "status": r["status"],
+            "error": outbox.clean_error(r.get("error")),
+            "reason": outbox.clean_error(r.get("reason")),
+            "warning": outbox.clean_error(r.get("warning")),
+            "duration_ms": r.get("duration_ms"),
+            "started_at": r["started_at"].isoformat() if isinstance(r.get("started_at"), datetime) else None,
+            "config_problem": bool(r.get("config_problem")),
+            "http_status": (r.get("detail") or {}).get("http_status"),
+        }
+    watchdog, reason, details = event
+    return {"v": 1, "at": datetime.now(timezone.utc).isoformat(), "boot_id": _boot(), "kind": "owner_watchdog",
+            "dedupe_key": dedupe_key, "source": source, "severity": severity, "title": outbox.clean_error(title),
+            "event": {"watchdog": watchdog, "reason": reason, "details": details}, "channels": channels}
+
+
+def append_spool(entry: dict, path: str = None) -> bool:
+    """Append one JSON line to the spool file (fsync'd). Never raises."""
+    try:
+        with open(path or SPOOL_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, default=str, separators=(",", ":")) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("outbox: spool write failed: %s", type(exc).__name__)
+        return False
+
+
+def _spooled_result(r: dict) -> dict:
+    started_at = datetime.fromisoformat(r["started_at"]) if r.get("started_at") else None
+    detail = {"http_status": r["http_status"]} if r.get("http_status") else None
+    if r.get("status") == "sent":
+        return outbox.sent(r.get("duration_ms"), started_at, r.get("warning"), detail)
+    if r.get("status") == "skipped":
+        return outbox.skipped(r.get("reason") or "no reason given", bool(r.get("config_problem")))
+    return outbox.failed(r.get("error") or "failed", r.get("duration_ms"), started_at, detail,
+                         bool(r.get("config_problem")))
+
+
+async def ingest_spool(path: str = None) -> int:
+    """Record each spooled watchdog notice (an inline outbox record and its
+    kafka_watchdog_events row), deduped on the key, then remove the file. A
+    database failure stops the ingest and keeps the file for the next start."""
+    path = path or SPOOL_PATH
+    if not os.path.exists(path):
+        return 0
+    with open(path, encoding="utf-8") as f:
+        lines = [line for line in f.read().splitlines() if line.strip()]
+    added = 0
+    for line in lines:
+        try:
+            e = json.loads(line)
+            results = {c: _spooled_result((e.get("channels") or {}).get(c) or {}) for c in _CHANNELS}
+            at = datetime.fromisoformat(e["at"])
+        except (ValueError, KeyError, TypeError) as exc:
+            logger.warning("outbox: spool line skipped: %s", type(exc).__name__)
+            continue
+        row, attempts = outbox.build_row(
+            e.get("kind") or "owner_watchdog", "owner", e["dedupe_key"], None, None, None, e.get("severity"),
+            e.get("title"), results, source=e.get("source") or "spool", now=at,
+            payload={"spooled": True, "spool_boot_id": e.get("boot_id")},
+        )
+        async with _session() as s, s.begin():
+            row_id = await outbox._insert(s, row, attempts)
+            if row_id is not None:
+                ev = e.get("event") or {}
+                await s.execute(text(
+                    "INSERT INTO kafka_watchdog_events (created_at, watchdog, reason, details) "
+                    "VALUES (:at, :w, :r, CAST(:d AS jsonb))"
+                ), {"at": at, "w": ev.get("watchdog") or "unknown", "r": ev.get("reason") or "unknown",
+                    "d": json.dumps(dict(ev.get("details") or {}, spooled=True), default=str)})
+                added += 1
+    os.remove(path)
+    logger.info("outbox: spool ingested: %d new of %d line(s)", added, len(lines))
+    return added
+
+
+# ── Startup and dead-man ─────────────────────────────────────────────────────
+
+async def _startup_check() -> str:
+    """Mode on: one owner notice when the previous run ended without a
+    watchdog event or left abandoned notifications unreported."""
+    if not outbox.owner_via_outbox():
+        return "skipped (mode not on)"
+    async with _session() as s:
+        now = await _db_now(s)
+        pending = (await s.execute(text(
+            "SELECT count(*) FROM kafka_notification_outbox WHERE origin = 'outbox' AND finished_at IS NULL"
+        ))).scalar_one()
+        abandoned = (await s.execute(text(
+            "SELECT count(*) FROM kafka_notification_outbox WHERE origin = 'outbox' AND reported_at IS NULL "
+            "AND (email_status = 'abandoned' OR teams_status = 'abandoned')"
+        ))).scalar_one()
+        prev_end = (await s.execute(text(
+            "SELECT max(GREATEST(started_at, COALESCE(ended_at, started_at))) FROM kafka_job_runs "
+            "WHERE started_at < to_timestamp(:t)"
+        ), {"t": _started_at})).scalar_one()
+        last_event = (await s.execute(text(
+            "SELECT max(created_at) FROM kafka_watchdog_events WHERE watchdog <> :clean"
+        ), {"clean": CLEAN_SHUTDOWN})).scalar_one()
+        clean_stop = (await s.execute(text(
+            "SELECT max(created_at) FROM kafka_watchdog_events WHERE watchdog = :clean "
+            "AND created_at > now() - make_interval(mins => :m)"
+        ), {"clean": CLEAN_SHUTDOWN, "m": CLEAN_SHUTDOWN_WINDOW_MINUTES})).scalar_one()
+    # A planned stop (clean_shutdown marker within the window) or a watchdog
+    # restart (its event near the end of the previous run) is expected.
+    unexplained = prev_end is not None and clean_stop is None and (
+        last_event is None or last_event < prev_end - timedelta(minutes=10))
+    if not unexplained and not abandoned:
+        return f"normal ({pending} pending)"
+    ended = (f"about {prev_end:%Y-%m-%d %H:%M} UTC ({(now - prev_end).total_seconds() / 60:.0f} min before)"
+             if prev_end is not None else "at an unknown time")
+    description = (f"Agent restarted at {now:%Y-%m-%d %H:%M} UTC; previous activity ended {ended}; "
+                   f"{pending} pending, {abandoned} abandoned notification(s).")
+    if unexplained:
+        description += (" No watchdog event was recorded for the previous run (a deploy, a crash or an "
+                        "out-of-memory kill ends a run that way).")
+    email, card = owner_content(
+        "warning", "agent_restart", description,
+        subject="[ISSUE] Kafka Analyser restarted " + ("unexpectedly" if unexplained else "with undelivered notifications"),
+    )
+    row_id = await enqueue("deadman", "owner", f"deadman:startup:{_boot()}", email=email, teams_card=card,
+                           severity="warning", source="startup_check", kick_after=False)
+    return f"notice enqueued (row {row_id})"
+
+
+CLEAN_SHUTDOWN = "clean_shutdown"
+CLEAN_SHUTDOWN_WINDOW_MINUTES = 10
+
+
+async def write_clean_shutdown_marker(timeout: float = 1.0) -> bool:
+    """Lifespan shutdown: one kafka_watchdog_events row (watchdog
+    "clean_shutdown") so the next startup sees a planned stop. A watchdog
+    os._exit(1) or a crash never gets here. Raw asyncpg, capped at timeout
+    seconds in all; never raises. True when written."""
+    async def write():
+        import asyncpg
+        dsn = _raw_dsn()
+        if not dsn:
+            raise RuntimeError("database not configured")
+        conn = await asyncpg.connect(dsn, timeout=timeout)
+        try:
+            await conn.execute("INSERT INTO kafka_watchdog_events (watchdog, reason, details) VALUES ($1, $2, $3::jsonb)",
+                               CLEAN_SHUTDOWN, "lifespan_shutdown", json.dumps({"boot_id": _boot()}))
+        finally:
+            conn.terminate()
+
+    try:
+        await asyncio.wait_for(write(), timeout=timeout)
+        logger.info("outbox: clean shutdown marker written")
+        return True
+    except Exception as exc:  # noqa: BLE001 -- best effort; shutdown goes on
+        logger.warning("outbox: clean shutdown marker not written: %s", outbox._exc_text(exc))
+        return False
+
+
+async def startup() -> dict:
+    """Lifespan hook, after the config load and before the scheduler starts:
+    a new boot_id, recovery of orphaned claims, the spool ingest, the startup
+    check, then a kick. Each step is capped and never stops the startup."""
+    global _started_at
+    outbox.BOOT_ID = uuid.uuid4().hex
+    _started_at = time.time()
+    result = {"boot_id": outbox.BOOT_ID}
+    for name, step in (("recovered", _recover), ("spool", ingest_spool), ("check", _startup_check)):
+        try:
+            result[name] = await asyncio.wait_for(step(), timeout=15)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("outbox startup: %s failed: %s", name, outbox._exc_text(exc))
+            result[name] = "failed"
+    kick()
+    logger.info("outbox startup: %s", result)
+    return result
+
+
+def _deadman_line(r) -> str:
+    def channel(c):
+        status, error = r[f"{c}_status"], r[f"{c}_last_error"]
+        return f"{c} {status}" + (f" ({error})" if error and status not in ("sent", "skipped") else "")
+    return f"row {r['id']} {r['kind']}, created {r['created_at']:%H:%M} UTC: {channel('email')}, {channel('teams')}"
+
+
+async def _deadman_check() -> int:
+    """Mode on, every run: rows unfinished for over DEADMAN_UNFINISHED_MINUTES
+    or with an abandoned channel, not yet reported, become one deadman owner
+    notice per hour; the rows in it are marked reported_at. Returns the
+    number reported."""
+    async with _session() as s, s.begin():
+        rows = (await s.execute(text(
+            "SELECT id, kind, email_status, teams_status, email_last_error, teams_last_error, created_at "
+            "FROM kafka_notification_outbox WHERE origin = 'outbox' AND reported_at IS NULL AND ("
+            "(finished_at IS NULL AND created_at < now() - make_interval(mins => :m)) "
+            "OR email_status = 'abandoned' OR teams_status = 'abandoned') "
+            "ORDER BY id LIMIT :n FOR UPDATE SKIP LOCKED"
+        ), {"m": DEADMAN_UNFINISHED_MINUTES, "n": DEADMAN_ROW_LIMIT})).mappings().all()
+        if not rows:
+            return 0
+        now = await _db_now(s)
+        description = (f"{len(rows)} notification(s) not delivered (unfinished for over "
+                       f"{DEADMAN_UNFINISHED_MINUTES} min, or a channel abandoned):\n"
+                       + "\n".join(_deadman_line(r) for r in rows))
+        email, card = owner_content("critical", "notification_delivery", description,
+                                    subject=f"[ISSUE] Kafka Analyser: {len(rows)} notification(s) not delivered")
+        row_id = (await s.execute(text(_INSERT_SQL), _row_values(
+            "deadman", "owner", f"deadman:{now:%Y-%m-%dT%H}", email=email, teams_card=card, severity="critical",
+            source="deadman_check"))).scalar_one_or_none()
+        if row_id is None:
+            return 0  # this hour's notice exists; these rows go into the next one
+        await s.execute(text("UPDATE kafka_notification_outbox SET reported_at = now() WHERE id = ANY(:ids)"),
+                        {"ids": [r["id"] for r in rows]})
+    logger.warning("outbox dead-man: %d undelivered notification(s) reported in row %s", len(rows), row_id)
+    kick()
+    return len(rows)

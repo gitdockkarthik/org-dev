@@ -898,6 +898,10 @@ async def lifespan(app: FastAPI):
                 timeout_secs=_outbox_worker.JOB_TIMEOUT_SECS,
             )
             logger.info("Created schedule for %s: every minute", _outbox_worker.JOB_ID)
+    # Outbox startup, after the config load and before the scheduler starts:
+    # a new boot_id, orphaned claims recovered, the watchdog spool ingested,
+    # the startup check, then a kick. Never raises; each step is capped.
+    await _outbox_worker.startup()
 
     count = await _jobs_module.load_schedules()
     logger.info("Job scheduler: loaded %d schedule(s)", count)
@@ -929,6 +933,9 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_warmup_connections())
     yield
     _jobs_module.stop_scheduler()
+    # Planned stop (SIGTERM): tell the next startup this was not a crash.
+    # Best effort, 1 s at most, never raises.
+    await _outbox_worker.write_clean_shutdown_marker()
 
 
 # ── App ───────────────────────────────────────────────────────────────────────

@@ -118,7 +118,7 @@ async def send_to_teams(webhook_url: str, card: dict) -> bool:
                 logger.info("Teams notification sent successfully")
                 return True
             else:
-                logger.error("Teams webhook returned %s: %s", resp.status_code, resp.text)
+                logger.error("Teams webhook returned %s: %s", resp.status_code, resp.text[:200])
                 return False
     except Exception as exc:
         logger.exception("Teams notification failed: %s", exc)

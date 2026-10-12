@@ -7,8 +7,10 @@ failed with a short secret-free error, or skipped with the reason -- including
 the not-configured cases that are silent today -- plus one
 kafka_notification_attempts row per channel.
 
-Setting notification_outbox_mode: "off" records nothing; "shadow" (default)
-records; "on" behaves as "shadow" until the delivery worker exists.
+Setting notification_outbox_mode (read on every call, so a change applies
+without a restart): "off" records nothing; "shadow" (default) records; "on"
+routes owner notices through the outbox (outbox_worker.py) and records rule
+alerts as in shadow mode. Anything unknown behaves as "shadow".
 
 Recording never raises and never changes a send, a trigger write or the
 caller's timing: hooks call record_inline_soon (a background task) or, on the
@@ -53,13 +55,18 @@ _tasks: set = set()
 
 
 def mode() -> str:
-    """"off" or "shadow" ("on" and anything unknown behave as "shadow")."""
+    """"off", "shadow" or "on" (anything unknown behaves as "shadow")."""
     try:
         from routes_settings import _config
         value = str(_config.get("notification_outbox_mode") or "shadow").strip().lower()
     except Exception:  # noqa: BLE001
         value = "shadow"
-    return "off" if value == "off" else "shadow"
+    return value if value in ("off", "on") else "shadow"
+
+
+def owner_via_outbox() -> bool:
+    """Mode "on": owner notices are enqueued and sent by the worker."""
+    return mode() == "on"
 
 
 def enabled() -> bool:
