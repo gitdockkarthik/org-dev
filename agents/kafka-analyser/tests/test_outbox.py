@@ -115,12 +115,12 @@ def test_secret_free():
 
 
 def test_modes():
-    for value, expected in (("off", "off"), ("OFF ", "off"), ("shadow", "shadow"), ("on", "shadow"),
+    for value, expected in (("off", "off"), ("OFF ", "off"), ("shadow", "shadow"), ("on", "on"), ("ON ", "on"),
                             ("bogus", "shadow"), (None, "shadow"), ("", "shadow")):
         _config["notification_outbox_mode"] = value
         assert outbox.mode() == expected, (value, outbox.mode())
     _config["notification_outbox_mode"] = "shadow"
-    ok("mode: off / shadow, 'on' and unknown values behave as shadow")
+    ok("mode: off / shadow / on; unknown values behave as shadow")
 
 
 class BoomSession:

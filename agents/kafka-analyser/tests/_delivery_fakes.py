@@ -10,7 +10,7 @@ reply (the client cannot know whether it was delivered -- the fake records
 it as delivered). data_started is set when a message body starts arriving.
 
 ScriptedTeams: records (path, card) per POST; script holds (status, headers)
-answers used in order, then status (default 202)."""
+or (status, headers, body) answers used in order, then status (default 202)."""
 import email
 import json
 import socket
@@ -119,12 +119,15 @@ class ScriptedTeams:
             def do_POST(self):
                 body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
                 owner.posts.append((self.path, json.loads(body or b"{}")))
-                status, headers = owner.script.pop(0) if owner.script else (owner.status, {})
+                answer = owner.script.pop(0) if owner.script else (owner.status, {})
+                status, headers, body = (tuple(answer) + ("",))[:3]
+                data = body.encode()
                 self.send_response(status)
                 for k, v in headers.items():
                     self.send_header(k, v)
-                self.send_header("Content-Length", "0")
+                self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
+                self.wfile.write(data)
 
             def log_message(self, *args):
                 pass
