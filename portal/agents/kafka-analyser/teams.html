@@ -108,6 +108,27 @@
     .configs-filters .configs-reset, .triggers-filters .triggers-reset { margin-bottom: 0.75rem; }
     #configs-count, #triggers-count { margin: 0 0 0.5rem; font-size: 0.8125rem; color: #64748b; }
     #triggers-limit-note { margin: 0 0 0.5rem; font-size: 0.8125rem; color: #b45309; }
+    /* Delivery log: same filter row, count line and pagers as Recent Triggers. */
+    .dl-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0 1rem; }
+    .dl-filters .field { flex: 0 1 12rem; min-width: 9rem; margin-bottom: 0.75rem; }
+    .dl-filters .dl-small-field { flex: 0 0 6rem; min-width: 6rem; }
+    .dl-filters .dl-reset { margin-bottom: 0.75rem; }
+    #dl-summary { margin: 0 0 1rem; font-size: 0.8125rem; color: #475569; }
+    #dl-count { margin: 0 0 0.5rem; font-size: 0.8125rem; color: #64748b; }
+    .dl-sub { display: block; font-size: 0.72rem; color: #94a3b8; }
+    .dl-row { cursor: pointer; }
+    .dl-row.dl-selected td { background: var(--navy-3); }
+    .dl-ch-ok   { color: #16a34a; }
+    .dl-ch-fail { color: #dc2626; font-weight: 700; cursor: help; }
+    .dl-ch-skip { color: #94a3b8; }
+    .dl-ch-wait { color: #64748b; }
+    .dl-state { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: .72rem; font-weight: 700; }
+    .dl-state--delivered  { background: rgba(22,163,74,.12);  color: #16a34a; }
+    .dl-state--degraded   { background: rgba(217,119,6,.12);  color: #d97706; }
+    .dl-state--failed     { background: rgba(220,38,38,.12);  color: #dc2626; }
+    .dl-state--pending, .dl-state--suppressed { background: rgba(100,116,139,.12); color: #475569; }
+    #dl-detail { margin-top: 1rem; }
+    #dl-detail-title { font-weight: 600; margin-bottom: 0.5rem; }
 
     .hidden { display: none; }
 
@@ -575,6 +596,138 @@
           <button class="btn btn-secondary btn-sm triggers-prev" id="btn-triggers-prev">Previous</button>
           <button class="btn btn-secondary btn-sm triggers-next" id="btn-triggers-next">Next</button>
           <span class="hint triggers-page-label" id="triggers-page-label"></span>
+        </div>
+      </div>
+
+      <!-- Delivery log -->
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <div class="card-title">Delivery log</div>
+            <div class="card-subtitle" style="margin-bottom:0">Every notification the agent sent: its channels, status and any error. Last 24 hours by default, up to 7 days.</div>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="btn-refresh-dl">Refresh</button>
+        </div>
+        <div id="dl-summary">Loading…</div>
+        <div class="dl-filters">
+          <div class="field dl-small-field">
+            <label for="dl-period">Period</label>
+            <select id="dl-period">
+              <option value="24" selected>24 hours</option>
+              <option value="72">3 days</option>
+              <option value="168">7 days</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="dl-kind">Kind</label>
+            <select id="dl-kind">
+              <option value="">All</option>
+              <option value="owner_summary">owner summary</option>
+              <option value="owner_watchdog">owner watchdog</option>
+              <option value="rule_fire">rule fire</option>
+              <option value="rule_escalate">rule escalate</option>
+              <option value="rule_reminder">rule reminder</option>
+              <option value="rule_resolve">rule resolve</option>
+              <option value="heartbeat">heartbeat</option>
+              <option value="deadman">deadman</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="dl-state">Status</label>
+            <select id="dl-state">
+              <option value="">All</option>
+              <option value="pending">pending</option>
+              <option value="delivered">delivered</option>
+              <option value="degraded">degraded</option>
+              <option value="failed">failed</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="dl-channel">Channel</label>
+            <select id="dl-channel">
+              <option value="">All</option>
+              <option value="email">Email</option>
+              <option value="teams">Teams</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="dl-channel-status">Channel status</label>
+            <select id="dl-channel-status">
+              <option value="">All</option>
+              <option value="sent">sent</option>
+              <option value="failed">failed</option>
+              <option value="skipped">skipped</option>
+              <option value="pending">pending</option>
+              <option value="abandoned">abandoned</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="dl-cluster">Cluster</label>
+            <select id="dl-cluster">
+              <option value="">All clusters</option>
+            </select>
+          </div>
+          <div class="field dl-small-field">
+            <label for="dl-page-size">Per page</label>
+            <select id="dl-page-size">
+              <option value="10" selected>10</option>
+              <option value="25">25</option>
+            </select>
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm dl-reset hidden" id="btn-dl-reset">Reset filters</button>
+        </div>
+        <div id="dl-count"></div>
+        <div class="show-more-row dl-pager hidden" id="dl-pager-top" style="margin:0 0 0.75rem">
+          <button class="btn btn-secondary btn-sm dl-prev" id="btn-dl-prev-top">Previous</button>
+          <button class="btn btn-secondary btn-sm dl-next" id="btn-dl-next-top">Next</button>
+          <span class="hint dl-page-label" id="dl-page-label-top"></span>
+        </div>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Time (UTC)</th>
+                <th>Kind</th>
+                <th>Rule or source</th>
+                <th>Cluster</th>
+                <th>Title</th>
+                <th>Email</th>
+                <th>Teams</th>
+                <th>State</th>
+              </tr>
+            </thead>
+            <tbody id="dl-body">
+              <tr><td colspan="8" class="data-table__loading">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="show-more-row dl-pager hidden" id="dl-pager">
+          <button class="btn btn-secondary btn-sm dl-prev" id="btn-dl-prev">Previous</button>
+          <button class="btn btn-secondary btn-sm dl-next" id="btn-dl-next">Next</button>
+          <span class="hint dl-page-label" id="dl-page-label"></span>
+        </div>
+        <div class="hidden" id="dl-detail">
+          <div class="card-head" style="margin-bottom:0.5rem">
+            <div id="dl-detail-title"></div>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-dl-detail-close">Close</button>
+          </div>
+          <div class="hint" id="dl-detail-meta"></div>
+          <div class="data-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Channel</th>
+                  <th>Attempt</th>
+                  <th>Time (UTC)</th>
+                  <th>Duration</th>
+                  <th>Phase</th>
+                  <th>Outcome</th>
+                  <th>Error</th>
+                </tr>
+              </thead>
+              <tbody id="dl-detail-body"></tbody>
+            </table>
+          </div>
         </div>
       </div>
 
@@ -1075,6 +1228,7 @@
           `<option value="${esc(c.id)}">${esc(c.name)}</option>`
         ).join('');
         sel.value = current;
+        buildDlClusterFilter(d.clusters || []);
       } catch (err) {
         _clustersError = err.message;
       }
@@ -1848,9 +2002,251 @@
       this.disabled = false;
     });
 
+    // ── Delivery log ─────────────────────────────────────────────────────
+    // GET /alerts/notifications filters and pages on the server: any filter
+    // change is a new request from page 1; Previous/Next send the offset.
+    // The summary line comes from /alerts/notifications/summary; a row click
+    // opens its attempts from /alerts/notifications/{id}. No auto-refresh.
+    const DL_PERIOD_DEFAULT = '24';
+    const DL_PERIOD_TEXT = { '24': '24 hours', '72': '3 days', '168': '7 days' };
+    const DL_PARAMS = { 'dl-kind': 'kind', 'dl-state': 'state', 'dl-channel': 'channel', 'dl-channel-status': 'channel_status', 'dl-cluster': 'cluster_id' };
+    const DL_FILTER_IDS = Object.keys(DL_PARAMS);
+    const DL_STATES = ['delivered', 'degraded', 'failed', 'pending', 'suppressed'];
+    let _dlPage = 0;  // 0-based; offset = page x page size
+    let _dlLoadSeq = 0, _dlSummarySeq = 0, _dlDetailSeq = 0;  // only the latest request renders
+    let _dlSelectedId = null;
+
+    function dlPageSize() {
+      return parseInt($('dl-page-size').value, 10) || 10;
+    }
+    function dlFiltersActive() {
+      return $('dl-period').value !== DL_PERIOD_DEFAULT || DL_FILTER_IDS.some(id => $(id).value !== '');
+    }
+    function dlQuery() {
+      const q = new URLSearchParams({ since_hours: $('dl-period').value || DL_PERIOD_DEFAULT });
+      for (const [id, param] of Object.entries(DL_PARAMS)) if ($(id).value !== '') q.set(param, $(id).value);
+      q.set('limit', String(dlPageSize()));
+      q.set('offset', String(_dlPage * dlPageSize()));
+      return q.toString();
+    }
+    // All clusters from /settings/clusters (disabled ones too: their history stays).
+    function buildDlClusterFilter(clusters) {
+      const sel = $('dl-cluster');
+      const current = sel.value;
+      sel.innerHTML = '<option value="">All clusters</option>' + clusters.filter(c => c && c.id != null)
+        .map(c => `<option value="${esc(c.id)}">${esc(c.name || ('Cluster ' + c.id))}</option>`).join('');
+      sel.value = [...sel.options].some(o => o.value === current) ? current : '';
+    }
+
+    function dlKindText(kind) {
+      return String(kind ?? '').replace(/_/g, ' ');
+    }
+    function dlOriginText(origin) {
+      return origin === 'outbox' ? 'worker' : String(origin ?? '');
+    }
+    function dlTimeSeconds(iso) {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      return isNaN(d.getTime()) ? String(iso) : d.toISOString().slice(0, 19).replace('T', ' ');
+    }
+    function dlAge(seconds) {
+      const s = Math.max(0, Math.round(Number(seconds) || 0));
+      if (s < 60) return `${s} s`;
+      if (s < 3600) return `${Math.floor(s / 60)} min`;
+      return `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`;
+    }
+    function dlDuration(ms) {
+      if (ms == null) return '—';
+      return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
+    }
+    // Status and attempts of one channel; a failed or abandoned channel is red
+    // with its last error as the tooltip, a skipped one shows its reason.
+    function dlChannelCell(status, attempts, error) {
+      const n = Number(attempts) || 0;
+      const sub = `<span class="dl-sub">${n} attempt${n === 1 ? '' : 's'}</span>`;
+      let mark;
+      if (status === 'failed' || status === 'abandoned') {
+        mark = `<span class="dl-ch-fail" title="${esc(error || 'No error recorded')}">✗ ${esc(status)}</span>`;
+      } else if (status === 'sent') {
+        mark = '<span class="dl-ch-ok">✓ sent</span>';
+      } else if (status === 'skipped') {
+        mark = `<span class="dl-ch-skip"${error ? ` title="${esc(error)}"` : ''}>skipped</span>`;
+      } else {
+        mark = `<span class="dl-ch-wait">${esc(status)}</span>`;
+      }
+      return mark + sub;
+    }
+    function dlStateBadge(state) {
+      const cls = DL_STATES.includes(state) ? state : 'pending';
+      return `<span class="dl-state dl-state--${cls}">${esc(state)}</span>`;
+    }
+
+    function showDlPagers(show) {
+      document.querySelectorAll('.dl-pager').forEach(el => el.classList.toggle('hidden', !show));
+    }
+    function renderDlPager(start, end, total) {
+      const empty = end === start;
+      const text = empty ? `Showing 0 of ${total}` : `Showing ${start + 1}-${end} of ${total}`;
+      document.querySelectorAll('.dl-page-label').forEach(el => { el.textContent = text; });
+      document.querySelectorAll('.dl-prev').forEach(btn => { btn.disabled = empty || start === 0; });
+      document.querySelectorAll('.dl-next').forEach(btn => { btn.disabled = empty || end >= total; });
+    }
+
+    function renderDeliveryLog(items, total) {
+      const active = dlFiltersActive();
+      const period = DL_PERIOD_TEXT[$('dl-period').value] || `${$('dl-period').value} hours`;
+      const noun = `notification${total === 1 ? '' : 's'}`;
+      $('dl-count').textContent = active
+        ? `${total} matching ${noun} in the last ${period}`
+        : `${total} ${noun} in the last ${period}`;
+      $('btn-dl-reset').classList.toggle('hidden', !active);
+      const body = $('dl-body');
+      if (!items.length) {
+        showDlPagers(false);
+        body.innerHTML = `<tr><td colspan="8" class="data-table__empty">${active
+          ? 'No notifications match these filters.' : 'No notifications in this period.'}</td></tr>`;
+        return;
+      }
+      const start = _dlPage * dlPageSize();
+      showDlPagers(true);
+      renderDlPager(start, start + items.length, total);
+      body.innerHTML = items.map(n => `
+          <tr class="dl-row${String(n.id) === String(_dlSelectedId) ? ' dl-selected' : ''}" data-id="${esc(n.id)}" tabindex="0">
+            <td class="nowrap">${esc(fmtUtc(n.created_at))}<span class="dl-sub">${esc(dlOriginText(n.origin))}</span></td>
+            <td>${esc(dlKindText(n.kind))}</td>
+            <td>${esc(n.rule_name ?? n.source ?? '—')}</td>
+            <td>${esc(n.cluster_name ?? '—')}</td>
+            <td>${esc(n.title ?? '')}</td>
+            <td>${dlChannelCell(n.email_status, n.email_attempts, n.email_last_error)}</td>
+            <td>${dlChannelCell(n.teams_status, n.teams_attempts, n.teams_last_error)}</td>
+            <td>${dlStateBadge(n.state)}</td>
+          </tr>`).join('');
+    }
+
+    async function loadDeliveryLog() {
+      const seq = ++_dlLoadSeq;
+      try {
+        const d = await api(`/alerts/notifications?${dlQuery()}`);
+        if (seq !== _dlLoadSeq) return;
+        const items = Array.isArray(d.notifications) ? d.notifications : [];
+        const total = Number(d.total_count) || 0;
+        // Rows aged out of the window since the last load: show the last page instead.
+        const lastPage = Math.max(0, Math.ceil(total / dlPageSize()) - 1);
+        if (!items.length && _dlPage > lastPage) {
+          _dlPage = lastPage;
+          return loadDeliveryLog();
+        }
+        renderDeliveryLog(items, total);
+      } catch (err) {
+        if (seq !== _dlLoadSeq) return;
+        $('dl-body').innerHTML =
+          `<tr><td colspan="8" class="data-table__error">Failed to load the delivery log: ${esc(err.message)}</td></tr>`;
+        showDlPagers(false);
+        $('dl-count').textContent = '';
+      }
+    }
+
+    // "Last 24 hours: 12 delivered, 1 degraded · nothing waiting · delivery
+    // worker last ran OK ... · heartbeat: not enabled yet".
+    function dlSummaryText(s) {
+      const by = (s && s.by_state) || {};
+      const counts = DL_STATES.filter(k => Number(by[k]) > 0).map(k => `${Number(by[k])} ${k}`);
+      const parts = [`Last 24 hours: ${counts.length ? counts.join(', ') : 'no notifications'}`];
+      const oldest = s && s.oldest_unfinished;
+      parts.push(oldest ? `oldest unfinished ${dlAge(oldest.age_seconds)} old` : 'nothing waiting');
+      const job = (s && s.delivery_job) || {};
+      const ran = job.last_success_ended_at || job.last_success_started_at;
+      parts.push(ran ? `delivery worker last ran OK ${fmtUtc(ran)}` : 'delivery worker: no successful run found');
+      const hb = s && s.last_heartbeat;
+      parts.push(hb ? `last heartbeat ${fmtUtc(hb.created_at)} (${hb.state})` : 'heartbeat: not enabled yet');
+      return parts.join(' · ');
+    }
+    async function loadDlSummary() {
+      const seq = ++_dlSummarySeq;
+      try {
+        const s = await api('/alerts/notifications/summary');
+        if (seq !== _dlSummarySeq) return;
+        $('dl-summary').textContent = dlSummaryText(s);
+      } catch (err) {
+        if (seq !== _dlSummarySeq) return;
+        $('dl-summary').textContent = `Summary unavailable: ${err.message}`;
+      }
+    }
+
+    function markDlSelected() {
+      $('dl-body').querySelectorAll('tr.dl-row').forEach(tr => tr.classList.toggle('dl-selected', tr.dataset.id === String(_dlSelectedId)));
+    }
+    async function openDlDetail(id) {
+      if (!/^[1-9][0-9]*$/.test(String(id))) return;
+      _dlSelectedId = String(id);
+      markDlSelected();
+      const seq = ++_dlDetailSeq;
+      $('dl-detail').classList.remove('hidden');
+      $('dl-detail-title').textContent = `Notification ${id}`;
+      $('dl-detail-meta').textContent = 'Loading…';
+      $('dl-detail-body').innerHTML = '';
+      try {
+        const n = await api(`/alerts/notifications/${encodeURIComponent(id)}`);
+        if (seq !== _dlDetailSeq) return;
+        $('dl-detail-title').textContent = `Notification ${n.id}: ${dlKindText(n.kind)}${n.title ? ' · ' + n.title : ''}`;
+        $('dl-detail-meta').textContent = [`${fmtUtc(n.created_at)} (${dlOriginText(n.origin)})`, n.rule_name ?? n.source,
+          n.cluster_name, `state ${n.state}`].filter(Boolean).join(' · ');
+        const attempts = Array.isArray(n.attempts) ? n.attempts : [];
+        $('dl-detail-body').innerHTML = attempts.length ? attempts.map(a => `
+            <tr>
+              <td>${esc(a.channel === 'email' ? 'Email' : a.channel === 'teams' ? 'Teams' : a.channel)}</td>
+              <td>${a.attempt_no === 0 ? 'not attempted' : esc(a.attempt_no)}</td>
+              <td class="nowrap">${esc(dlTimeSeconds(a.started_at))}</td>
+              <td class="nowrap">${esc(dlDuration(a.duration_ms))}</td>
+              <td>${esc(a.phase_reached ?? '—')}</td>
+              <td>${esc(a.outcome ?? 'in flight')}</td>
+              <td>${esc(a.error ?? '')}</td>
+            </tr>`).join('')
+          : '<tr><td colspan="7" class="data-table__empty">No attempts recorded.</td></tr>';
+      } catch (err) {
+        if (seq !== _dlDetailSeq) return;
+        $('dl-detail-meta').textContent = `Failed to load notification ${id}: ${err.message}`;
+      }
+    }
+    function closeDlDetail() {
+      _dlDetailSeq += 1;
+      _dlSelectedId = null;
+      $('dl-detail').classList.add('hidden');
+      markDlSelected();
+    }
+
+    // Any filter or page size change: a new request from page 1.
+    ['dl-period', 'dl-page-size', ...DL_FILTER_IDS].forEach(id =>
+      $(id).addEventListener('change', () => { _dlPage = 0; loadDeliveryLog(); }));
+    // Clears every filter except page size; back to 24 hours and page 1.
+    $('btn-dl-reset').addEventListener('click', () => {
+      DL_FILTER_IDS.forEach(id => { $(id).value = ''; });
+      $('dl-period').value = DL_PERIOD_DEFAULT;
+      _dlPage = 0;
+      loadDeliveryLog();
+    });
+    document.querySelectorAll('.dl-prev').forEach(btn => btn.addEventListener('click', () => { _dlPage = Math.max(0, _dlPage - 1); loadDeliveryLog(); }));
+    document.querySelectorAll('.dl-next').forEach(btn => btn.addEventListener('click', () => { _dlPage += 1; loadDeliveryLog(); }));
+    $('dl-body').addEventListener('click', e => {
+      const tr = e.target.closest('tr.dl-row');
+      if (tr) openDlDetail(tr.dataset.id);
+    });
+    $('dl-body').addEventListener('keydown', e => {
+      const tr = e.target.closest('tr.dl-row');
+      if (tr && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openDlDetail(tr.dataset.id); }
+    });
+    $('btn-dl-detail-close').addEventListener('click', closeDlDetail);
+    $('btn-refresh-dl').addEventListener('click', async function () {
+      this.disabled = true;
+      await Promise.all([loadDeliveryLog(), loadDlSummary()]);
+      this.disabled = false;
+    });
+
     loadClusterOptions();
     loadConfigs();
     loadTriggers();
+    loadDeliveryLog();
+    loadDlSummary();
   </script>
   <script>
     // ── Fix nav links in standalone mode ──────────────────────────────────
