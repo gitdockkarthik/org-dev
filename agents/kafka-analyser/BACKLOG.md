@@ -1180,6 +1180,35 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Admin access control, rule audit trail and identity header: design pending (2026-10-12)
+REQUEST (Karthikeyan, 2026-10-12): protect the agent's admin pages (Settings, Jobs, Alert
+rules, notification pages) with a password so only Kafka admins can view or modify them;
+users of the agent UI are for dashboards and receive notifications through other channels
+(DLs and channel members are managed outside the agent). A simple RBAC; at least a
+password. Do not give Kafka team members the platform Admin role.
+DESIGN IDEAS (nothing built): enforce in the agent API, not only in the page (port 8003 is
+open on the host); protected routes require a short-lived signed admin token issued after
+the admin password (stored hashed, rate-limited, lockout, changeable); dashboards,
+/health, backend self-registration and the MCP gateway stay open; later upgrade: a list
+of admin emails in Settings (per person). Our own curl calls to /settings (for example the
+outbox mode switch) will need a token once this lands, so run the batch test first.
+RULE AUDIT TRAIL (requested by the Kafka team): create, modify, delete of alert rules with
+timestamp and who, kept long (no purge in v1), shown in the agent UI; the notification
+trail (done) covers last 24 h up to 7 days. Stage 2 only: an agent table (Alembic 0060;
+0059 is the alert chat's; tell them first) written in the same transaction as the change,
+with a compact before and after of the changed fields, no secrets, URLs or recipients.
+IDENTITY: the backend proxy (backend/orchestrator/router.py proxy_agent_endpoint) copies
+every incoming header to the agent except host, content-length, transfer-encoding and
+x-api-key, so a forged X-User-Email would reach the agent today. The proxy would strip any
+incoming x-user-email, resolve the user with get_current_user (as its invoke audit does)
+and add the verified email plus a shared-secret header the agent checks (direct calls
+to port 8003 then show as unknown). It must never raise or change responses (try/except),
+roll back by emptying the secret, and be tested against the alert agent. Depends on the
+backend's AUTH_MODE giving a user (to confirm: none gives no user).
+OPEN: AUTH_MODE on the box; whether backend/audit.py's table could be reused; how the
+portal's per-user agent access gates the proxy; one design session for the identity
+header, the admin gate and the audit trail (Wednesday), build after approval.
+
 ### Notification delivery log and open items (2026-10-12)
 DONE 2026-10-12 (b3c25ed, 301e118; deployed 09:15 UTC, checked in the browser): a
 read-only delivery log over the outbox. Backend: GET /alerts/notifications (since_hours
