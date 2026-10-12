@@ -298,6 +298,7 @@
             </div>
             <div class="hint" id="af-tiers-above-hint">Set at least one; the highest tier reached decides the severity</div>
             <div class="hint hidden" id="af-tiers-below-hint">Fires when the cluster's inflow falls BELOW a tier. Enter tiers from high to low (info &gt; warning &gt; critical); 0 means no messages at all. Needs two consecutive inflow runs (about 10 minutes apart), so a real drop takes about 20 minutes to fire.</div>
+            <div class="hint hidden" id="af-tiers-slo-hint">Fires when the cluster's overall SLO compliance for the latest hour falls BELOW a tier. Enter tiers from high to low (warning &gt; critical). The figure is calculated hourly, and two hourly readings in a row are needed, so a real drop takes about two hours to fire. See the SLI/SLO tab for what is below target.</div>
             <div class="hint hidden" id="af-tiers-data-max-hint">Fires when the largest broker's data on disk (GB) reaches a tier. The card names that broker. The rule is ignored while any broker of the cluster is not reporting.</div>
             <div class="hint hidden" id="af-tiers-data-spread-hint">Spread = (largest - smallest broker data) / largest x 100. Fires when a broker holds much less data than the others (rebuilt, lost disks or not replicating). Normal spread is under 1%. Ignored while any broker is not reporting.</div>
             <div class="hint hidden" id="af-tiers-zk-hint">Counts problems in the cluster's ZooKeeper ensemble: one per node that does not answer, plus one if there is not exactly one leader. Checked live every 5 minutes (one mntr per node) and confirmed over two checks. With three nodes, 1 = degraded and 2 = quorum at risk.</div>
@@ -623,7 +624,8 @@
     // af-min-rf field, sent as min_rf; routes_alerts validates it). Labels
     // must match routes_alerts._TYPE_LABELS. `below` marks types that fire when
     // the value falls below a tier (routes_alerts._BELOW_ALERT_TYPES): tiers
-    // are entered high to low and 0 is allowed.
+    // are entered high to low and 0 is allowed. `pct` marks below types whose
+    // tiers are percentages (routes_alerts._PCT_TIER_ALERT_TYPES): 0 to 100.
     const ALERT_TYPES = [
       { value: 'close_wait_spike', label: 'CLOSE_WAIT spike', group: 'Connections', kind: 'threshold_count', resolves: true, general: true },
       { value: 'broker_unreachable', label: 'Broker reachability (live check)', group: 'Broker', kind: 'binary', resolves: true, general: true },
@@ -643,6 +645,7 @@
       { value: 'cluster.sr_soft_deleted', label: 'Schema Registry soft-deleted subjects', group: 'Cluster', kind: 'tiers', unit: 'subjects', resolves: true },
       { value: 'cluster.consumer_lag', label: 'Consumer group lag', group: 'Cluster', kind: 'tiers', unit: 'messages', resolves: true, lag: true },
       { value: 'cluster.connector_lag', label: 'Connector lag', group: 'Cluster', kind: 'tiers', unit: 'messages', resolves: true, lag: true },
+      { value: 'cluster.slo_compliance', label: 'SLO compliance', group: 'Cluster', kind: 'tiers', unit: '%', resolves: true, below: true, pct: true },
     ];
     // Lag rules (lag: true): custom thresholds, blacklist and reminder, limits as in routes_alerts.py.
     const LAG_CUSTOM_MAX = 200;
@@ -786,7 +789,8 @@
       $('af-tiers-sr-nodes-hint').classList.toggle('hidden', t.value !== 'cluster.sr_nodes_down');
       $('af-tiers-sr-soft-deleted-hint').classList.toggle('hidden', t.value !== 'cluster.sr_soft_deleted');
       $('af-tiers-above-hint').classList.toggle('hidden', !!t.below);
-      $('af-tiers-below-hint').classList.toggle('hidden', !t.below);
+      $('af-tiers-below-hint').classList.toggle('hidden', !t.below || t.value === 'cluster.slo_compliance');
+      $('af-tiers-slo-hint').classList.toggle('hidden', t.value !== 'cluster.slo_compliance');
       $('af-resolve-card').closest('.field').classList.toggle('hidden', !t.resolves);
       document.querySelectorAll('.af-tier-unit').forEach(el => { el.textContent = t.unit ? ` (${t.unit})` : ''; });
       $('af-lag-field').classList.toggle('hidden', !t.lag);
@@ -1221,10 +1225,14 @@
         const tiers = {};
         // Below types allow 0 (no messages at all); the others need > 0.
         const below = !!selectedAlertType().below;
+        const pct = !!selectedAlertType().pct;
         for (const [tier, id] of Object.entries(TIER_IDS)) {
           const raw = $(id).value.trim();
           if (raw === '') continue;
           const value = parseFloat(raw);
+          if (pct && (!Number.isFinite(value) || value < 0 || value > 100)) {
+            showMsg(msgEl, '✗ ' + tier.charAt(0).toUpperCase() + tier.slice(1) + ' at: Must be between 0 and 100', 'err', 0); return;
+          }
           if (below && (!Number.isFinite(value) || value < 0)) {
             showMsg(msgEl, '✗ ' + tier.charAt(0).toUpperCase() + tier.slice(1) + ' at must be a number of 0 or more', 'err', 0); return;
           }
