@@ -350,6 +350,9 @@ services:
       context: .
       dockerfile: agents/kafka-analyser/Dockerfile
     restart: unless-stopped
+    # Time between SIGTERM and SIGKILL on stop/recreate, for the lifespan
+    # shutdown (scheduler stop, clean-shutdown marker); the default is 10 s.
+    stop_grace_period: 30s
     mem_limit: 4g
     mem_reservation: 512m
     ports:

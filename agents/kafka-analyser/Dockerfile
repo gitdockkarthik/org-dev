@@ -14,4 +14,7 @@ ENV PYTHONPATH=/app
 
 EXPOSE 8003
 
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8003}"]
+# exec: uvicorn replaces the shell as PID 1, so Docker's SIGTERM reaches it and
+# the lifespan shutdown runs (a shell as PID 1 ignores SIGTERM; Docker then
+# SIGKILLs after the grace period). The shell is kept only to expand PORT.
+CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8003}"]
