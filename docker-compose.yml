@@ -350,7 +350,7 @@ services:
       context: .
       dockerfile: agents/kafka-analyser/Dockerfile
     restart: unless-stopped
-    mem_limit: 2g
+    mem_limit: 4g
     mem_reservation: 512m
     ports:
       - "${KAFKA_ANALYSER_PORT:-8003}:8003"
