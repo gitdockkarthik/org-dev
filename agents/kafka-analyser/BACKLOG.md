@@ -1180,6 +1180,49 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Batch test results, rules CSV export, readable Affected text (2026-10-13)
+DONE 2026-10-13 (pushed bccf2ed, e745c00, 34a369c, batch script 8d6093a; deployed 09:48 UTC,
+graceful stop with its marker, healthy, 54 schedules, export checked live and in the browser).
+BATCH TEST (scripts/batch_test_rules.py, run inside the container from /tmp, temporary
+BATCHTEST copies on a test channel webhook, emails to Karthikeyan only, finally block restores
+everything; every run ended with VERIFICATION PASSED: 65 rules, only rule 5 enabled, non-test rows
+unchanged in every column, settings restored). Proven live on BOTH channels (Teams card and email
+received for fire and for resolve): broker.cpu_pct and broker.heap_pct (one card and email per broker
+above the tier), cluster.data_gb_max, data_spread_pct, leader_skew, connect_failed_connectors,
+connect_failed_tasks, rf_below_min, sr_soft_deleted, msg_rate_in (a below type: fires on a forced
+tier above the real value, needs a new inflow run). ESCALATION proven on broker.cpu_pct (warning,
+then critical with an escalate card and email, then resolve; a new warning for a third broker appeared
+when the tier was lowered). Timing: fire on the 2nd evaluator run (about 8 to 10 minutes after
+enabling, evaluator every 5 minutes), resolve on the next (about 5 minutes), cards reach the channel
+about 1 to 3 seconds after the fire. NOT forceable on a healthy cluster (value 0, tiers must be above
+0): urp_total, zk_ensemble, connect_workers_down, sr_nodes_down; their evidence is the unit tests.
+STILL TO TEST LIVE: consumer_lag and connector_lag (they fire for real on clusters 8, 9 and 10; the
+script fires one name per copy and asks for YES) and slo_compliance (needs a new hourly row, up to
+about 65 minutes).
+FINDINGS: a rule's webhook_url is stored in PLAIN TEXT in kafka_alert_configs (only the agent-level
+webhook is encrypted); the test webhook was pasted in a chat (its signature was visible): regenerate it
+in Power Automate when testing ends. Per-broker rules send one card and one email per broker. Cluster 8
+has about 25,000 topics below RF 4 (staging, real data; mention to the Kafka team). The batch script
+needs to be copied into the running container (docker cp to /tmp) because it is not in the image until
+the next rebuild; the webhook file in /dev/shm is deleted after every run.
+EXPORT (bccf2ed, e745c00): GET /alerts/configs/export, an Export CSV button on the Alert Rules card.
+23 fixed columns that an import can read back: id, name, alert_type, alert_type_label, cluster_id,
+cluster_name, enabled, severity, direction, info, warning, critical, min_rf, cooldown_minutes,
+send_resolve_card, email_enabled, has_custom_webhook, reminder_hours, custom_count, blacklist_count,
+created_at, updated_at, threshold. enabled IS the Teams toggle (a disabled rule is not evaluated, so no
+email either). No webhook URL or secret, no lag names (counts only). Formula-injection protection with
+an exact undo rule; no BOM (Excel: Data, From Text/CSV, UTF-8). The page builds the filename because the
+backend proxy drops Content-Disposition.
+WORDING (34a369c): affected_text() shared by cards and emails; the card label Subject became Affected;
+cluster-wide types show no row; per-broker types show "Broker <id>". NOT DONE: a "Cleared: <metric> is
+now <value>" line on resolve cards (the clearing value is not carried to the resolve builders; needs a
+design change). Cards are not escaped (emails are).
+NEXT: the remaining live tests (lag, SLO); documentation (Wednesday forenoon); walkthrough call
+Thursday noon; the import CSV (one global for rules, plus the lag rules: an open question whether one
+CSV with a list column (custom or blacklist) and an action column (add, update, remove) is better than
+two buttons), the lag export of custom and blacklist names, then the admin gate, the audit trail and the
+identity header; the environment split of recipients and Teams channels; the optional resolve sentence.
+
 ### Admin access control, rule audit trail and identity header: design pending (2026-10-12)
 REQUEST (Karthikeyan, 2026-10-12): protect the agent's admin pages (Settings, Jobs, Alert
 rules, notification pages) with a password so only Kafka admins can view or modify them;
