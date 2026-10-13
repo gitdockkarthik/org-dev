@@ -532,17 +532,6 @@ def _format_open_minutes(minutes: Optional[float]) -> Optional[str]:
     return f"{hours} h {mins} min"
 
 
-def _affected_value(value) -> Optional[str]:
-    """The "Affected" row value (a trigger's subject, e.g. a broker), or None
-    to hide the row: empty, or the generic "cluster" of cluster-wide rules."""
-    if value is None:
-        return None
-    text = str(value)
-    if not text.strip() or text.strip().lower() == "cluster":
-        return None
-    return text
-
-
 def _alert_group_table(extra: dict) -> Tuple[list, list]:
     """(header, rows as strings) of a grouped lag email's table, or ([], [])."""
     if extra.get("offenders"):
@@ -572,15 +561,16 @@ def build_alert_email(
     or "resolve". Fire/escalate carry the build_adaptive_card fields
     (severity, category, cluster, time, description, recommended action);
     resolve carries the build_resolve_card fields (rule, cluster, subject,
-    was, open for, time). extra may hold rule_name, subject (e.g. a
-    broker), open_minutes (resolve) and test (marks a sample email).
+    was, open for, time). extra may hold rule_name, subject (the trigger's
+    stored subject; its "Affected" row is notifier.affected_text, the same
+    as the card's), open_minutes (resolve) and test (marks a sample email).
     Grouped lag rules add "reminder" (still firing, no change) and a full
     table: extra["offenders"] ({"name", "lag", "tier", "source"}) or, on a
     resolve, extra["cleared"] ({"name", "was", "open_minutes"}), each shown
     in the order given.
     Subject: "[SEVERITY] Kafka Analyser - <label> - <cluster>", or
     "[RESOLVED] ..." for a resolve; CR/LF stripped, every value escaped."""
-    from shared.escalation.notifier import CATEGORY_LABEL
+    from shared.escalation.notifier import CATEGORY_LABEL, affected_text
 
     if kind not in _ALERT_KINDS:
         raise ValueError(f"unknown alert email kind: {kind!r}")
@@ -603,7 +593,7 @@ def build_alert_email(
     if kind == "resolve":
         rows.append(("Category", label))
         rows.append(("Cluster", cluster_name))
-        affected = _affected_value(extra.get("subject"))
+        affected = affected_text(alert_type, extra.get("subject"))
         if affected is not None:
             rows.append(("Affected", affected))
         if severity:
@@ -617,7 +607,7 @@ def build_alert_email(
         rows.append(("Severity", sev))
         rows.append(("Category", label))
         rows.append(("Cluster", cluster_name))
-        affected = _affected_value(extra.get("subject"))
+        affected = affected_text(alert_type, extra.get("subject"))
         if affected is not None:
             rows.append(("Affected", affected))
         rows.append(("Time", when))

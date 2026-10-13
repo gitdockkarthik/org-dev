@@ -47,6 +47,34 @@ CATEGORY_LABEL = {
     "broker.heap_pct": "Broker Heap %",
 }
 
+# Grouped lag rules list their consumer groups / connectors in their own
+# table (build_lag_card, the email's offenders/cleared table), never in an
+# "Affected" row.
+_LAG_ALERT_TYPES = ("cluster.consumer_lag", "cluster.connector_lag")
+
+
+def affected_text(alert_type: str | None, subject) -> str | None:
+    """The "Affected" row of an alert rule's card and email, or None to omit
+    the row. subject is the trigger's stored subject (display only, never
+    changed): a broker id for the per-broker types (broker.*) -> "Broker
+    <id>"; host:port for broker_unreachable, shown as stored; "cluster" for
+    the cluster-wide types (cluster.*) -> None; lag types -> None (they keep
+    their own lists). Empty or "cluster" is None for every type; any other
+    type shows the stored subject."""
+    if subject is None:
+        return None
+    text = str(subject)
+    if not text.strip() or text.strip().lower() == "cluster":
+        return None
+    alert_type = str(alert_type or "")
+    if alert_type in _LAG_ALERT_TYPES or alert_type.startswith("cluster."):
+        return None
+    if alert_type.startswith("broker."):
+        # Already labelled (e.g. the settings page's sample "Broker 1").
+        return text if text.strip().lower().startswith("broker ") else f"Broker {text.strip()}"
+    return text
+
+
 def build_adaptive_card(
     agent_name: str,
     cluster_name: str,
@@ -61,6 +89,15 @@ def build_adaptive_card(
     emoji = SEVERITY_EMOJI.get(severity, "⚪")
     cat_label = CATEGORY_LABEL.get(category, category.replace("_", " ").title())
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    facts = [
+        {"title": "Severity", "value": severity.upper()},
+        {"title": "Category", "value": cat_label},
+        {"title": "Cluster", "value": cluster_name},
+    ]
+    # Optional anomaly["affected"]: an alert rule's affected_text (row omitted when empty).
+    if anomaly.get("affected"):
+        facts.append({"title": "Affected", "value": str(anomaly["affected"])})
+    facts.append({"title": "Time", "value": timestamp})
 
     body = [
         {
@@ -72,12 +109,7 @@ def build_adaptive_card(
         },
         {
             "type": "FactSet",
-            "facts": [
-                {"title": "Severity", "value": severity.upper()},
-                {"title": "Category", "value": cat_label},
-                {"title": "Cluster", "value": cluster_name},
-                {"title": "Time", "value": timestamp},
-            ],
+            "facts": facts,
         },
         {
             "type": "TextBlock",
@@ -202,7 +234,10 @@ def build_resolve_card(
     subject: str | None,
     severity: str | None,
     open_minutes: float | None,
+    alert_type: str | None = None,
 ) -> dict:
+    """Green card for a resolved alert rule trigger. The "Affected" row is
+    affected_text(alert_type, subject), omitted when that is None."""
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
     facts = [
@@ -210,8 +245,9 @@ def build_resolve_card(
         {"title": "Rule", "value": rule_name},
         {"title": "Cluster", "value": cluster_name},
     ]
-    if subject:
-        facts.append({"title": "Subject", "value": subject})
+    affected = affected_text(alert_type, subject)
+    if affected is not None:
+        facts.append({"title": "Affected", "value": affected})
     if severity:
         facts.append({"title": "Was", "value": severity.upper()})
     if open_minutes is not None:

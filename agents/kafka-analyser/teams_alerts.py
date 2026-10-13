@@ -21,7 +21,7 @@ from sqlalchemy import bindparam, func, select, text
 import outbox
 from database import SessionLocal
 from models import KafkaAlertConfig, KafkaAlertTrigger, KafkaBrokerMetrics
-from shared.escalation.notifier import build_adaptive_card, build_resolve_card, send_to_teams
+from shared.escalation.notifier import affected_text, build_adaptive_card, build_resolve_card, send_to_teams
 from tools.zookeeper import _parse_mntr, _zk_command
 
 logger = logging.getLogger(__name__)
@@ -81,6 +81,7 @@ async def _send_resolve_cards(items: list[dict]) -> None:
                     subject=trigger.subject,
                     severity=trigger.severity or config.severity,
                     open_minutes=open_minutes,
+                    alert_type=config.alert_type,
                 )
                 _sent, item["_outbox_teams"] = await _post_card(webhook_url, card)
             except Exception as exc:
@@ -672,6 +673,7 @@ async def _evaluate_broker_reachability() -> None:
                             "category": BROKER_UNREACHABLE_ALERT_TYPE,
                             "description": description,
                             "recommended_action": recommended_action,
+                            "affected": affected_text(BROKER_UNREACHABLE_ALERT_TYPE, subject),
                         },
                     )
 
@@ -1038,6 +1040,7 @@ async def _evaluate_broker_thresholds() -> None:
                     "category": config.alert_type,
                     "description": description,
                     "recommended_action": recommended_action,
+                    "affected": affected_text(config.alert_type, subject),
                 },
             )
             webhook_url = config.webhook_url or _config.get("teams_webhook_url", "")
