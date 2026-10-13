@@ -37,7 +37,7 @@ To test another copy of teams.html: `TEAMS_HTML=/path/to/teams.html run_all.sh`.
   So adding a type should not break these checks, as long as the new type
   follows the rules.
 - `configs_*.js`: alert rules table (filters, paging, layout, enabled and email
-  toggles, copy panel).
+  toggles, copy panel, Export CSV button).
 - `form_*.js`: the alert rule form, one file per type family (urp_rf, msg_rate,
   data, leader_skew, zk, connect, schema_registry, lag, slo), plus the cluster
   select, "Create for every cluster" and the tier layout.

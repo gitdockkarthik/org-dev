@@ -106,6 +106,8 @@
     }
     .configs-search-clear:hover { color: #475569; }
     .configs-filters .configs-reset, .triggers-filters .triggers-reset { margin-bottom: 0.75rem; }
+    .configs-head-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; justify-content: flex-end; }
+    .configs-export-error { font-size: 0.8125rem; color: #b91c1c; }
     #configs-count, #triggers-count { margin: 0 0 0.5rem; font-size: 0.8125rem; color: #64748b; }
     #triggers-limit-note { margin: 0 0 0.5rem; font-size: 0.8125rem; color: #b45309; }
     /* Delivery log: same filter row, count line and pagers as Recent Triggers. */
@@ -423,7 +425,11 @@
           <div>
             <div class="card-title">Alert Rules</div>
           </div>
-          <button class="btn btn-primary" id="btn-new-alert" style="padding:0.375rem 0.875rem">+ New Alert Rule</button>
+          <div class="configs-head-actions">
+            <span class="configs-export-error hidden" id="configs-export-error" role="alert"></span>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-configs-export" title="Download every rule as CSV (filters are not applied)">Export CSV</button>
+            <button class="btn btn-primary" id="btn-new-alert" style="padding:0.375rem 0.875rem">+ New Alert Rule</button>
+          </div>
         </div>
         <div class="configs-filters">
           <div class="field">
@@ -1834,6 +1840,44 @@
           `<tr><td colspan="10" class="data-table__error">Failed to load alert rules: ${esc(err.message)}</td></tr>`;
       }
     }
+
+    // Export CSV: every rule (the filters above do not apply), downloaded as a
+    // file. The backend proxy passes only the body and Content-Type on, so the
+    // file name is built here in UTC unless Content-Disposition carries one.
+    function exportFileName(res) {
+      const cd = res.headers && res.headers.get ? res.headers.get('Content-Disposition') : null;
+      const m = cd && /filename="?([^";]+)"?/.exec(cd);
+      if (m) return m[1];
+      const t = new Date().toISOString();
+      return `kafka-alert-rules-${t.slice(0, 10).replace(/-/g, '')}-${t.slice(11, 13)}${t.slice(14, 16)}.csv`;
+    }
+
+    $('btn-configs-export').addEventListener('click', async () => {
+      const btn = $('btn-configs-export'), err = $('configs-export-error');
+      btn.disabled = true;
+      btn.textContent = 'Exporting...';
+      err.classList.add('hidden');
+      err.textContent = '';
+      try {
+        await portalReady;
+        const res = await fetch(`${PROXY}/alerts/configs/export`, { headers: authHeaders() });
+        if (!res.ok) throw new Error(await errorFromResponse(res));
+        const url = URL.createObjectURL(await res.blob());
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = exportFileName(res);
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 0);
+      } catch (e) {
+        err.textContent = `Export failed: ${e.message}`;
+        err.classList.remove('hidden');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Export CSV';
+      }
+    });
 
     // ── Recent triggers table ────────────────────────────────────────────
     // datetime-local value ("2026-10-06T08:20") read as UTC, in ms; null if empty.
