@@ -41,7 +41,7 @@ sudo dnf install -y git
 
 ### Step 1 — Clone the repository
 ```bash
-git clone https://github.com/gitdockkarthik/org-dev.git
+git clone <repository-url>
 cd org-dev
 ```
 
