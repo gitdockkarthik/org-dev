@@ -1180,6 +1180,41 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Batch test complete: lag and SLO results, RF note corrected (2026-10-14)
+DONE 2026-10-14 (scripts/batch_test_rules.py: temporary BATCHTEST copies, a test Teams
+channel, emails to one mailbox; every run ended with VERIFICATION PASSED: 65 rules, only
+rule 5 enabled, non-test rows unchanged in every column, email settings restored, webhook
+file removed).
+LAG (cluster 8, Internal Staging Kafka, one custom row per copy so no other name could
+fire): consumer_lag for group Audit_ratecard_stg fired 04:50:02 and resolved 04:55:10;
+connector_lag for connector aosstg_unifiedplanner_plan_line_view fired 05:05:00 and
+resolved 05:10:01; one grouped Teams card and one email each time (outbox rows 153-156).
+SLO (cluster 8, forced critical tier 100): fire notice 06:05:03, resolve notice 06:10:02,
+Teams card and email both delivered (outbox rows 158 and 159). It fired about 49 minutes
+after the copy was enabled because the current hourly row counted as the first reading of a
+fresh copy. For a rule that is already running, a real drop needs two distinct hourly
+readings, so alerting takes one to two hours.
+TOTAL: 13 cluster alert types proven live on both channels for fire and resolve (broker CPU
+and heap, data max, data spread, leader skew, Connect failed connectors and tasks, RF below
+min, Schema Registry soft-deleted, message rate, consumer lag, connector lag, SLO), plus
+escalation (warning to critical) on broker CPU. 4 types are covered by unit tests only
+because a healthy cluster reads 0 and they cannot be forced: urp_total, zk_ensemble,
+connect_workers_down, sr_nodes_down.
+OPERATING NOTES: the script is not in the image, so copy it in after every rebuild or
+recreate (docker cp to /tmp/batch_test_rules.py; a host copy is kept in
+/home/backups/manual/batch-test/); create the webhook file in /dev/shm each time (the
+script deletes it after a run); run long tests (SLO, about an hour) inside tmux so a
+dropped connection cannot skip the cleanup.
+TO DO: regenerate the test channel webhook (its signature was shared in a chat).
+CORRECTION: the 2026-10-13 entry said cluster 8 has about 25,000 topics below RF 4 as real
+data. That count came from the batch script raising min_rf to 4 to force the rule; a
+three-broker cluster cannot have RF 4, so there is nothing to look at.
+WALKTHROUGH: a 10-slide deck (Kafka_Analyser_Walkthrough.pptx) was prepared for the
+30-minute walkthrough on Thursday 2026-10-15; Confluence documentation follows it. Still
+open: Import CSV (rules and lag lists; whether one CSV with a list column and an action
+column is better than two buttons is undecided), the admin gate, the audit trail and
+identity header, and the environment split of recipients and Teams channels.
+
 ### Batch test results, rules CSV export, readable Affected text (2026-10-13)
 DONE 2026-10-13 (pushed bccf2ed, e745c00, 34a369c, batch script 8d6093a; deployed 09:48 UTC,
 graceful stop with its marker, healthy, 54 schedules, export checked live and in the browser).
@@ -1201,8 +1236,7 @@ script fires one name per copy and asks for YES) and slo_compliance (needs a new
 about 65 minutes).
 FINDINGS: a rule's webhook_url is stored in PLAIN TEXT in kafka_alert_configs (only the agent-level
 webhook is encrypted); the test webhook was pasted in a chat (its signature was visible): regenerate it
-in Power Automate when testing ends. Per-broker rules send one card and one email per broker. Cluster 8
-has about 25,000 topics below RF 4 (staging, real data; mention to the Kafka team). The batch script
+in Power Automate when testing ends. Per-broker rules send one card and one email per broker. The RF test showed about 25,000 topics below RF 4 on cluster 8: an artefact of the test setting (the script raised min_rf to 4), not a finding; see the 2026-10-14 entry. The batch script
 needs to be copied into the running container (docker cp to /tmp) because it is not in the image until
 the next rebuild; the webhook file in /dev/shm is deleted after every run.
 EXPORT (bccf2ed, e745c00): GET /alerts/configs/export, an Export CSV button on the Alert Rules card.
