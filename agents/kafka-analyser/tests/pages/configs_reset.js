@@ -58,7 +58,7 @@ const state = () => JSON.stringify(['configs-cluster-filter', 'configs-type-filt
         && x.previousElementSibling === $('configs-name-search') && x.getAttribute('aria-label') === 'Clear name search' && x.type === 'button', x.outerHTML);
   check('"×" sits inside the box (absolute, input padded)', w.getComputedStyle(x).position === 'absolute' && w.getComputedStyle($('configs-name-search')).paddingRight === '1.75rem');
   check('Reset is the last item of the filter row, type button', rb.parentElement.classList.contains('configs-filters') && rb.parentElement.lastElementChild === rb && rb.type === 'button' && rb.textContent === 'Reset filters');
-  check('Reset hidden with no filter active', !resetShown() && count() === '36 rules, 3 enabled');
+  check('Reset hidden with no filter active', !resetShown() && count() === '36 rules, 3 active');
 
   for (const [lab, act, undo] of [['cluster', () => sel('configs-cluster-filter', '4'), () => sel('configs-cluster-filter', '')],
                                   ['type', () => sel('configs-type-filter', 'cluster.urp_total'), () => sel('configs-type-filter', '')],
@@ -77,8 +77,8 @@ const state = () => JSON.stringify(['configs-cluster-filter', 'configs-type-filt
   const r0 = configReqs();
   rb.click();
   check('Reset: all four filters back to all, Per page stays 25', state() === '["","","","","25"]', `${before[0]} -> ${state()}`);
-  check('Reset: page 1, full list, count "36 rules, 3 enabled", Reset hidden, no request',
-        label() === 'Showing 1-25 of 36' && count() === '36 rules, 3 enabled' && !resetShown() && configReqs() === r0, `${before[1]} / ${before[2]} -> ${label()} / ${count()}`);
+  check('Reset: page 1, full list, count "36 rules, 3 active", Reset hidden, no request',
+        label() === 'Showing 1-25 of 36' && count() === '36 rules, 3 active' && !resetShown() && configReqs() === r0, `${before[1]} / ${before[2]} -> ${label()} / ${count()}`);
   sel('configs-page-size', '10');
   sel('configs-state-filter', 'disabled'); $('btn-configs-next').click(); $('btn-configs-next').click();
   const p3 = label(); rb.click();
@@ -91,7 +91,7 @@ const state = () => JSON.stringify(['configs-cluster-filter', 'configs-type-filt
   check('"×" clears only the name; other three kept; page 1; Reset still shown', state() === '["4","cluster.urp_total","disabled","","10"]' && label().startsWith('Showing 1-') && resetShown() && count() !== n, `${state()} | ${count()} | ${label()}`);
   rb.click();
   type('heap'); x.click();
-  check('"×" with only a name set: back to the full list, Reset hidden', count() === '36 rules, 3 enabled' && !resetShown());
+  check('"×" with only a name set: back to the full list, Reset hidden', count() === '36 rules, 3 active' && !resetShown());
 
   // Reset state survives a reload (render on load)
   sel('configs-state-filter', 'disabled');

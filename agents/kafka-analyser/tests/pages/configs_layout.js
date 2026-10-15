@@ -52,10 +52,11 @@ const inSync = () => { const [b, t] = pagers(); return JSON.stringify(b) === JSO
   check('10 cells per row, colspan rows still 10', tds.length === 10);
   check('Type cell no longer nowrap', !tds[1].classList.contains('nowrap') && tds[1].textContent.startsWith('Broker CPU %'));
   const en = tds[6].querySelector('input'), em = tds[7].querySelector('input');
+  const TEAMS_TIP = 'Posts to the Teams channel when this rule fires, escalates or resolves.';
   check('Teams toggle: same classes and data-id, switch only, state in title',
         en.className === 'toggle-input config-enable-toggle' && en.dataset.id === '100' && en.checked && !tds[6].querySelector('.toggle-text') && tds[6].textContent.trim() === ''
-        && tds[6].querySelector('label').title === 'Enabled (click to disable)' && row(101).querySelectorAll('td')[6].querySelector('label').title === 'Disabled (click to enable)');
-  const EMAIL_TIP = 'Sends an email to the Alert rule recipients (Settings) when this rule fires, escalates or resolves. Needs Email Escalation enabled and recipients set.';
+        && tds[6].querySelector('label').title === 'Enabled. ' + TEAMS_TIP && row(101).querySelectorAll('td')[6].querySelector('label').title === 'Disabled. ' + TEAMS_TIP);
+  const EMAIL_TIP = 'Sends an email to the alert recipients when this rule fires, escalates or resolves. A rule with Teams and Email both off is not evaluated.';
   check('Email toggle: same classes and data-id, switch only, state + tooltip',
         em.className === 'toggle-input config-email-toggle' && em.dataset.id === '100' && !em.checked && !tds[7].querySelector('.toggle-text')
         && tds[7].querySelector('label').title === 'Disabled. ' + EMAIL_TIP

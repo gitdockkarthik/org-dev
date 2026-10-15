@@ -58,5 +58,16 @@ const opts = () => [...$('af-cluster').options].map(o => `${o.value || "''"}=${o
   check('no enabled cluster, CLOSE_WAIT form: hint', $('af-cluster-hint').textContent === 'No enabled clusters — only "All clusters" is available.' && [...$('af-cluster').options].length === 1, `hint='${$('af-cluster-hint').textContent}'`);
   $('af-alert-type').value = 'broker.cpu_pct'; $('af-alert-type').dispatchEvent(new w.Event('change'));
   check('no enabled cluster, CPU form: hint', $('af-cluster-hint').textContent === 'No enabled clusters — this metric needs a cluster, so a new rule cannot be saved.', `hint='${$('af-cluster-hint').textContent}'`);
+  $('btn-cancel-alert').click();
+
+  // A rule is active when its Teams or its Email toggle is on.
+  configs.push({ ...rule(40, 'cluster.urp_total', 4), email_enabled: true }, { ...rule(41, 'cluster.leader_skew', 4), enabled: true });
+  await w.eval('loadConfigs()');
+  const shown = () => [...d.querySelectorAll('#configs-body button.config-edit')].map(b => +b.dataset.id).sort((a, b) => a - b).join();
+  const state = v => { $('configs-state-filter').value = v; $('configs-state-filter').dispatchEvent(new w.Event('change')); };
+  check('count: email-only rule 40 and Teams-only rule 41 active, both-off 20 and 30 not', $('configs-count').textContent === '4 rules, 2 active', $('configs-count').textContent);
+  state('enabled'); check('Active: 40 (email only) and 41 (Teams only)', shown() === '40,41', shown());
+  state('disabled'); check('Inactive: 20 and 30 (both toggles off)', shown() === '20,30', shown());
+  state('');
   console.log(fails ? `${fails} FAILED` : 'ALL PASS');
 })();

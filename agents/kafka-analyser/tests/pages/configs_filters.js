@@ -51,7 +51,7 @@ const configReqs = () => calls.filter(c => c.method === 'GET').length;
 
 (async () => {
   await flush();
-  check('36 rules loaded; count "36 rules, 3 enabled"', configs.length === 36 && count() === '36 rules, 3 enabled', count());
+  check('36 rules loaded; count "36 rules, 3 active"', configs.length === 36 && count() === '36 rules, 3 active', count());
   const order = [...d.querySelector('.configs-filters').querySelectorAll('select, input')].map(e => e.id);
   check('one filter row: cluster, type, state, name search, per page', JSON.stringify(order) === '["configs-cluster-filter","configs-type-filter","configs-state-filter","configs-name-search","configs-page-size"]', JSON.stringify(order));
   check('Clear button sits next to the search', $('btn-configs-name-clear').previousElementSibling === $('configs-name-search') && $('btn-configs-name-clear').type === 'button');
@@ -63,7 +63,7 @@ const configReqs = () => calls.filter(c => c.method === 'GET').length;
   check('type options: "All types" + only present types, sorted by label', tOpts[0][0] === '' && tOpts[0][1] === 'All types' && tOpts.length === present.length + 1
         && tOpts.slice(1).every(([v]) => present.includes(v)) && JSON.stringify(tOpts.slice(1).map(o => o[1])) === JSON.stringify(tOpts.slice(1).map(o => o[1]).slice().sort((a, b) => a.localeCompare(b)))
         && !tOpts.some(([v]) => v === 'cluster.rf_below_min'), JSON.stringify(tOpts.map(o => o[1])));
-  check('state options All / Enabled / Disabled', [...$('configs-state-filter').options].map(o => o.value + '=' + o.textContent).join() === '=All,enabled=Enabled,disabled=Disabled');
+  check('state options All / Active / Inactive', [...$('configs-state-filter').options].map(o => o.value + '=' + o.textContent).join() === '=All,enabled=Active,disabled=Inactive');
 
   const r0 = configReqs();
   // each filter alone
@@ -72,13 +72,13 @@ const configReqs = () => calls.filter(c => c.method === 'GET').length;
   sel('configs-type-filter', 'cluster.urp_total'); got = await allRows(); want = configs.filter(c => c.alert_type === 'cluster.urp_total').map(c => c.id);
   check(`type URP alone: ${want.length} rules`, JSON.stringify(got.sort()) === JSON.stringify(want.sort()) && count() === `Showing ${want.length} of 36 rules`, count()); reset();
   sel('configs-state-filter', 'enabled'); got = await allRows();
-  check('state Enabled alone: 3, 5, 20', JSON.stringify(got.sort((a, b) => a - b)) === '[3,5,20]' && count() === 'Showing 3 of 36 rules', count()); reset();
-  sel('configs-state-filter', 'disabled'); check('state Disabled alone: 33', count() === 'Showing 33 of 36 rules' && label() === 'Showing 1-10 of 33', count()); reset();
+  check('state Active alone: 3, 5, 20', JSON.stringify(got.sort((a, b) => a - b)) === '[3,5,20]' && count() === 'Showing 3 of 36 rules', count()); reset();
+  sel('configs-state-filter', 'disabled'); check('state Inactive alone: 33', count() === 'Showing 33 of 36 rules' && label() === 'Showing 1-10 of 33', count()); reset();
   type('  bRoKeR cpu  '); got = await allRows(); want = configs.filter(c => c.name.toLowerCase().includes('broker cpu')).map(c => c.id);
   check(`name "  bRoKeR cpu  " alone (case-insensitive, trimmed): ${want.length}`, want.length === 3 && JSON.stringify(got.sort()) === JSON.stringify(want.sort()) && count() === 'Showing 3 of 36 rules', count());
   type('<b>'); got = await allRows();
   check('name "<b>" matches the escaped names literally', got.length === configs.filter(c => c.name.includes('<b>')).length && got.length > 0 && !d.querySelector('#configs-body b'), JSON.stringify(got));
-  type('   '); check('whitespace-only search is not a filter', count() === '36 rules, 3 enabled', count()); reset();
+  type('   '); check('whitespace-only search is not a filter', count() === '36 rules, 3 active', count()); reset();
   // combined
   sel('configs-cluster-filter', '4'); sel('configs-type-filter', 'broker.cpu_pct'); sel('configs-state-filter', 'enabled'); type('cpu');
   check('all four combined: only rule 20', JSON.stringify(ids()) === '[20]' && count() === 'Showing 1 of 36 rules' && label() === 'Showing 1-1 of 1', `${ids()} | ${count()} | ${label()}`);
@@ -97,7 +97,7 @@ const configReqs = () => calls.filter(c => c.method === 'GET').length;
     check(`changing ${lab} returns to page 1`, was.startsWith('Showing 11-') && label().startsWith('Showing 1-'), `${was} -> ${label()}`);
   }
   reset();
-  check('no filter: count back to "36 rules, 3 enabled", pager 1-10 of 36', count() === '36 rules, 3 enabled' && label() === 'Showing 1-10 of 36');
+  check('no filter: count back to "36 rules, 3 active", pager 1-10 of 36', count() === '36 rules, 3 active' && label() === 'Showing 1-10 of 36');
 
   // Edit / Copy on a filtered row
   sel('configs-cluster-filter', '8'); type('heap');
@@ -113,22 +113,30 @@ const configReqs = () => calls.filter(c => c.method === 'GET').length;
   sel('configs-state-filter', 'disabled'); type('- c'); $('btn-configs-next').click();
   const before = [count(), label(), JSON.stringify(ids())];
   const tid = ids()[0];
+  check('Inactive + "- c" on page 2: 33 rules', before[0] === 'Showing 33 of 36 rules' && before[1].startsWith('Showing 11-'), before.join(' | '));
   row(tid).querySelector('.config-email-toggle').click(); await flush();
-  check('email toggle reloads and keeps filters + page 2', calls.some(c => c.method === 'PUT' && c.url.endsWith('/' + tid)) && $('configs-state-filter').value === 'disabled'
-        && $('configs-name-search').value === '- c' && JSON.stringify([count(), label(), JSON.stringify(ids())]) === JSON.stringify(before), `${before} -> ${[count(), label()]}`);
-  row(tid).querySelector('.config-enable-toggle').click(); await flush();
-  check(`enabling rule ${tid} under "Disabled": it leaves the list, page 2 kept, count updates`, !row(tid) && count() === 'Showing 32 of 36 rules' && label().startsWith('Showing 11-') && $('configs-state-filter').value === 'disabled', `${count()} | ${label()}`);
-  reset(); check('enabled count now 4', count() === '36 rules, 4 enabled', count());
+  check(`email on for rule ${tid} (Teams off) under "Inactive": email-only is active, it leaves the list, filters and page 2 kept`,
+        calls.some(c => c.method === 'PUT' && c.url.endsWith('/' + tid) && c.body.email_enabled === true) && !row(tid)
+        && $('configs-state-filter').value === 'disabled' && $('configs-name-search').value === '- c'
+        && count() === 'Showing 32 of 36 rules' && label().startsWith('Showing 11-'), `${count()} | ${label()}`);
+  const tid2 = ids()[0];
+  row(tid2).querySelector('.config-enable-toggle').click(); await flush();
+  check(`Teams on for rule ${tid2} under "Inactive": it leaves the list, page 2 kept, count updates`, !row(tid2) && count() === 'Showing 31 of 36 rules' && label().startsWith('Showing 11-') && $('configs-state-filter').value === 'disabled', `${count()} | ${label()}`);
+  sel('configs-state-filter', 'enabled'); got = await allRows();
+  check(`Active + "- c" lists rule 20, the email-only rule ${tid} and the Teams-only rule ${tid2}`,
+        JSON.stringify(got.sort((a, b) => a - b)) === JSON.stringify([20, tid, tid2].sort((a, b) => a - b)) && count() === 'Showing 3 of 36 rules', `${JSON.stringify(got)} | ${count()}`);
+  reset(); check('active count now 5 (email-only rule counted)', count() === '36 rules, 5 active', count());
 
   // type options rebuilt on reload, selection kept / dropped
   sel('configs-type-filter', 'cluster.zk_ensemble');
   const zk = configs.find(c => c.alert_type === 'cluster.zk_ensemble').id;
   row(zk).querySelector('.config-email-toggle').click(); await flush();
   check('type selection kept across a reload', $('configs-type-filter').value === 'cluster.zk_ensemble' && JSON.stringify(ids()) === `[${zk}]`);
+  sel('configs-type-filter', ''); check('ZK rule now email-only: active count 6', count() === '36 rules, 6 active', count()); sel('configs-type-filter', 'cluster.zk_ensemble');
   w.confirm = () => true;
   row(zk).querySelector('.config-delete').click(); await flush(); await flush();
   check('deleting the only ZK rule: option removed, back to "All types"', calls.some(c => c.method === 'DELETE' && c.url.endsWith('/' + zk)) && $('configs-type-filter').value === ''
-        && ![...$('configs-type-filter').options].some(o => o.value === 'cluster.zk_ensemble') && count() === '35 rules, 4 enabled', count());
+        && ![...$('configs-type-filter').options].some(o => o.value === 'cluster.zk_ensemble') && count() === '35 rules, 5 active', count());
 
   console.log(fails ? `${fails} FAILED` : 'ALL PASSED');
   process.exit(fails ? 1 : 0);

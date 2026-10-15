@@ -382,8 +382,16 @@
         <div class="field">
           <div class="checkbox-row">
             <input type="checkbox" id="af-enabled" checked />
-            <label for="af-enabled">Enabled</label>
+            <label for="af-enabled">Teams</label>
           </div>
+        </div>
+
+        <div class="field">
+          <div class="checkbox-row">
+            <input type="checkbox" id="af-email" />
+            <label for="af-email">Email</label>
+          </div>
+          <div class="hint">A rule with Teams and Email both off is not evaluated.</div>
         </div>
 
         <div class="field">
@@ -449,8 +457,8 @@
             <label for="configs-state-filter">State</label>
             <select id="configs-state-filter">
               <option value="">All</option>
-              <option value="enabled">Enabled</option>
-              <option value="disabled">Disabled</option>
+              <option value="enabled">Active</option>
+              <option value="disabled">Inactive</option>
             </select>
           </div>
           <div class="field">
@@ -562,6 +570,7 @@
               <option value="">All</option>
               <option value="sent">Sent</option>
               <option value="failed">Failed</option>
+              <option value="off">Teams off</option>
             </select>
           </div>
           <div class="field triggers-small-field">
@@ -1203,6 +1212,7 @@
       $('af-cooldown').value = '30';
       $('af-webhook').value = '';
       $('af-enabled').checked = true;
+      $('af-email').checked = false;
       $('af-resolve-card').checked = true;
       $('af-all-clusters').checked = false;
       Object.values(TIER_IDS).forEach(id => { $(id).value = ''; });
@@ -1258,7 +1268,7 @@
     }
 
     // Fill the form from an existing rule. The type cannot be changed, and
-    // Enabled is left to the table toggle, so its field is hidden.
+    // Teams is left to the table toggle, so its field is hidden.
     function openEditForm(c) {
       editingId = c.id;
       resetAlertForm();
@@ -1301,6 +1311,7 @@
       $('af-cooldown').value = String(c.cooldown_minutes);
       $('af-webhook').value = c.webhook_url || '';
       $('af-resolve-card').checked = c.send_resolve_card !== false;
+      $('af-email').checked = !!c.email_enabled;
       $('alert-form-card').querySelector('.card-title').textContent = 'Edit Alert Rule';
       $('btn-save-alert').textContent = 'Save Changes';
       $('af-enabled').closest('.field').classList.add('hidden');
@@ -1371,12 +1382,15 @@
         cooldown_minutes: parseInt($('af-cooldown').value, 10),
         webhook_url: $('af-webhook').value.trim() || null,
         enabled: $('af-enabled').checked,
+        email_enabled: $('af-email').checked,
       };
       // Only types whose evaluator sends resolve cards store the option.
       if (resolves) payload.send_resolve_card = $('af-resolve-card').checked;
       if (everyClusterIds) {
         payload.cluster_id = everyClusterIds[0];
+        // Created off, like the copies, so no rule runs before it is reviewed.
         payload.enabled = false;
+        payload.email_enabled = false;
       }
       if (kind === 'threshold_count' && (!Number.isInteger(payload.threshold) || payload.threshold < 1)) {
         showMsg(msgEl, '✗ Threshold must be a whole number of at least 1', 'err', 0); return;
@@ -1481,7 +1495,7 @@
           resetAlertForm();
           showMsg($('configs-msg'), '✓ Alert rule "' + name + '" created', 'ok');
         } else {
-          // The type is fixed and Enabled belongs to the table toggle.
+          // The type is fixed and Teams belongs to the table toggle.
           delete payload.alert_type;
           delete payload.enabled;
           // Only send the cluster when the admin changed it. An untouched
@@ -1570,24 +1584,28 @@
       return $('configs-cluster-filter').value !== '' || $('configs-type-filter').value !== ''
         || $('configs-state-filter').value !== '' || configsNameQuery() !== '';
     }
+    // A rule is active (evaluated) when its Teams or Email toggle is on.
+    function ruleActive(c) {
+      return !!c.enabled || !!c.email_enabled;
+    }
     function matchesConfigFilters(c) {
       const type = $('configs-type-filter').value;
       const state = $('configs-state-filter').value;
       const name = configsNameQuery();
       return matchesConfigFilter(c, $('configs-cluster-filter').value)
         && (type === '' || c.alert_type === type)
-        && (state === '' || (state === 'enabled') === !!c.enabled)
+        && (state === '' || (state === 'enabled') === ruleActive(c))
         && (name === '' || String(c.name ?? '').toLowerCase().includes(name));
     }
 
-    // "36 rules, 2 enabled", or "Showing N of 36 rules" while a filter is
+    // "36 rules, 2 active", or "Showing N of 36 rules" while a filter is
     // active; Reset filters is shown only then.
     function renderConfigsCount(matching, configs) {
       const rules = `${configs.length} rule${configs.length === 1 ? '' : 's'}`;
       const active = configFiltersActive();
       $('configs-count').textContent = active
         ? `Showing ${matching} of ${rules}`
-        : `${rules}, ${configs.filter(c => c.enabled).length} enabled`;
+        : `${rules}, ${configs.filter(ruleActive).length} active`;
       $('btn-configs-reset').classList.toggle('hidden', !active);
     }
 
@@ -1679,13 +1697,13 @@
             <td>${thresholdCell}</td>
             <td>${esc(c.cooldown_minutes)}</td>
             <td class="nowrap">
-              <label class="toggle-wrap" title="${c.enabled ? 'Enabled (click to disable)' : 'Disabled (click to enable)'}">
+              <label class="toggle-wrap" title="${c.enabled ? 'Enabled' : 'Disabled'}. Posts to the Teams channel when this rule fires, escalates or resolves.">
                 <input type="checkbox" class="toggle-input config-enable-toggle" data-id="${esc(c.id)}" ${c.enabled ? 'checked' : ''} />
                 <span class="toggle-slider"></span>
               </label>
             </td>
             <td class="nowrap">
-              <label class="toggle-wrap" title="${c.email_enabled ? 'Enabled' : 'Disabled'}. Sends an email to the Alert rule recipients (Settings) when this rule fires, escalates or resolves. Needs Email Escalation enabled and recipients set.">
+              <label class="toggle-wrap" title="${c.email_enabled ? 'Enabled' : 'Disabled'}. Sends an email to the alert recipients when this rule fires, escalates or resolves. A rule with Teams and Email both off is not evaluated.">
                 <input type="checkbox" class="toggle-input config-email-toggle" data-id="${esc(c.id)}" ${c.email_enabled ? 'checked' : ''} />
                 <span class="toggle-slider"></span>
               </label>
@@ -1890,6 +1908,13 @@
     function triggersNameQuery() {
       return $('triggers-name-search').value.trim().toLowerCase();
     }
+    // error_detail values teams_alerts.py stores when Teams is switched off.
+    const TEAMS_OFF_DETAILS = ['Teams off for this rule', 'Teams switched off globally'];
+    // Teams Post: sent, failed, or deliberately not posted (Teams off).
+    function teamsPost(t) {
+      if (t.teams_post_success) return 'sent';
+      return TEAMS_OFF_DETAILS.includes(t.error_detail) ? 'off' : 'failed';
+    }
     const TRIGGERS_FILTER_IDS = ['triggers-cluster-filter', 'triggers-status-filter', 'triggers-recurrence-filter', 'triggers-teams-filter'];
     function triggerFiltersActive() {
       return $('triggers-from').value !== '' || $('triggers-to').value !== '' || triggersNameQuery() !== ''
@@ -1910,7 +1935,7 @@
         && (cluster === '' || (t.cluster_id != null && String(t.cluster_id) === cluster))
         && (status === '' || (status === 'open') === !t.resolved_at)
         && (recurrence === '' || (recurrence === 'recurring') === !!t.is_recurrence)
-        && (teams === '' || (teams === 'sent') === !!t.teams_post_success);
+        && (teams === '' || teams === teamsPost(t));
     }
 
     // Options: "All clusters" plus each cluster present in the loaded firings.
@@ -1985,6 +2010,9 @@
         let post;
         if (t.teams_post_success) {
           post = '<span class="post-ok" title="Posted to Teams">✓</span>';
+        } else if (teamsPost(t) === 'off') {
+          // Teams deliberately not posted (teams_alerts._teams_off), not a failure.
+          post = `<span title="${esc(t.error_detail)}">Teams off</span>`;
         } else {
           const reason = t.error_detail || 'Teams post failed (see agent logs for details)';
           post = `<span class="post-fail" title="${esc(reason)}">✗</span>`;

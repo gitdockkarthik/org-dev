@@ -204,7 +204,7 @@ function runPage(file, fetchImpl) {
   };
   const T = runPage(TEAMS_HTML, tFetch);
   await settle(40);
-  const NEW = 'Sends an email to the Alert rule recipients (Settings) when this rule fires, escalates or resolves. Needs Email Escalation enabled and recipients set.';
+  const NEW = 'Sends an email to the alert recipients when this rule fires, escalates or resolves. A rule with Teams and Email both off is not evaluated.';
   const toggles = () => T.els['configs-body'].querySelectorAll('.config-email-toggle');
   let tg = toggles();
   check('rules table rendered with two Email toggles', tg.length === 2, `${tg.length}; missing ids: ${[...T.missing].join(',')}`);

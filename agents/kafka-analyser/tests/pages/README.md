@@ -41,6 +41,9 @@ To test another copy of teams.html: `TEAMS_HTML=/path/to/teams.html run_all.sh`.
 - `form_*.js`: the alert rule form, one file per type family (urp_rf, msg_rate,
   data, leader_skew, zk, connect, schema_registry, lag, slo), plus the cluster
   select, "Create for every cluster" and the tier layout.
+- `form_channels.js`: the form's Teams and Email checkboxes (create and edit),
+  the "Teams off" text and Teams Post filter in Recent Triggers, and an
+  email-only rule counting as active.
 - `form_tier_layout.js`: also checks that every element id in the committed
   (git HEAD) teams.html still exists.
 - `triggers.js`: Recent Triggers table (30-day window, filters, paging).

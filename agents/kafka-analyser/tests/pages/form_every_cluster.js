@@ -58,7 +58,7 @@ const fmt = sent => sent.map(c => `${c.method} ${c.path} ${JSON.stringify(c.body
   newCpu(); tickEvery(true);
   let r = await save();
   check('ticked, no cluster: two requests in order, first enabled false on cluster 4, copy with config_id 100 and [8, 9]',
-    r.sent.length === 2 && r.sent[0].path === '/alerts/configs' && r.sent[0].body.cluster_id === 4 && r.sent[0].body.enabled === false && r.sent[0].body.name === 'CPU high'
+    r.sent.length === 2 && r.sent[0].path === '/alerts/configs' && r.sent[0].body.cluster_id === 4 && r.sent[0].body.enabled === false && r.sent[0].body.email_enabled === false && r.sent[0].body.name === 'CPU high'
     && r.sent[1].path === '/alerts/configs/copy' && JSON.stringify(r.sent[1].body) === '{"config_id":100,"target_cluster_ids":[8,9],"preview":false}', fmt(r.sent));
   check('success: form closed and reset, list reloaded, message counts', $('alert-form-card').classList.contains('hidden') && !$('af-all-clusters').checked && r.reloads === 1 && $('configs-msg').textContent === '✓ Created 2 rule(s), 1 skipped', `configs-msg='${$('configs-msg').textContent}' reloads=${r.reloads}`);
 
@@ -83,7 +83,7 @@ const fmt = sent => sent.map(c => `${c.method} ${c.path} ${JSON.stringify(c.body
   // Unticked create unchanged
   newCpu(); $('af-cluster').value = '8';
   r = await save();
-  check('unticked create: one POST, exactly the old payload', r.sent.length === 1 && JSON.stringify(r.sent[0].body) === JSON.stringify({ name: 'CPU high', alert_type: 'broker.cpu_pct', cluster_id: 8, severity: 'warning', threshold: 1, cooldown_minutes: 30, webhook_url: null, enabled: true, send_resolve_card: true, tiers: { warning: 70, critical: 85 } })
+  check('unticked create: one POST, exactly the old payload', r.sent.length === 1 && JSON.stringify(r.sent[0].body) === JSON.stringify({ name: 'CPU high', alert_type: 'broker.cpu_pct', cluster_id: 8, severity: 'warning', threshold: 1, cooldown_minutes: 30, webhook_url: null, enabled: true, email_enabled: false, send_resolve_card: true, tiers: { warning: 70, critical: 85 } })
     && $('configs-msg').textContent === '✓ Alert rule "CPU high" created', fmt(r.sent));
 
   // One cluster only

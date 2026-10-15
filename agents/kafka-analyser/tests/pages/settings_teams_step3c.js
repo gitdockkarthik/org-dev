@@ -199,7 +199,7 @@ function runPage(file, fetchImpl) {
   const T = runPage(TEAMS_HTML, tFetch);
   await settle(40);
   const body = T.els['configs-body'];
-  const NEW = 'Sends an email to the Alert rule recipients (Settings) when this rule fires, escalates or resolves. Needs Email Escalation enabled and recipients set.';
+  const NEW = 'Sends an email to the alert recipients when this rule fires, escalates or resolves. A rule with Teams and Email both off is not evaluated.';
   const labels = [...body.innerHTML.matchAll(/<label class="toggle-wrap"[^>]*>\s*<input[^>]*config-email-toggle[^>]*>/g)].map(m => m[0]);
   check('rendered Email toggle labels have no style attribute', labels.length === 2 && labels.every(l => !/<label[^>]*style=/.test(l)), labels.length);
   const byId = id => body.querySelectorAll('.config-email-toggle').find(t => t.dataset.id === String(id));
