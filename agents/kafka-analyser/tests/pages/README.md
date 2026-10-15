@@ -49,6 +49,8 @@ To test another copy of teams.html: `TEAMS_HTML=/path/to/teams.html run_all.sh`.
 - `triggers.js`: Recent Triggers table (30-day window, filters, paging).
 - `delivery_log.js`: Delivery log card (server-side filters and paging, summary
   line, row styling, detail panel with attempts, empty, error and escaping).
+- `settings_rule_fallback.js`: settings.html's "post it to Teams" checkbox
+  (rule_teams_fallback): loaded (missing = on) and sent by Save.
 - `settings_teams_step3*.js`: email settings and email toggle stubs for both
   pages. Step 3c writes one temporary copy of settings.html under the OS temp
   directory and deletes it afterwards.

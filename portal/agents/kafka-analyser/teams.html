@@ -673,6 +673,7 @@
               <option value="failed">failed</option>
               <option value="skipped">skipped</option>
               <option value="pending">pending</option>
+              <option value="standby">standby</option>
               <option value="abandoned">abandoned</option>
             </select>
           </div>
@@ -2143,6 +2144,9 @@
         mark = '<span class="dl-ch-ok">✓ sent</span>';
       } else if (status === 'skipped') {
         mark = `<span class="dl-ch-skip"${error ? ` title="${esc(error)}"` : ''}>skipped</span>`;
+      } else if (status === 'standby') {
+        // A Teams card held back until the email fails (owner notices, or a rule with Teams off).
+        mark = '<span class="dl-ch-wait" title="Sent to Teams only if the email cannot be delivered">standby (fallback)</span>';
       } else {
         mark = `<span class="dl-ch-wait">${esc(status)}</span>`;
       }

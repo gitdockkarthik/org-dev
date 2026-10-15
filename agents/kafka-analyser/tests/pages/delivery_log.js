@@ -103,7 +103,7 @@ const click = async el => { el.dispatchEvent(new w.MouseEvent('click', { bubbles
     'rule_escalate=rule escalate', 'rule_reminder=rule reminder', 'rule_resolve=rule resolve', 'heartbeat=heartbeat', 'deadman=deadman']));
   check('Status options', same(opts('dl-state'), ['=All', 'pending=pending', 'delivered=delivered', 'degraded=degraded', 'failed=failed']));
   check('Channel options', same(opts('dl-channel'), ['=All', 'email=Email', 'teams=Teams']));
-  check('Channel status options', same(opts('dl-channel-status'), ['=All', 'sent=sent', 'failed=failed', 'skipped=skipped', 'pending=pending', 'abandoned=abandoned']));
+  check('Channel status options (standby included)', same(opts('dl-channel-status'), ['=All', 'sent=sent', 'failed=failed', 'skipped=skipped', 'pending=pending', 'standby=standby', 'abandoned=abandoned']));
   check('Cluster options from /settings/clusters (disabled too), names escaped', same([...$('dl-cluster').options].map(o => o.value), ['', '4', '8', '9'])
     && $('dl-cluster').options[3].textContent === 'old ' + EVIL && !$('dl-cluster').querySelector('img'));
   check('Per page 10 (default) or 25; Reset hidden', same(opts('dl-page-size'), ['10=10', '25=25']) && $('dl-page-size').value === '10' && !shown('btn-dl-reset'));
@@ -137,8 +137,9 @@ const click = async el => { el.dispatchEvent(new w.MouseEvent('click', { bubbles
   const f3 = r3[6].querySelector('.dl-ch-fail');
   check('abandoned Teams: red mark with its error; skipped email shows its reason; failed state red', f3 && f3.textContent === '✗ abandoned' && f3.title === 'gave up after 6 attempts'
     && r3[5].querySelector('.dl-ch-skip').title === 'rule email off' && r3[7].querySelector('.dl-state--failed'));
-  check('pending and standby shown plainly, pending state grey', r4[5].querySelector('.dl-ch-wait').textContent === 'pending' && r4[6].querySelector('.dl-ch-wait').textContent === 'standby'
-    && r4[7].querySelector('.dl-state--pending') && !r4[5].querySelector('.dl-ch-fail') && r1[6].querySelector('.dl-ch-wait').textContent === 'superseded');
+  check('pending plain, standby as a neutral "standby (fallback)" with a tooltip, pending state grey', r4[5].querySelector('.dl-ch-wait').textContent === 'pending'
+    && r4[6].querySelector('.dl-ch-wait').textContent === 'standby (fallback)' && r4[6].querySelector('.dl-ch-wait').title === 'Sent to Teams only if the email cannot be delivered'
+    && !r4[6].querySelector('.dl-ch-fail, .dl-ch-skip') && r4[7].querySelector('.dl-state--pending') && !r4[5].querySelector('.dl-ch-fail') && r1[6].querySelector('.dl-ch-wait').textContent === 'superseded');
 
   console.log('--- paging ---');
   await click($('btn-dl-next'));
@@ -158,7 +159,8 @@ const click = async el => { el.dispatchEvent(new w.MouseEvent('click', { bubbles
   const filterCases = [
     ['dl-period', '72', { since_hours: '72' }], ['dl-period', '168', { since_hours: '168' }], ['dl-kind', 'rule_resolve', { kind: 'rule_resolve' }],
     ['dl-state', 'degraded', { state: 'degraded' }], ['dl-channel', 'teams', { channel: 'teams' }],
-    ['dl-channel-status', 'abandoned', { channel_status: 'abandoned' }], ['dl-cluster', '8', { cluster_id: '8' }],
+    ['dl-channel-status', 'abandoned', { channel_status: 'abandoned' }], ['dl-channel-status', 'standby', { channel_status: 'standby' }],
+    ['dl-cluster', '8', { cluster_id: '8' }],
   ];
   for (const [id, value, want] of filterCases) {
     await click($('btn-dl-next'));
