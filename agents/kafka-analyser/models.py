@@ -270,8 +270,9 @@ class KafkaAlertConfig(Base):
     to all clusters. webhook_url NULL falls back to the agent-level default
     Teams webhook. Replaces the old global Teams severity filter/cooldown
     settings, which are now per-rule (severity, cooldown_minutes). `enabled`
-    is the Teams toggle; `email_enabled` is an independent per-rule Email
-    toggle (scaffolding only, not yet wired to sending)."""
+    is the rule's Teams toggle and `email_enabled` its Email toggle; each
+    controls only its own channel. The rule is evaluated when either is on,
+    and not at all when both are off (teams_alerts.py)."""
     __tablename__ = "kafka_alert_configs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -284,10 +285,10 @@ class KafkaAlertConfig(Base):
     cooldown_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     # Independent Email on/off toggle alongside `enabled` (Teams) -- a
-    # rule can go to Teams only, Email only, both, or neither. Added
-    # 2026-09-29 as configuration scaffolding for a future Email
-    # channel; defaults to False since real SMTP credentials don't
-    # exist yet.
+    # rule can go to Teams only, Email only, both, or neither (then it is
+    # not evaluated). Added 2026-09-29; sent by notify_rule_email, which
+    # also needs the global email_enabled setting and recipients. Defaults
+    # to False.
     email_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

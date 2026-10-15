@@ -2152,10 +2152,11 @@ async def check_and_recycle_close_wait() -> dict:
         async def _cw_resolve(counts_by_id: dict[int, int]) -> None:
             await teams_alerts.resolve_cleared_close_wait_triggers(counts_by_id)
 
-        # No resolve pass (and no DB session) while Teams alerting is off;
-        # close_wait_by_cluster_id above is still needed by the fire block.
+        # No resolve pass (and no DB session) while both Teams and Email
+        # alerting are off; close_wait_by_cluster_id above is still needed by
+        # the fire block.
         from routes_settings import _config
-        if _config.get("teams_enabled"):
+        if _config.get("teams_enabled") or _config.get("email_enabled"):
             _cw_alert_task = asyncio.create_task(_cw_resolve(close_wait_by_cluster_id))
             _cw_background_tasks.add(_cw_alert_task)
             _cw_alert_task.add_done_callback(_cw_background_tasks.discard)

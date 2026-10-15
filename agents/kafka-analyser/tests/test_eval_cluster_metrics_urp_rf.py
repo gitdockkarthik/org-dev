@@ -65,7 +65,7 @@ class Session:
         if "resolved_at IS NULL" in s:
             return Res([NS(id=t.id, alert_config_id=t.alert_config_id, cluster_id=t.cluster_id, subject=t.subject, severity=t.severity)
                         for t in world.triggers.values() if t.resolved_at is None])
-        return Res([c for c in world.configs if c.enabled])
+        return Res([c for c in world.configs if c.enabled or getattr(c, "email_enabled", False)])
     def begin_nested(self): return Nested()
     def add(self, t):
         if world.fail_add: raise RuntimeError("simulated insert failure")
@@ -225,9 +225,100 @@ async def main():
     await step("rf rule without min_rf, urp rule without cluster")
     check("both skipped with warnings, no queries for them", not [s for s, _ in world.sql if "replication_factor" in s or "urp_count" in s])
 
-    world.reset(); rs._config["teams_enabled"] = False
-    await step("teams_enabled off"); rs._config["teams_enabled"] = True
-    world.configs = []
+    # ---- Per-rule channels: enabled is Teams, email_enabled is Email ----
+    EMAILS, POSTED, LOGS = [], [], []
+    class Grab(logging.Handler):
+        def emit(self, rec): LOGS.append(rec.getMessage())
+    grab = Grab(); ta.logger.addHandler(grab)
+    real_queue, real_post = ta._queue_rule_emails, ta._post_card
+    ta._queue_rule_emails = lambda emails: EMAILS.extend(e for e in emails if e)
+    def chan(r, teams, email): r.enabled, r.email_enabled = teams, email; return r
+    def mails(kind): return [e for e in EMAILS if e["kind"] == kind]
+    def only_trigger(): return next(iter(world.triggers.values()), None)
+    def channels_world(teams, email):
+        fresh_world([chan(rule(1, "cluster.urp_total", 4, URP), teams, email)])
+        world.urp[4] = 25; EMAILS.clear(); LOGS.clear()
+
+    channels_world(False, True)
+    await step("email-only rule: URP 25, two checks"); await ta._evaluate_cluster_metrics()
+    t = only_trigger()
+    check("email-only: evaluated, trigger saved, no Teams post, detail 'Teams off for this rule'",
+          t is not None and t.teams_post_success is False and t.error_detail == "Teams off for this rule" and not cards("ALERT"))
+    check("email-only: fire email queued for the rule", len(mails("fire")) == 1 and mails("fire")[0]["config_row"].id == 1)
+    world.urp[4] = 150; EMAILS.clear()
+    await step("email-only rule: escalation")
+    check("email-only: escalation email, no card, no 'card not sent' warning",
+          len(mails("escalate")) == 1 and not cards("ALERT") and not [m for m in LOGS if "card not sent" in m])
+    world.urp[4] = 0; EMAILS.clear()
+    await step("email-only rule: resolve")
+    check("email-only: resolved, resolve email queued, no resolve card", t.resolved_at is not None and len(mails("resolve")) == 1 and not cards("RESOLVE"))
+
+    channels_world(True, False)
+    await step("Teams-only rule: URP 25, two checks"); await ta._evaluate_cluster_metrics()
+    t = only_trigger()
+    check("Teams-only: card posted, posted=True, no detail, no email",
+          len(cards("ALERT")) == 1 and t.teams_post_success is True and t.error_detail is None and not EMAILS)
+    world.urp[4] = 0
+    await step("Teams-only rule: resolve")
+    check("Teams-only: resolve card, no email", len(cards("RESOLVE")) == 1 and not EMAILS)
+
+    channels_world(True, True)
+    await step("Teams + Email rule: URP 25, two checks"); await ta._evaluate_cluster_metrics()
+    check("both on: card and fire email", len(cards("ALERT")) == 1 and only_trigger().teams_post_success is True and len(mails("fire")) == 1)
+    world.urp[4] = 0; EMAILS.clear()
+    await step("Teams + Email rule: resolve")
+    check("both on: resolve card and resolve email", len(cards("RESOLVE")) == 1 and len(mails("resolve")) == 1)
+
+    channels_world(False, False)
+    await step("both toggles off: two checks"); await ta._evaluate_cluster_metrics()
+    check("both toggles off: not evaluated (no metric query, no trigger, no card, no email)",
+          not world.triggers and not cards("ALERT") and not EMAILS and not [s for s, _ in world.sql if "urp_count" in s])
+
+    channels_world(True, True)
+    rs._config.update(teams_enabled=False, email_enabled=True)
+    await step("global Teams off, global email on: two checks"); await ta._evaluate_cluster_metrics()
+    t = only_trigger()
+    check("global Teams off + email on: evaluator runs, trigger saved, no card, detail 'Teams switched off globally', email queued",
+          t is not None and t.teams_post_success is False and t.error_detail == "Teams switched off globally" and not cards("ALERT") and len(mails("fire")) == 1)
+    world.urp[4] = 0; EMAILS.clear()
+    await step("global Teams off, global email on: resolve")
+    check("global Teams off + email on: resolve email, no resolve card", t.resolved_at is not None and len(mails("resolve")) == 1 and not cards("RESOLVE"))
+
+    channels_world(True, True)
+    rs._config.update(teams_enabled=False, email_enabled=False)
+    await step("both global switches off")
+    check("both global switches off: returns before any session or query", "session open" not in world.events and not world.sql and not EMAILS)
+    rs._config["teams_enabled"] = True; rs._config.pop("email_enabled")
+
+    print("--- close-wait: email-only rule")
+    world.reset(); EMAILS.clear()
+    world.configs = [NS(id=7, alert_type="close_wait_spike", cluster_id=None, enabled=False, email_enabled=True, name="cw", severity="warning",
+                        config={"threshold": 1}, webhook_url=None, cooldown_minutes=30)]
+    await ta.fire_close_wait_alerts({4: 3})
+    t = only_trigger()
+    check("close-wait email-only: trigger saved, no card, detail 'Teams off for this rule', fire email queued",
+          t is not None and t.teams_post_success is False and t.error_detail == "Teams off for this rule" and not cards("ALERT") and len(mails("fire")) == 1)
+
+    print("--- lag resolves: card gated by both Teams switches, email independent")
+    async def rec_post(url, card): POSTED.append(url); return True, ta.outbox.sent()
+    ta._post_card = rec_post
+    async def lag_resolve(teams, email, global_teams=True):
+        rs._config["teams_enabled"] = global_teams
+        lag = NS(id=30, alert_type="cluster.consumer_lag", cluster_id=4, enabled=teams, email_enabled=email, name="lag30",
+                 severity="warning", config={}, webhook_url=None)
+        items = [{"name": "g1", "was": "warning", "open_minutes": 5.0, "teams_post_success": True}]
+        POSTED.clear(); EMAILS.clear()
+        await ta._send_lag_resolves({30: lag}, {30: items}, {4: "prod-4"}, "https://hook/agent")
+        rs._config["teams_enabled"] = True
+        return len(POSTED), len(mails("resolve"))
+    check("lag Teams-only: resolve card, no email", await lag_resolve(True, False) == (1, 0))
+    check("lag both on: resolve card and email", await lag_resolve(True, True) == (1, 1))
+    check("lag email-only: no resolve card, resolve email", await lag_resolve(False, True) == (0, 1))
+    check("lag both on, global Teams off: no resolve card, resolve email", await lag_resolve(True, True, global_teams=False) == (0, 1))
+    ta._queue_rule_emails, ta._post_card = real_queue, real_post
+    ta.logger.removeHandler(grab)
+
+    world.reset(); world.configs = []
     await step("no enabled rules")
     db_mod.SessionLocal = None; ta.SessionLocal = None
     await step("no database"); ta.SessionLocal = Session

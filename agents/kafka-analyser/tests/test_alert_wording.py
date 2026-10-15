@@ -176,7 +176,7 @@ async def main_teams_alerts():
     items = []
     for i, (alert_type, subject, want) in enumerate(CASES):
         config = NS(id=i + 1, name=f"Rule {i}", alert_type=alert_type, severity="warning", config={},
-                    webhook_url=None, email_enabled=True, cluster_id=4)
+                    webhook_url=None, enabled=True, email_enabled=True, cluster_id=4)
         trigger = NS(subject=subject, severity="critical", triggered_at=now - timedelta(minutes=30), resolved_at=now,
                      teams_post_success=True)
         items.append({"config": config, "trigger": trigger, "cluster_name": "prod-4"})

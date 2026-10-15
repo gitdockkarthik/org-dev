@@ -73,7 +73,7 @@ class Session:
         if "resolved_at IS NULL" in s:
             return Res([NS(id=t.id, alert_config_id=t.alert_config_id, cluster_id=t.cluster_id, subject=t.subject, severity=t.severity)
                         for t in world.triggers.values() if t.resolved_at is None])
-        return Res([c for c in world.configs if c.enabled])
+        return Res([c for c in world.configs if c.enabled or getattr(c, "email_enabled", False)])
     def begin_nested(self): return Nested()
     def add(self, t):
         if world.fail_add: raise RuntimeError("simulated insert failure")

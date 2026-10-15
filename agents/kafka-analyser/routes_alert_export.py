@@ -7,7 +7,9 @@ reorder them.
 Cells: booleans are true / false; numbers are plain decimals; timestamps are
 ISO 8601 in UTC; a column that does not apply to the rule's type, or a tier
 that is not set, is an empty cell. `enabled` is the rule's Teams toggle (the
-model has no separate teams_enabled). Tier types take their severity from the
+model has no separate teams_enabled) and `email_enabled` its Email toggle;
+each controls only its own channel, and a rule with both false is not
+evaluated. Tier types take their severity from the
 tier, so their severity cell is empty; their direction is "above" unless the
 stored config says "below". threshold (the last column) is the config's
 "threshold" of the two general types (close_wait_spike, broker_unreachable),

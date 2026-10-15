@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
 import httpx
-from sqlalchemy import bindparam, func, select, text
+from sqlalchemy import bindparam, func, or_, select, text
 
 import outbox
 from database import SessionLocal
@@ -46,9 +46,11 @@ _RESOLVE_CARDS_TIMEOUT_SECS = 10
 
 async def _send_resolve_cards(items: list[dict]) -> None:
     """Post one green "resolved" card per item ({"config": KafkaAlertConfig,
-    "trigger": KafkaAlertTrigger, "cluster_name": str}), only for triggers
-    whose opening card actually reached Teams (teams_post_success) and whose
-    rule allows it (config.config["send_resolve_card"], default True).
+    "trigger": KafkaAlertTrigger, "cluster_name": str}), only while the global
+    Teams switch is on, only for triggers whose rule has Teams on
+    (config.enabled) and whose opening card actually reached Teams
+    (teams_post_success), and only if the rule allows it
+    (config.config["send_resolve_card"], default True).
     Best-effort: capped at 10 s in total, every error logged as a warning,
     never raises, never touches the database."""
     async def _send_all() -> None:
@@ -61,6 +63,9 @@ async def _send_resolve_cards(items: list[dict]) -> None:
             try:
                 config = item["config"]
                 trigger = item["trigger"]
+                if not getattr(config, "enabled", False):
+                    item["_outbox_teams"] = outbox.skipped(_TEAMS_OFF_RULE)
+                    continue
                 if trigger.teams_post_success is not True:
                     item["_outbox_teams"] = outbox.skipped("opening card did not reach Teams")
                     continue
@@ -113,6 +118,33 @@ _rule_email_tasks: set = set()
 # done (_send_rule_emails), or at once when no email is queued. Recording is
 # a background step and never changes a send, a trigger write or timing.
 _NO_WEBHOOK = "no webhook URL configured (per-alert or agent-level)"
+
+# Each rule has two independent channel toggles: enabled (Teams) and
+# email_enabled (Email). A rule is evaluated when either is on, and the
+# evaluators run when either global switch (teams_enabled, email_enabled) is
+# on. A Teams card is posted only when both the rule's and the global Teams
+# switch are on; email is gated in notify_rule_email.
+_TEAMS_OFF_RULE = "Teams off for this rule"
+_TEAMS_OFF_GLOBAL = "Teams switched off globally"
+
+
+def _alerting_on(settings: dict) -> bool:
+    """True when either global channel switch is on."""
+    return bool(settings.get("teams_enabled") or settings.get("email_enabled"))
+
+
+def _rule_evaluated():
+    """WHERE clause for the rules an evaluator reads: Teams or Email on."""
+    return or_(KafkaAlertConfig.enabled == True, KafkaAlertConfig.email_enabled == True)  # noqa: E712
+
+
+def _teams_off(config, settings: dict) -> str | None:
+    """Why this rule's Teams card is not posted, or None when it is."""
+    if not getattr(config, "enabled", False):
+        return _TEAMS_OFF_RULE
+    if not settings.get("teams_enabled"):
+        return _TEAMS_OFF_GLOBAL
+    return None
 
 
 async def _post_card(webhook_url: str, card: dict) -> tuple[bool, dict]:
@@ -333,7 +365,7 @@ async def fire_close_wait_alerts(close_wait_by_cluster_id: dict[int, int]) -> No
         return
     try:
         from routes_settings import _config
-        if not _config.get("teams_enabled"):
+        if not _alerting_on(_config):
             return
 
         # ---- Single read session: configs + every relevant trigger ----
@@ -341,7 +373,7 @@ async def fire_close_wait_alerts(close_wait_by_cluster_id: dict[int, int]) -> No
             configs = (await session.execute(
                 select(KafkaAlertConfig).where(
                     KafkaAlertConfig.alert_type == CLOSE_WAIT_ALERT_TYPE,
-                    KafkaAlertConfig.enabled == True,
+                    _rule_evaluated(),
                 )
             )).scalars().all()
             if not configs:
@@ -420,7 +452,12 @@ async def fire_close_wait_alerts(close_wait_by_cluster_id: dict[int, int]) -> No
                 )
 
                 webhook_url = config.webhook_url or _config.get("teams_webhook_url", "")
-                if webhook_url:
+                teams_off = _teams_off(config, _config)
+                if teams_off:
+                    success = False
+                    error_detail = teams_off
+                    teams_result = outbox.skipped(teams_off)
+                elif webhook_url:
                     # Isolated per (config, cluster): one pair's slow/failed
                     # post never blocks or is rolled back by another's.
                     success, teams_result = await _post_card(webhook_url, card)
@@ -524,8 +561,8 @@ async def _evaluate_broker_reachability() -> None:
         return
     try:
         from routes_settings import _config
-        if not _config.get("teams_enabled"):
-            logger.info("evaluate_alerts: broker_unreachable skipped: teams_enabled is off")
+        if not _alerting_on(_config):
+            logger.info("evaluate_alerts: broker_unreachable skipped: teams_enabled and email_enabled are off")
             return
 
         # ---- Single read session: configs + every relevant trigger ----
@@ -533,7 +570,7 @@ async def _evaluate_broker_reachability() -> None:
             configs = (await session.execute(
                 select(KafkaAlertConfig).where(
                     KafkaAlertConfig.alert_type == BROKER_UNREACHABLE_ALERT_TYPE,
-                    KafkaAlertConfig.enabled == True,
+                    _rule_evaluated(),
                 )
             )).scalars().all()
             if not configs:
@@ -678,7 +715,12 @@ async def _evaluate_broker_reachability() -> None:
                     )
 
                     webhook_url = config.webhook_url or _config.get("teams_webhook_url", "")
-                    if webhook_url:
+                    teams_off = _teams_off(config, _config)
+                    if teams_off:
+                        success = False
+                        error_detail = teams_off
+                        teams_result = outbox.skipped(teams_off)
+                    elif webhook_url:
                         # Isolated per (config, cluster, broker): one slow/failed
                         # post never blocks or is rolled back by another's.
                         success, teams_result = await _post_card(webhook_url, card)
@@ -836,8 +878,8 @@ async def _evaluate_broker_thresholds() -> None:
         return
     try:
         from routes_settings import _config
-        if not _config.get("teams_enabled"):
-            logger.info("evaluate_alerts: broker thresholds skipped: teams_enabled is off")
+        if not _alerting_on(_config):
+            logger.info("evaluate_alerts: broker thresholds skipped: teams_enabled and email_enabled are off")
             return
 
         # ---- Single read session: configs, relevant triggers, broker metrics ----
@@ -845,7 +887,7 @@ async def _evaluate_broker_thresholds() -> None:
             configs = (await session.execute(
                 select(KafkaAlertConfig).where(
                     KafkaAlertConfig.alert_type.in_(list(BROKER_THRESHOLD_METRICS)),
-                    KafkaAlertConfig.enabled == True,
+                    _rule_evaluated(),
                 )
             )).scalars().all()
             if not configs:
@@ -1044,7 +1086,12 @@ async def _evaluate_broker_thresholds() -> None:
                 },
             )
             webhook_url = config.webhook_url or _config.get("teams_webhook_url", "")
-            if webhook_url:
+            teams_off = _teams_off(config, _config)
+            if teams_off:
+                success = False
+                error_detail = teams_off
+                teams_result = outbox.skipped(teams_off)
+            elif webhook_url:
                 # Isolated per (config, cluster, broker): one slow/failed
                 # post never blocks or is rolled back by another's.
                 success, teams_result = await _post_card(webhook_url, card)
@@ -1056,7 +1103,7 @@ async def _evaluate_broker_thresholds() -> None:
             if trigger is not None:
                 trigger.teams_post_success = success
                 trigger.error_detail = error_detail
-            elif not success:
+            elif not success and not teams_off:
                 logger.warning(
                     "_evaluate_broker_thresholds: escalation card not sent for "
                     "alert_config_id=%s cluster_id=%s subject=%s: %s",
@@ -1566,8 +1613,8 @@ async def _evaluate_cluster_metrics() -> None:
         return
     try:
         from routes_settings import _config
-        if not _config.get("teams_enabled"):
-            logger.info("evaluate_alerts: cluster metrics skipped: teams_enabled is off")
+        if not _alerting_on(_config):
+            logger.info("evaluate_alerts: cluster metrics skipped: teams_enabled and email_enabled are off")
             return
 
         # ---- Single read session: configs, triggers, freshness, metric values ----
@@ -1575,7 +1622,7 @@ async def _evaluate_cluster_metrics() -> None:
             configs = (await session.execute(
                 select(KafkaAlertConfig).where(
                     KafkaAlertConfig.alert_type.in_(list(CLUSTER_METRIC_TYPES)),
-                    KafkaAlertConfig.enabled == True,
+                    _rule_evaluated(),
                 )
             )).scalars().all()
             if not configs:
@@ -2281,7 +2328,12 @@ async def _evaluate_cluster_metrics() -> None:
                 },
             )
             webhook_url = config.webhook_url or _config.get("teams_webhook_url", "")
-            if webhook_url:
+            teams_off = _teams_off(config, _config)
+            if teams_off:
+                success = False
+                error_detail = teams_off
+                teams_result = outbox.skipped(teams_off)
+            elif webhook_url:
                 success, teams_result = await _post_card(webhook_url, card)
                 error_detail = None
             else:
@@ -2291,7 +2343,7 @@ async def _evaluate_cluster_metrics() -> None:
             if trigger is not None:
                 trigger.teams_post_success = success
                 trigger.error_detail = error_detail
-            elif not success:
+            elif not success and not teams_off:
                 logger.warning(
                     "_evaluate_cluster_metrics: escalation card not sent for "
                     "alert_config_id=%s cluster_id=%s: %s",
@@ -2455,8 +2507,8 @@ async def _evaluate_cluster_lag() -> None:
         return
     try:
         from routes_settings import _config
-        if not _config.get("teams_enabled"):
-            logger.info("evaluate_alerts: cluster lag skipped: teams_enabled is off")
+        if not _alerting_on(_config):
+            logger.info("evaluate_alerts: cluster lag skipped: teams_enabled and email_enabled are off")
             return
 
         # ---- Single read session: configs, triggers, fresh lag rows, connector snapshots ----
@@ -2464,7 +2516,7 @@ async def _evaluate_cluster_lag() -> None:
             configs = (await session.execute(
                 select(KafkaAlertConfig).where(
                     KafkaAlertConfig.alert_type.in_(list(CLUSTER_LAG_TYPES)),
-                    KafkaAlertConfig.enabled == True,
+                    _rule_evaluated(),
                 )
             )).scalars().all()
             if not configs:
@@ -2708,7 +2760,12 @@ async def _evaluate_cluster_lag() -> None:
                 _LAG_ACTION, max_rows=_LAG_CARD_MAX_ROWS,
             )
             webhook_url = config.webhook_url or _config.get("teams_webhook_url", "")
-            if webhook_url:
+            teams_off = _teams_off(config, _config)
+            if teams_off:
+                success = False
+                error_detail = teams_off
+                teams_result = outbox.skipped(teams_off)
+            elif webhook_url:
                 success, teams_result = await _post_card(webhook_url, card)
                 error_detail = None
             else:
@@ -2718,7 +2775,7 @@ async def _evaluate_cluster_lag() -> None:
             for trigger in new_triggers:
                 trigger.teams_post_success = success
                 trigger.error_detail = error_detail
-            if not success and not new_triggers:
+            if not success and not new_triggers and not teams_off:
                 logger.warning(
                     "_evaluate_cluster_lag: %s card not sent for alert_config_id=%s: %s",
                     kind, config.id, error_detail or "Teams post failed",
@@ -2810,10 +2867,12 @@ async def _send_lag_resolves(
     cluster_names: dict[int, str],
     default_webhook_url: str,
 ) -> None:
-    """One grouped resolve card per rule (only the groups whose opening card
-    reached Teams, and only if the rule's send_resolve_card allows it; capped
-    at _RESOLVE_CARDS_TIMEOUT_SECS in total) and one grouped resolve email
-    per rule listing every group cleared. Never raises."""
+    """One grouped resolve card per rule (only when the rule's and the global
+    Teams switch are on, only the groups whose opening card reached Teams, and
+    only if the rule's send_resolve_card allows it; capped at
+    _RESOLVE_CARDS_TIMEOUT_SECS in total) and one grouped resolve email per
+    rule listing every group cleared, whatever its Teams toggle. Never raises."""
+    from routes_settings import _config
     emails: list[dict | None] = []
     cards: list[tuple[int, str, dict]] = []
     # Outbox records: (rule id, email, config, cluster name, was, groups) and
@@ -2837,13 +2896,16 @@ async def _send_lag_resolves(
             shadows.append((len(emails) - 1, rule_id, config, cluster_name, was, len(items)))
             card_items = [i for i in items if i["teams_post_success"] is True]
             webhook_url = config.webhook_url or default_webhook_url
-            if not card_items:
+            teams_off = _teams_off(config, _config)
+            if teams_off:
+                teams_results[rule_id] = outbox.skipped(teams_off)
+            elif not card_items:
                 teams_results[rule_id] = outbox.skipped("no opening card reached Teams")
             elif not (config.config or {}).get("send_resolve_card", True):
                 teams_results[rule_id] = outbox.skipped("resolve card off for this rule")
             elif not webhook_url:
                 teams_results[rule_id] = outbox.skipped(_NO_WEBHOOK, config_problem=True)
-            if card_items and webhook_url and (config.config or {}).get("send_resolve_card", True):
+            if not teams_off and card_items and webhook_url and (config.config or {}).get("send_resolve_card", True):
                 from shared.escalation.notifier import build_lag_card
                 cards.append((rule_id, webhook_url, build_lag_card(
                     "Kafka Analyser", cluster_name, config.alert_type, was,
