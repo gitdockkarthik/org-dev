@@ -1,7 +1,7 @@
 # batch_test_rules.py: batch test of the alert rules
 
 Tests each cluster rule type end to end on both channels (Teams card and
-email): fire, optional escalation, resolve. It uses **temporary copies** named
+email), or on one with `--channels`: fire, optional escalation, resolve. It uses **temporary copies** named
 `BATCHTEST - <type> - <cluster name>`, so the real rules are never edited.
 Copies post to a **test** Teams webhook. Emails go to **one** address.
 
@@ -46,6 +46,7 @@ sudo docker exec -it -e BATCH_TEST_WEBHOOK_FILE=/dev/shm/batch_webhook org-dev-k
 | `--to` | Required. Exactly one address at `@operative.com` or `@sintecmedia.com`. |
 | `--only a,b` | Test only these types. The SLO and lag types can run only through this option. |
 | `--cluster ID` | Test on this cluster only. By default each type uses the first cluster in the order 8, 10, 4, 9 where the type can be forced. |
+| `--channels both\|email\|teams` | The copy's channels. `both` (the default) turns Teams and Email on. `email` turns Email on and Teams off: the run then checks that no card is posted (triggers saved with `Teams off for this rule`, the resolve's outbox Teams channel `skipped`) and that the fire and resolve emails were sent. `teams` turns Teams on and Email off. |
 | `--escalate` | Fire at warning first, then escalate to critical. Used only where the value allows two tiers. |
 | `--timeout-minutes N` | Per-rule wait limit. The default is 20 minutes (90 for SLO). |
 | `--log-file PATH` | A copy of the agent log to search for the `rule email sent` lines. |
@@ -64,7 +65,8 @@ sudo docker exec -it -e BATCH_TEST_WEBHOOK_FILE=/dev/shm/batch_webhook org-dev-k
 3. Refuses to start, and says which check failed, if any of these is true:
    - another rule has email on or a webhook set;
    - `email_recipients` is not empty;
-   - `teams_enabled` is off;
+   - `teams_enabled` is off and `--channels` is `both` or `teams` (with
+     `email` the run needs only `email_enabled`, which it turns on itself);
    - the test webhook is the agent-level webhook;
    - the evaluator schedule is disabled;
    - rule notices are pending in the outbox.
@@ -76,11 +78,12 @@ sudo docker exec -it -e BATCH_TEST_WEBHOOK_FILE=/dev/shm/batch_webhook org-dev-k
 
 1. Reads the live value. It uses the evaluator's own SQL and probes, with the
    same guards.
-2. Creates the copy, disabled. The copy has the test webhook, Teams and email
-   on, the resolve card on and cooldown 0. Its tiers put the value clearly
+2. Creates the copy with Teams and Email off, so it cannot run yet. The copy
+   has the test webhook, the resolve card on and cooldown 0. Its tiers put the value clearly
    beyond critical. For below-direction types the value sits clearly under
    the critical tier.
-3. Enables the copy and polls the trigger rows every 30 s.
+3. Turns on the channels under test (`--channels`) in one change, then polls
+   the trigger rows every 30 s.
 4. When the copy fires, prints the trigger row, `teams_post_success`, the
    outbox record (email and Teams status) and the log line, or the host
    command that greps for it.

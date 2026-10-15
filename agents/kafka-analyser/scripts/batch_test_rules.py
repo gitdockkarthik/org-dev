@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Batch test of the cluster alert rules, end to end on both channels: for
-each rule type, a TEMPORARY copy named "BATCHTEST - <type> - <cluster name>"
-with a TEST Teams webhook and email on is forced to fire (tiers set so the
-live value is clearly beyond critical), checked, relaxed so it resolves,
-checked again and deleted. The real rules are never edited. See
-README_batch_test_rules.md beside this file.
+"""Batch test of the cluster alert rules, end to end on both channels (or
+one, with --channels): for each rule type, a TEMPORARY copy named
+"BATCHTEST - <type> - <cluster name>" with a TEST Teams webhook is created
+with both channels off, then switched to the channels under test in one
+change, forced to fire (tiers set so the live value is clearly beyond
+critical), checked, relaxed so it resolves, checked again and deleted. The
+real rules are never edited. See README_batch_test_rules.md beside this file.
 
 Runs inside the agent container, like the default-rules script: init_storage,
 then the routes_alerts functions for every rule change. The three settings
@@ -53,6 +54,13 @@ DEFAULT_WEBHOOK_FILE = "/run/batch_webhook"
 DEFAULT_BACKUP_DIR = "/home/backups/manual"
 DEFAULT_AGENT_URL = "http://localhost:8003"
 SETTINGS_KEYS = ("email_enabled", "email_recipients", "teams_enabled")
+# --channels: the copy's Teams (enabled) and Email (email_enabled) toggles.
+CHANNELS = {
+    "both": {"enabled": True, "email_enabled": True},
+    "email": {"enabled": False, "email_enabled": True},
+    "teams": {"enabled": True, "email_enabled": False},
+}
+TEAMS_OFF_RULE = "Teams off for this rule"  # teams_alerts._TEAMS_OFF_RULE
 EVALUATOR_JOB_ID = "kafka-alert-evaluator"
 
 POLL_SECS = 30
@@ -208,6 +216,8 @@ def parse_args(argv=None):
     p.add_argument("--restore-settings", action="store_true",
                    help="with --cleanup: put email_enabled and email_recipients back from the newest backup")
     p.add_argument("--to", help="the one address emails go to during the run")
+    p.add_argument("--channels", choices=sorted(CHANNELS), default="both",
+                   help="the copy's channels: both (default), email only (no Teams post expected) or teams only")
     p.add_argument("--escalate", action="store_true",
                    help="fire at warning first, then escalate to critical (where the value allows two tiers)")
     p.add_argument("--timeout-minutes", type=int, help=f"per-rule wait limit (default {DEFAULT_TIMEOUT_MIN}; SLO {SLO_TIMEOUT_MIN})")
@@ -442,12 +452,14 @@ def rule_problems(rules: list[dict]) -> list[str]:
     return problems
 
 
-def settings_problems(saved: dict) -> list[str]:
+def settings_problems(saved: dict, channels: str = "both") -> list[str]:
     problems = []
     if str(saved.get("email_recipients") or "").strip():
         problems.append("setting email_recipients is not empty (rule emails would reach those addresses too)")
-    if not saved.get("teams_enabled"):
-        problems.append("setting teams_enabled is off: the evaluators skip every rule while it is off")
+    # The evaluators run when either global switch is on, and the run turns
+    # email_enabled on itself; only a run that expects cards needs Teams on.
+    if not saved.get("teams_enabled") and CHANNELS[channels]["enabled"]:
+        problems.append("setting teams_enabled is off: no Teams card would be posted (use --channels email)")
     if saved.get("_agent_webhook_is_test"):
         problems.append("the test webhook is the agent-level teams_webhook_url (the real channel): use a test channel")
     return problems
@@ -1020,17 +1032,19 @@ async def exercise(ctx: Ctx, item: PlanItem, res: Result, start: float) -> None:
     body = {
         "name": f"{PREFIX}{item.alert_type} - {item.cluster_name}",
         "alert_type": item.alert_type, "cluster_id": item.cluster_id, "severity": "warning",
-        "webhook_url": ctx.hook, "cooldown_minutes": 0, "enabled": False, "email_enabled": True,
+        "webhook_url": ctx.hook, "cooldown_minutes": 0, "enabled": False, "email_enabled": False,
         "send_resolve_card": True, **tier_body(item.alert_type, tiers.fire, reading),
     }
     if item.alert_type == "cluster.rf_below_min":
         body["min_rf"] = reading.min_rf
     rule_id = res.rule_id = await create_rule(body)
-    say(f"  created rule {rule_id} {body['name']!r} (disabled; webhook {WEBHOOK_MASK}; Teams, Email, resolve card on; "
+    say(f"  created rule {rule_id} {body['name']!r} (Teams and Email off; webhook {WEBHOOK_MASK}; resolve card on; "
         f"cooldown 0) with tiers {json.dumps(tiers.fire)}")
-    await update_rule(rule_id, {"enabled": True})
+    channels = CHANNELS[ctx.args.channels]
+    await update_rule(rule_id, channels)  # both toggles in one change: the rule cannot run half set up
     enabled_at = _now()
-    say(f"  enabled at {_t(enabled_at)}; {expected_wait(item.alert_type, ctx.eval_minutes)}")
+    say(f"  enabled at {_t(enabled_at)} (Teams {'on' if channels['enabled'] else 'off'}, "
+        f"Email {'on' if channels['email_enabled'] else 'off'}); {expected_wait(item.alert_type, ctx.eval_minutes)}")
 
     async def fired():
         rows = await triggers(rule_id)
@@ -1043,12 +1057,19 @@ async def exercise(ctx: Ctx, item: PlanItem, res: Result, start: float) -> None:
         res.notes.append(f"no {tiers.fire_severity} trigger within {timeout // 60} min")
         return
     res.fire = f"{tiers.fire_severity} x{len(found)}"
-    res.fire_teams = "ok" if all(t.teams_post_success for t in found) else "FAILED"
+    if channels["enabled"]:
+        res.fire_teams = "ok" if all(t.teams_post_success for t in found) else "FAILED"
+    elif all(t.teams_post_success is False and t.error_detail == TEAMS_OFF_RULE for t in found):
+        res.fire_teams = "off"
+    else:
+        res.fire_teams = "WRONG"
+        res.notes.append(f"Teams is off for this copy, but a trigger was not saved as {TEAMS_OFF_RULE!r}")
     say(f"  FIRED at {_t(found[0].triggered_at)} ({int(time.monotonic() - start)} s since start)")
     for t in found:
         say(f"     {_trigger_line(t)}")
     await report_notice(ctx, res, rule_id, "fire", enabled_at, "fire")
-    answer = await ask_choice(ctx, "Card in the TEST channel and email in the inbox?")
+    check_email_only(ctx, res, "fire")
+    answer = await ask_choice(ctx, expect_question(ctx, "Card", "email"))
     res.fire_ok = answer
     if answer == "s":
         res.notes.append("operator skipped after the fire")
@@ -1075,7 +1096,7 @@ async def exercise(ctx: Ctx, item: PlanItem, res: Result, start: float) -> None:
             row = await wait_outbox(ctx, rule_id, kind, esc_from)
             say(f"     outbox: " + (f"row {row.id} email {row.email_status}, teams {row.teams_status}" if row else "no row"))
             say(f"     'rule email sent' log line: {log_line(ctx.args.log_file, rule_id, kind)}")
-            answer = await ask_choice(ctx, "ESCALATED card in the TEST channel and email in the inbox?")
+            answer = await ask_choice(ctx, expect_question(ctx, "ESCALATED card", "ESCALATED email"))
             res.escalate += f" ({answer})"
             if answer == "s":
                 res.notes.append("operator skipped after the escalation")
@@ -1101,7 +1122,29 @@ async def exercise(ctx: Ctx, item: PlanItem, res: Result, start: float) -> None:
     for t in done:
         say(f"     {_trigger_line(t)}")
     await report_notice(ctx, res, rule_id, "resolve", resolve_from, "resolve")
-    res.resolve_ok = await ask_choice(ctx, "RESOLVED card in the TEST channel and email in the inbox?")
+    check_email_only(ctx, res, "resolve")
+    res.resolve_ok = await ask_choice(ctx, expect_question(ctx, "RESOLVED card", "RESOLVED email"))
+
+
+def expect_question(ctx: Ctx, card: str, email: str) -> str:
+    """The operator's question for the channels under test."""
+    if ctx.args.channels == "email":
+        return f"{email[0].upper() + email[1:]} in the inbox, and NO card in the TEST channel?"
+    if ctx.args.channels == "teams":
+        return f"{card} in the TEST channel, and NO email in the inbox?"
+    return f"{card} in the TEST channel and email in the inbox?"
+
+
+def check_email_only(ctx: Ctx, res: Result, prefix: str) -> None:
+    """--channels email: the email must be sent (outbox or log line) and,
+    for the resolve, no card posted (the outbox Teams channel skipped)."""
+    if ctx.args.channels != "email":
+        return
+    if "sent" not in (getattr(res, f"{prefix}_email"), getattr(res, f"{prefix}_log")):
+        res.notes.append(f"{prefix} email not confirmed sent (outbox {getattr(res, f'{prefix}_email')}, "
+                         f"log {getattr(res, f'{prefix}_log')})")
+    if prefix == "resolve" and res.resolve_teams != "skipped":
+        res.notes.append(f"resolve card: outbox Teams channel is {res.resolve_teams!r}, expected 'skipped'")
 
 
 def print_results(results: list[Result]) -> None:
@@ -1221,6 +1264,8 @@ async def body(ctx: Ctx) -> None:
         say(f"  test webhook: {WEBHOOK_MASK} (from {webhook_file})")
         ctx.to = check_to(args.to)
         say(f"  emails go to: {ctx.to}")
+        ch = CHANNELS[args.channels]
+        say(f"  channels: {args.channels} (Teams {'on' if ch['enabled'] else 'off'}, Email {'on' if ch['email_enabled'] else 'off'})")
     types = select_types(args) if not args.cleanup else []
     slow_risky = [t for t in types if t in SLOW_TYPES + RISKY_TYPES]
     if args.run and ctx.deps.interactive_check and not sys.stdin.isatty():
@@ -1262,7 +1307,7 @@ async def body(ctx: Ctx) -> None:
             await restore_from_backup(ctx)
         return
 
-    problems = rule_problems(rules) + settings_problems(s)
+    problems = rule_problems(rules) + settings_problems(s, args.channels)
     if not sched["enabled"]:
         problems.append(f"the {EVALUATOR_JOB_ID} schedule is disabled or missing: nothing would fire")
     pending = await pending_rule_notices()

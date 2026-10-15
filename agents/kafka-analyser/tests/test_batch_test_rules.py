@@ -11,7 +11,8 @@ with email on, a webhook set, recipients not empty, bad --to, a missing
 webhook file, the test webhook being the agent-level one); dry run changing
 nothing (tables compared before and after); a full run (fire, resolve, the
 outbox rows, the "rule email sent" lines, the operator prompts, YES for lag,
---escalate); TIMEOUT; the finally restore after an injected exception, a
+--escalate); --channels email with global Teams off (no card, emails sent) and the
+settings checks per --channels; TIMEOUT; the finally restore after an injected exception, a
 KeyboardInterrupt and a real SIGINT (a second SIGINT during cleanup is
 ignored); the final verification failing when a real rule changes; --cleanup
 and --restore-settings; the backup's mode and content; and that the test
@@ -563,6 +564,43 @@ async def test_full_run():
     return output
 
 
+def test_settings_checks_channels():
+    s = {"email_recipients": "", "teams_enabled": False, "email_enabled": True}
+    assert B.settings_problems(s, "email") == [], B.settings_problems(s, "email")
+    assert B.settings_problems(s, "both") == B.settings_problems(s, "teams") == [
+        "setting teams_enabled is off: no Teams card would be posted (use --channels email)"], B.settings_problems(s, "both")
+    assert B.settings_problems({**s, "email_enabled": False}, "email") == []  # the run turns email_enabled on
+    assert B.settings_problems({**s, "teams_enabled": True, "email_enabled": False}) == []
+    assert B.parse_args(["--to", TO]).channels == "both" and B.parse_args(["--channels", "email"]).channels == "email"
+    ok("settings checks: --channels email runs with global Teams off, both/teams need it; --channels default both")
+
+
+async def test_channels_email_only():
+    await reset(teams_enabled=False)
+    agent = Agent(answers=answers_all())
+    code, output = await run_script(["--run", "--to", TO, "--log-file", LOG_FILE, "--channels", "email",
+                                     "--only", "broker.cpu_pct"], agent)
+    assert code == 0, output
+    assert "(Teams and Email off; webhook" in output and "(Teams off, Email on)" in output, output
+    row = result_row(output, "broker.cpu_pct")
+    assert row["fire"].startswith("critical x") and row["resolve"].startswith("resolved x"), row
+    assert (row["fire_teams"], row["fire_email"], row["fire_log"], row["fire_ok"]) == ("off", "sent", "sent", "y"), row
+    assert (row["resolve_teams"], row["resolve_email"], row["resolve_log"], row["resolve_ok"]) == ("skipped", "sent", "sent", "y"), row
+    assert "note:" not in output.split("\nRESULTS\n", 1)[1], output
+    assert "error=Teams off for this rule" in output and "teams_post_success=True" not in output, output
+    assert not CARDS, CARDS
+    subjects = SMTP.subjects()
+    assert any((s or "").startswith("[RESOLVED]") for s in subjects) and all(rcpts == [TO] for rcpts, _m in SMTP.messages), subjects
+    assert agent.prompts and all("NO card in the TEST channel" in p for p in agent.prompts), agent.prompts
+    assert "VERIFICATION PASSED" in output, output
+    rules = [json.loads(r[0]) for r in (await sql("SELECT row_to_json(c)::text FROM kafka_alert_configs c ORDER BY id")).all()]
+    assert rules == LIVE_RULES, "the real rules changed"
+    assert (routes_settings._config["email_enabled"], routes_settings._config["email_recipients"],
+            routes_settings._config["teams_enabled"]) == (False, "", False)
+    ok("--channels email with global Teams off: the copy runs, no card (triggers saved as 'Teams off for this rule', "
+       "outbox Teams skipped on the resolve), fire and resolve emails sent, prompts ask for no card")
+
+
 async def test_lag_needs_yes_and_escalation():
     await reset()
     agent = Agent(answers=["no"])
@@ -746,6 +784,8 @@ async def main():
         await test_refusal_leaves_state()
         dry = await test_dry_run_changes_nothing()
         await test_full_run()
+        test_settings_checks_channels()
+        await test_channels_email_only()
         await test_lag_needs_yes_and_escalation()
         await test_timeout_moves_on()
         await test_skip_answer_deletes_copy()
