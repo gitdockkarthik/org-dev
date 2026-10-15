@@ -10,7 +10,9 @@ kafka_notification_attempts row per channel.
 Setting notification_outbox_mode (read on every call, so a change applies
 without a restart): "off" records nothing; "shadow" (default) records; "on"
 routes owner notices through the outbox (outbox_worker.py) and records rule
-alerts as in shadow mode. Anything unknown behaves as "shadow".
+alerts as in shadow mode. Anything unknown behaves as "shadow". Rule notices
+move to the outbox per evaluator, independently of this mode, through the
+rule_outbox_evaluators setting (rule_via_outbox).
 
 Recording never raises and never changes a send, a trigger write or the
 caller's timing: hooks call record_inline_soon (a background task) or, on the
@@ -71,6 +73,21 @@ def owner_via_outbox() -> bool:
 
 def enabled() -> bool:
     return mode() != "off"
+
+
+# Evaluators whose rule notices can go through the outbox, one at a time
+# (setting rule_outbox_evaluators).
+RULE_EVALUATORS = ("close_wait", "reachability", "broker_thresholds", "cluster_metrics", "lag")
+
+
+def rule_via_outbox(name: str) -> bool:
+    """True when this evaluator's rule notices are enqueued for the worker
+    instead of sent inline. False for an unknown name or an empty list."""
+    try:
+        from routes_settings import _config
+        return name in RULE_EVALUATORS and name in (_config.get("rule_outbox_evaluators") or [])
+    except Exception:  # noqa: BLE001
+        return False
 
 
 # ── Channel results ──────────────────────────────────────────────────────────

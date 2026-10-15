@@ -39,6 +39,35 @@ Recipients, SMTP settings and webhooks are read from the live settings at send
 time; the payload holds only the content and a webhook reference ("rule:<id>"
 or "agent_default"). Passwords, addresses and webhook URLs are never logged
 or stored.
+
+Rule rows (routing "rule") enqueued with a policy (enqueue_in, on the
+evaluator's own session) follow the rule's two channel toggles, read again at
+send time. Teams on and Email on: both channels independent. Teams on, Email
+off: email skipped "rule email off". Teams off, Email on: email first, the
+card waits in 'standby' and becomes pending in the same run once the email
+has failed RULE_FALLBACK_AFTER_ATTEMPTS times, is abandoned, failed for good,
+or is not configured -- only while rule_teams_fallback and teams_enabled are
+on, otherwise it is skipped with the reason. Both off: no row. A resolve,
+escalate or reminder row waits (at most DEPENDENCY_WAIT) for every earlier
+fire or escalate row sharing a trigger id to finish that channel; a resolve
+card goes out only if its fire's card did. When a rule row's Teams channel
+settles, the triggers in trigger_ids still showing "queued (outbox row N)"
+get teams_post_success and error_detail.
+
+Payload of a rule row (keys shared with owner rows first):
+  title       str   the email subject (or the kind), shown in the delivery log
+  mode        "on"  boot_id  str (as owner rows)
+  email       {"subject", "text", "html"}  rendered email; absent: no email
+  teams_card  dict  the rendered Teams card; absent: no card
+  teams_ref   "rule:<id>"  webhook reference, resolved at send time
+  rule_name   str   the rule's name when enqueued
+  policy      {"rule_id": int, "teams_toggle": bool, "email_toggle": bool}
+              the rule's toggles when enqueued (the row's channel plan)
+  worker      the worker's bookkeeping (due, inflight, resend, config_problem)
+  ...         any extra keys the caller passes (subject, cluster_name, ...)
+Dedupe keys (rule_dedupe_key): rule_fire:{trigger_id},
+rule_escalate:{trigger_id}:{tier}:{eval_ts}, rule_resolve:{trigger_id},
+lag:{config_id}:{kind}:{eval_ts}, lag_resolve:{config_id}:{eval_ts}.
 """
 import asyncio
 import copy
@@ -90,6 +119,23 @@ SPOOL_PATH = os.environ.get("OUTBOX_SPOOL_PATH", "/app/.outbox_spool.jsonl")
 _CHANNELS = ("email", "teams")
 _OPEN = ("pending", "sending")
 _RETRY = ("failed_transient", "failed_config", "timeout")
+# A channel status that no longer changes (what a dependent row waits for).
+_DONE = ("sent", "failed", "skipped", "abandoned", "superseded")
+
+# Rule rows: the Teams fallback of a rule with its Teams toggle off starts
+# after this many failed email attempts (or at once, see _apply).
+RULE_FALLBACK_AFTER_ATTEMPTS = 3
+# A resolve, escalate or reminder row waits at most this long (from its
+# creation) for its earlier fire/escalate rows; then it proceeds.
+DEPENDENCY_WAIT = timedelta(minutes=60)
+DEPENDENCY_POLL_SECS = 30
+RULE_EMAIL_OFF = "rule email off"
+TEAMS_OFF_RULE = "Teams off for this rule"  # teams_alerts._TEAMS_OFF_RULE
+TEAMS_OFF_NO_FALLBACK = "Teams off for this rule (fallback off)"
+TEAMS_OFF_GLOBAL = "Teams switched off globally"  # teams_alerts._TEAMS_OFF_GLOBAL
+FALLBACK_NOT_NEEDED = "fallback not needed: email sent"
+FALLBACK_SUPERSEDED = "fallback no longer needed: email sent"
+NO_OPENING_CARD = "opening card never reached Teams"
 
 # Never the default executor: a saturated default pool must not delay email.
 _SMTP_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="outbox-smtp")
@@ -180,6 +226,33 @@ def _due(row: dict, channel: str):
     return datetime.fromisoformat(value) if value else None
 
 
+def _policy(row: dict) -> dict | None:
+    """A rule row's channel plan (payload policy), or None (owner rows and
+    rule rows enqueued without one)."""
+    policy = row["payload"].get("policy") if row["routing"] == "rule" else None
+    return policy if isinstance(policy, dict) else None
+
+
+def _rule_fallback(row: dict) -> bool:
+    """A rule row whose card is only a fallback: Teams off, Email on."""
+    policy = _policy(row)
+    return bool(policy) and not policy.get("teams_toggle") and bool(policy.get("email_toggle"))
+
+
+def _email_first(row: dict) -> bool:
+    return row["routing"] == "owner" or _rule_fallback(row)
+
+
+def _settings() -> dict:
+    from routes_settings import _config
+    return dict(_config)
+
+
+def queued_detail(row_id) -> str:
+    """error_detail of a trigger whose Teams post waits in outbox row row_id."""
+    return f"queued (outbox row {row_id})"
+
+
 def row_state(row: dict) -> tuple:
     """(state, finished) from the channel statuses. A finished row is judged
     like an inline record (outbox.state); an unfinished one is degraded once
@@ -187,14 +260,14 @@ def row_state(row: dict) -> tuple:
     retrying, otherwise pending."""
     statuses = {c: row[f"{c}_status"] for c in _CHANNELS}
     w = _w(row)
-    if row["routing"] == "owner" and statuses["teams"] == "standby" and statuses["email"] in _OPEN:
+    if statuses["teams"] == "standby" and statuses["email"] in _OPEN:  # owner or rule fallback
         unfinished = ["email"]
     else:
         unfinished = [c for c in _CHANNELS if statuses[c] in _OPEN]
     if unfinished:
         any_sent = any(statuses[c] == "sent" for c in _CHANNELS)
         retrying = any(row[f"{c}_attempts"] > 0 and row[f"{c}_last_error"] for c in unfinished)
-        fallback_used = row["routing"] == "owner" and statuses["teams"] == "sent"  # email not confirmed yet
+        fallback_used = _email_first(row) and statuses["teams"] == "sent"  # email not confirmed yet
         return ("degraded" if any_sent and (retrying or fallback_used) else "pending"), False
     results = {}
     for c in _CHANNELS:
@@ -236,9 +309,30 @@ def _attempt_summary(row: dict, channel: str, error) -> str:
 
 
 def _activate_fallback(row: dict, now: datetime) -> None:
-    if row["routing"] == "owner" and row["teams_status"] == "standby":
+    """Standby Teams card -> pending now. A rule row's fallback also needs
+    rule_teams_fallback and teams_enabled; otherwise the card is skipped
+    with the reason."""
+    if row["teams_status"] != "standby":
+        return
+    if row["routing"] == "owner":
         row["teams_status"] = "pending"
         _w(row)["due"]["teams"] = now.isoformat()
+    elif _rule_fallback(row):
+        cfg = _settings()
+        if not cfg.get("rule_teams_fallback", True):
+            _skip_standby(row, TEAMS_OFF_NO_FALLBACK)
+        elif not cfg.get("teams_enabled"):
+            _skip_standby(row, TEAMS_OFF_GLOBAL)
+        else:
+            row["teams_status"] = "pending"
+            _w(row)["due"]["teams"] = now.isoformat()
+
+
+def _skip_standby(row: dict, reason: str) -> None:
+    if row["teams_status"] == "standby":
+        row["teams_status"] = "skipped"
+        row["teams_last_error"] = reason
+        _w(row)["due"].pop("teams", None)
 
 
 def _apply(row: dict, channel: str, res: dict, now: datetime, rand=random.random) -> None:
@@ -290,17 +384,27 @@ def _apply(row: dict, channel: str, res: dict, now: datetime, rand=random.random
         row[error_key] = error
         w["due"].pop(channel, None)
 
-    if row["routing"] == "owner" and channel == "email":
+    if _email_first(row) and channel == "email":
         if row["email_status"] == "sent":
             if row["teams_status"] == "standby":
                 row["teams_status"] = "skipped"
-                row["teams_last_error"] = "fallback not needed: email sent"
+                row["teams_last_error"] = FALLBACK_NOT_NEEDED
             elif row["teams_status"] == "pending":
                 row["teams_status"] = "superseded"
-                row["teams_last_error"] = "fallback no longer needed: email sent"
+                row["teams_last_error"] = FALLBACK_SUPERSEDED
                 w["due"].pop("teams", None)
-        elif outcome_ != "unknown" or row["email_status"] == "abandoned":
+        elif row["routing"] == "owner":
+            if outcome_ != "unknown" or row["email_status"] == "abandoned":
+                _activate_fallback(row, now)
+        elif res.get("teams_reason"):
+            # The rule's own Email toggle is off, or the rule is gone: not a delivery failure.
+            _skip_standby(row, res["teams_reason"])
+        elif (row["email_status"] in ("failed", "abandoned")
+              or (outcome_ == "skipped" and res.get("config_problem"))
+              or (outcome_ in _RETRY and row["email_attempts"] >= RULE_FALLBACK_AFTER_ATTEMPTS)):
             _activate_fallback(row, now)
+        elif row["email_status"] == "skipped":
+            _skip_standby(row, TEAMS_OFF_RULE)
 
 
 def _expire(row: dict, now: datetime) -> None:
@@ -317,7 +421,7 @@ def _expire(row: dict, now: datetime) -> None:
 # ── Database ─────────────────────────────────────────────────────────────────
 
 _COLS = (
-    "id", "created_at", "kind", "routing", "priority", "alert_config_id", "payload",
+    "id", "created_at", "kind", "routing", "priority", "alert_config_id", "trigger_ids", "payload",
     "email_status", "teams_status", "email_attempts", "teams_attempts", "email_last_error",
     "teams_last_error", "email_warning", "email_sent_at", "teams_sent_at", "email_message_id",
     "next_attempt_at", "claimed_by", "claim_expires_at", "expires_at", "state", "delivered_at", "finished_at",
@@ -413,7 +517,7 @@ async def _recover() -> int:
 
 async def _claim(limit: int = BATCH) -> list:
     """(b) Claim up to limit due rows. Returns [(row, {channel: attempt_id})]."""
-    claimed = []
+    claimed, settled = [], []
     async with _session() as s, s.begin():
         now = await _db_now(s)
         rows = await _rows(
@@ -426,9 +530,12 @@ async def _claim(limit: int = BATCH) -> list:
                 _expire(row, now)
                 _settle(row, now)
                 await _write(s, row)
+                settled.append(row)
                 continue
             due = [c for c in _CHANNELS if row[f"{c}_status"] == "pending" and (_due(row, c) or now) <= now]
-            if row["routing"] == "owner" and "email" in due:
+            if due:
+                due = await _not_waiting(s, row, due, now)
+            if _email_first(row) and "email" in due:
                 due = ["email"]  # Teams only after this email attempt, in the same run
             if not due:
                 _settle(row, now)
@@ -442,7 +549,56 @@ async def _claim(limit: int = BATCH) -> list:
             _settle(row, now)
             await _write(s, row)
             claimed.append((row, attempts))
+    for row in settled:
+        await _writeback(row)
     return claimed
+
+
+_DEPENDENT_KINDS = ("rule_resolve", "rule_escalate", "rule_reminder")
+
+
+async def _not_waiting(s, row: dict, due: list, now: datetime) -> list:
+    """The due channels of row that need not wait. A rule resolve, escalate
+    or reminder row waits for every earlier fire/escalate row sharing a
+    trigger id to finish the same channel, at most DEPENDENCY_WAIT after its
+    own creation; a waiting channel is looked at again in
+    DEPENDENCY_POLL_SECS. No earlier row: nothing to wait for."""
+    if (row["routing"] != "rule" or row["kind"] not in _DEPENDENT_KINDS or not row.get("trigger_ids")
+            or now - row["created_at"] >= DEPENDENCY_WAIT):
+        return due
+    open_ = (await s.execute(text(
+        "SELECT bool_or(email_status <> ALL(CAST(:done AS text[]))) AS email, "
+        "bool_or(teams_status <> ALL(CAST(:done AS text[]))) AS teams "
+        "FROM kafka_notification_outbox WHERE id < :id AND routing = 'rule' AND origin = 'outbox' "
+        "AND kind IN ('rule_fire', 'rule_escalate') AND trigger_ids && CAST(:ids AS integer[])"
+    ), {"id": row["id"], "ids": list(row["trigger_ids"]), "done": list(_DONE)})).mappings().one()
+    waiting = [c for c in due if open_[c]]
+    for c in waiting:
+        _w(row)["due"][c] = (now + timedelta(seconds=DEPENDENCY_POLL_SECS)).isoformat()
+    return [c for c in due if c not in waiting]
+
+
+async def _writeback(row: dict) -> None:
+    """A rule row's Teams channel has settled: the triggers in trigger_ids
+    still showing queued_detail(row id) get teams_post_success and the
+    reason. Idempotent; a failure is logged and changes nothing else."""
+    status = row["teams_status"]
+    if row["routing"] != "rule" or not row.get("trigger_ids") or status not in _DONE:
+        return
+    if status == "sent":
+        ok, detail = True, None
+    elif row["teams_last_error"] in (FALLBACK_NOT_NEEDED, FALLBACK_SUPERSEDED):
+        ok, detail = False, TEAMS_OFF_RULE  # the rule's Teams toggle is off; its email went out
+    else:
+        ok, detail = False, row["teams_last_error"] or status
+    try:
+        async with _session() as s, s.begin():
+            await s.execute(text(
+                "UPDATE kafka_alert_triggers SET teams_post_success = :ok, error_detail = :d "
+                "WHERE id = ANY(CAST(:ids AS integer[])) AND teams_post_success = false AND error_detail = :queued"
+            ), {"ok": ok, "d": detail, "ids": list(row["trigger_ids"]), "queued": queued_detail(row["id"])})
+    except Exception as exc:  # noqa: BLE001 -- never fails the send
+        logger.warning("outbox worker: row %s: trigger write-back failed: %s", row["id"], outbox._exc_text(exc))
 
 
 async def _claim_fallback(row_id: int):
@@ -521,6 +677,8 @@ async def _record(row_id: int, channel: str, attempt_id: int, boot: str, res: di
         updated = await _write(s, row, f"AND {channel}_status = 'sending' AND claimed_by = :boot", boot=boot)
         if updated and res["outcome"] == "sent" and row["kind"] == "owner_summary":
             await _supersede_older_summaries(s, row, now)
+    if updated:
+        await _writeback(row)
     log = logger.info if res["outcome"] == "sent" else logger.warning
     log("outbox worker: row %s %s %s: %s%s -> %s, row %s", row_id, row["kind"], channel, res["outcome"],
         f" ({outbox.clean_error(res.get('error'))})" if res.get("error") else "", row[f"{channel}_status"], row["state"])
@@ -541,7 +699,8 @@ async def _note_cap(row_id: int, attempt_id: int, boot: str, phase: str, cap: fl
         if not rows:
             return
         row = rows[0]
-        if row["email_status"] == "sending" and row["claimed_by"] == boot and row["teams_status"] == "standby":
+        if (row["routing"] == "owner" and row["email_status"] == "sending" and row["claimed_by"] == boot
+                and row["teams_status"] == "standby"):
             _activate_fallback(row, now)
             _settle(row, now)
             await _write(s, row)
@@ -660,16 +819,22 @@ def _email_target(row: dict, cfg: dict):
                           "config_problem": True}
         candidates = parse_recipients(raw)
     else:
+        # A rule row with a policy (Teams fallback possible): "not configured"
+        # is a skip that starts the fallback at once, not a retry at the cap.
+        not_configured = ({"outcome": "skipped", "config_problem": True} if _policy(row)
+                          else {"outcome": "failed_config"})
         if not cfg.get("email_enabled"):
+            if _policy(row):
+                return None, dict(not_configured, error="not configured: email_enabled (global) off")
             return None, {"outcome": "skipped", "error": "email_enabled (global) off"}
         candidates = parse_recipients(cfg.get("email_recipients") or "")
         missing = [k for k, v in (("email_recipients", candidates), ("smtp_host", host),
                                   ("smtp_from_address", from_address)) if not v]
         if missing:
-            return None, {"outcome": "failed_config", "error": f"not configured: {', '.join(missing)} missing"}
+            return None, dict(not_configured, error=f"not configured: {', '.join(missing)} missing")
         candidates = [a for a in candidates if a.lower().endswith(RULE_EMAIL_ALLOWED_DOMAINS)]
         if not candidates:
-            return None, {"outcome": "failed_config", "error": "no allowed recipients"}
+            return None, dict(not_configured, error="no allowed recipients")
     valid = [a for a in candidates if is_valid_address(a)][:MAX_RECIPIENTS]
     if not valid:
         return None, {"outcome": "failed_config", "error": "no valid recipients"}
@@ -707,6 +872,10 @@ async def _send_email(row: dict, attempt_id: int, boot: str, cap: float = None):
     from routes_settings import _config
 
     cfg = dict(_config)
+    if row["routing"] == "rule":
+        result = await _rule_check(row, "email", cfg)
+        if result is not None:
+            return dict(result, phase="config")
     recipients, result = _email_target(row, cfg)
     if result is not None:
         return dict(result, phase="config")
@@ -739,6 +908,8 @@ async def _webhook(row: dict, cfg: dict):
         if not (cfg.get("teams_enabled") and default):
             return None, {"outcome": "failed_config", "error": "not configured: teams_enabled off or no teams_webhook_url"}
         return default, None
+    if not cfg.get("teams_enabled"):
+        return None, {"outcome": "skipped", "error": TEAMS_OFF_GLOBAL}
     ref = str(row["payload"].get("teams_ref") or "agent_default")
     url = default
     if ref.startswith("rule:"):
@@ -749,6 +920,9 @@ async def _webhook(row: dict, cfg: dict):
             return None, {"outcome": "skipped", "error": f"rule {ref[5:]} no longer exists"}
         url = found[0] or default
     if not url:
+        if _rule_fallback(row):
+            return None, {"outcome": "skipped", "config_problem": True,
+                          "error": "no webhook URL configured (per-alert or agent-level)"}
         return None, {"outcome": "failed_config", "error": "no webhook URL configured (per-alert or agent-level)"}
     return url, None
 
@@ -756,7 +930,14 @@ async def _webhook(row: dict, cfg: dict):
 async def _send_teams(row: dict) -> dict:
     from routes_settings import _config
 
-    url, result = await _webhook(row, dict(_config))
+    cfg = dict(_config)
+    if row["routing"] == "rule":
+        result = await _rule_check(row, "teams", cfg)
+        if result is None and row["kind"] == "rule_resolve":
+            result = await _resolve_gate(row)
+        if result is not None:
+            return dict(result, phase="config")
+    url, result = await _webhook(row, cfg)
     if result is not None:
         return dict(result, phase="config")
     card = row["payload"].get("teams_card") or {}
@@ -783,6 +964,60 @@ async def _send_teams(row: dict) -> dict:
     return res
 
 
+# ── Rule rows: send-time checks ───────────────────────────────────────────────
+
+async def _rule_check(row: dict, channel: str, cfg: dict):
+    """A skip result when this rule row's channel must not go out now, else
+    None. Reads the rule (policy rows) and the settings at send time: rule
+    deleted -> both channels skipped; its Email toggle off -> email skipped;
+    its Teams toggle off -> Teams skipped unless the card is the fallback;
+    teams_enabled off -> Teams skipped, fallback included."""
+    policy = _policy(row)
+    if channel == "teams" and not cfg.get("teams_enabled"):
+        return {"outcome": "skipped", "error": TEAMS_OFF_GLOBAL}
+    if policy is None:
+        return None
+    async with _session() as s:
+        rule = (await s.execute(text("SELECT enabled, email_enabled FROM kafka_alert_configs WHERE id = :id"),
+                                {"id": int(policy.get("rule_id") or 0)})).mappings().first()
+    if rule is None:
+        gone = f"rule {policy.get('rule_id')} no longer exists"
+        return {"outcome": "skipped", "error": gone, "teams_reason": gone}
+    if channel == "email":
+        if not rule["email_enabled"]:
+            return {"outcome": "skipped", "error": RULE_EMAIL_OFF, "teams_reason": TEAMS_OFF_RULE}
+        return None
+    if _rule_fallback(row):
+        if not cfg.get("rule_teams_fallback", True):
+            return {"outcome": "skipped", "error": TEAMS_OFF_NO_FALLBACK}
+        return None
+    if not rule["enabled"]:
+        return {"outcome": "skipped", "error": TEAMS_OFF_RULE}
+    return None
+
+
+async def _resolve_gate(row: dict):
+    """A resolve card goes out only if the opening card did: an earlier
+    outbox fire row sharing a trigger id with its Teams channel sent; with
+    no such row (the fire went inline), the trigger's own teams_post_success.
+    No trigger ids: no gate."""
+    ids = list(row.get("trigger_ids") or [])
+    if not ids:
+        return None
+    async with _session() as s:
+        parents = (await s.execute(text(
+            "SELECT teams_status FROM kafka_notification_outbox WHERE id < :id AND routing = 'rule' "
+            "AND origin = 'outbox' AND kind = 'rule_fire' AND trigger_ids && CAST(:ids AS integer[])"
+        ), {"id": row["id"], "ids": ids})).scalars().all()
+        if parents:
+            reached = "sent" in parents
+        else:
+            reached = bool((await s.execute(text(
+                "SELECT bool_or(teams_post_success) FROM kafka_alert_triggers WHERE id = ANY(CAST(:ids AS integer[]))"
+            ), {"ids": ids})).scalar())
+    return None if reached else {"outcome": "skipped", "error": NO_OPENING_CARD}
+
+
 # ── The run ──────────────────────────────────────────────────────────────────
 
 async def _send_channel(row: dict, channel: str, attempt_id: int, boot: str, email_cap: float = None) -> None:
@@ -804,7 +1039,7 @@ async def _process(row: dict, attempts: dict, boot: str, started: set, email_cap
         if channel in attempts:
             started.add((row["id"], channel))
             await _send_channel(row, channel, attempts[channel], boot, email_cap)
-    if row["routing"] == "owner":
+    if _email_first(row):
         fresh, attempt_id = await _claim_fallback(row["id"])
         if fresh is not None:
             started.add((row["id"], "teams"))
@@ -905,31 +1140,50 @@ _INSERT_SQL = (
 
 
 def _row_values(kind, routing, dedupe_key, *, email=None, teams_card=None, teams_ref=None, severity=None,
-                alert_config_id=None, cluster_id=None, trigger_ids=None, source="", payload=None) -> dict:
+                alert_config_id=None, cluster_id=None, trigger_ids=None, source="", payload=None,
+                policy=None, rule_name=None) -> dict:
     """Parameters of _INSERT_SQL for one pending row. A channel with no
-    content is skipped; the owner Teams card waits in standby behind email."""
+    content is skipped; the owner Teams card waits in standby behind email.
+    A rule row with a policy follows the rule's toggles (module docstring):
+    Email off -> email skipped "rule email off"; Teams off with Email on ->
+    the card waits in standby as the fallback."""
     email_status = "pending" if email else "skipped"
+    email_skip = None if email else "no email content"
+    teams_skip = None if teams_card else "no card content"
     if not teams_card:
         teams_status = "skipped"
     elif routing == "owner" and email:
         teams_status = "standby"
     else:
         teams_status = "pending"
+    if routing == "rule" and policy is not None:
+        if email and not policy.get("email_toggle"):
+            email_status, email_skip = "skipped", RULE_EMAIL_OFF
+        if teams_card and not policy.get("teams_toggle"):
+            if email_status == "pending":
+                teams_status = "standby"
+            else:
+                teams_status, teams_skip = "skipped", TEAMS_OFF_RULE
     body = {"title": outbox.clean_error((email or {}).get("subject") or kind), "mode": "on",
             "boot_id": _boot(), **(payload or {})}
     if email:
         body["email"] = email
     if teams_card:
         body["teams_card"] = teams_card
-        body["teams_ref"] = teams_ref or "agent_default"
+        body["teams_ref"] = teams_ref or (f"rule:{policy['rule_id']}" if policy else "agent_default")
+    if policy is not None:
+        body["policy"] = {"rule_id": policy.get("rule_id"), "teams_toggle": bool(policy.get("teams_toggle")),
+                          "email_toggle": bool(policy.get("email_toggle"))}
+        body["rule_name"] = rule_name
     return {
         "kind": kind, "source": source or "outbox", "routing": routing, "dedupe_key": dedupe_key,
         "priority": outbox.priority(kind, severity), "alert_config_id": alert_config_id,
         "cluster_id": cluster_id, "trigger_ids": list(trigger_ids) if trigger_ids else None,
         "severity": severity, "payload": json.dumps(body, default=str),
         "email_status": email_status, "teams_status": teams_status,
-        "email_skip": None if email else "no email content", "teams_skip": None if teams_card else "no card content",
-        "message_id": make_msgid() if email else None,
+        "email_skip": email_skip if email_status == "skipped" else None,
+        "teams_skip": teams_skip if teams_status == "skipped" else None,
+        "message_id": make_msgid() if email_status == "pending" else None,
         "max_age": outbox._MAX_AGE.get(kind, timedelta(hours=24)).total_seconds(),
     }
 
@@ -961,6 +1215,40 @@ async def enqueue(kind, routing, dedupe_key, *, email=None, teams_card=None, tea
     if row_id is not None and kick_after:
         kick()
     return row_id
+
+
+async def enqueue_in(session, kind, dedupe_key, *, policy, email=None, teams_card=None, rule_name=None,
+                     severity=None, cluster_id=None, trigger_ids=None, source="", payload=None, teams_ref=None):
+    """Insert one rule row (routing "rule", pending) on the CALLER's session:
+    same transaction as the caller's trigger write, so both commit or roll
+    back together. Never commits and never kicks: call kick() after the
+    caller's commit. policy is {"rule_id", "teams_toggle", "email_toggle"};
+    with both toggles off nothing is inserted. Returns the row id, or None
+    (both off, or dedupe_key exists). Raises on a database failure."""
+    if not policy.get("teams_toggle") and not policy.get("email_toggle"):
+        return None
+    values = _row_values(kind, "rule", dedupe_key, email=email, teams_card=teams_card, teams_ref=teams_ref,
+                         severity=severity, alert_config_id=policy.get("rule_id"), cluster_id=cluster_id,
+                         trigger_ids=trigger_ids, source=source, payload=payload, policy=policy,
+                         rule_name=rule_name)
+    return (await session.execute(text(_INSERT_SQL), values)).scalar_one_or_none()
+
+
+def rule_dedupe_key(kind: str, *, trigger_id=None, tier=None, eval_ts=None, config_id=None,
+                    grouped: bool = False) -> str:
+    """The dedupe key of a rule row. One per trigger for a fire or resolve,
+    per trigger, tier and evaluator run for an escalation; a grouped (lag)
+    notice is one per rule and run."""
+    ts = eval_ts.isoformat() if isinstance(eval_ts, datetime) else eval_ts
+    if grouped:
+        if kind == "rule_resolve":
+            return f"lag_resolve:{config_id}:{ts}"
+        return f"lag:{config_id}:{kind.removeprefix('rule_')}:{ts}"
+    if kind == "rule_escalate":
+        return f"rule_escalate:{trigger_id}:{tier}:{ts}"
+    if kind in ("rule_fire", "rule_resolve"):
+        return f"{kind}:{trigger_id}"
+    raise ValueError(f"no per-trigger dedupe key for {kind}")
 
 
 def owner_content(severity: str, category: str, description: str, subject: str = None) -> tuple:

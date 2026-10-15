@@ -82,6 +82,14 @@ _DEFAULTS: dict = {
     # send, without changing the send; "on" behaves as "shadow" until the
     # delivery worker exists.
     "notification_outbox_mode": "shadow",
+    # Rule notices through the outbox (outbox_worker.py). rule_teams_fallback:
+    # a rule notice whose email cannot be delivered is posted to Teams instead
+    # (rules with their Teams toggle off; needs teams_enabled), read by the
+    # worker at send time. rule_outbox_evaluators: the evaluators whose rule
+    # notices are enqueued instead of sent inline (outbox.RULE_EVALUATORS);
+    # empty sends every rule notice inline as before.
+    "rule_teams_fallback": True,
+    "rule_outbox_evaluators": [],
     # Message-rate CSV cold archive to MinIO (rollup_hourly_to_daily Step 2)
     "message_rate_archive_enabled": False,
 }
@@ -175,6 +183,8 @@ class SettingsPayload(BaseModel):
     health_email_recipients: str = ""
     # See the matching comment in _DEFAULTS above.
     notification_outbox_mode: Literal["off", "shadow", "on"] = "shadow"
+    rule_teams_fallback: bool = True
+    rule_outbox_evaluators: list[str] = []
 
     # Message-rate CSV cold archive to MinIO (rollup_hourly_to_daily Step 2)
     message_rate_archive_enabled: bool = False
@@ -240,6 +250,15 @@ async def save_settings(request: Request) -> dict:
     # "clear the password". Only a genuinely non-empty value updates it.
     if "smtp_password" in data and not data["smtp_password"]:
         data.pop("smtp_password")
+    if "rule_teams_fallback" in data and not isinstance(data["rule_teams_fallback"], bool):
+        raise HTTPException(status_code=422, detail="rule_teams_fallback must be true or false")
+    if "rule_outbox_evaluators" in data:
+        import outbox
+        value = data["rule_outbox_evaluators"]
+        if not isinstance(value, list) or any(v not in outbox.RULE_EVALUATORS for v in value):
+            raise HTTPException(status_code=422, detail="rule_outbox_evaluators must be a list of: "
+                                                        + ", ".join(outbox.RULE_EVALUATORS))
+        data["rule_outbox_evaluators"] = list(dict.fromkeys(value))
     _config.update(data)
     for k, v in data.items():
         await _upsert(k, v)

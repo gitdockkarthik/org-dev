@@ -6,7 +6,9 @@ evaluator is involved. Plain asserts, no pytest needed.
 
 Run inside the agent image, never against a real database (it truncates
 kafka_notification_outbox, kafka_notification_attempts, kafka_alert_configs,
-kafka_job_runs and kafka_job_schedules):
+kafka_alert_triggers, kafka_job_runs and kafka_job_schedules). Rule rows with a
+policy (enqueue_in) cover the rule fallback, the dependency gate, the send-time
+checks and the trigger write-back:
   docker run --rm --network <scratch net> -v $PWD/agents/kafka-analyser:/app:ro \
     -v $PWD/shared:/opt/shared:ro -e PYTHONPATH=/app:/opt -e DATABASE_URL=<scratch> \
     -e OUTBOX_TEST_CONFIRM=scratch -w /app org-dev-kafka-analyser python -B tests/test_outbox_worker.py
@@ -76,6 +78,7 @@ def configure(**over):
         "smtp_from_address": "alerts@sintecmedia.com",
         "email_recipients": "ops@operative.com, outsider@example.com",
         "health_email_recipients": "owner@operative.com",
+        "rule_teams_fallback": True,
         **over,
     })
 
@@ -98,7 +101,7 @@ async def reset(**over):
     await W.drain(60)
     await assert_no_secrets_stored()  # checked on every test's rows before they are truncated
     await sql("TRUNCATE kafka_notification_outbox, kafka_notification_attempts, kafka_alert_configs, "
-              "kafka_job_runs, kafka_job_schedules RESTART IDENTITY CASCADE")
+              "kafka_alert_triggers, kafka_job_runs, kafka_job_schedules RESTART IDENTITY CASCADE")
     if SMTP._server is None:
         SMTP.up()
     if TEAMS._server is None:
@@ -540,6 +543,418 @@ async def test_superseded_summary_and_kick():
        "deadman 12 h")
 
 
+# ── Rule rows with a policy (rule notices through the outbox, step 1) ────────
+
+async def add_rule(rule_id, teams=True, email=True, webhook=None):
+    await sql("INSERT INTO kafka_alert_configs (id, name, alert_type, severity, config, cooldown_minutes, enabled, "
+              "email_enabled, webhook_url, created_at, updated_at) VALUES (:id, :n, 'cluster.urp_total', 'warning', "
+              "'{}', 0, :t, :e, :u, now(), now())", id=rule_id, n=f"rule {rule_id}", t=teams, e=email, u=webhook)
+
+
+async def add_trigger(rule_id, posted=False, detail=None):
+    return (await sql("INSERT INTO kafka_alert_triggers (alert_config_id, cluster_id, subject, severity, triggered_at, "
+                      "metric_value, message_sent, teams_post_success, error_detail, is_recurrence) VALUES "
+                      "(:r, 4, 'cluster', 'warning', now(), '5', 'm', :p, :d, false) RETURNING id",
+                      r=rule_id, p=posted, d=detail)).scalar_one()
+
+
+async def trigger(tid):
+    return dict((await sql("SELECT teams_post_success, error_detail FROM kafka_alert_triggers WHERE id = :id",
+                           id=tid)).mappings().one())
+
+
+async def enq_policy(n, rule_id, kind="rule_fire", teams=True, email=True, trigger_ids=None, queued=True):
+    """One rule row on its own session, as an evaluator would: the triggers
+    in trigger_ids are marked queued in the same transaction."""
+    async with SessionLocal() as s:
+        rid = await W.enqueue_in(s, kind, f"p:{n}", policy={"rule_id": rule_id, "teams_toggle": teams,
+                                                             "email_toggle": email},
+                                 email=mail(n), teams_card=card(n), rule_name=f"rule {rule_id}", severity="warning",
+                                 cluster_id=4, trigger_ids=trigger_ids, source="test", payload={"subject": "cluster"})
+        if rid is not None and trigger_ids and queued:
+            await s.execute(text("UPDATE kafka_alert_triggers SET error_detail = :d WHERE id = ANY(:ids)"),
+                            {"d": W.queued_detail(rid), "ids": trigger_ids})
+        await s.commit()
+    return rid
+
+
+async def run_until_idle(n=1):
+    for _ in range(n):
+        await force_due()
+        await W.run_once()
+
+
+async def test_rule_channel_plan():
+    await reset()
+    for rule_id, teams, email in ((1, True, True), (2, True, False), (3, False, True), (4, False, False)):
+        await add_rule(rule_id, teams, email)
+    both, teams_only, email_only = [await enq_policy(n, n, teams=t, email=e)
+                                    for n, t, e in ((1, True, True), (2, True, False), (3, False, True))]
+    none = await enq_policy(4, 4, teams=False, email=False)
+    rows = {k: await row(v) for k, v in (("both", both), ("teams", teams_only), ("email", email_only))}
+    assert none is None and (await sql("SELECT count(*) FROM kafka_notification_outbox")).scalar() == 3
+    assert (rows["both"]["email_status"], rows["both"]["teams_status"]) == ("pending", "pending"), rows["both"]
+    assert (rows["teams"]["email_status"], rows["teams"]["email_last_error"], rows["teams"]["teams_status"]) == (
+        "skipped", "rule email off", "pending") and rows["teams"]["email_message_id"] is None, rows["teams"]
+    assert (rows["email"]["email_status"], rows["email"]["teams_status"]) == ("pending", "standby"), rows["email"]
+    pl = rows["email"]["payload"]
+    assert pl["teams_card"] == card(3) and pl["email"] == mail(3) and pl["teams_ref"] == "rule:3" and pl["title"] == "notice 3"
+    assert pl["policy"] == {"rule_id": 3, "teams_toggle": False, "email_toggle": True} and pl["rule_name"] == "rule 3"
+    assert pl["subject"] == "cluster" and pl["mode"] == "on" and rows["email"]["alert_config_id"] == 3
+    ok("rule rows at enqueue: both on -> both pending; Teams only -> email skipped 'rule email off'; Email only -> "
+       "email pending, card stored in standby; both off -> no row; payload holds email, card, policy, rule_name, rule:<id>")
+    await W.run_once()
+    rows = {k: await row(v) for k, v in (("both", both), ("teams", teams_only), ("email", email_only))}
+    assert (rows["both"]["email_status"], rows["both"]["teams_status"], rows["both"]["state"]) == ("sent", "sent", "delivered")
+    assert (rows["teams"]["teams_status"], rows["teams"]["state"]) == ("sent", "delivered"), rows["teams"]
+    assert (rows["email"]["email_status"], rows["email"]["teams_status"], rows["email"]["teams_last_error"],
+            rows["email"]["state"]) == ("sent", "skipped", "fallback not needed: email sent", "delivered"), rows["email"]
+    assert sorted(SMTP.subjects()) == ["notice 1", "notice 3"] and sorted(first_texts()) == ["card 1", "card 2"]
+    ok("rule rows sent: each channel independent when Teams is on; Email-only: email sent, the standby card "
+       "skipped 'fallback not needed: email sent', no card; all delivered")
+
+
+async def test_enqueue_in_transaction():
+    await reset()
+    await add_rule(1)
+    async with SessionLocal() as s:
+        tid = (await s.execute(text("INSERT INTO kafka_alert_triggers (alert_config_id, triggered_at, teams_post_success, "
+                                    "is_recurrence) VALUES (1, now(), false, false) RETURNING id"))).scalar_one()
+        rid = await W.enqueue_in(s, "rule_fire", W.rule_dedupe_key("rule_fire", trigger_id=tid),
+                                 policy={"rule_id": 1, "teams_toggle": True, "email_toggle": True},
+                                 email=mail(1), teams_card=card(1), trigger_ids=[tid])
+        assert rid is not None
+        await s.rollback()
+    counts = (await sql("SELECT (SELECT count(*) FROM kafka_notification_outbox), (SELECT count(*) FROM kafka_alert_triggers)")).one()
+    assert tuple(counts) == (0, 0), counts
+    await W.run_once()
+    assert SMTP.messages == [] and TEAMS.posts == []
+    ok("enqueue_in joins the caller's transaction: a rollback removes the trigger and the row together; "
+       "nothing is committed or kicked by enqueue_in")
+    async with SessionLocal() as s:
+        tid = (await s.execute(text("INSERT INTO kafka_alert_triggers (alert_config_id, triggered_at, teams_post_success, "
+                                    "is_recurrence) VALUES (1, now(), false, false) RETURNING id"))).scalar_one()
+        key = W.rule_dedupe_key("rule_fire", trigger_id=tid)
+        pol = {"rule_id": 1, "teams_toggle": True, "email_toggle": True}
+        first = await W.enqueue_in(s, "rule_fire", key, policy=pol, email=mail(1), trigger_ids=[tid])
+        again = await W.enqueue_in(s, "rule_fire", key, policy=pol, email=mail(1), trigger_ids=[tid])
+        await s.commit()
+    r = await row(first)
+    assert first is not None and again is None and r["trigger_ids"] == [tid] and r["routing"] == "rule" and r["origin"] == "outbox"
+    from datetime import datetime, timezone
+    ts = datetime(2026, 10, 15, 6, 45, tzinfo=timezone.utc)
+    assert [W.rule_dedupe_key("rule_fire", trigger_id=7), W.rule_dedupe_key("rule_resolve", trigger_id=7),
+            W.rule_dedupe_key("rule_escalate", trigger_id=7, tier="critical", eval_ts=ts),
+            W.rule_dedupe_key("rule_reminder", config_id=3, eval_ts=ts, grouped=True),
+            W.rule_dedupe_key("rule_resolve", config_id=3, eval_ts=ts, grouped=True)] == [
+        "rule_fire:7", "rule_resolve:7", "rule_escalate:7:critical:2026-10-15T06:45:00+00:00",
+        "lag:3:reminder:2026-10-15T06:45:00+00:00", "lag_resolve:3:2026-10-15T06:45:00+00:00"]
+    ok("enqueue_in after a commit: one row with its trigger_ids; the same dedupe key again inserts nothing; "
+       "dedupe keys rule_fire:{t}, rule_resolve:{t}, rule_escalate:{t}:{tier}:{ts}, lag:{rule}:{kind}:{ts}, "
+       "lag_resolve:{rule}:{ts}")
+
+
+async def test_rule_fallback_after_three():
+    await reset(smtp_port=free_port())
+    await add_rule(1, teams=False)
+    rid = await enq_policy(1, 1, teams=False)
+    for attempt in (1, 2):
+        await run_until_idle()
+        r = await row(rid)
+        assert (r["email_status"], r["email_attempts"], r["teams_status"]) == ("pending", attempt, "standby"), r
+        assert TEAMS.posts == [] and r["state"] == "pending", r
+    ok("rule fallback: after 1 and 2 failed email attempts the card stays in standby; nothing posted")
+    await run_until_idle()
+    r = await row(rid)
+    assert (r["email_status"], r["email_attempts"], r["teams_status"], r["state"]) == ("pending", 3, "sent", "degraded"), r
+    assert first_texts() == ["card 1"] and TEAMS.posts[0][0].startswith("/webhook/"), TEAMS.posts
+    ok("rule fallback: the 3rd failed attempt turns standby into pending and the card goes out in the same run; "
+       "email keeps retrying; degraded")
+    configure()
+    await run_until_idle()
+    r = await row(rid)
+    assert (r["email_status"], r["teams_status"], r["state"]) == ("sent", "sent", "delivered") and len(TEAMS.posts) == 1, r
+    ok("rule fallback: the email retried later is sent; the card is not posted again; both channels sent")
+
+
+async def test_rule_fallback_at_once():
+    cases = []
+    # abandoned: max age reached on the 2nd attempt
+    await reset(smtp_port=free_port())
+    await add_rule(1, teams=False)
+    rid = await enq_policy(1, 1, teams=False)
+    await W.run_once()
+    await sql("UPDATE kafka_notification_outbox SET expires_at = now() + interval '20 seconds' WHERE id = :id", id=rid)
+    await run_until_idle()
+    r = await row(rid)
+    cases.append(("abandoned", r))
+    assert (r["email_status"], r["email_attempts"], r["teams_status"], r["state"]) == ("abandoned", 2, "sent", "degraded"), r
+    # permanently failed (1 attempt). Not reachable end to end today: smtplib's data() returns a 5xx final
+    # reply instead of raising, and _smtp_send_sync records it as sent (reported, not changed here).
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    fake = {"id": 1, "routing": "rule", "kind": "rule_fire", "email_status": "sending", "teams_status": "standby",
+            "email_attempts": 1, "teams_attempts": 0, "email_last_error": None, "teams_last_error": None,
+            "email_sent_at": None, "teams_sent_at": None, "email_warning": None, "expires_at": now + timedelta(hours=1),
+            "payload": {"policy": {"rule_id": 1, "teams_toggle": False, "email_toggle": True}}}
+    W._apply(fake, "email", {"outcome": "failed_permanent", "error": "554 rejected"}, now)
+    assert (fake["email_status"], fake["teams_status"]) == ("failed", "pending"), fake
+    # not configured: no SMTP host; and email switched off globally
+    for over, reason in (({"smtp_host": ""}, "not configured: smtp_host missing"),
+                         ({"email_recipients": ""}, "not configured: email_recipients missing"),
+                         ({"email_enabled": False}, "not configured: email_enabled (global) off")):
+        await reset(**over)
+        await add_rule(1, teams=False)
+        rid = await enq_policy(1, 1, teams=False)
+        await W.run_once()
+        r = await row(rid)
+        assert (r["email_status"], r["email_last_error"], r["teams_status"], r["state"]) == (
+            "skipped", reason, "sent", "degraded"), (over, r)
+        assert len(TEAMS.posts) == 1 and SMTP.messages == []
+    ok("rule fallback at once: email abandoned (2 attempts), permanently failed (1 attempt, via _apply), not "
+       "configured (no SMTP host, no recipients) or global email off -> the card goes out in the same run; degraded")
+
+
+async def test_rule_no_fallback():
+    for over, reason in (({"teams_enabled": False}, "Teams switched off globally"),
+                         ({"rule_teams_fallback": False}, "Teams off for this rule (fallback off)")):
+        await reset(smtp_host="", **over)
+        await add_rule(1, teams=False)
+        rid = await enq_policy(1, 1, teams=False)
+        await W.run_once()
+        r = await row(rid)
+        assert (r["email_status"], r["teams_status"], r["teams_last_error"], r["state"]) == (
+            "skipped", "skipped", reason, "failed"), (over, r)
+        assert r["finished_at"] is not None and TEAMS.posts == []
+    ok("no rule fallback with global Teams off ('Teams switched off globally') or rule_teams_fallback off "
+       "('Teams off for this rule (fallback off)'): nothing posted, the row ends failed")
+    await reset(smtp_host="", teams_webhook_url="")
+    await add_rule(1, teams=False)
+    rid = await enq_policy(1, 1, teams=False)
+    await W.run_once()
+    r = await row(rid)
+    assert (r["teams_status"], r["teams_last_error"], r["state"], r["finished_at"] is not None) == (
+        "skipped", "no webhook URL configured (per-alert or agent-level)", "failed", True), r
+    ok("no rule fallback without a webhook: the card is skipped with the reason, not retried")
+    await reset()
+    await add_rule(1, teams=False, email=False)  # the rule's Email toggle was turned off after the enqueue
+    rid = await enq_policy(1, 1, teams=False)
+    await W.run_once()
+    r = await row(rid)
+    assert (r["email_status"], r["email_last_error"], r["teams_status"], r["teams_last_error"], r["state"]) == (
+        "skipped", "rule email off", "skipped", "Teams off for this rule", "suppressed"), r
+    assert TEAMS.posts == [] and SMTP.messages == []
+    ok("rule Email toggle off at send time: email skipped 'rule email off'; that is not a delivery failure, so "
+       "no fallback (card skipped 'Teams off for this rule'); suppressed")
+
+
+async def test_rule_email_supersedes():
+    await reset(smtp_port=free_port())
+    await add_rule(1, teams=False)
+    rid = await enq_policy(1, 1, teams=False)
+    await run_until_idle(2)
+    TEAMS.script = [(500, {})]
+    await run_until_idle()
+    r = await row(rid)
+    assert (r["email_attempts"], r["teams_status"], r["teams_last_error"]) == (3, "pending", "HTTP 500"), r
+    configure()
+    await run_until_idle()
+    r = await row(rid)
+    assert (r["email_status"], r["teams_status"], r["teams_last_error"], r["state"]) == (
+        "sent", "superseded", "fallback no longer needed: email sent", "delivered"), r
+    assert len(TEAMS.posts) == 1 and SMTP.subjects() == ["notice 1"]
+    ok("rule fallback pending but not yet delivered (Teams 500) when the email goes out: superseded, no card; delivered")
+
+
+async def test_rule_dependency_gate():
+    await reset()
+    await add_rule(1)
+    t1 = await add_trigger(1)
+    TEAMS.status = 500
+    fire = await enq_policy(1, 1, trigger_ids=[t1])
+    resolve = await enq_policy(2, 1, kind="rule_resolve", trigger_ids=[t1])
+    await W.run_once()
+    f, r = await row(fire), await row(resolve)
+    assert (f["email_status"], f["teams_status"]) == ("sent", "pending"), f
+    assert (r["email_status"], r["teams_status"]) == ("pending", "pending") and r["email_attempts"] == 0, r
+    await run_until_idle()  # the fire's email has finished: the resolve email may go; its card still waits
+    r = await row(resolve)
+    assert (r["email_status"], r["teams_status"], r["teams_attempts"]) == ("sent", "pending", 0), r
+    assert SMTP.subjects() == ["notice 1", "notice 2"], SMTP.subjects()
+    ok("dependency gate: a resolve waits per channel for the earlier fire sharing its trigger; its email goes once "
+       "the fire's email is done while its card keeps waiting for the fire's card")
+    TEAMS.status = 202
+    await run_until_idle()
+    r = await row(resolve)
+    assert r["teams_status"] == "pending" and r["teams_attempts"] == 0, r  # the fire's card was only being sent
+    await run_until_idle()
+    f, r = await row(fire), await row(resolve)
+    assert (f["teams_status"], r["teams_status"], r["state"]) == ("sent", "sent", "delivered"), (f, r)
+    texts = first_texts()  # card 1 also holds the posts answered 500
+    assert texts.count("card 2") == 1 and max(i for i, t in enumerate(texts) if t == "card 1") < texts.index("card 2"), texts
+    ok("dependency gate: the resolve card goes out only after the fire's card was sent, in that order")
+
+    await reset(smtp_port=free_port())
+    await add_rule(1)
+    t1 = await add_trigger(1)
+    fire = await enq_policy(1, 1, trigger_ids=[t1])
+    resolve = await enq_policy(2, 1, kind="rule_resolve", trigger_ids=[t1])
+    await run_until_idle()
+    await sql("UPDATE kafka_notification_outbox SET expires_at = now() + interval '20 seconds' WHERE id = :id", id=fire)
+    await run_until_idle()
+    f, r = await row(fire), await row(resolve)
+    assert (f["email_status"], f["teams_status"]) == ("abandoned", "sent"), f
+    assert (r["email_status"], r["email_attempts"], r["teams_status"]) == ("pending", 0, "sent"), r
+    configure()
+    await run_until_idle()
+    r = await row(resolve)
+    assert (r["email_status"], r["state"]) == ("sent", "delivered") and SMTP.subjects() == ["notice 2"], (r, SMTP.subjects())
+    ok("dependency gate: a fire email that was never delivered (abandoned) does not block the resolve email once "
+       "it is done; the resolve card went as soon as the fire's card was sent")
+
+    await reset()
+    await add_rule(1)
+    t1 = await add_trigger(1)
+    TEAMS.status = 500
+    fire = await enq_policy(1, 1, trigger_ids=[t1])
+    resolve = await enq_policy(2, 1, kind="rule_resolve", trigger_ids=[t1])
+    await sql("UPDATE kafka_notification_outbox SET created_at = now() - interval '61 minutes' WHERE id = :id", id=resolve)
+    await W.run_once()
+    r = await row(resolve)
+    assert (r["email_status"], r["teams_status"], r["teams_last_error"]) == (
+        "sent", "skipped", "opening card never reached Teams"), r
+    assert (await row(fire))["teams_status"] == "pending"
+    ok("dependency gate capped at 60 min: the resolve proceeds; its card is skipped 'opening card never reached "
+       "Teams' since the fire's card was not sent; its email goes out")
+
+    await reset()
+    await add_rule(1)
+    t_posted, t_not = await add_trigger(1, posted=True), await add_trigger(1, posted=False, detail="HTTP 500")
+    r_posted = await enq_policy(1, 1, kind="rule_resolve", trigger_ids=[t_posted], queued=False)
+    r_not = await enq_policy(2, 1, kind="rule_resolve", trigger_ids=[t_not], queued=False)
+    await W.run_once()
+    a, b = await row(r_posted), await row(r_not)
+    assert (a["email_status"], a["teams_status"]) == ("sent", "sent"), a
+    assert (b["email_status"], b["teams_status"], b["teams_last_error"]) == ("sent", "skipped", "opening card never reached Teams"), b
+    assert first_texts() == ["card 1"]
+    ok("no parent row (the fire went inline before the switch): the resolve proceeds; its card follows the "
+       "trigger's own teams_post_success (sent for the posted one, skipped for the other)")
+
+
+async def test_rule_send_time_checks():
+    await reset()
+    await add_rule(9)
+    await add_rule(1)
+    gone = await enq_policy(1, 9)
+    both = await enq_policy(2, 1)
+    await sql("DELETE FROM kafka_alert_configs WHERE id = 9")
+    await sql("UPDATE kafka_alert_configs SET enabled = false WHERE id = 1")  # Teams toggle off after the enqueue
+    await W.run_once()
+    g, b = await row(gone), await row(both)
+    assert (g["email_status"], g["email_last_error"], g["teams_status"], g["teams_last_error"], g["state"]) == (
+        "skipped", "rule 9 no longer exists", "skipped", "rule 9 no longer exists", "suppressed"), g
+    assert (b["email_status"], b["teams_status"], b["teams_last_error"], b["state"]) == (
+        "sent", "skipped", "Teams off for this rule", "delivered"), b
+    assert SMTP.subjects() == ["notice 2"] and TEAMS.posts == []
+    ok("send-time checks: a deleted rule skips both channels; a Teams toggle turned off after the enqueue "
+       "skips the card (not a fallback row); the email still goes")
+    await reset(teams_enabled=False)
+    await add_rule(1)
+    rid = await enq_policy(1, 1)
+    legacy = await enq_rule(2, email=False)
+    await W.run_once()
+    r, l = await row(rid), await row(legacy)
+    assert (r["email_status"], r["teams_status"], r["teams_last_error"]) == ("sent", "skipped", "Teams switched off globally"), r
+    assert (l["teams_status"], l["teams_last_error"]) == ("skipped", "Teams switched off globally"), l
+    await reset(email_enabled=False)
+    await add_rule(1)
+    rid = await enq_policy(1, 1)
+    await W.run_once()
+    r = await row(rid)
+    assert (r["email_status"], r["email_last_error"], r["teams_status"], r["state"]) == (
+        "skipped", "not configured: email_enabled (global) off", "sent", "degraded"), r
+    ok("send-time checks: global Teams off skips every rule card ('Teams switched off globally'); global email "
+       "off skips the email as not configured (degraded) while the card goes")
+
+
+async def test_rule_trigger_writeback():
+    await reset()
+    await add_rule(1)
+    await add_rule(2, teams=False)
+    t_sent, t_off, t_other = await add_trigger(1), await add_trigger(2), await add_trigger(1, detail="HTTP 500")
+    sent_row = await enq_policy(1, 1, trigger_ids=[t_sent])
+    off_row = await enq_policy(2, 2, teams=False, trigger_ids=[t_off])
+    other_row = await enq_policy(3, 1, trigger_ids=[t_other], queued=False)
+    assert (await trigger(t_sent)) == {"teams_post_success": False, "error_detail": f"queued (outbox row {sent_row})"}
+    await W.run_once()
+    assert (await trigger(t_sent)) == {"teams_post_success": True, "error_detail": None}
+    assert (await trigger(t_off)) == {"teams_post_success": False, "error_detail": "Teams off for this rule"}
+    assert (await trigger(t_other)) == {"teams_post_success": False, "error_detail": "HTTP 500"}
+    assert (await row(other_row))["teams_status"] == "sent"
+    await W._writeback(await row(sent_row))  # again: nothing still shows "queued", nothing changes
+    assert (await trigger(t_sent)) == {"teams_post_success": True, "error_detail": None}
+    ok("trigger write-back: sent -> teams_post_success true; an Email-only rule's card not needed -> false "
+       "'Teams off for this rule'; a trigger not showing 'queued (outbox row N)' is left alone; idempotent")
+    await reset(teams_enabled=False)
+    await add_rule(1)
+    t = await add_trigger(1)
+    await enq_policy(1, 1, trigger_ids=[t])
+    await W.run_once()
+    assert (await trigger(t)) == {"teams_post_success": False, "error_detail": "Teams switched off globally"}
+    await reset()
+    await add_rule(1)
+    t = await add_trigger(1)
+    rid = await enq_policy(1, 1, trigger_ids=[t])
+    await sql("ALTER TABLE kafka_alert_triggers RENAME TO kafka_alert_triggers_moved")
+    try:
+        await W.run_once()
+    finally:
+        await sql("ALTER TABLE kafka_alert_triggers_moved RENAME TO kafka_alert_triggers")
+    r = await row(rid)
+    assert (r["email_status"], r["teams_status"], r["state"]) == ("sent", "sent", "delivered"), r
+    assert any("trigger write-back failed" in line for line in LOGS.lines)
+    ok("trigger write-back: a skipped card writes its reason; a failing write-back is logged and never fails the send")
+
+
+async def test_rule_settings():
+    import httpx
+    import routes_settings
+    from fastapi import FastAPI
+    from storage import init_storage
+    from config import settings as agent_settings
+    init_storage(agent_settings.agent_slug)
+    assert routes_settings._DEFAULTS["rule_teams_fallback"] is True and routes_settings._DEFAULTS["rule_outbox_evaluators"] == []
+    saved = {k: _config.get(k) for k in ("rule_teams_fallback", "rule_outbox_evaluators")}
+    _config["rule_outbox_evaluators"] = []
+    assert not any(outbox.rule_via_outbox(n) for n in outbox.RULE_EVALUATORS + ("nope",))
+    app = FastAPI()
+    app.include_router(routes_settings.router)
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://agent") as c:
+            bad = [await c.post("/settings", json={"rule_outbox_evaluators": v}) for v in (["lag", "nope"], "lag", [1])]
+            bad.append(await c.post("/settings", json={"rule_teams_fallback": "yes"}))
+            assert [r.status_code for r in bad] == [422] * 4, [r.status_code for r in bad]
+            assert _config["rule_outbox_evaluators"] == [] and _config["rule_teams_fallback"] is True
+            good = await c.post("/settings", json={"rule_outbox_evaluators": ["lag", "close_wait", "lag"],
+                                                   "rule_teams_fallback": False})
+            assert good.status_code == 200 and _config["rule_outbox_evaluators"] == ["lag", "close_wait"]
+            assert [outbox.rule_via_outbox(n) for n in ("lag", "close_wait", "cluster_metrics", "nope")] == [
+                True, True, False, False]
+            stored = dict((await sql("SELECT key, value FROM agent_config WHERE key IN "
+                                     "('rule_outbox_evaluators', 'rule_teams_fallback')")).all())
+            assert json.loads(stored["rule_outbox_evaluators"]) == ["lag", "close_wait"], stored
+            assert json.loads(stored["rule_teams_fallback"]) is False, stored
+            got = (await c.get("/settings")).json()
+            assert got["rule_outbox_evaluators"] == ["lag", "close_wait"] and got["rule_teams_fallback"] is False
+            await c.post("/settings", json={"rule_outbox_evaluators": [], "rule_teams_fallback": True})
+    finally:
+        _config.update(saved)
+        await sql("DELETE FROM agent_config WHERE key IN ('rule_outbox_evaluators', 'rule_teams_fallback')")
+    ok("settings: rule_teams_fallback (default true) and rule_outbox_evaluators (default empty) are validated "
+       "(422 for an unknown name, a non-list or a non-bool), de-duplicated, stored and returned; "
+       "outbox.rule_via_outbox is false for an empty list and an unknown name")
+
+
 async def test_no_secrets():
     await assert_no_secrets_stored()
     logs = "\n".join(LOGS.lines)
@@ -554,11 +969,14 @@ async def main():
     for test in (test_shadow_finds_nothing, test_smtp_down, test_teams_down, test_both_down_then_recover,
                  test_slow_smtp, test_restart_mid_send, test_duplicates, test_crash_after_claim,
                  test_config_healing, test_not_configured, test_superseded_summary_and_kick,
-                 test_default_executor_saturation, test_no_secrets):
+                 test_default_executor_saturation, test_rule_channel_plan, test_enqueue_in_transaction,
+                 test_rule_fallback_after_three, test_rule_fallback_at_once, test_rule_no_fallback,
+                 test_rule_email_supersedes, test_rule_dependency_gate, test_rule_send_time_checks,
+                 test_rule_trigger_writeback, test_rule_settings, test_no_secrets):
         await test()
     await W.drain(30)
     await sql("TRUNCATE kafka_notification_outbox, kafka_notification_attempts, kafka_alert_configs, "
-              "kafka_job_runs, kafka_job_schedules RESTART IDENTITY CASCADE")
+              "kafka_alert_triggers, kafka_job_runs, kafka_job_schedules RESTART IDENTITY CASCADE")
     await engine.dispose()
     print(f"\nALL {len(PASSED)} CHECKS PASSED")
 
