@@ -79,14 +79,9 @@ async def _send_resolve_cards(items: list[dict]) -> None:
                 open_minutes = None
                 if trigger.triggered_at is not None and trigger.resolved_at is not None:
                     open_minutes = (trigger.resolved_at - trigger.triggered_at).total_seconds() / 60
-                card = build_resolve_card(
-                    agent_name="Kafka Analyser",
-                    cluster_name=item.get("cluster_name", ""),
-                    rule_name=config.name,
-                    subject=trigger.subject,
-                    severity=trigger.severity or config.severity,
-                    open_minutes=open_minutes,
-                    alert_type=config.alert_type,
+                card = rule_resolve_card(
+                    config, item.get("cluster_name", ""), trigger.subject, trigger.severity or config.severity,
+                    open_minutes,
                 )
                 _sent, item["_outbox_teams"] = await _post_card(webhook_url, card)
             except Exception as exc:
@@ -200,6 +195,24 @@ def _record_rule_notice(meta: dict, email_result: dict) -> None:
         logger.warning("_record_rule_notice: not recorded: %s", type(exc).__name__)
 
 
+def _email_args(config, cluster_name, kind, severity, description="", recommended_action="", **extra) -> dict:
+    """The arguments of one rule email (notify_rule_email's, and
+    rule_email_content's), with a plain snapshot of the rule so no ORM
+    object outlives its session."""
+    from types import SimpleNamespace
+    return {
+        "config_row": SimpleNamespace(
+            id=config.id, name=config.name, alert_type=config.alert_type, email_enabled=True,
+        ),
+        "cluster_name": cluster_name,
+        "kind": kind,
+        "severity": severity,
+        "description": description,
+        "recommended_action": recommended_action,
+        "extra": {k: v for k, v in extra.items() if v is not None},
+    }
+
+
 def _rule_email(config, cluster_name, kind, severity, description="", recommended_action="", **extra) -> dict | None:
     """One queued rule email, or None when the rule has email off. Takes a
     plain snapshot of the rule so no ORM object outlives its session. Never
@@ -207,21 +220,127 @@ def _rule_email(config, cluster_name, kind, severity, description="", recommende
     try:
         if not getattr(config, "email_enabled", False):
             return None
-        from types import SimpleNamespace
-        return {
-            "config_row": SimpleNamespace(
-                id=config.id, name=config.name, alert_type=config.alert_type, email_enabled=True,
-            ),
-            "cluster_name": cluster_name,
-            "kind": kind,
-            "severity": severity,
-            "description": description,
-            "recommended_action": recommended_action,
-            "extra": {k: v for k, v in extra.items() if v is not None},
-        }
+        return _email_args(config, cluster_name, kind, severity, description, recommended_action, **extra)
     except Exception as exc:
         logger.warning("_rule_email: could not queue %s email: %s", kind, exc)
         return None
+
+
+# ── Rule notice content builders ─────────────────────────────────────────────
+# One rule notice's Teams card and email, pure (no I/O). The inline send
+# paths build their cards with these, and rule_email_content renders an
+# email exactly as notify_rule_email does, so a notice enqueued for the
+# outbox carries the same content as the inline send
+# (tests/test_rule_notice_golden.py).
+_AGENT_NAME = "Kafka Analyser"
+_NO_AFFECTED = object()
+
+
+def rule_alert_card(cluster_name: str, severity, category: str, description: str, recommended_action: str,
+                    affected=_NO_AFFECTED) -> dict:
+    """The fire/escalate card of a non-grouped rule. affected: the card's
+    Affected row text, or left out (close-wait, cluster metrics)."""
+    anomaly = {
+        "severity": severity,
+        "category": category,
+        "description": description,
+        "recommended_action": recommended_action,
+    }
+    if affected is not _NO_AFFECTED:
+        anomaly["affected"] = affected
+    return build_adaptive_card(agent_name=_AGENT_NAME, cluster_name=cluster_name, anomaly=anomaly)
+
+
+def rule_resolve_card(config, cluster_name: str, subject, severity, open_minutes) -> dict:
+    """The green resolve card of one trigger."""
+    return build_resolve_card(
+        agent_name=_AGENT_NAME,
+        cluster_name=cluster_name,
+        rule_name=config.name,
+        subject=subject,
+        severity=severity,
+        open_minutes=open_minutes,
+        alert_type=config.alert_type,
+    )
+
+
+def rule_lag_card(config, cluster_name: str, severity, summary: str, rows: list[dict],
+                  resolved: bool = False) -> dict:
+    """The grouped card of a lag rule: fire/escalate/reminder (with the
+    recommended action) or resolve."""
+    from shared.escalation.notifier import build_lag_card
+    if resolved:
+        return build_lag_card(_AGENT_NAME, cluster_name, config.alert_type, severity, summary, rows,
+                              resolved=True, max_rows=_LAG_CARD_MAX_ROWS)
+    return build_lag_card(_AGENT_NAME, cluster_name, config.alert_type, severity, summary, rows,
+                          _LAG_ACTION, max_rows=_LAG_CARD_MAX_ROWS)
+
+
+def rule_email_content(email: dict) -> dict:
+    """{"subject", "text", "html"} of a queued rule email (the dict
+    _rule_email returns), rendered exactly as notify_rule_email renders it."""
+    from shared.escalation.email_notifier import build_alert_email
+    config_row = email["config_row"]
+    extra = dict(email.get("extra") or {})
+    extra.setdefault("rule_name", getattr(config_row, "name", None))
+    subject, text_body, html_body = build_alert_email(
+        email["kind"], getattr(config_row, "alert_type", ""), email["cluster_name"], email["severity"],
+        email.get("description", ""), email.get("recommended_action", ""), extra,
+    )
+    return {"subject": subject, "text": text_body, "html": html_body}
+
+
+# ── Rule notices through the outbox (step 2) ────────────────────────────────
+# Not called by any evaluator yet: rule_outbox_evaluators selects, per
+# evaluator, whether its notices are sent inline (today) or enqueued here.
+
+def build_rule_payload(config, cluster_name: str, kind: str, severity, description: str = "",
+                       recommended_action: str = "", *, card: dict, subject=None, **extra) -> dict:
+    """The rule row payload of one notice (schema: outbox_worker docstring).
+    kind is the email kind ("fire", "escalate", "reminder", "resolve");
+    card is built with the rule_*_card builders; the email takes the same
+    arguments as the inline path (subject and extra such as open_minutes,
+    offenders, cleared), so the content is the same."""
+    email = rule_email_content(_email_args(config, cluster_name, kind, severity, description, recommended_action,
+                                           subject=subject, **extra))
+    return {
+        "title": email["subject"],
+        "email": email,
+        "teams_card": card,
+        "teams_ref": f"rule:{config.id}",
+        "rule_name": config.name,
+        "policy": {"rule_id": config.id, "teams_toggle": bool(config.enabled),
+                   "email_toggle": bool(config.email_enabled)},
+        "subject": subject,
+        "cluster_name": cluster_name,
+    }
+
+
+async def enqueue_rule_notice(session, config, kind: str, trigger_ids: list[int], *, cluster_id, cluster_name: str,
+                              severity, card: dict, description: str = "", recommended_action: str = "",
+                              subject=None, tier=None, eval_ts=None, grouped: bool = False, source: str = "",
+                              **extra):
+    """Enqueue one rule notice on the caller's session (same transaction as
+    its trigger write; the caller commits, marks the triggers
+    outbox_worker.queued_detail(row id) and kicks the worker). kind is the
+    email kind; the row kind is "rule_<kind>". Dedupe key: one per trigger
+    for fire and resolve, per trigger, tier and run for an escalation, per
+    rule and run for a grouped (lag) notice. Returns the row id, or None
+    (both channel toggles off, or the notice already exists)."""
+    import outbox_worker
+    row_kind = f"rule_{kind}"
+    if grouped:
+        key = outbox_worker.rule_dedupe_key(row_kind, config_id=config.id, eval_ts=eval_ts, grouped=True)
+    else:
+        key = outbox_worker.rule_dedupe_key(row_kind, trigger_id=trigger_ids[0], tier=tier, eval_ts=eval_ts)
+    payload = build_rule_payload(config, cluster_name, kind, severity, description, recommended_action,
+                                 card=card, subject=subject, **extra)
+    return await outbox_worker.enqueue_in(
+        session, row_kind, key, policy=payload["policy"], email=payload["email"], teams_card=payload["teams_card"],
+        rule_name=payload["rule_name"], severity=severity, cluster_id=cluster_id, trigger_ids=trigger_ids,
+        source=source or "teams_alerts", teams_ref=payload["teams_ref"],
+        payload={"subject": subject, "cluster_name": cluster_name},
+    )
 
 
 def _resolve_emails(items: list[dict]) -> list[dict | None]:
@@ -440,15 +559,9 @@ async def fire_close_wait_alerts(close_wait_by_cluster_id: dict[int, int]) -> No
                 recommended_action = ("Use the Breaker Status tab's Clear Stale "
                                       "Connections button, or wait roughly 5 minutes "
                                       "for this to clear automatically.")
-                card = build_adaptive_card(
-                    agent_name="Kafka Analyser",
-                    cluster_name=cluster_names.get(cluster_id, str(cluster_id)),
-                    anomaly={
-                        "severity": config.severity,
-                        "category": CLOSE_WAIT_ALERT_TYPE,
-                        "description": description,
-                        "recommended_action": recommended_action,
-                    },
+                card = rule_alert_card(
+                    cluster_names.get(cluster_id, str(cluster_id)), config.severity, CLOSE_WAIT_ALERT_TYPE,
+                    description, recommended_action,
                 )
 
                 webhook_url = config.webhook_url or _config.get("teams_webhook_url", "")
@@ -702,16 +815,9 @@ async def _evaluate_broker_reachability() -> None:
                         if is_recurrence else ""
                     )
                     recommended_action = "Check the broker process/host and the network path to it."
-                    card = build_adaptive_card(
-                        agent_name="Kafka Analyser",
-                        cluster_name=cluster_name,
-                        anomaly={
-                            "severity": config.severity,
-                            "category": BROKER_UNREACHABLE_ALERT_TYPE,
-                            "description": description,
-                            "recommended_action": recommended_action,
-                            "affected": affected_text(BROKER_UNREACHABLE_ALERT_TYPE, subject),
-                        },
+                    card = rule_alert_card(
+                        cluster_name, config.severity, BROKER_UNREACHABLE_ALERT_TYPE, description,
+                        recommended_action, affected=affected_text(BROKER_UNREACHABLE_ALERT_TYPE, subject),
                     )
 
                     webhook_url = config.webhook_url or _config.get("teams_webhook_url", "")
@@ -1074,16 +1180,9 @@ async def _evaluate_broker_thresholds() -> None:
     for config, cluster_id, subject, tier, description, trigger in to_post:
         try:
             recommended_action = "Check load on the broker and recent traffic changes."
-            card = build_adaptive_card(
-                agent_name="Kafka Analyser",
-                cluster_name=cluster_names.get(cluster_id, str(cluster_id)),
-                anomaly={
-                    "severity": tier,
-                    "category": config.alert_type,
-                    "description": description,
-                    "recommended_action": recommended_action,
-                    "affected": affected_text(config.alert_type, subject),
-                },
+            card = rule_alert_card(
+                cluster_names.get(cluster_id, str(cluster_id)), tier, config.alert_type, description,
+                recommended_action, affected=affected_text(config.alert_type, subject),
             )
             webhook_url = config.webhook_url or _config.get("teams_webhook_url", "")
             teams_off = _teams_off(config, _config)
@@ -2317,15 +2416,9 @@ async def _evaluate_cluster_metrics() -> None:
     for config, cluster_id, subject, tier, description, trigger in to_post:
         try:
             recommended_action = _CLUSTER_METRIC_ACTIONS[config.alert_type]
-            card = build_adaptive_card(
-                agent_name="Kafka Analyser",
-                cluster_name=cluster_names.get(cluster_id, str(cluster_id)),
-                anomaly={
-                    "severity": tier,
-                    "category": config.alert_type,
-                    "description": description,
-                    "recommended_action": recommended_action,
-                },
+            card = rule_alert_card(
+                cluster_names.get(cluster_id, str(cluster_id)), tier, config.alert_type, description,
+                recommended_action,
             )
             webhook_url = config.webhook_url or _config.get("teams_webhook_url", "")
             teams_off = _teams_off(config, _config)
@@ -2754,11 +2847,7 @@ async def _evaluate_cluster_lag() -> None:
     for config, kind, severity, summary, offenders, new_triggers in to_post:
         try:
             cluster_name = cluster_names.get(config.cluster_id, str(config.cluster_id))
-            from shared.escalation.notifier import build_lag_card
-            card = build_lag_card(
-                "Kafka Analyser", cluster_name, config.alert_type, severity, summary, offenders,
-                _LAG_ACTION, max_rows=_LAG_CARD_MAX_ROWS,
-            )
+            card = rule_lag_card(config, cluster_name, severity, summary, offenders)
             webhook_url = config.webhook_url or _config.get("teams_webhook_url", "")
             teams_off = _teams_off(config, _config)
             if teams_off:
@@ -2906,12 +2995,9 @@ async def _send_lag_resolves(
             elif not webhook_url:
                 teams_results[rule_id] = outbox.skipped(_NO_WEBHOOK, config_problem=True)
             if not teams_off and card_items and webhook_url and (config.config or {}).get("send_resolve_card", True):
-                from shared.escalation.notifier import build_lag_card
-                cards.append((rule_id, webhook_url, build_lag_card(
-                    "Kafka Analyser", cluster_name, config.alert_type, was,
-                    f"{_plural(len(card_items), noun)} back below their lag tiers.",
-                    [{"name": i["name"], "was": i["was"]} for i in card_items],
-                    resolved=True, max_rows=_LAG_CARD_MAX_ROWS,
+                cards.append((rule_id, webhook_url, rule_lag_card(
+                    config, cluster_name, was, f"{_plural(len(card_items), noun)} back below their lag tiers.",
+                    [{"name": i["name"], "was": i["was"]} for i in card_items], resolved=True,
                 )))
         except Exception as exc:
             logger.warning("_send_lag_resolves: rule %s failed: %s", rule_id, exc)

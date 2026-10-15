@@ -24,6 +24,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from types import SimpleNamespace as NS
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -961,6 +962,83 @@ async def test_data_end_rejection():
     ok("shared send_email (inline sends) already reports a rejection at the end of DATA: (False, 'SMTP error <code>')")
 
 
+async def test_enqueue_rule_notice():
+    """teams_alerts.enqueue_rule_notice (step 2 plumbing, not called by any evaluator yet)."""
+    import teams_alerts as ta
+    from datetime import datetime, timezone
+    await reset()
+    ts = datetime(2026, 10, 15, 6, 45, tzinfo=timezone.utc)
+    rules = {}
+    for rule_id, teams, email in ((1, True, True), (2, True, False), (3, False, True), (4, False, False)):
+        await add_rule(rule_id, teams, email)
+        rules[rule_id] = NS(id=rule_id, name=f"rule {rule_id}", alert_type="broker.cpu_pct", enabled=teams,
+                            email_enabled=email, severity="warning")
+    card = ta.rule_alert_card("prod-4", "warning", "broker.cpu_pct", "Broker 1 CPU is 75.5%", "Check load.",
+                              affected="Broker 1")
+    ids = {}
+    async with SessionLocal() as s:
+        for rule_id in rules:
+            t = await add_trigger(rule_id)
+            ids[rule_id] = (t, await ta.enqueue_rule_notice(
+                s, rules[rule_id], "fire", [t], cluster_id=4, cluster_name="prod-4", severity="warning", card=card,
+                description="Broker 1 CPU is 75.5%", recommended_action="Check load.", subject="1"))
+        await s.commit()
+    t1, rid = ids[1]
+    r = await row(rid)
+    want = ta.build_rule_payload(rules[1], "prod-4", "fire", "warning", "Broker 1 CPU is 75.5%", "Check load.",
+                                 card=card, subject="1")
+    pl = r["payload"]
+    assert (r["kind"], r["routing"], r["origin"], r["dedupe_key"], r["severity"], r["priority"], r["alert_config_id"],
+            r["cluster_id"], r["trigger_ids"]) == ("rule_fire", "rule", "outbox", f"rule_fire:{t1}", "warning", 2, 1, 4,
+                                                   [t1]), r
+    assert (r["email_status"], r["teams_status"]) == ("pending", "pending"), r
+    assert {k: pl[k] for k in want} == want, pl
+    assert pl["email"]["subject"].startswith("[WARNING] ") and pl["title"] == pl["email"]["subject"]
+    assert pl["teams_ref"] == "rule:1" and pl["policy"] == {"rule_id": 1, "teams_toggle": True, "email_toggle": True}
+    r2, r3 = await row(ids[2][1]), await row(ids[3][1])
+    assert (r2["email_status"], r2["email_last_error"], r2["teams_status"]) == ("skipped", "rule email off", "pending"), r2
+    assert (r3["email_status"], r3["teams_status"]) == ("pending", "standby") and r3["payload"]["teams_card"] == card, r3
+    assert ids[4][1] is None and (await sql("SELECT count(*) FROM kafka_notification_outbox")).scalar() == 3
+    ok("enqueue_rule_notice: both on -> both pending; Teams only -> email skipped 'rule email off'; Email only -> "
+       "standby with the card; both off -> no row; kind, routing, severity, priority, rule_fire:{trigger} key and "
+       "the documented payload (email, card, rule:<id>, rule_name, policy, title, subject, cluster_name)")
+
+    async with SessionLocal() as s:
+        again = await ta.enqueue_rule_notice(s, rules[1], "fire", [t1], cluster_id=4, cluster_name="prod-4",
+                                             severity="warning", card=card, subject="1")
+        esc = await ta.enqueue_rule_notice(s, rules[1], "escalate", [t1], cluster_id=4, cluster_name="prod-4",
+                                           severity="critical", card=card, subject="1", tier="critical", eval_ts=ts)
+        lag = await ta.enqueue_rule_notice(s, rules[1], "fire", [t1, ids[2][0]], cluster_id=4, cluster_name="prod-4",
+                                           severity="warning", card=card, eval_ts=ts, grouped=True,
+                                           offenders=[{"name": "g1", "lag": 500, "tier": "warning", "source": "generic"}])
+        lag_res = await ta.enqueue_rule_notice(s, rules[1], "resolve", [t1], cluster_id=4, cluster_name="prod-4",
+                                               severity="warning", card=card, eval_ts=ts, grouped=True)
+        await s.commit()
+    e, g, gr = await row(esc), await row(lag), await row(lag_res)
+    assert again is None, again
+    assert (e["dedupe_key"], e["kind"], e["priority"]) == (
+        f"rule_escalate:{t1}:critical:2026-10-15T06:45:00+00:00", "rule_escalate", 1), e
+    assert (g["dedupe_key"], g["trigger_ids"]) == ("lag:1:fire:2026-10-15T06:45:00+00:00", [t1, ids[2][0]]), g
+    assert "g1" in g["payload"]["email"]["text"], g["payload"]["email"]["text"]
+    assert (gr["dedupe_key"], gr["kind"], gr["priority"]) == ("lag_resolve:1:2026-10-15T06:45:00+00:00", "rule_resolve", 3)
+    ok("enqueue_rule_notice: the same fire again inserts nothing; escalate rule_escalate:{t}:{tier}:{ts} priority 1 "
+       "(critical); grouped lag:{rule}:fire:{ts} with all its trigger ids and offenders in the email; "
+       "lag_resolve:{rule}:{ts} priority 3")
+
+    async with SessionLocal() as s:
+        t = (await s.execute(text("INSERT INTO kafka_alert_triggers (alert_config_id, triggered_at, teams_post_success, "
+                                  "is_recurrence) VALUES (1, now(), false, false) RETURNING id"))).scalar_one()
+        rid = await ta.enqueue_rule_notice(s, rules[1], "fire", [t], cluster_id=4, cluster_name="prod-4",
+                                           severity="warning", card=card)
+        await s.execute(text("UPDATE kafka_alert_triggers SET error_detail = :d WHERE id = :t"),
+                        {"d": W.queued_detail(rid), "t": t})
+        await s.rollback()
+    left = (await sql("SELECT (SELECT count(*) FROM kafka_notification_outbox WHERE id = :r), "
+                      "(SELECT count(*) FROM kafka_alert_triggers WHERE id = :t)", r=rid, t=t)).one()
+    assert tuple(left) == (0, 0), left
+    ok("enqueue_rule_notice rolls back with the caller's transaction (trigger, row and queued mark together)")
+
+
 async def test_rule_settings():
     import httpx
     import routes_settings
@@ -1017,7 +1095,8 @@ async def main():
                  test_default_executor_saturation, test_rule_channel_plan, test_enqueue_in_transaction,
                  test_rule_fallback_after_three, test_rule_fallback_at_once, test_rule_no_fallback,
                  test_rule_email_supersedes, test_rule_dependency_gate, test_rule_send_time_checks,
-                 test_rule_trigger_writeback, test_data_end_rejection, test_rule_settings, test_no_secrets):
+                 test_rule_trigger_writeback, test_data_end_rejection, test_enqueue_rule_notice,
+                 test_rule_settings, test_no_secrets):
         await test()
     await W.drain(30)
     await sql("TRUNCATE kafka_notification_outbox, kafka_notification_attempts, kafka_alert_configs, "

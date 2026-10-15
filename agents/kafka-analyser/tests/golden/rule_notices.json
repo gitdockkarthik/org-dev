@@ -1,0 +1,1027 @@
+{
+ "broker_thresholds check 1": [],
+ "broker_thresholds escalate": [
+  {
+   "channel": "email",
+   "html": "<html><body style=\"font-family:Segoe UI,Arial,sans-serif;font-size:14px\"><p><strong>Kafka Analyser alert escalated: Broker CPU %</strong></p><table style=\"border-collapse:collapse;font-size:13px\"><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Status</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#c50f1f;font-weight:bold\">ESCALATED</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Rule</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Broker CPU %</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Severity</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#c50f1f;font-weight:bold\">CRITICAL</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Category</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Broker CPU %</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Cluster</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">prod-4</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Affected</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Broker 1</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Time</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">2026-10-15 06:45 UTC</td></tr></table><p>Broker 1 CPU is 96.0% (critical, threshold 90) -- ESCALATED from warning</p><p><em>Recommended action:</em> Check load on the broker and recent traffic changes.</p></body></html>",
+   "subject": "[CRITICAL] Kafka Analyser - Broker CPU % - prod-4",
+   "text": "Kafka Analyser alert escalated: Broker CPU %\n\nStatus    ESCALATED\nRule      Broker CPU %\nSeverity  CRITICAL\nCategory  Broker CPU %\nCluster   prod-4\nAffected  Broker 1\nTime      2026-10-15 06:45 UTC\n\nBroker 1 CPU is 96.0% (critical, threshold 90) -- ESCALATED from warning\n\nRecommended action: Check load on the broker and recent traffic changes.\n"
+  },
+  {
+   "card": {
+    "attachments": [
+     {
+      "content": {
+       "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+       "actions": [],
+       "body": [
+        {
+         "color": "attention",
+         "size": "Medium",
+         "text": "🔴 Operative Intelligence — Kafka Analyser",
+         "type": "TextBlock",
+         "weight": "Bolder"
+        },
+        {
+         "facts": [
+          {
+           "title": "Severity",
+           "value": "CRITICAL"
+          },
+          {
+           "title": "Category",
+           "value": "Broker CPU %"
+          },
+          {
+           "title": "Cluster",
+           "value": "prod-4"
+          },
+          {
+           "title": "Affected",
+           "value": "Broker 1"
+          },
+          {
+           "title": "Time",
+           "value": "2026-10-15 06:45 UTC"
+          }
+         ],
+         "type": "FactSet"
+        },
+        {
+         "spacing": "Medium",
+         "text": "Broker 1 CPU is 96.0% (critical, threshold 90) -- ESCALATED from warning",
+         "type": "TextBlock",
+         "wrap": true
+        },
+        {
+         "color": "accent",
+         "spacing": "Small",
+         "text": "💡 Check load on the broker and recent traffic changes.",
+         "type": "TextBlock",
+         "wrap": true
+        }
+       ],
+       "type": "AdaptiveCard",
+       "version": "1.4"
+      },
+      "contentType": "application/vnd.microsoft.card.adaptive"
+     }
+    ],
+    "type": "message"
+   },
+   "channel": "teams"
+  }
+ ],
+ "broker_thresholds fire": [
+  {
+   "channel": "email",
+   "html": "<html><body style=\"font-family:Segoe UI,Arial,sans-serif;font-size:14px\"><p><strong>Kafka Analyser alert firing: Broker CPU %</strong></p><table style=\"border-collapse:collapse;font-size:13px\"><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Status</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#9d5d00\">FIRING</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Rule</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Broker CPU %</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Severity</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#9d5d00\">WARNING</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Category</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Broker CPU %</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Cluster</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">prod-4</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Affected</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Broker 1</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Time</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">2026-10-15 06:45 UTC</td></tr></table><p>Broker 1 CPU is 75.5% (warning, threshold 70)</p><p><em>Recommended action:</em> Check load on the broker and recent traffic changes.</p></body></html>",
+   "subject": "[WARNING] Kafka Analyser - Broker CPU % - prod-4",
+   "text": "Kafka Analyser alert firing: Broker CPU %\n\nStatus    FIRING\nRule      Broker CPU %\nSeverity  WARNING\nCategory  Broker CPU %\nCluster   prod-4\nAffected  Broker 1\nTime      2026-10-15 06:45 UTC\n\nBroker 1 CPU is 75.5% (warning, threshold 70)\n\nRecommended action: Check load on the broker and recent traffic changes.\n"
+  },
+  {
+   "card": {
+    "attachments": [
+     {
+      "content": {
+       "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+       "actions": [],
+       "body": [
+        {
+         "color": "warning",
+         "size": "Medium",
+         "text": "🟡 Operative Intelligence — Kafka Analyser",
+         "type": "TextBlock",
+         "weight": "Bolder"
+        },
+        {
+         "facts": [
+          {
+           "title": "Severity",
+           "value": "WARNING"
+          },
+          {
+           "title": "Category",
+           "value": "Broker CPU %"
+          },
+          {
+           "title": "Cluster",
+           "value": "prod-4"
+          },
+          {
+           "title": "Affected",
+           "value": "Broker 1"
+          },
+          {
+           "title": "Time",
+           "value": "2026-10-15 06:45 UTC"
+          }
+         ],
+         "type": "FactSet"
+        },
+        {
+         "spacing": "Medium",
+         "text": "Broker 1 CPU is 75.5% (warning, threshold 70)",
+         "type": "TextBlock",
+         "wrap": true
+        },
+        {
+         "color": "accent",
+         "spacing": "Small",
+         "text": "💡 Check load on the broker and recent traffic changes.",
+         "type": "TextBlock",
+         "wrap": true
+        }
+       ],
+       "type": "AdaptiveCard",
+       "version": "1.4"
+      },
+      "contentType": "application/vnd.microsoft.card.adaptive"
+     }
+    ],
+    "type": "message"
+   },
+   "channel": "teams"
+  }
+ ],
+ "broker_thresholds resolve": [
+  {
+   "channel": "email",
+   "html": "<html><body style=\"font-family:Segoe UI,Arial,sans-serif;font-size:14px\"><p><strong>Kafka Analyser alert resolved: Broker CPU %</strong></p><table style=\"border-collapse:collapse;font-size:13px\"><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Status</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#107c10\">RESOLVED</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Rule</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Broker CPU %</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Category</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Broker CPU %</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Cluster</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">prod-4</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Affected</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Broker 1</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Was</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">CRITICAL</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Open for</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">1 h 5 min</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Time</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">2026-10-15 06:45 UTC</td></tr></table><p>The condition that triggered this alert has cleared.</p></body></html>",
+   "subject": "[RESOLVED] Kafka Analyser - Broker CPU % - prod-4",
+   "text": "Kafka Analyser alert resolved: Broker CPU %\n\nStatus    RESOLVED\nRule      Broker CPU %\nCategory  Broker CPU %\nCluster   prod-4\nAffected  Broker 1\nWas       CRITICAL\nOpen for  1 h 5 min\nTime      2026-10-15 06:45 UTC\n\nThe condition that triggered this alert has cleared.\n"
+  },
+  {
+   "card": {
+    "attachments": [
+     {
+      "content": {
+       "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+       "actions": [],
+       "body": [
+        {
+         "color": "good",
+         "size": "Medium",
+         "text": "✅ Operative Intelligence — Kafka Analyser",
+         "type": "TextBlock",
+         "weight": "Bolder"
+        },
+        {
+         "facts": [
+          {
+           "title": "Status",
+           "value": "RESOLVED"
+          },
+          {
+           "title": "Rule",
+           "value": "Broker CPU %"
+          },
+          {
+           "title": "Cluster",
+           "value": "prod-4"
+          },
+          {
+           "title": "Affected",
+           "value": "Broker 1"
+          },
+          {
+           "title": "Was",
+           "value": "CRITICAL"
+          },
+          {
+           "title": "Open for",
+           "value": "1 h 5 min"
+          },
+          {
+           "title": "Time",
+           "value": "2026-10-15 06:45 UTC"
+          }
+         ],
+         "type": "FactSet"
+        },
+        {
+         "spacing": "Medium",
+         "text": "The condition that triggered this alert has cleared.",
+         "type": "TextBlock",
+         "wrap": true
+        }
+       ],
+       "type": "AdaptiveCard",
+       "version": "1.4"
+      },
+      "contentType": "application/vnd.microsoft.card.adaptive"
+     }
+    ],
+    "type": "message"
+   },
+   "channel": "teams"
+  }
+ ],
+ "close_wait fire": [
+  {
+   "channel": "email",
+   "html": "<html><body style=\"font-family:Segoe UI,Arial,sans-serif;font-size:14px\"><p><strong>Kafka Analyser alert firing: Close Wait Spike</strong></p><table style=\"border-collapse:collapse;font-size:13px\"><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Status</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#9d5d00\">FIRING</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Rule</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">CLOSE_WAIT spike</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Severity</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#9d5d00\">WARNING</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Category</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Close Wait Spike</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Cluster</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">prod-4</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Time</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">2026-10-15 06:45 UTC</td></tr></table><p>3 CLOSE_WAIT connection(s) detected</p><p><em>Recommended action:</em> Use the Breaker Status tab&#x27;s Clear Stale Connections button, or wait roughly 5 minutes for this to clear automatically.</p></body></html>",
+   "subject": "[WARNING] Kafka Analyser - Close Wait Spike - prod-4",
+   "text": "Kafka Analyser alert firing: Close Wait Spike\n\nStatus    FIRING\nRule      CLOSE_WAIT spike\nSeverity  WARNING\nCategory  Close Wait Spike\nCluster   prod-4\nTime      2026-10-15 06:45 UTC\n\n3 CLOSE_WAIT connection(s) detected\n\nRecommended action: Use the Breaker Status tab's Clear Stale Connections button, or wait roughly 5 minutes for this to clear automatically.\n"
+  },
+  {
+   "card": {
+    "attachments": [
+     {
+      "content": {
+       "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+       "actions": [],
+       "body": [
+        {
+         "color": "warning",
+         "size": "Medium",
+         "text": "🟡 Operative Intelligence — Kafka Analyser",
+         "type": "TextBlock",
+         "weight": "Bolder"
+        },
+        {
+         "facts": [
+          {
+           "title": "Severity",
+           "value": "WARNING"
+          },
+          {
+           "title": "Category",
+           "value": "Close Wait Spike"
+          },
+          {
+           "title": "Cluster",
+           "value": "prod-4"
+          },
+          {
+           "title": "Time",
+           "value": "2026-10-15 06:45 UTC"
+          }
+         ],
+         "type": "FactSet"
+        },
+        {
+         "spacing": "Medium",
+         "text": "3 CLOSE_WAIT connection(s) detected",
+         "type": "TextBlock",
+         "wrap": true
+        },
+        {
+         "color": "accent",
+         "spacing": "Small",
+         "text": "💡 Use the Breaker Status tab's Clear Stale Connections button, or wait roughly 5 minutes for this to clear automatically.",
+         "type": "TextBlock",
+         "wrap": true
+        }
+       ],
+       "type": "AdaptiveCard",
+       "version": "1.4"
+      },
+      "contentType": "application/vnd.microsoft.card.adaptive"
+     }
+    ],
+    "type": "message"
+   },
+   "channel": "teams"
+  }
+ ],
+ "close_wait resolve": [
+  {
+   "channel": "email",
+   "html": "<html><body style=\"font-family:Segoe UI,Arial,sans-serif;font-size:14px\"><p><strong>Kafka Analyser alert resolved: Close Wait Spike</strong></p><table style=\"border-collapse:collapse;font-size:13px\"><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Status</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#107c10\">RESOLVED</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Rule</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">CLOSE_WAIT spike</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Category</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Close Wait Spike</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Cluster</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">prod-4</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Was</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">WARNING</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Open for</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">42 min</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Time</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">2026-10-15 06:45 UTC</td></tr></table><p>The condition that triggered this alert has cleared.</p></body></html>",
+   "subject": "[RESOLVED] Kafka Analyser - Close Wait Spike - prod-4",
+   "text": "Kafka Analyser alert resolved: Close Wait Spike\n\nStatus    RESOLVED\nRule      CLOSE_WAIT spike\nCategory  Close Wait Spike\nCluster   prod-4\nWas       WARNING\nOpen for  42 min\nTime      2026-10-15 06:45 UTC\n\nThe condition that triggered this alert has cleared.\n"
+  },
+  {
+   "card": {
+    "attachments": [
+     {
+      "content": {
+       "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+       "actions": [],
+       "body": [
+        {
+         "color": "good",
+         "size": "Medium",
+         "text": "✅ Operative Intelligence — Kafka Analyser",
+         "type": "TextBlock",
+         "weight": "Bolder"
+        },
+        {
+         "facts": [
+          {
+           "title": "Status",
+           "value": "RESOLVED"
+          },
+          {
+           "title": "Rule",
+           "value": "CLOSE_WAIT spike"
+          },
+          {
+           "title": "Cluster",
+           "value": "prod-4"
+          },
+          {
+           "title": "Was",
+           "value": "WARNING"
+          },
+          {
+           "title": "Open for",
+           "value": "42 min"
+          },
+          {
+           "title": "Time",
+           "value": "2026-10-15 06:45 UTC"
+          }
+         ],
+         "type": "FactSet"
+        },
+        {
+         "spacing": "Medium",
+         "text": "The condition that triggered this alert has cleared.",
+         "type": "TextBlock",
+         "wrap": true
+        }
+       ],
+       "type": "AdaptiveCard",
+       "version": "1.4"
+      },
+      "contentType": "application/vnd.microsoft.card.adaptive"
+     }
+    ],
+    "type": "message"
+   },
+   "channel": "teams"
+  }
+ ],
+ "cluster_metrics check 1": [],
+ "cluster_metrics escalate": [
+  {
+   "channel": "email",
+   "html": "<html><body style=\"font-family:Segoe UI,Arial,sans-serif;font-size:14px\"><p><strong>Kafka Analyser alert escalated: Under-Replicated Partitions</strong></p><table style=\"border-collapse:collapse;font-size:13px\"><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Status</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#c50f1f;font-weight:bold\">ESCALATED</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Rule</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Under-replicated partitions</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Severity</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#c50f1f;font-weight:bold\">CRITICAL</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Category</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Under-Replicated Partitions</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Cluster</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">prod-4</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Time</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">2026-10-15 06:45 UTC</td></tr></table><p>150 under-replicated partitions (critical, threshold 100) -- ESCALATED from warning</p><p><em>Recommended action:</em> Check broker health and replica sync.</p></body></html>",
+   "subject": "[CRITICAL] Kafka Analyser - Under-Replicated Partitions - prod-4",
+   "text": "Kafka Analyser alert escalated: Under-Replicated Partitions\n\nStatus    ESCALATED\nRule      Under-replicated partitions\nSeverity  CRITICAL\nCategory  Under-Replicated Partitions\nCluster   prod-4\nTime      2026-10-15 06:45 UTC\n\n150 under-replicated partitions (critical, threshold 100) -- ESCALATED from warning\n\nRecommended action: Check broker health and replica sync.\n"
+  },
+  {
+   "card": {
+    "attachments": [
+     {
+      "content": {
+       "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+       "actions": [],
+       "body": [
+        {
+         "color": "attention",
+         "size": "Medium",
+         "text": "🔴 Operative Intelligence — Kafka Analyser",
+         "type": "TextBlock",
+         "weight": "Bolder"
+        },
+        {
+         "facts": [
+          {
+           "title": "Severity",
+           "value": "CRITICAL"
+          },
+          {
+           "title": "Category",
+           "value": "Under-Replicated Partitions"
+          },
+          {
+           "title": "Cluster",
+           "value": "prod-4"
+          },
+          {
+           "title": "Time",
+           "value": "2026-10-15 06:45 UTC"
+          }
+         ],
+         "type": "FactSet"
+        },
+        {
+         "spacing": "Medium",
+         "text": "150 under-replicated partitions (critical, threshold 100) -- ESCALATED from warning",
+         "type": "TextBlock",
+         "wrap": true
+        },
+        {
+         "color": "accent",
+         "spacing": "Small",
+         "text": "💡 Check broker health and replica sync.",
+         "type": "TextBlock",
+         "wrap": true
+        }
+       ],
+       "type": "AdaptiveCard",
+       "version": "1.4"
+      },
+      "contentType": "application/vnd.microsoft.card.adaptive"
+     }
+    ],
+    "type": "message"
+   },
+   "channel": "teams"
+  }
+ ],
+ "cluster_metrics fire": [
+  {
+   "channel": "email",
+   "html": "<html><body style=\"font-family:Segoe UI,Arial,sans-serif;font-size:14px\"><p><strong>Kafka Analyser alert firing: Under-Replicated Partitions</strong></p><table style=\"border-collapse:collapse;font-size:13px\"><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Status</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#9d5d00\">FIRING</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Rule</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Under-replicated partitions</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Severity</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#9d5d00\">WARNING</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Category</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Under-Replicated Partitions</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Cluster</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">prod-4</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Time</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">2026-10-15 06:45 UTC</td></tr></table><p>25 under-replicated partitions (warning, threshold 10)</p><p><em>Recommended action:</em> Check broker health and replica sync.</p></body></html>",
+   "subject": "[WARNING] Kafka Analyser - Under-Replicated Partitions - prod-4",
+   "text": "Kafka Analyser alert firing: Under-Replicated Partitions\n\nStatus    FIRING\nRule      Under-replicated partitions\nSeverity  WARNING\nCategory  Under-Replicated Partitions\nCluster   prod-4\nTime      2026-10-15 06:45 UTC\n\n25 under-replicated partitions (warning, threshold 10)\n\nRecommended action: Check broker health and replica sync.\n"
+  },
+  {
+   "card": {
+    "attachments": [
+     {
+      "content": {
+       "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+       "actions": [],
+       "body": [
+        {
+         "color": "warning",
+         "size": "Medium",
+         "text": "🟡 Operative Intelligence — Kafka Analyser",
+         "type": "TextBlock",
+         "weight": "Bolder"
+        },
+        {
+         "facts": [
+          {
+           "title": "Severity",
+           "value": "WARNING"
+          },
+          {
+           "title": "Category",
+           "value": "Under-Replicated Partitions"
+          },
+          {
+           "title": "Cluster",
+           "value": "prod-4"
+          },
+          {
+           "title": "Time",
+           "value": "2026-10-15 06:45 UTC"
+          }
+         ],
+         "type": "FactSet"
+        },
+        {
+         "spacing": "Medium",
+         "text": "25 under-replicated partitions (warning, threshold 10)",
+         "type": "TextBlock",
+         "wrap": true
+        },
+        {
+         "color": "accent",
+         "spacing": "Small",
+         "text": "💡 Check broker health and replica sync.",
+         "type": "TextBlock",
+         "wrap": true
+        }
+       ],
+       "type": "AdaptiveCard",
+       "version": "1.4"
+      },
+      "contentType": "application/vnd.microsoft.card.adaptive"
+     }
+    ],
+    "type": "message"
+   },
+   "channel": "teams"
+  }
+ ],
+ "cluster_metrics resolve": [
+  {
+   "channel": "email",
+   "html": "<html><body style=\"font-family:Segoe UI,Arial,sans-serif;font-size:14px\"><p><strong>Kafka Analyser alert resolved: Under-Replicated Partitions</strong></p><table style=\"border-collapse:collapse;font-size:13px\"><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Status</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#107c10\">RESOLVED</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Rule</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Under-replicated partitions</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Category</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Under-Replicated Partitions</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Cluster</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">prod-4</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Was</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">CRITICAL</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Open for</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">3 min</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Time</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">2026-10-15 06:45 UTC</td></tr></table><p>The condition that triggered this alert has cleared.</p></body></html>",
+   "subject": "[RESOLVED] Kafka Analyser - Under-Replicated Partitions - prod-4",
+   "text": "Kafka Analyser alert resolved: Under-Replicated Partitions\n\nStatus    RESOLVED\nRule      Under-replicated partitions\nCategory  Under-Replicated Partitions\nCluster   prod-4\nWas       CRITICAL\nOpen for  3 min\nTime      2026-10-15 06:45 UTC\n\nThe condition that triggered this alert has cleared.\n"
+  },
+  {
+   "card": {
+    "attachments": [
+     {
+      "content": {
+       "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+       "actions": [],
+       "body": [
+        {
+         "color": "good",
+         "size": "Medium",
+         "text": "✅ Operative Intelligence — Kafka Analyser",
+         "type": "TextBlock",
+         "weight": "Bolder"
+        },
+        {
+         "facts": [
+          {
+           "title": "Status",
+           "value": "RESOLVED"
+          },
+          {
+           "title": "Rule",
+           "value": "Under-replicated partitions"
+          },
+          {
+           "title": "Cluster",
+           "value": "prod-4"
+          },
+          {
+           "title": "Was",
+           "value": "CRITICAL"
+          },
+          {
+           "title": "Open for",
+           "value": "3 min"
+          },
+          {
+           "title": "Time",
+           "value": "2026-10-15 06:45 UTC"
+          }
+         ],
+         "type": "FactSet"
+        },
+        {
+         "spacing": "Medium",
+         "text": "The condition that triggered this alert has cleared.",
+         "type": "TextBlock",
+         "wrap": true
+        }
+       ],
+       "type": "AdaptiveCard",
+       "version": "1.4"
+      },
+      "contentType": "application/vnd.microsoft.card.adaptive"
+     }
+    ],
+    "type": "message"
+   },
+   "channel": "teams"
+  }
+ ],
+ "lag check 1": [],
+ "lag escalate": [
+  {
+   "channel": "email",
+   "html": "<html><body style=\"font-family:Segoe UI,Arial,sans-serif;font-size:14px\"><p><strong>Kafka Analyser alert escalated: Consumer Group Lag</strong></p><table style=\"border-collapse:collapse;font-size:13px\"><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Status</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#c50f1f;font-weight:bold\">ESCALATED</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Rule</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Consumer lag</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Severity</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#c50f1f;font-weight:bold\">CRITICAL</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Category</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Consumer Group Lag</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Cluster</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">prod-4</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Time</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">2026-10-15 06:45 UTC</td></tr></table><p>2 consumer groups above their lag tiers (1 escalated)</p><table style=\"border-collapse:collapse;font-size:13px\"><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Name</th><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Lag</th><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Tier</th><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Thresholds</th></tr><tr><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">orders-app</td><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">5,000</td><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">critical</td><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">generic</td></tr><tr><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">billing</td><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">250</td><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">warning</td><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">generic</td></tr></table><p><em>Recommended action:</em> Check the consumers or connectors with the Kafka team.</p></body></html>",
+   "subject": "[CRITICAL] Kafka Analyser - Consumer Group Lag - prod-4",
+   "text": "Kafka Analyser alert escalated: Consumer Group Lag\n\nStatus    ESCALATED\nRule      Consumer lag\nSeverity  CRITICAL\nCategory  Consumer Group Lag\nCluster   prod-4\nTime      2026-10-15 06:45 UTC\n\n2 consumer groups above their lag tiers (1 escalated)\n\nName        Lag    Tier      Thresholds\n----------  -----  --------  ----------\norders-app  5,000  critical  generic\nbilling     250    warning   generic\n\nRecommended action: Check the consumers or connectors with the Kafka team.\n"
+  },
+  {
+   "card": {
+    "attachments": [
+     {
+      "content": {
+       "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+       "actions": [],
+       "body": [
+        {
+         "color": "attention",
+         "size": "Medium",
+         "text": "🔴 Operative Intelligence — Kafka Analyser",
+         "type": "TextBlock",
+         "weight": "Bolder"
+        },
+        {
+         "facts": [
+          {
+           "title": "Severity",
+           "value": "CRITICAL"
+          },
+          {
+           "title": "Category",
+           "value": "Consumer Group Lag"
+          },
+          {
+           "title": "Cluster",
+           "value": "prod-4"
+          },
+          {
+           "title": "Time",
+           "value": "2026-10-15 06:45 UTC"
+          }
+         ],
+         "type": "FactSet"
+        },
+        {
+         "spacing": "Medium",
+         "text": "2 consumer groups above their lag tiers (1 escalated)",
+         "type": "TextBlock",
+         "wrap": true
+        },
+        {
+         "facts": [
+          {
+           "title": "orders-app",
+           "value": "5,000 · critical · generic"
+          },
+          {
+           "title": "billing",
+           "value": "250 · warning · generic"
+          }
+         ],
+         "type": "FactSet"
+        },
+        {
+         "color": "accent",
+         "spacing": "Small",
+         "text": "💡 Check the consumers or connectors with the Kafka team.",
+         "type": "TextBlock",
+         "wrap": true
+        }
+       ],
+       "type": "AdaptiveCard",
+       "version": "1.4"
+      },
+      "contentType": "application/vnd.microsoft.card.adaptive"
+     }
+    ],
+    "type": "message"
+   },
+   "channel": "teams"
+  }
+ ],
+ "lag fire": [
+  {
+   "channel": "email",
+   "html": "<html><body style=\"font-family:Segoe UI,Arial,sans-serif;font-size:14px\"><p><strong>Kafka Analyser alert firing: Consumer Group Lag</strong></p><table style=\"border-collapse:collapse;font-size:13px\"><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Status</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#9d5d00\">FIRING</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Rule</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Consumer lag</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Severity</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#9d5d00\">WARNING</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Category</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Consumer Group Lag</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Cluster</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">prod-4</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Time</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">2026-10-15 06:45 UTC</td></tr></table><p>2 consumer groups above their lag tiers (2 new)</p><table style=\"border-collapse:collapse;font-size:13px\"><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Name</th><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Lag</th><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Tier</th><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Thresholds</th></tr><tr><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">orders-app</td><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">500</td><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">warning</td><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">generic</td></tr><tr><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">billing</td><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">250</td><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">warning</td><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">generic</td></tr></table><p><em>Recommended action:</em> Check the consumers or connectors with the Kafka team.</p></body></html>",
+   "subject": "[WARNING] Kafka Analyser - Consumer Group Lag - prod-4",
+   "text": "Kafka Analyser alert firing: Consumer Group Lag\n\nStatus    FIRING\nRule      Consumer lag\nSeverity  WARNING\nCategory  Consumer Group Lag\nCluster   prod-4\nTime      2026-10-15 06:45 UTC\n\n2 consumer groups above their lag tiers (2 new)\n\nName        Lag  Tier     Thresholds\n----------  ---  -------  ----------\norders-app  500  warning  generic\nbilling     250  warning  generic\n\nRecommended action: Check the consumers or connectors with the Kafka team.\n"
+  },
+  {
+   "card": {
+    "attachments": [
+     {
+      "content": {
+       "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+       "actions": [],
+       "body": [
+        {
+         "color": "warning",
+         "size": "Medium",
+         "text": "🟡 Operative Intelligence — Kafka Analyser",
+         "type": "TextBlock",
+         "weight": "Bolder"
+        },
+        {
+         "facts": [
+          {
+           "title": "Severity",
+           "value": "WARNING"
+          },
+          {
+           "title": "Category",
+           "value": "Consumer Group Lag"
+          },
+          {
+           "title": "Cluster",
+           "value": "prod-4"
+          },
+          {
+           "title": "Time",
+           "value": "2026-10-15 06:45 UTC"
+          }
+         ],
+         "type": "FactSet"
+        },
+        {
+         "spacing": "Medium",
+         "text": "2 consumer groups above their lag tiers (2 new)",
+         "type": "TextBlock",
+         "wrap": true
+        },
+        {
+         "facts": [
+          {
+           "title": "orders-app",
+           "value": "500 · warning · generic"
+          },
+          {
+           "title": "billing",
+           "value": "250 · warning · generic"
+          }
+         ],
+         "type": "FactSet"
+        },
+        {
+         "color": "accent",
+         "spacing": "Small",
+         "text": "💡 Check the consumers or connectors with the Kafka team.",
+         "type": "TextBlock",
+         "wrap": true
+        }
+       ],
+       "type": "AdaptiveCard",
+       "version": "1.4"
+      },
+      "contentType": "application/vnd.microsoft.card.adaptive"
+     }
+    ],
+    "type": "message"
+   },
+   "channel": "teams"
+  }
+ ],
+ "lag reminder": [
+  {
+   "channel": "email",
+   "html": "<html><body style=\"font-family:Segoe UI,Arial,sans-serif;font-size:14px\"><p><strong>Kafka Analyser alert reminder: Consumer Group Lag</strong></p><table style=\"border-collapse:collapse;font-size:13px\"><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Status</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#c50f1f;font-weight:bold\">REMINDER</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Rule</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Consumer lag</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Severity</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#c50f1f;font-weight:bold\">CRITICAL</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Category</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Consumer Group Lag</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Cluster</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">prod-4</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Time</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">2026-10-15 06:45 UTC</td></tr></table><p>2 consumer groups above their lag tiers (reminder: still above after 6 h)</p><table style=\"border-collapse:collapse;font-size:13px\"><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Name</th><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Lag</th><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Tier</th><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Thresholds</th></tr><tr><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">orders-app</td><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">5,000</td><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">critical</td><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">generic</td></tr><tr><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">billing</td><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">250</td><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">warning</td><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">generic</td></tr></table><p><em>Recommended action:</em> Check the consumers or connectors with the Kafka team.</p></body></html>",
+   "subject": "[CRITICAL] Kafka Analyser - Consumer Group Lag - prod-4",
+   "text": "Kafka Analyser alert reminder: Consumer Group Lag\n\nStatus    REMINDER\nRule      Consumer lag\nSeverity  CRITICAL\nCategory  Consumer Group Lag\nCluster   prod-4\nTime      2026-10-15 06:45 UTC\n\n2 consumer groups above their lag tiers (reminder: still above after 6 h)\n\nName        Lag    Tier      Thresholds\n----------  -----  --------  ----------\norders-app  5,000  critical  generic\nbilling     250    warning   generic\n\nRecommended action: Check the consumers or connectors with the Kafka team.\n"
+  },
+  {
+   "card": {
+    "attachments": [
+     {
+      "content": {
+       "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+       "actions": [],
+       "body": [
+        {
+         "color": "attention",
+         "size": "Medium",
+         "text": "🔴 Operative Intelligence — Kafka Analyser",
+         "type": "TextBlock",
+         "weight": "Bolder"
+        },
+        {
+         "facts": [
+          {
+           "title": "Severity",
+           "value": "CRITICAL"
+          },
+          {
+           "title": "Category",
+           "value": "Consumer Group Lag"
+          },
+          {
+           "title": "Cluster",
+           "value": "prod-4"
+          },
+          {
+           "title": "Time",
+           "value": "2026-10-15 06:45 UTC"
+          }
+         ],
+         "type": "FactSet"
+        },
+        {
+         "spacing": "Medium",
+         "text": "2 consumer groups above their lag tiers (reminder: still above after 6 h)",
+         "type": "TextBlock",
+         "wrap": true
+        },
+        {
+         "facts": [
+          {
+           "title": "orders-app",
+           "value": "5,000 · critical · generic"
+          },
+          {
+           "title": "billing",
+           "value": "250 · warning · generic"
+          }
+         ],
+         "type": "FactSet"
+        },
+        {
+         "color": "accent",
+         "spacing": "Small",
+         "text": "💡 Check the consumers or connectors with the Kafka team.",
+         "type": "TextBlock",
+         "wrap": true
+        }
+       ],
+       "type": "AdaptiveCard",
+       "version": "1.4"
+      },
+      "contentType": "application/vnd.microsoft.card.adaptive"
+     }
+    ],
+    "type": "message"
+   },
+   "channel": "teams"
+  }
+ ],
+ "lag resolve": [
+  {
+   "channel": "email",
+   "html": "<html><body style=\"font-family:Segoe UI,Arial,sans-serif;font-size:14px\"><p><strong>Kafka Analyser alert resolved: Consumer Group Lag</strong></p><table style=\"border-collapse:collapse;font-size:13px\"><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Status</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#107c10\">RESOLVED</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Rule</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Consumer lag</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Category</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Consumer Group Lag</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Cluster</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">prod-4</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Was</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">CRITICAL</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Time</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">2026-10-15 06:45 UTC</td></tr></table><p>2 consumer groups back below their lag tiers.</p><table style=\"border-collapse:collapse;font-size:13px\"><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Name</th><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Was</th><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Open for</th></tr><tr><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">billing</td><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">WARNING</td><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">1 h 35 min</td></tr><tr><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">orders-app</td><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">CRITICAL</td><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top\">1 h 35 min</td></tr></table></body></html>",
+   "subject": "[RESOLVED] Kafka Analyser - Consumer Group Lag - prod-4",
+   "text": "Kafka Analyser alert resolved: Consumer Group Lag\n\nStatus    RESOLVED\nRule      Consumer lag\nCategory  Consumer Group Lag\nCluster   prod-4\nWas       CRITICAL\nTime      2026-10-15 06:45 UTC\n\n2 consumer groups back below their lag tiers.\n\nName        Was       Open for\n----------  --------  ----------\nbilling     WARNING   1 h 35 min\norders-app  CRITICAL  1 h 35 min\n"
+  },
+  {
+   "card": {
+    "attachments": [
+     {
+      "content": {
+       "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+       "actions": [],
+       "body": [
+        {
+         "color": "good",
+         "size": "Medium",
+         "text": "✅ Operative Intelligence — Kafka Analyser",
+         "type": "TextBlock",
+         "weight": "Bolder"
+        },
+        {
+         "facts": [
+          {
+           "title": "Status",
+           "value": "RESOLVED"
+          },
+          {
+           "title": "Category",
+           "value": "Consumer Group Lag"
+          },
+          {
+           "title": "Cluster",
+           "value": "prod-4"
+          },
+          {
+           "title": "Time",
+           "value": "2026-10-15 06:45 UTC"
+          }
+         ],
+         "type": "FactSet"
+        },
+        {
+         "spacing": "Medium",
+         "text": "2 consumer groups back below their lag tiers.",
+         "type": "TextBlock",
+         "wrap": true
+        },
+        {
+         "facts": [
+          {
+           "title": "billing",
+           "value": "cleared (was warning)"
+          },
+          {
+           "title": "orders-app",
+           "value": "cleared (was critical)"
+          }
+         ],
+         "type": "FactSet"
+        }
+       ],
+       "type": "AdaptiveCard",
+       "version": "1.4"
+      },
+      "contentType": "application/vnd.microsoft.card.adaptive"
+     }
+    ],
+    "type": "message"
+   },
+   "channel": "teams"
+  }
+ ],
+ "reachability check 1": [],
+ "reachability fire": [
+  {
+   "channel": "email",
+   "html": "<html><body style=\"font-family:Segoe UI,Arial,sans-serif;font-size:14px\"><p><strong>Kafka Analyser alert firing: Broker Unreachable</strong></p><table style=\"border-collapse:collapse;font-size:13px\"><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Status</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#c50f1f;font-weight:bold\">FIRING</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Rule</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Broker reachability</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Severity</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#c50f1f;font-weight:bold\">CRITICAL</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Category</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Broker Unreachable</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Cluster</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">prod-4</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Affected</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">kafka-1.internal:9092</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Time</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">2026-10-15 06:45 UTC</td></tr></table><p>Broker kafka-1.internal:9092 is unreachable (TCP connect failed on 2 consecutive checks; 0/1 brokers in this cluster reachable)</p><p><em>Recommended action:</em> Check the broker process/host and the network path to it.</p></body></html>",
+   "subject": "[CRITICAL] Kafka Analyser - Broker Unreachable - prod-4",
+   "text": "Kafka Analyser alert firing: Broker Unreachable\n\nStatus    FIRING\nRule      Broker reachability\nSeverity  CRITICAL\nCategory  Broker Unreachable\nCluster   prod-4\nAffected  kafka-1.internal:9092\nTime      2026-10-15 06:45 UTC\n\nBroker kafka-1.internal:9092 is unreachable (TCP connect failed on 2 consecutive checks; 0/1 brokers in this cluster reachable)\n\nRecommended action: Check the broker process/host and the network path to it.\n"
+  },
+  {
+   "card": {
+    "attachments": [
+     {
+      "content": {
+       "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+       "actions": [],
+       "body": [
+        {
+         "color": "attention",
+         "size": "Medium",
+         "text": "🔴 Operative Intelligence — Kafka Analyser",
+         "type": "TextBlock",
+         "weight": "Bolder"
+        },
+        {
+         "facts": [
+          {
+           "title": "Severity",
+           "value": "CRITICAL"
+          },
+          {
+           "title": "Category",
+           "value": "Broker Unreachable"
+          },
+          {
+           "title": "Cluster",
+           "value": "prod-4"
+          },
+          {
+           "title": "Affected",
+           "value": "kafka-1.internal:9092"
+          },
+          {
+           "title": "Time",
+           "value": "2026-10-15 06:45 UTC"
+          }
+         ],
+         "type": "FactSet"
+        },
+        {
+         "spacing": "Medium",
+         "text": "Broker kafka-1.internal:9092 is unreachable (TCP connect failed on 2 consecutive checks; 0/1 brokers in this cluster reachable)",
+         "type": "TextBlock",
+         "wrap": true
+        },
+        {
+         "color": "accent",
+         "spacing": "Small",
+         "text": "💡 Check the broker process/host and the network path to it.",
+         "type": "TextBlock",
+         "wrap": true
+        }
+       ],
+       "type": "AdaptiveCard",
+       "version": "1.4"
+      },
+      "contentType": "application/vnd.microsoft.card.adaptive"
+     }
+    ],
+    "type": "message"
+   },
+   "channel": "teams"
+  }
+ ],
+ "reachability resolve": [
+  {
+   "channel": "email",
+   "html": "<html><body style=\"font-family:Segoe UI,Arial,sans-serif;font-size:14px\"><p><strong>Kafka Analyser alert resolved: Broker Unreachable</strong></p><table style=\"border-collapse:collapse;font-size:13px\"><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Status</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#107c10\">RESOLVED</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Rule</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Broker reachability</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Category</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Broker Unreachable</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Cluster</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">prod-4</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Affected</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">kafka-1.internal:9092</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Was</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">CRITICAL</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Open for</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">17 min</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Time</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">2026-10-15 06:45 UTC</td></tr></table><p>The condition that triggered this alert has cleared.</p></body></html>",
+   "subject": "[RESOLVED] Kafka Analyser - Broker Unreachable - prod-4",
+   "text": "Kafka Analyser alert resolved: Broker Unreachable\n\nStatus    RESOLVED\nRule      Broker reachability\nCategory  Broker Unreachable\nCluster   prod-4\nAffected  kafka-1.internal:9092\nWas       CRITICAL\nOpen for  17 min\nTime      2026-10-15 06:45 UTC\n\nThe condition that triggered this alert has cleared.\n"
+  },
+  {
+   "card": {
+    "attachments": [
+     {
+      "content": {
+       "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+       "actions": [],
+       "body": [
+        {
+         "color": "good",
+         "size": "Medium",
+         "text": "✅ Operative Intelligence — Kafka Analyser",
+         "type": "TextBlock",
+         "weight": "Bolder"
+        },
+        {
+         "facts": [
+          {
+           "title": "Status",
+           "value": "RESOLVED"
+          },
+          {
+           "title": "Rule",
+           "value": "Broker reachability"
+          },
+          {
+           "title": "Cluster",
+           "value": "prod-4"
+          },
+          {
+           "title": "Affected",
+           "value": "kafka-1.internal:9092"
+          },
+          {
+           "title": "Was",
+           "value": "CRITICAL"
+          },
+          {
+           "title": "Open for",
+           "value": "17 min"
+          },
+          {
+           "title": "Time",
+           "value": "2026-10-15 06:45 UTC"
+          }
+         ],
+         "type": "FactSet"
+        },
+        {
+         "spacing": "Medium",
+         "text": "The condition that triggered this alert has cleared.",
+         "type": "TextBlock",
+         "wrap": true
+        }
+       ],
+       "type": "AdaptiveCard",
+       "version": "1.4"
+      },
+      "contentType": "application/vnd.microsoft.card.adaptive"
+     }
+    ],
+    "type": "message"
+   },
+   "channel": "teams"
+  }
+ ]
+}
