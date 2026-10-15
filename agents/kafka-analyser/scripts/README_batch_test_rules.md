@@ -87,6 +87,12 @@ sudo docker exec -it -e BATCH_TEST_WEBHOOK_FILE=/dev/shm/batch_webhook org-dev-k
 4. When the copy fires, prints the trigger row, `teams_post_success`, the
    outbox record (email and Teams status) and the log line, or the host
    command that greps for it.
+   When the type's evaluator sends through the notification outbox (its name
+   is in the `rule_outbox_evaluators` setting), the worker sends after the
+   trigger is written: the script first waits, up to 10 minutes, until the
+   outbox rows of those triggers have settled both channels, prints the
+   wait, and only then reads `teams_post_success` and `error_detail`. With
+   the setting empty (today) nothing changes.
 5. Asks **y** (seen), **n** (not seen) or **s** (skip the rest of this rule).
 6. Relaxes the tiers, waits for the resolve, checks it the same way and asks
    again.

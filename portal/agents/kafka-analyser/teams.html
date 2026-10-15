@@ -571,6 +571,7 @@
               <option value="sent">Sent</option>
               <option value="failed">Failed</option>
               <option value="off">Teams off</option>
+              <option value="queued">Queued</option>
             </select>
           </div>
           <div class="field triggers-small-field">
@@ -1911,10 +1912,12 @@
     }
     // error_detail values teams_alerts.py stores when Teams is switched off.
     const TEAMS_OFF_DETAILS = ['Teams off for this rule', 'Teams switched off globally'];
-    // Teams Post: sent, failed, or deliberately not posted (Teams off).
+    // Teams Post: sent, failed, deliberately not posted (Teams off), or still
+    // waiting in the notification outbox (outbox_worker.queued_detail).
     function teamsPost(t) {
       if (t.teams_post_success) return 'sent';
-      return TEAMS_OFF_DETAILS.includes(t.error_detail) ? 'off' : 'failed';
+      if (TEAMS_OFF_DETAILS.includes(t.error_detail)) return 'off';
+      return String(t.error_detail || '').startsWith('queued (outbox row') ? 'queued' : 'failed';
     }
     const TRIGGERS_FILTER_IDS = ['triggers-cluster-filter', 'triggers-status-filter', 'triggers-recurrence-filter', 'triggers-teams-filter'];
     function triggerFiltersActive() {
@@ -2011,6 +2014,8 @@
         let post;
         if (t.teams_post_success) {
           post = '<span class="post-ok" title="Posted to Teams">✓</span>';
+        } else if (teamsPost(t) === 'queued') {
+          post = `<span class="dl-ch-wait" title="${esc(t.error_detail)}">queued</span>`;
         } else if (teamsPost(t) === 'off') {
           // Teams deliberately not posted (teams_alerts._teams_off), not a failure.
           post = `<span title="${esc(t.error_detail)}">Teams off</span>`;

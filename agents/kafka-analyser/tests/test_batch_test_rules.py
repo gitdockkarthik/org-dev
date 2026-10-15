@@ -601,6 +601,43 @@ async def test_channels_email_only():
        "outbox Teams skipped on the resolve), fire and resolve emails sent, prompts ask for no card")
 
 
+async def test_settle_outbox():
+    await reset()
+    from types import SimpleNamespace as NS
+    out = io.StringIO()
+    t = (await sql("INSERT INTO kafka_alert_triggers (alert_config_id, triggered_at, teams_post_success, error_detail, "
+                   "is_recurrence) VALUES (20, now(), false, 'queued (outbox row 1)', false) RETURNING id")).scalar()
+    found = [NS(id=t)]
+    sleeps = []
+
+    clock = FakeClock()
+    B.time = FakeTime(clock)
+
+    async def sleep(secs):
+        sleeps.append(secs)
+        clock.t += secs
+        if len(sleeps) == 2:  # the worker settles the row and writes the trigger back
+            await sql("UPDATE kafka_notification_outbox SET email_status = 'sent', teams_status = 'sent'")
+            await sql("UPDATE kafka_alert_triggers SET teams_post_success = true, error_detail = NULL WHERE id = :t", t=t)
+    ctx = NS(saved_settings={"_rule_outbox_evaluators": []}, deps=NS(sleep=sleep))
+    with contextlib.redirect_stdout(out):
+        same = await B.settle_outbox(ctx, "broker.cpu_pct", "rule_fire", 20, found)
+    assert same is found and not sleeps and out.getvalue() == "", out.getvalue()
+    await sql("INSERT INTO kafka_notification_outbox (kind, source, routing, origin, dedupe_key, alert_config_id, "
+              "trigger_ids, payload, email_status, teams_status, expires_at, state) VALUES ('rule_fire', 't', 'rule', "
+              "'outbox', 'k1', 20, ARRAY[:t]::integer[], '{}', 'pending', 'pending', now() + interval '1 day', 'pending')", t=t)
+    ctx.saved_settings["_rule_outbox_evaluators"] = ["broker_thresholds"]
+    with contextlib.redirect_stdout(out):
+        got = await B.settle_outbox(ctx, "broker.cpu_pct", "rule_fire", 20, found)
+    assert sleeps == [10, 10] and got[0].teams_post_success is True and got[0].error_detail is None, (sleeps, got)
+    assert "outbox (rule_fire): settled after 20 s: row 1 email sent, teams sent" in out.getvalue(), out.getvalue()
+    assert [B.evaluator_of(a) for a in ("close_wait_spike", "broker_unreachable", "broker.heap_pct",
+                                        "cluster.consumer_lag", "cluster.urp_total")] == [
+        "close_wait", "reachability", "broker_thresholds", "lag", "cluster_metrics"]
+    ok("settle_outbox: with rule_outbox_evaluators empty nothing is read, waited or printed; with the type's "
+       "evaluator listed it waits for both channels to settle, prints the wait and returns the written-back triggers")
+
+
 async def test_lag_needs_yes_and_escalation():
     await reset()
     agent = Agent(answers=["no"])
@@ -785,6 +822,7 @@ async def main():
         dry = await test_dry_run_changes_nothing()
         await test_full_run()
         test_settings_checks_channels()
+        await test_settle_outbox()
         await test_channels_email_only()
         await test_lag_needs_yes_and_escalation()
         await test_timeout_moves_on()

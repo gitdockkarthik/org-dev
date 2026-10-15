@@ -67,6 +67,11 @@ POLL_SECS = 30
 DEFAULT_TIMEOUT_MIN = 20
 SLO_TIMEOUT_MIN = 90  # two distinct hourly readings: up to about 65-80 min
 OUTBOX_WAIT_SECS = 90  # the email is sent after the card; its outbox row follows
+# Evaluators moved to the outbox (setting rule_outbox_evaluators): the worker
+# sends the notice after the trigger is written, so the script waits up to
+# this long for the rows to settle before reading teams_post_success.
+OUTBOX_SETTLE_SECS = 600
+OUTBOX_SETTLED = ("sent", "skipped", "abandoned", "superseded", "failed")
 # Staging clusters first, production last; other enabled clusters after these.
 CLUSTER_ORDER = (8, 10, 4, 9)
 # A lag copy fires for ONE chosen name only: a custom row with low tiers, and
@@ -248,6 +253,8 @@ class AgentSettings:
         out = {k: data.get(k) for k in SETTINGS_KEYS}
         # Only whether the agent-level webhook IS the test webhook; never its value.
         out["_agent_webhook_is_test"] = bool(hook) and str(data.get("teams_webhook_url") or "").strip() == hook
+        # Read only, never written or restored (not in SETTINGS_KEYS).
+        out["_rule_outbox_evaluators"] = list(data.get("rule_outbox_evaluators") or [])
         return out
 
     async def write(self, values: dict) -> None:
@@ -804,6 +811,50 @@ def print_plan(plan: list[PlanItem], minutes: int | None, escalate: bool) -> Non
 
 # ── Evidence ─────────────────────────────────────────────────────────────────
 
+def evaluator_of(alert_type: str) -> str:
+    """The rule_outbox_evaluators name of the evaluator for this type."""
+    if alert_type == "close_wait_spike":
+        return "close_wait"
+    if alert_type == "broker_unreachable":
+        return "reachability"
+    if alert_type.startswith("broker."):
+        return "broker_thresholds"
+    if alert_type in RISKY_TYPES:
+        return "lag"
+    return "cluster_metrics"
+
+
+async def settle_outbox(ctx, alert_type: str, kind: str, rule_id: int, found: list) -> list:
+    """When this type's evaluator sends through the outbox: wait (up to
+    OUTBOX_SETTLE_SECS) until the outbox rows of kind sharing these
+    triggers have settled both channels, report the wait, and return the
+    triggers read again (teams_post_success and error_detail are written
+    back by the worker). Otherwise return found unchanged, saying nothing."""
+    if evaluator_of(alert_type) not in ((ctx.saved_settings or {}).get("_rule_outbox_evaluators") or []):
+        return found
+    ids = sorted(t.id for t in found)
+    start = time.monotonic()
+    while True:
+        rows = await _rows(
+            "SELECT id, email_status, teams_status, trigger_ids FROM kafka_notification_outbox "
+            "WHERE origin = 'outbox' AND routing = 'rule' AND kind = :kind AND trigger_ids && CAST(:ids AS integer[]) "
+            "ORDER BY id", {"kind": kind, "ids": ids})
+        covered = {i for r in rows for i in (r.trigger_ids or [])}
+        settled = bool(rows) and set(ids) <= covered and all(
+            r.email_status in OUTBOX_SETTLED and r.teams_status in OUTBOX_SETTLED for r in rows)
+        waited = int(time.monotonic() - start)
+        if settled or waited >= OUTBOX_SETTLE_SECS:
+            break
+        await ctx.deps.sleep(10)
+    statuses = "; ".join(f"row {r.id} email {r.email_status}, teams {r.teams_status}" for r in rows) or "no row"
+    if settled:
+        say(f"     outbox ({kind}): settled after {waited} s: {statuses}")
+    else:
+        say(f"     outbox ({kind}): NOT settled within {OUTBOX_SETTLE_SECS // 60} min: {statuses}")
+    by_id = {t.id: t for t in await triggers(rule_id)}
+    return [by_id.get(t.id, t) for t in found]
+
+
 async def triggers(rule_id: int) -> list:
     return await _rows(
         "SELECT id, subject, severity, triggered_at, resolved_at, metric_value, teams_post_success, error_detail "
@@ -1056,6 +1107,7 @@ async def exercise(ctx: Ctx, item: PlanItem, res: Result, start: float) -> None:
         res.fire = "TIMEOUT"
         res.notes.append(f"no {tiers.fire_severity} trigger within {timeout // 60} min")
         return
+    found = await settle_outbox(ctx, item.alert_type, "rule_fire", rule_id, found)
     res.fire = f"{tiers.fire_severity} x{len(found)}"
     if channels["enabled"]:
         res.fire_teams = "ok" if all(t.teams_post_success for t in found) else "FAILED"
@@ -1089,6 +1141,7 @@ async def exercise(ctx: Ctx, item: PlanItem, res: Result, start: float) -> None:
             res.escalate = "TIMEOUT"
             res.notes.append("no escalation within the limit")
         else:
+            found = await settle_outbox(ctx, item.alert_type, "rule_escalate", rule_id, found)
             res.escalate = "critical"
             for t in found:
                 say(f"     {_trigger_line(t)}")
@@ -1117,6 +1170,7 @@ async def exercise(ctx: Ctx, item: PlanItem, res: Result, start: float) -> None:
         res.resolve = "TIMEOUT"
         res.notes.append(f"not resolved within {timeout // 60} min")
         return
+    done = await settle_outbox(ctx, item.alert_type, "rule_resolve", rule_id, done)
     res.resolve = f"resolved x{len(done)}"
     say(f"  RESOLVED")
     for t in done:

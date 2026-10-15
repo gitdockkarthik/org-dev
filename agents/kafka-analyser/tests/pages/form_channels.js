@@ -13,7 +13,8 @@ const configs = [rule(20, { enabled: false, email_enabled: true }), rule(21, { e
 const trig = (id, ok, detail) => ({ id, alert_config_id: 20, config_name: 'CPU 20', cluster_id: 4, cluster_name: 'c4',
   triggered_at: new Date(Date.parse('2026-10-15T08:00:00Z') - id * 60000).toISOString(), resolved_at: null,
   is_recurrence: false, metric_value: '90', teams_post_success: ok, error_detail: detail });
-const triggers = [trig(1, false, 'Teams off for this rule'), trig(2, false, 'Teams switched off globally'), trig(3, false, 'HTTP 400'), trig(4, true, null)];
+const triggers = [trig(1, false, 'Teams off for this rule'), trig(2, false, 'Teams switched off globally'), trig(3, false, 'HTTP 400'), trig(4, true, null),
+  trig(5, false, 'queued (outbox row 42)')];
 const json = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
 
 const dom = new JSDOM(html, { runScripts: 'dangerously', url: 'http://localhost/', beforeParse(w) {
@@ -80,12 +81,16 @@ const row = id => [...$('configs-body').querySelectorAll('tr')].find(r => r.quer
     post(1).textContent.trim() === 'Teams off' && post(1).querySelector('span').title === 'Teams switched off globally' && !post(1).querySelector('.post-fail'), post(1).innerHTML);
   check('other failures unchanged: red mark with the error', post(2).querySelector('.post-fail') && post(2).querySelector('.post-fail').title === 'HTTP 400');
   check('posted unchanged: green tick', post(3).querySelector('.post-ok') && post(3).textContent.trim() === '✓');
+  check('queued in the outbox: neutral "queued" label with the outbox row in the tooltip, no red mark',
+    post(4).textContent.trim() === 'queued' && post(4).querySelector('span').title === 'queued (outbox row 42)'
+    && !post(4).querySelector('.post-fail') && post(4).querySelector('.dl-ch-wait'), post(4).innerHTML);
 
   // Teams Post filter: Teams off is its own option, never "Failed"
   const teamsFilter = v => { $('triggers-teams-filter').value = v; $('triggers-teams-filter').dispatchEvent(new w.Event('change'));
     return [...$('triggers-body').querySelectorAll('tr')].map(r => r.querySelectorAll('td')[6].textContent.trim()).join('|'); };
-  check('filter Failed: only the HTTP 400 firing', teamsFilter('failed') === '✗' && $('triggers-count').textContent === 'Showing 1 of 4 firings', $('triggers-count').textContent);
-  check('filter Teams off: both Teams-off firings', teamsFilter('off') === 'Teams off|Teams off' && $('triggers-count').textContent === 'Showing 2 of 4 firings', $('triggers-count').textContent);
+  check('filter Failed: only the HTTP 400 firing (queued excluded)', teamsFilter('failed') === '✗' && $('triggers-count').textContent === 'Showing 1 of 5 firings', $('triggers-count').textContent);
+  check('filter Teams off: both Teams-off firings', teamsFilter('off') === 'Teams off|Teams off' && $('triggers-count').textContent === 'Showing 2 of 5 firings', $('triggers-count').textContent);
+  check('filter Queued: only the queued firing', teamsFilter('queued') === 'queued' && $('triggers-count').textContent === 'Showing 1 of 5 firings', $('triggers-count').textContent);
   check('filter Sent: only the posted firing', teamsFilter('sent') === '✓');
   teamsFilter('');
 

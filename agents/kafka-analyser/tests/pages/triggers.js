@@ -6,16 +6,19 @@ const clusters = [{ id: 4, name: 'c4', enabled: true }, { id: 8, name: 'c8', ena
 const configs = [{ id: 20, name: 'Broker CPU % - c4', alert_type: 'broker.cpu_pct', cluster_id: 4, cluster_name: 'c4', severity: 'warning', threshold: 1, send_resolve_card: true, webhook_url: null,
                    cooldown_minutes: 30, enabled: true, email_enabled: false, open_trigger_count: 0, config: { mode: 'simple', warning: 70 }, min_rf: null }];
 // 40 firings, newest first, one per 90 min from T0 back; cluster cycles 4/8/9; every 7th open; every 5th recurring; every 6th failed post;
-// i = 5, 15, 25, 35 not posted because Teams is off (the rule's toggle or the global switch).
+// i = 5, 15, 25, 35 not posted because Teams is off (the rule's toggle or the global switch);
+// i = 7, 17, 27, 37 still queued in the notification outbox.
 const OFF = ['Teams off for this rule', 'Teams switched off globally'];
+const queued = t => !t.teams_post_success && String(t.error_detail || '').startsWith('queued (outbox row');
 const T0 = Date.parse('2026-10-06T08:00:00Z');
 const NAMES = ['Broker CPU % - c', 'URP - c', 'ZooKeeper ensemble problems - c', 'Data <b>max</b> - c'];
 const all = Array.from({ length: 40 }, (_, i) => {
   const cid = [4, 8, 9][i % 3];
   return { id: 1000 - i, alert_config_id: 20 + (i % 4), config_name: NAMES[i % 4] + cid, cluster_id: cid, cluster_name: cid === 9 ? 'c9 <i>' : 'c' + cid,
            triggered_at: new Date(T0 - i * 90 * 60000).toISOString(), resolved_at: i % 7 === 0 ? null : new Date(T0 - i * 90 * 60000 + 600000).toISOString(),
-           is_recurrence: i % 5 === 0, metric_value: String(i), teams_post_success: i % 6 !== 0 && i % 10 !== 5,
-           error_detail: i % 6 === 0 ? 'HTTP 400 <bad>' : i % 10 === 5 ? OFF[(i % 20 === 5) ? 0 : 1] : null };
+           is_recurrence: i % 5 === 0, metric_value: String(i), teams_post_success: i % 6 !== 0 && i % 10 !== 5 && i % 10 !== 7,
+           error_detail: i % 6 === 0 ? 'HTTP 400 <bad>' : i % 10 === 5 ? OFF[(i % 20 === 5) ? 0 : 1]
+             : i % 10 === 7 ? `queued (outbox row ${900 + i})` : null };
 });
 let mode = 'ok', total = null;  // total overrides total_count
 const reqs = [];
@@ -76,8 +79,9 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
         && rows()[1].querySelector('.status-resolved').textContent.startsWith('✓ Resolved ') && rows()[1].querySelector('.post-ok') && rows()[1].querySelectorAll('td').length === 7);
   const r0 = reqs.length;
 
-  check('Teams Post options: All / Sent / Failed / Teams off', [...$('triggers-teams-filter').options].map(o => o.value + '=' + o.textContent).join() === '=All,sent=Sent,failed=Failed,off=Teams off');
-  check('fixture: 7 failed, 4 Teams off', expect(t => !t.teams_post_success && !OFF.includes(t.error_detail)).length === 7 && same(expect(t => OFF.includes(t.error_detail)), [5, 15, 25, 35]));
+  check('Teams Post options: All / Sent / Failed / Teams off / Queued', [...$('triggers-teams-filter').options].map(o => o.value + '=' + o.textContent).join() === '=All,sent=Sent,failed=Failed,off=Teams off,queued=Queued');
+  check('fixture: 7 failed, 4 Teams off, 4 queued', expect(t => !t.teams_post_success && !OFF.includes(t.error_detail) && !queued(t)).length === 7
+        && same(expect(t => OFF.includes(t.error_detail)), [5, 15, 25, 35]) && same(expect(queued), [7, 17, 27, 37]));
 
   // each filter alone
   const cases = [
@@ -87,7 +91,8 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
     ['recurrence Recurring', () => sel('triggers-recurrence-filter', 'recurring'), (t) => t.is_recurrence],
     ['recurrence New', () => sel('triggers-recurrence-filter', 'new'), (t) => !t.is_recurrence],
     ['teams Sent', () => sel('triggers-teams-filter', 'sent'), (t) => t.teams_post_success],
-    ['teams Failed (Teams off excluded)', () => sel('triggers-teams-filter', 'failed'), (t) => !t.teams_post_success && !OFF.includes(t.error_detail)],
+    ['teams Failed (Teams off and queued excluded)', () => sel('triggers-teams-filter', 'failed'), (t) => !t.teams_post_success && !OFF.includes(t.error_detail) && !queued(t)],
+    ['teams Queued', () => sel('triggers-teams-filter', 'queued'), (t) => queued(t)],
     ['teams Teams off', () => sel('triggers-teams-filter', 'off'), (t) => !t.teams_post_success && OFF.includes(t.error_detail)],
     ['name "  zOOkeeper  "', () => type('  zOOkeeper  '), (t) => t.config_name.toLowerCase().includes('zookeeper')],
     ['name "<b>max"', () => type('<b>max'), (t) => t.config_name.includes('<b>max')],
