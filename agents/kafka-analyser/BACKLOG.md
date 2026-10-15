@@ -1180,6 +1180,47 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Rule channels decoupled and proven live (2026-10-15)
+DONE 2026-10-15 (commits 25cd2f9, 7a052a2, df5c9d8; deployed 06:33 UTC, graceful
+stop, healthy, rule 5 evaluator lines unchanged): Teams and Email are separate per
+rule. A rule is evaluated when its Teams toggle (the enabled column) OR its Email
+toggle (email_enabled) is on; each toggle controls only its own channel; the global
+gate opens when global Teams OR global email is on; a Teams post needs the rule's
+Teams toggle and global Teams; resolve cards (normal and lag) also need the rule's
+Teams toggle (the lag path now also checks global Teams); resolve emails are
+independent. No schema change. Before this, enabled was the master switch for the
+whole rule and global teams_enabled for the whole alert system, so a rule with Teams
+off and Email on was never evaluated. The 2026-09-29 column comment already described
+independent channels; the evaluators were never changed.
+PORTAL: rules form has Teams and Email checkboxes (the Teams checkbox is hidden when
+editing; the table toggle changes it); table tooltips updated; a rule is Active when
+either toggle is on ("N rules, M active"); Recent Triggers shows "Teams off" instead of
+a failed mark and has a "Teams off" filter option.
+LIVE TEST (batch script, --channels email, a dummy webhook address, emails to one
+mailbox): broker.cpu_pct on cluster 8 fired 06:45:00 for 3 brokers and resolved;
+cluster.consumer_lag for one group fired 07:15:01 and resolved 07:20:01. Every trigger
+was saved with "Teams off for this rule"; outbox rows show email sent and Teams
+skipped; no resolve card; the final verification passed (65 rules, only rule 5
+enabled, non-test rows unchanged, settings restored). Not run live: cluster metrics,
+close-wait and reachability email-only (covered by the 236 evaluator tests; cluster
+metrics shares the code path); a Teams-on regression run (covered by the tests and by
+rule 5, which is Teams only and ran unchanged).
+GAPS: the tests that need a scratch Postgres were not run in the build session (no
+Docker): test_batch_test_rules, test_outbox*, test_notifications_api,
+test_alert_export, test_owner_notice_log. Rerun them when a Docker-enabled session is
+available.
+NOTES: the CSV export column enabled means the Teams toggle (the export contract is
+unchanged; the Kafka head has the file). A failed rule email is still only logged: no
+retry and no Teams fallback (that exists only for the owner and health notices).
+NEXT: (1) apply the Kafka head's spreadsheet from the backend: Teams off, Email on for
+the rules he marks, his thresholds, a backup first, the distribution list set as the
+alert recipients and global email on; lag rules only after his thresholds and exclusion
+lists, since clusters 8, 9 and 10 have groups far above 10,000; (2) send rule emails
+through the outbox with retry and a Teams fallback, as the health summary works, before
+real rules rely on email; (3) rule 5: proposed to turn its email on and keep Teams on
+for the first week, then decide (not decided).
+DECK: Kafka_Analyser_Capabilities.pptx shared with the Kafka head on 2026-10-15.
+
 ### Batch test complete: lag and SLO results, RF note corrected (2026-10-14)
 DONE 2026-10-14 (scripts/batch_test_rules.py: temporary BATCHTEST copies, a test Teams
 channel, emails to one mailbox; every run ended with VERIFICATION PASSED: 65 rules, only
