@@ -43,6 +43,7 @@ class World:
     def reset(self):
         self.configs, self.triggers, self.next_id = [], {}, 100
         self.metrics, self.urp, self.fresh, self.lag = [], {}, set(), {}
+        self.rate = {}  # cluster -> (collected_at, msgs, interval_seconds) of the latest inflow run
 
 
 world = World()
@@ -96,6 +97,11 @@ class Session:
                 return Res([j for j in params["job_ids"] if int(j.rsplit("-", 1)[1]) in world.fresh])
             if "urp_count" in sql:
                 return Res([NS(cluster_id=c, value=world.urp[c]) for c in params["cids"] if c in world.urp])
+            if "MAX(collected_at)" in sql:  # _MSG_RATE_LATEST_SQL
+                return Res([NS(cluster_id=c, collected_at=v[0]) for c, v in world.rate.items() if c in params["cids"]])
+            if "SUM(inflow)" in sql:  # _MSG_RATE_RUN_SQL
+                return Res([NS(cluster_id=c, collected_at=v[0], msgs=v[1], interval_seconds=v[2])
+                            for c, v in world.rate.items() if c in params["cids"] and v[0] in params["runs"]])
             if "kafka_consumer_group_lag" in sql:
                 return Res([NS(cluster_id=c, group_id=g, total_lag=v) for (c, g), v in sorted(world.lag.items())
                             if c in params["cids"]])
@@ -243,6 +249,19 @@ async def step(label, coro):
     print(f"  {label}: {kinds or 'nothing'}")
 
 
+async def msg_rate_steps(prefix, rate, stepper=None):
+    stepper = stepper or step
+    rate(1, 20.0)
+    await stepper(f"{prefix} check 1", ta._evaluate_cluster_metrics())
+    rate(2, 20.0)
+    await stepper(f"{prefix} fire", ta._evaluate_cluster_metrics())
+    rate(3, 1.5)
+    await stepper(f"{prefix} escalate", ta._evaluate_cluster_metrics())
+    age_triggers(25)
+    rate(4, 80.0)
+    await stepper(f"{prefix} resolve", ta._evaluate_cluster_metrics())
+
+
 def age_triggers(minutes):
     for t in world.triggers.values():
         if t.resolved_at is None:
@@ -300,6 +319,18 @@ async def scenarios():
     age_triggers(3)
     world.urp[4] = 0
     await step("cluster_metrics resolve", ta._evaluate_cluster_metrics())
+
+    # Cluster metrics, below direction: message rate in fires when the inflow drops BELOW a tier, one
+    # breach per new inflow run.
+    world.reset()
+    ta._threshold_breach_counts.clear()
+    ta._msg_rate_last_run.clear()
+    world.configs = [rule(6, "cluster.msg_rate_in", 4, {"mode": "simple", "direction": "below", "warning": 50,
+                                                        "critical": 5}, name="Message rate in")]
+
+    def rate(run, msgs_per_sec):
+        world.rate[4] = (FROZEN - timedelta(minutes=10 - run), msgs_per_sec * 600, 600.0)
+    await msg_rate_steps("msg_rate", rate)
 
     # Lag (grouped per rule): fire, escalate, reminder, grouped resolve.
     world.reset()
@@ -360,9 +391,62 @@ async def broker_thresholds_via_outbox():
     return out
 
 
+async def cluster_metrics_via_outbox():
+    """The cluster metrics scenarios again with the switch on: URP (above a
+    tier) and message rate in (below a tier), both with the cluster-wide
+    subject "cluster"."""
+    import outbox_worker
+    outbox_worker.kick = lambda: KICKS.append(1)
+    ta.outbox.enabled = lambda: True
+    ta.outbox.record_inline_soon = lambda **kw: SHADOW.append(kw)
+    rs._config["rule_outbox_evaluators"] = ["cluster_metrics"]
+    out = {}
+
+    async def on(label, coro):
+        CAPTURED.clear()
+        ENQUEUED.clear()
+        KICKS.clear()
+        await coro
+        if ta._rule_email_tasks:
+            await asyncio.gather(*list(ta._rule_email_tasks))
+        out[label] = (list(CAPTURED), list(ENQUEUED), len(KICKS))
+    try:
+        world.reset()
+        ta._threshold_breach_counts.clear()
+        world.fresh = {4}
+        world.configs = [rule(4, "cluster.urp_total", 4, {"mode": "simple", "warning": 10, "critical": 100},
+                              name="Under-replicated partitions")]
+        world.urp[4] = 25
+        await on("cluster_metrics check 1", ta._evaluate_cluster_metrics())
+        await on("cluster_metrics fire", ta._evaluate_cluster_metrics())
+        world.urp[4] = 150
+        await on("cluster_metrics escalate", ta._evaluate_cluster_metrics())
+        age_triggers(3)
+        world.urp[4] = 0
+        await on("cluster_metrics resolve", ta._evaluate_cluster_metrics())
+        await on("cluster_metrics quiet", ta._evaluate_cluster_metrics())
+
+        world.reset()
+        ta._threshold_breach_counts.clear()
+        ta._msg_rate_last_run.clear()
+        world.configs = [rule(6, "cluster.msg_rate_in", 4, {"mode": "simple", "direction": "below", "warning": 50,
+                                                            "critical": 5}, name="Message rate in")]
+
+        def rate(run, msgs_per_sec):
+            world.rate[4] = (FROZEN - timedelta(minutes=10 - run), msgs_per_sec * 600, 600.0)
+        await msg_rate_steps("msg_rate", rate, on)
+        rate(5, 80.0)
+        await on("msg_rate quiet", ta._evaluate_cluster_metrics())
+    finally:
+        rs._config["rule_outbox_evaluators"] = []
+        ta.outbox.enabled = lambda: False
+    return out
+
+
 def main():
     asyncio.run(scenarios())
     via_outbox = asyncio.run(broker_thresholds_via_outbox())
+    cm_outbox = asyncio.run(cluster_metrics_via_outbox())
     expect_nonempty = [k for k in RESULTS if "check 1" not in k]
     empty = [k for k in expect_nonempty if len(RESULTS[k]) != 2]
     assert not empty, f"each notice should give one card and one email: {empty}"
@@ -407,6 +491,27 @@ def main():
     outbox_checks += 1
     print(f"[{'PASS' if ok else 'FAIL'}] switch on: nothing enqueued before the 2nd breach or when quiet; no shadow "
           f"record in any run")
+    for prefix in ("cluster_metrics", "msg_rate"):
+        for step_name, kind in (("fire", "rule_fire"), ("escalate", "rule_escalate"), ("resolve", "rule_resolve")):
+            captured, enqueued, kicks = cm_outbox[f"{prefix} {step_name}"]
+            gold = {c["channel"]: c for c in golden[f"{prefix} {step_name}"]}
+            want_email = {k: gold["email"][k] for k in ("subject", "text", "html")}
+            ok = (len(enqueued) == 1 and enqueued[0]["kind"] == kind and enqueued[0]["routing"] == "rule"
+                  and enqueued[0]["payload"]["subject"] == "cluster"
+                  and json.dumps(enqueued[0]["payload"]["email"], sort_keys=True) == json.dumps(want_email, sort_keys=True)
+                  and json.dumps(enqueued[0]["payload"]["teams_card"], sort_keys=True)
+                  == json.dumps(gold["teams"]["card"], sort_keys=True)
+                  and not captured and kicks == 1)
+            fails += not ok
+            outbox_checks += 1
+            print(f"[{'PASS' if ok else 'FAIL'}] {prefix} {step_name}, switch on: one {kind} row (subject 'cluster') "
+                  f"byte-identical to the golden inline content; no inline post or email; kick() once")
+        quiet = cm_outbox[f"{prefix} quiet"]
+        ok = not cm_outbox[f"{prefix} check 1"][1] and not quiet[1] and not quiet[0] and not quiet[2] and not SHADOW
+        fails += not ok
+        outbox_checks += 1
+        print(f"[{'PASS' if ok else 'FAIL'}] {prefix}, switch on: nothing before the 2nd breach or when quiet; "
+              f"no shadow record")
     total = len(golden) + 1 + len(BUILDER_CHECKS) + outbox_checks
     print(f"{total - fails}/{total} checks passed" + ("" if not fails else "  <-- FAILURES"))
     sys.exit(1 if fails else 0)

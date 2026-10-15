@@ -878,6 +878,212 @@
    "channel": "teams"
   }
  ],
+ "msg_rate check 1": [],
+ "msg_rate escalate": [
+  {
+   "channel": "email",
+   "html": "<html><body style=\"font-family:Segoe UI,Arial,sans-serif;font-size:14px\"><p><strong>Kafka Analyser alert escalated: Message Rate In</strong></p><table style=\"border-collapse:collapse;font-size:13px\"><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Status</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#c50f1f;font-weight:bold\">ESCALATED</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Rule</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Message rate in</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Severity</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#c50f1f;font-weight:bold\">CRITICAL</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Category</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Message Rate In</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Cluster</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">prod-4</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Time</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">2026-10-15 06:45 UTC</td></tr></table><p>Cluster inflow is 1.5 msgs/sec over the last 10.0 minutes (critical, threshold 5) -- ESCALATED from warning</p><p><em>Recommended action:</em> Check producers and connectors writing to this cluster.</p></body></html>",
+   "subject": "[CRITICAL] Kafka Analyser - Message Rate In - prod-4",
+   "text": "Kafka Analyser alert escalated: Message Rate In\n\nStatus    ESCALATED\nRule      Message rate in\nSeverity  CRITICAL\nCategory  Message Rate In\nCluster   prod-4\nTime      2026-10-15 06:45 UTC\n\nCluster inflow is 1.5 msgs/sec over the last 10.0 minutes (critical, threshold 5) -- ESCALATED from warning\n\nRecommended action: Check producers and connectors writing to this cluster.\n"
+  },
+  {
+   "card": {
+    "attachments": [
+     {
+      "content": {
+       "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+       "actions": [],
+       "body": [
+        {
+         "color": "attention",
+         "size": "Medium",
+         "text": "🔴 Operative Intelligence — Kafka Analyser",
+         "type": "TextBlock",
+         "weight": "Bolder"
+        },
+        {
+         "facts": [
+          {
+           "title": "Severity",
+           "value": "CRITICAL"
+          },
+          {
+           "title": "Category",
+           "value": "Message Rate In"
+          },
+          {
+           "title": "Cluster",
+           "value": "prod-4"
+          },
+          {
+           "title": "Time",
+           "value": "2026-10-15 06:45 UTC"
+          }
+         ],
+         "type": "FactSet"
+        },
+        {
+         "spacing": "Medium",
+         "text": "Cluster inflow is 1.5 msgs/sec over the last 10.0 minutes (critical, threshold 5) -- ESCALATED from warning",
+         "type": "TextBlock",
+         "wrap": true
+        },
+        {
+         "color": "accent",
+         "spacing": "Small",
+         "text": "💡 Check producers and connectors writing to this cluster.",
+         "type": "TextBlock",
+         "wrap": true
+        }
+       ],
+       "type": "AdaptiveCard",
+       "version": "1.4"
+      },
+      "contentType": "application/vnd.microsoft.card.adaptive"
+     }
+    ],
+    "type": "message"
+   },
+   "channel": "teams"
+  }
+ ],
+ "msg_rate fire": [
+  {
+   "channel": "email",
+   "html": "<html><body style=\"font-family:Segoe UI,Arial,sans-serif;font-size:14px\"><p><strong>Kafka Analyser alert firing: Message Rate In</strong></p><table style=\"border-collapse:collapse;font-size:13px\"><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Status</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#9d5d00\">FIRING</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Rule</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Message rate in</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Severity</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#9d5d00\">WARNING</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Category</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Message Rate In</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Cluster</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">prod-4</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Time</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">2026-10-15 06:45 UTC</td></tr></table><p>Cluster inflow is 20.0 msgs/sec over the last 10.0 minutes (warning, threshold 50)</p><p><em>Recommended action:</em> Check producers and connectors writing to this cluster.</p></body></html>",
+   "subject": "[WARNING] Kafka Analyser - Message Rate In - prod-4",
+   "text": "Kafka Analyser alert firing: Message Rate In\n\nStatus    FIRING\nRule      Message rate in\nSeverity  WARNING\nCategory  Message Rate In\nCluster   prod-4\nTime      2026-10-15 06:45 UTC\n\nCluster inflow is 20.0 msgs/sec over the last 10.0 minutes (warning, threshold 50)\n\nRecommended action: Check producers and connectors writing to this cluster.\n"
+  },
+  {
+   "card": {
+    "attachments": [
+     {
+      "content": {
+       "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+       "actions": [],
+       "body": [
+        {
+         "color": "warning",
+         "size": "Medium",
+         "text": "🟡 Operative Intelligence — Kafka Analyser",
+         "type": "TextBlock",
+         "weight": "Bolder"
+        },
+        {
+         "facts": [
+          {
+           "title": "Severity",
+           "value": "WARNING"
+          },
+          {
+           "title": "Category",
+           "value": "Message Rate In"
+          },
+          {
+           "title": "Cluster",
+           "value": "prod-4"
+          },
+          {
+           "title": "Time",
+           "value": "2026-10-15 06:45 UTC"
+          }
+         ],
+         "type": "FactSet"
+        },
+        {
+         "spacing": "Medium",
+         "text": "Cluster inflow is 20.0 msgs/sec over the last 10.0 minutes (warning, threshold 50)",
+         "type": "TextBlock",
+         "wrap": true
+        },
+        {
+         "color": "accent",
+         "spacing": "Small",
+         "text": "💡 Check producers and connectors writing to this cluster.",
+         "type": "TextBlock",
+         "wrap": true
+        }
+       ],
+       "type": "AdaptiveCard",
+       "version": "1.4"
+      },
+      "contentType": "application/vnd.microsoft.card.adaptive"
+     }
+    ],
+    "type": "message"
+   },
+   "channel": "teams"
+  }
+ ],
+ "msg_rate resolve": [
+  {
+   "channel": "email",
+   "html": "<html><body style=\"font-family:Segoe UI,Arial,sans-serif;font-size:14px\"><p><strong>Kafka Analyser alert resolved: Message Rate In</strong></p><table style=\"border-collapse:collapse;font-size:13px\"><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Status</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#107c10\">RESOLVED</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Rule</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Message rate in</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Category</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Message Rate In</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Cluster</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">prod-4</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Was</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">CRITICAL</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Open for</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">25 min</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Time</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">2026-10-15 06:45 UTC</td></tr></table><p>The condition that triggered this alert has cleared.</p></body></html>",
+   "subject": "[RESOLVED] Kafka Analyser - Message Rate In - prod-4",
+   "text": "Kafka Analyser alert resolved: Message Rate In\n\nStatus    RESOLVED\nRule      Message rate in\nCategory  Message Rate In\nCluster   prod-4\nWas       CRITICAL\nOpen for  25 min\nTime      2026-10-15 06:45 UTC\n\nThe condition that triggered this alert has cleared.\n"
+  },
+  {
+   "card": {
+    "attachments": [
+     {
+      "content": {
+       "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+       "actions": [],
+       "body": [
+        {
+         "color": "good",
+         "size": "Medium",
+         "text": "✅ Operative Intelligence — Kafka Analyser",
+         "type": "TextBlock",
+         "weight": "Bolder"
+        },
+        {
+         "facts": [
+          {
+           "title": "Status",
+           "value": "RESOLVED"
+          },
+          {
+           "title": "Rule",
+           "value": "Message rate in"
+          },
+          {
+           "title": "Cluster",
+           "value": "prod-4"
+          },
+          {
+           "title": "Was",
+           "value": "CRITICAL"
+          },
+          {
+           "title": "Open for",
+           "value": "25 min"
+          },
+          {
+           "title": "Time",
+           "value": "2026-10-15 06:45 UTC"
+          }
+         ],
+         "type": "FactSet"
+        },
+        {
+         "spacing": "Medium",
+         "text": "The condition that triggered this alert has cleared.",
+         "type": "TextBlock",
+         "wrap": true
+        }
+       ],
+       "type": "AdaptiveCard",
+       "version": "1.4"
+      },
+      "contentType": "application/vnd.microsoft.card.adaptive"
+     }
+    ],
+    "type": "message"
+   },
+   "channel": "teams"
+  }
+ ],
  "reachability check 1": [],
  "reachability fire": [
   {
