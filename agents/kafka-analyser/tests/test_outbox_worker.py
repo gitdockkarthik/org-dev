@@ -689,16 +689,14 @@ async def test_rule_fallback_at_once():
     r = await row(rid)
     cases.append(("abandoned", r))
     assert (r["email_status"], r["email_attempts"], r["teams_status"], r["state"]) == ("abandoned", 2, "sent", "degraded"), r
-    # permanently failed (1 attempt). Not reachable end to end today: smtplib's data() returns a 5xx final
-    # reply instead of raising, and _smtp_send_sync records it as sent (reported, not changed here).
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc)
-    fake = {"id": 1, "routing": "rule", "kind": "rule_fire", "email_status": "sending", "teams_status": "standby",
-            "email_attempts": 1, "teams_attempts": 0, "email_last_error": None, "teams_last_error": None,
-            "email_sent_at": None, "teams_sent_at": None, "email_warning": None, "expires_at": now + timedelta(hours=1),
-            "payload": {"policy": {"rule_id": 1, "teams_toggle": False, "email_toggle": True}}}
-    W._apply(fake, "email", {"outcome": "failed_permanent", "error": "554 rejected"}, now)
-    assert (fake["email_status"], fake["teams_status"]) == ("failed", "pending"), fake
+    # permanently failed: 554 at the end of DATA (1 attempt)
+    await reset()
+    SMTP.data_end_code = 554
+    await add_rule(1, teams=False)
+    rid = await enq_policy(1, 1, teams=False)
+    await W.run_once()
+    r = await row(rid)
+    assert (r["email_status"], r["email_attempts"], r["teams_status"], r["state"]) == ("failed", 1, "sent", "degraded"), r
     # not configured: no SMTP host; and email switched off globally
     for over, reason in (({"smtp_host": ""}, "not configured: smtp_host missing"),
                          ({"email_recipients": ""}, "not configured: email_recipients missing"),
@@ -711,7 +709,7 @@ async def test_rule_fallback_at_once():
         assert (r["email_status"], r["email_last_error"], r["teams_status"], r["state"]) == (
             "skipped", reason, "sent", "degraded"), (over, r)
         assert len(TEAMS.posts) == 1 and SMTP.messages == []
-    ok("rule fallback at once: email abandoned (2 attempts), permanently failed (1 attempt, via _apply), not "
+    ok("rule fallback at once: email abandoned (2 attempts), permanently failed (554, 1 attempt), not "
        "configured (no SMTP host, no recipients) or global email off -> the card goes out in the same run; degraded")
 
 
@@ -916,6 +914,53 @@ async def test_rule_trigger_writeback():
     ok("trigger write-back: a skipped card writes its reason; a failing write-back is logged and never fails the send")
 
 
+async def test_data_end_rejection():
+    """The reply after the message body: 250 sent, 4xx transient, 5xx permanent."""
+    await reset()
+    ids = {}
+    for code in (None, 452, 554):
+        SMTP.data_end_code = code
+        ids[code] = rid = await enq_rule(code or 250, teams=False)
+        await W.run_once()
+    ok250, t452, p554 = (await row(ids[None]), await row(ids[452]), await row(ids[554]))
+    a452, a554 = (await attempts(ids[452]))[0], (await attempts(ids[554]))[0]
+    assert (ok250["email_status"], ok250["state"]) == ("sent", "delivered") and SMTP.subjects() == ["notice 250"], ok250
+    assert (t452["email_status"], t452["email_last_error"], t452["finished_at"]) == (
+        "pending", "message rejected at end of DATA (SMTP 452)", None), t452
+    assert 24 <= due_in(t452, "email") <= 36
+    assert (a452["outcome"], a452["phase_reached"], a452["detail"]["smtp_code"]) == ("failed_transient", "data", 452), a452
+    assert (p554["email_status"], p554["email_last_error"], p554["state"]) == (
+        "failed", "message rejected at end of DATA (SMTP 554)", "failed") and p554["finished_at"] is not None, p554
+    assert (a554["outcome"], a554["phase_reached"], a554["detail"]["smtp_code"]) == ("failed_permanent", "data", 554), a554
+    assert [m[1]["Subject"] for m in SMTP.rejected] == ["notice 452", "notice 554"], SMTP.rejected
+    ok("end of DATA: 250 sent; 452 failed_transient, retried on backoff; 554 failed_permanent, not retried; the "
+       "attempt row has phase 'data', the SMTP code and a message without the server's text")
+    SMTP.data_end_code = None
+    await force_due()
+    await W.run_once()
+    t452 = await row(ids[452])
+    assert (t452["email_status"], t452["email_attempts"], t452["state"]) == ("sent", 2, "delivered"), t452
+    ok("end of DATA 452 then accepted: the retry delivers it")
+
+    await reset()
+    SMTP.data_end_code = 554
+    rid = await enq_owner(1)
+    await W.run_once()
+    r = await row(rid)
+    assert (r["email_status"], r["email_attempts"], r["teams_status"], r["state"]) == ("failed", 1, "sent", "degraded"), r
+    assert first_texts() == ["card 1"]
+    ok("owner notice, 554 at the end of DATA: email failed for good and the Teams fallback goes out in the same run")
+
+    from shared.escalation.email_notifier import send_email
+    results = []
+    for code in (None, 452, 554):
+        SMTP.data_end_code = code
+        results.append(await send_email("127.0.0.1", SMTP.port, "", "", "alerts@sintecmedia.com", "ops@operative.com",
+                                        "s", "t", "<p>h</p>", timeout=5))
+    assert results == [(True, None), (False, "SMTP error 452"), (False, "SMTP error 554")], results
+    ok("shared send_email (inline sends) already reports a rejection at the end of DATA: (False, 'SMTP error <code>')")
+
+
 async def test_rule_settings():
     import httpx
     import routes_settings
@@ -972,7 +1017,7 @@ async def main():
                  test_default_executor_saturation, test_rule_channel_plan, test_enqueue_in_transaction,
                  test_rule_fallback_after_three, test_rule_fallback_at_once, test_rule_no_fallback,
                  test_rule_email_supersedes, test_rule_dependency_gate, test_rule_send_time_checks,
-                 test_rule_trigger_writeback, test_rule_settings, test_no_secrets):
+                 test_rule_trigger_writeback, test_data_end_rejection, test_rule_settings, test_no_secrets):
         await test()
     await W.drain(30)
     await sql("TRUNCATE kafka_notification_outbox, kafka_notification_attempts, kafka_alert_configs, "

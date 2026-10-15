@@ -780,7 +780,15 @@ def _smtp_send_sync(host, port, username, password, from_address, recipients, me
         if refused == len(recipients):
             raise smtplib.SMTPRecipientsRefused({})
         phase["phase"] = "data"
-        server.data(message)
+        # data() raises only when DATA itself is refused; the reply after the
+        # message body comes back as (code, text). Only 250 is a delivery:
+        # 4xx is transient, 5xx permanent. The server's text is not kept (it
+        # can echo addresses).
+        code, _resp = server.data(message)
+        if code != 250:
+            return {"outcome": "failed_permanent" if code >= 500 else "failed_transient",
+                    "error": f"message rejected at end of DATA (SMTP {code})", "phase": "data",
+                    "detail": {"smtp_code": code}}
         phase["phase"] = "done"
         ok = True
         warning = f"{refused} recipient(s) refused by server" if refused else None

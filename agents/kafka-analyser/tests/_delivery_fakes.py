@@ -7,7 +7,9 @@ ScriptedSMTP: plain ESMTP (no STARTTLS, no AUTH). delay maps a step
 reply; reply maps a step to a raw reply line that replaces the normal one;
 drop_at_data_end closes the connection after the message body without a
 reply (the client cannot know whether it was delivered -- the fake records
-it as delivered). data_started is set when a message body starts arriving.
+it as delivered). data_end_code (e.g. 452 or 554) refuses every message
+with that code at the end of DATA; refused messages go to rejected, not to
+messages. data_started is set when a message body starts arriving.
 
 ScriptedTeams: records (path, card) per POST; script holds (status, headers)
 or (status, headers, body) answers used in order, then status (default 202)."""
@@ -32,6 +34,10 @@ class ScriptedSMTP:
         self.delay = {}
         self.reply = {}
         self.drop_at_data_end = False
+        # A code (e.g. 452 or 554): every message is refused with it at the end
+        # of DATA and kept in rejected, not in messages.
+        self.data_end_code = None
+        self.rejected = []
         self.data_started = threading.Event()
 
     def up(self):
@@ -68,7 +74,13 @@ class ScriptedSMTP:
                             if chunk in (b".\r\n", b".\n", b""):
                                 break
                             data.append(chunk)
-                        owner.messages.append((list(rcpts), email.message_from_bytes(b"".join(data))))
+                        parsed = (list(rcpts), email.message_from_bytes(b"".join(data)))
+                        if owner.data_end_code:
+                            owner.rejected.append(parsed)
+                            # The text echoes an address, as real servers do: it must never be stored.
+                            self.wfile.write(f"{owner.data_end_code} 5.7.1 <ops@operative.com> refused by test\r\n".encode())
+                            continue
+                        owner.messages.append(parsed)
                         if owner.drop_at_data_end:
                             time.sleep(owner.delay.get("DATA_END", 0))
                             return
