@@ -1063,6 +1063,7 @@ async def _evaluate_broker_thresholds() -> None:
     resolve_context: dict[int, tuple[KafkaAlertConfig, int]] = {}
     # (config, cluster_id, subject, tier, description, new trigger or None for an escalation)
     to_post: list[tuple[KafkaAlertConfig, int, str, str, str, KafkaAlertTrigger | None]] = []
+    escalations: dict[int, tuple] = {}  # trigger id -> its to_post entry (outbox path)
     cluster_ids_evaluated: set[int] = set()
     brokers_evaluated = 0
     stale_rows = 0
@@ -1119,6 +1120,7 @@ async def _evaluate_broker_thresholds() -> None:
                             config, cluster_id, subject, tier,
                             f"{description} -- ESCALATED from {old_tier}", None,
                         ))
+                        escalations[trigger_id] = to_post[-1]
                     elif _TIER_RANK[tier] < old_rank:
                         to_update.append((trigger_id, tier, metric_value))
                     else:
@@ -1169,6 +1171,13 @@ async def _evaluate_broker_thresholds() -> None:
         len(to_insert), escalated, len(to_resolve),
     )
 
+    # One path per run: the outbox (nothing inline) or the inline sends below.
+    if outbox.rule_via_outbox("broker_thresholds"):
+        if to_insert or to_update or to_resolve:
+            await _broker_thresholds_via_outbox(to_insert, to_update, to_post, to_resolve, resolve_context,
+                                                escalations, now)
+        return
+
     # ---- Teams posts, no DB session open ----
     if to_post or to_resolve:
         try:
@@ -1179,7 +1188,7 @@ async def _evaluate_broker_thresholds() -> None:
     emails: list[dict | None] = []
     for config, cluster_id, subject, tier, description, trigger in to_post:
         try:
-            recommended_action = "Check load on the broker and recent traffic changes."
+            recommended_action = _BROKER_THRESHOLD_ACTION
             card = rule_alert_card(
                 cluster_names.get(cluster_id, str(cluster_id)), tier, config.alert_type, description,
                 recommended_action, affected=affected_text(config.alert_type, subject),
@@ -1301,6 +1310,112 @@ async def _evaluate_broker_thresholds() -> None:
         except Exception as exc:
             logger.warning("_evaluate_broker_thresholds: resolve cards failed: %s", exc)
         _queue_rule_emails(_resolve_emails(resolved_items))
+
+
+_BROKER_THRESHOLD_ACTION = "Check load on the broker and recent traffic changes."
+
+
+async def _broker_thresholds_via_outbox(to_insert, to_update, to_post, to_resolve, resolve_context,
+                                        escalations, now) -> None:
+    """The broker thresholds run's notices through the outbox (setting
+    rule_outbox_evaluators lists "broker_thresholds"): nothing is posted or
+    emailed inline and nothing is shadow-recorded. Each trigger write and its
+    notice row share one savepoint (all or nothing); a fired or escalated
+    trigger is marked queued_detail(row id) until the worker settles its
+    Teams channel. Resolves are enqueued in their resolve savepoint; the
+    worker orders them after the fire and gates the card. kick() once after
+    the session, when anything was enqueued."""
+    import outbox_worker
+    cluster_names: dict[int, str] = {}
+    if to_post or to_resolve:
+        try:
+            cluster_names = await _get_cluster_names()
+        except Exception as exc:
+            logger.warning("_evaluate_broker_thresholds: cluster name lookup failed: %s", exc)
+
+    def name(cluster_id):
+        return cluster_names.get(cluster_id, str(cluster_id))
+
+    def notice(config, cluster_id, subject, tier, description) -> dict:
+        return {
+            "cluster_id": cluster_id, "cluster_name": name(cluster_id), "severity": tier, "subject": subject,
+            "description": description, "recommended_action": _BROKER_THRESHOLD_ACTION,
+            "card": rule_alert_card(name(cluster_id), tier, config.alert_type, description, _BROKER_THRESHOLD_ACTION,
+                                    affected=affected_text(config.alert_type, subject)),
+        }
+
+    fires = {id(t): (c, notice(c, cid, subj, tier, desc)) for c, cid, subj, tier, desc, t in to_post if t is not None}
+    escalation_notices = {tid: (c, notice(c, cid, subj, tier, desc), tier)
+                          for tid, (c, cid, subj, tier, desc, _t) in escalations.items()}
+    enqueued = 0
+    try:
+        async with SessionLocal() as session:
+            for trigger in to_insert:
+                config, n = fires[id(trigger)]
+                try:
+                    async with session.begin_nested():
+                        session.add(trigger)
+                        await session.flush()
+                        row_id = await enqueue_rule_notice(
+                            session, config, "fire", [trigger.id], source="_evaluate_broker_thresholds", **n)
+                        trigger.teams_post_success = False
+                        trigger.error_detail = outbox_worker.queued_detail(row_id) if row_id is not None else None
+                    await session.commit()
+                    enqueued += row_id is not None
+                except Exception as exc:
+                    await session.rollback()
+                    logger.warning(
+                        "_evaluate_broker_thresholds: trigger and notice not recorded for alert_config_id=%s "
+                        "cluster_id=%s subject=%s (re-evaluated next cycle): %s",
+                        config.id, trigger.cluster_id, trigger.subject, exc,
+                    )
+            for trigger_id, severity, metric_value in to_update:
+                try:
+                    async with session.begin_nested():
+                        trigger = await session.get(KafkaAlertTrigger, trigger_id)
+                        if trigger is not None and trigger.resolved_at is None:
+                            if severity is not None:
+                                trigger.severity = severity
+                            trigger.metric_value = metric_value
+                            if trigger_id in escalation_notices:
+                                config, n, tier = escalation_notices[trigger_id]
+                                row_id = await enqueue_rule_notice(
+                                    session, config, "escalate", [trigger_id], tier=tier, eval_ts=now,
+                                    source="_evaluate_broker_thresholds", **n)
+                                if row_id is not None:
+                                    trigger.teams_post_success = False
+                                    trigger.error_detail = outbox_worker.queued_detail(row_id)
+                                    enqueued += 1
+                    await session.commit()
+                except Exception as exc:
+                    await session.rollback()
+                    logger.warning("_evaluate_broker_thresholds: failed to update trigger id=%s: %s", trigger_id, exc)
+            for trigger_id in to_resolve:
+                try:
+                    async with session.begin_nested():
+                        trigger = await session.get(KafkaAlertTrigger, trigger_id)
+                        if trigger is not None and trigger.resolved_at is None and trigger_id in resolve_context:
+                            trigger.resolved_at = now
+                            config, cluster_id = resolve_context[trigger_id]
+                            severity = trigger.severity or config.severity
+                            open_minutes = None
+                            if trigger.triggered_at is not None:
+                                open_minutes = (trigger.resolved_at - trigger.triggered_at).total_seconds() / 60
+                            row_id = await enqueue_rule_notice(
+                                session, config, "resolve", [trigger_id], cluster_id=cluster_id,
+                                cluster_name=name(cluster_id), severity=severity, subject=trigger.subject,
+                                card=rule_resolve_card(config, name(cluster_id), trigger.subject, severity, open_minutes),
+                                open_minutes=open_minutes, source="_evaluate_broker_thresholds",
+                            )
+                            enqueued += row_id is not None
+                    await session.commit()
+                except Exception as exc:
+                    await session.rollback()
+                    logger.warning("_evaluate_broker_thresholds: failed to resolve trigger id=%s: %s", trigger_id, exc)
+    except Exception as exc:
+        logger.warning("_evaluate_broker_thresholds: write session failed entirely: %s", exc)
+    if enqueued:
+        outbox_worker.kick()
 
 
 # Cluster threshold rules (Simple mode, same config as the broker thresholds):

@@ -198,10 +198,11 @@ async def main_teams_alerts():
           and all(it["trigger"].severity == "critical" for it in items))
 
     # Fire/escalate call sites in teams_alerts pass affected_text(...) to the card
-    # (through the rule_alert_card builder since step 2; tests/test_rule_notice_golden.py).
+    # (through the rule_alert_card builder since step 2; tests/test_rule_notice_golden.py):
+    # reachability, broker thresholds inline, broker thresholds through the outbox.
     src = open(ta.__file__).read()
     check("teams_alerts: reachability and broker-threshold fire/escalate cards pass 'affected'",
-          src.count('affected=affected_text(') == 2
+          src.count('affected=affected_text(') == 3
           and 'affected=affected_text(BROKER_UNREACHABLE_ALERT_TYPE, subject)' in src
           and 'affected=affected_text(config.alert_type, subject)' in src
           and 'anomaly["affected"] = affected' in src)

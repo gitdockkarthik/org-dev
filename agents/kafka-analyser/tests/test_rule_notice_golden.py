@@ -62,6 +62,9 @@ class Res:
     def scalar_one(self):
         return self.rows[0]
 
+    def scalar_one_or_none(self):
+        return self.rows[0] if self.rows else None
+
 
 class Nested:
     async def __aenter__(self):
@@ -84,6 +87,11 @@ class Session:
     async def execute(self, stmt, params=None):
         if isinstance(stmt, TextClause):
             sql = stmt.text
+            if sql.startswith("INSERT INTO kafka_notification_outbox"):  # outbox_worker.enqueue_in
+                if any(r["dedupe_key"] == params["dedupe_key"] for r in ENQUEUED):
+                    return Res([])
+                ENQUEUED.append(dict(params, payload=json.loads(params["payload"]), id=len(ENQUEUED) + 1))
+                return Res([len(ENQUEUED)])
             if "kafka_job_runs" in sql:
                 return Res([j for j in params["job_ids"] if int(j.rsplit("-", 1)[1]) in world.fresh])
             if "urp_count" in sql:
@@ -117,6 +125,9 @@ class Session:
 
     def add(self, t):
         self.pending.append(t)
+
+    async def flush(self):
+        await self.commit()
 
     async def get(self, model, tid):
         return world.triggers.get(tid)
@@ -176,6 +187,9 @@ async def _names():
 ta._get_cluster_names = _names
 
 CAPTURED: list = []
+ENQUEUED: list = []  # outbox rows (switch on)
+KICKS: list = []
+SHADOW: list = []
 
 
 async def fake_post(webhook_url, card):
@@ -304,8 +318,51 @@ async def scenarios():
     await step("lag resolve", ta._evaluate_cluster_lag())
 
 
+async def broker_thresholds_via_outbox():
+    """The broker thresholds scenario again with the switch on: the enqueued
+    payloads must carry the golden content, and nothing is sent inline."""
+    import outbox_worker
+    outbox_worker.kick = lambda: KICKS.append(1)
+    ta.outbox.enabled = lambda: True  # a shadow record would be counted, not written
+    ta.outbox.record_inline_soon = lambda **kw: SHADOW.append(kw)
+    rs._config["rule_outbox_evaluators"] = ["broker_thresholds"]
+    out = {}
+    try:
+        world.reset()
+        ta._threshold_breach_counts.clear()
+        world.configs = [rule(3, "broker.cpu_pct", 4, {"mode": "simple", "warning": 70, "critical": 90},
+                              name="Broker CPU %")]
+
+        def cpu(value):
+            world.metrics = [NS(cluster_id=4, broker_id=1, cpu_pct=value, heap_pct=40.0, time=FROZEN)]
+
+        async def run(label):
+            CAPTURED.clear()
+            ENQUEUED.clear()
+            KICKS.clear()
+            await ta._evaluate_broker_thresholds()
+            if ta._rule_email_tasks:
+                await asyncio.gather(*list(ta._rule_email_tasks))
+            out[label] = (list(CAPTURED), list(ENQUEUED), len(KICKS))
+        cpu(75.5)
+        await run("check 1")
+        await run("fire")
+        cpu(96.0)
+        await run("escalate")
+        age_triggers(65)
+        cpu(10.0)
+        await run("resolve")
+        cpu(10.0)
+        await run("quiet")
+    finally:
+        rs._config["rule_outbox_evaluators"] = []
+        ta.outbox.enabled = lambda: False
+    return out
+
+
 def main():
     asyncio.run(scenarios())
+    via_outbox = asyncio.run(broker_thresholds_via_outbox())
     expect_nonempty = [k for k in RESULTS if "check 1" not in k]
     empty = [k for k in expect_nonempty if len(RESULTS[k]) != 2]
     assert not empty, f"each notice should give one card and one email: {empty}"
@@ -330,7 +387,27 @@ def main():
     for label, same in BUILDER_CHECKS:
         fails += not same
         print(f"[{'PASS' if same else 'FAIL'}] {label}: rule_email_content equals the email notify_rule_email sent")
-    total = len(golden) + 1 + len(BUILDER_CHECKS)
+    outbox_checks = 0
+    for step_name, kind in (("fire", "rule_fire"), ("escalate", "rule_escalate"), ("resolve", "rule_resolve")):
+        captured, enqueued, kicks = via_outbox[step_name]
+        gold = {c["channel"]: c for c in golden[f"broker_thresholds {step_name}"]}
+        want_email = {k: gold["email"][k] for k in ("subject", "text", "html")}
+        ok = (len(enqueued) == 1 and enqueued[0]["kind"] == kind and enqueued[0]["routing"] == "rule"
+              and json.dumps(enqueued[0]["payload"]["email"], sort_keys=True) == json.dumps(want_email, sort_keys=True)
+              and json.dumps(enqueued[0]["payload"]["teams_card"], sort_keys=True)
+              == json.dumps(gold["teams"]["card"], sort_keys=True)
+              and not captured and kicks == 1)
+        fails += not ok
+        outbox_checks += 1
+        print(f"[{'PASS' if ok else 'FAIL'}] broker_thresholds {step_name}, switch on: one {kind} row whose email and "
+              f"card are byte-identical to the golden inline content; no inline post or email; kick() once")
+    quiet = via_outbox["quiet"]
+    ok = not via_outbox["check 1"][1] and not quiet[1] and not quiet[0] and not quiet[2] and not SHADOW
+    fails += not ok
+    outbox_checks += 1
+    print(f"[{'PASS' if ok else 'FAIL'}] switch on: nothing enqueued before the 2nd breach or when quiet; no shadow "
+          f"record in any run")
+    total = len(golden) + 1 + len(BUILDER_CHECKS) + outbox_checks
     print(f"{total - fails}/{total} checks passed" + ("" if not fails else "  <-- FAILURES"))
     sys.exit(1 if fails else 0)
 
