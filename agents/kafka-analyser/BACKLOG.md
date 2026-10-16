@@ -1180,6 +1180,62 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Rule notices through the outbox: steps 1 and 2 done, proven live (2026-10-16)
+DONE (commits 119818e, c6b5914, a9afa79, 70487e9, c2eb22b, e2508e1, 68d0903;
+chunks A and B deployed 2026-10-15 11:17 UTC, chunk C 2026-10-16 04:43 UTC, both
+graceful stops, rule 5 evaluator lines unchanged after each).
+STEP 1, the worker (dark): rule rows can be enqueued on the caller's transaction
+(enqueue_in); channel status follows the rule's toggles (both on: independent;
+Teams only: email skipped; Email only: Teams on standby with the card stored);
+fallback: the standby Teams card is sent when the email reaches 3 failed attempts,
+is abandoned, permanently failed or not configured, only if rule_teams_fallback is
+on (default on) and global Teams is on and a webhook resolves; email sent
+supersedes it; ordering: a resolve, escalate or reminder waits for the earlier fire
+rows of the same triggers, capped at 60 minutes, and the resolve card goes only if
+its fire card was sent; the worker writes the Teams result back to the trigger
+(teams_post_success and error_detail). SMTP fix (a9afa79): the reply at the end of
+DATA is checked: 250 sent, 4xx transient, 5xx permanent; before, a rejected message
+was recorded as sent (owner notices too); the server's reply text is not stored.
+STEP 2, evaluators behind the switch rule_outbox_evaluators (default empty; a
+list of broker_thresholds, cluster_metrics, lag, close_wait, reachability; now
+["broker_thresholds","cluster_metrics"]; one POST to /settings changes it): shared
+builders and a golden test proving the inline output is byte-identical
+(tests/golden/rule_notices.json); chunk B broker thresholds; chunk C cluster
+metrics; Recent Triggers shows a neutral "queued" label and has a "Queued" filter.
+LIVE PROOFS (email-only copies from the batch script, dummy webhook address,
+emails to one mailbox): 2026-10-15 broker.cpu_pct, 2 brokers fired 11:35 and
+resolved 11:40 (outbox rows 206-209); 2026-10-16 cluster.data_spread_pct fired 05:05
+and resolved 05:10 (rows 231, 232). Each time: email sent, Teams skipped, trigger
+saved with "Teams off for this rule", no resolve card, final verification passed.
+NOT PROVEN LIVE (covered by tests on a scratch Postgres 16): Teams-on rules through
+the outbox, escalation through the outbox, the Teams fallback after a failed email.
+NOT RUN IN THE BUILD SESSIONS: test_batch_test_rules and test_owner_notice_log
+(they need the live rule rows or Docker). The scratch Postgres setup lives only in
+the build session's scratchpad.
+KNOWN: an escalation re-marks the trigger as queued, so a trigger fired inline,
+escalated after the switch and resolved gets its resolve card gated on the
+escalation card (changeover only; do not switch an evaluator on while its triggers
+are open); a rejection at MAIL or at RCPT with every recipient refused is classed
+as a configuration error and retried at the 15 minute cap even for a temporary 4xx.
+STEP 3 (not started): lag (grouped notices, reminders without a trigger write, grouped
+resolves; decision: build the resolve card at send time so it lists only the groups
+whose opening card reached Teams), close-wait (its resolve commits all triggers in
+one transaction and needs per-trigger savepoints), reachability (rule 5) last; then
+remove the inline path and the shadow recording for rules. Until then those three
+send inline and a failed rule email there is only logged.
+ROLLOUT PLAN (agreed 2026-10-15/16): apply the Kafka head's tiers from the backend
+with a dry run and a backup first: Email on and Teams off for every rule, except
+rule 5 which gets Email on with Teams on for the first week; alert recipients
+Prod_Kafka_alerts@operative.com (one prod list for all clusters until the prod and
+test split exists); global email on; rule 3 (CLOSE_WAIT) stays off; the lag rules
+only after their blacklists are filled in the UI (they fire on real lag at once);
+the data-on-disk tiers (blank in his file) default to 5000 and 8000 GB. His file
+differs from the creation defaults for CPU 90/95, heap 80/90, RF below min 1/1,
+Connect 1/1, Schema Registry nodes 1/1, soft-deleted 5/50 on cluster 8, consumer
+lag 10000/50000, connector lag 10000/30000, SLO 90/80 (a fresh export will give the
+exact diff). The SLO warning at 90 is above today's 82% on clusters 8, 9 and 10 and
+would fire.
+
 ### Rule channels decoupled and proven live (2026-10-15)
 DONE 2026-10-15 (commits 25cd2f9, 7a052a2, df5c9d8; deployed 06:33 UTC, graceful
 stop, healthy, rule 5 evaluator lines unchanged): Teams and Email are separate per
