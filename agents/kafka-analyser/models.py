@@ -77,6 +77,29 @@ class KafkaBrokerMetrics(Base):
     messages_in_per_sec: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     cpu_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     disk_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    # Not mapped on purpose (like bytes_in_per_sec and the other columns added
+    # later): process_start_time (Alembic 0059) is read and written only by raw
+    # SQL in broker_restarts.py, so this class keeps working before 0059 is applied.
+
+
+class KafkaBrokerRestart(Base):
+    """One row per detected broker restart (a later process_start_time than the
+    stored one). Unique on (cluster_id, broker_id, started_at) so recording is
+    idempotent. Alembic 0059; keep the two in step."""
+    __tablename__ = "kafka_broker_restarts"
+    __table_args__ = (
+        Index("uq_kafka_broker_restarts_broker_started", "cluster_id", "broker_id", "started_at", unique=True),
+        Index("ix_kafka_broker_restarts_cluster_detected", "cluster_id", "detected_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    cluster_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    broker_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    previous_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    detected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
 
 
 class KafkaConsumerLag(Base):

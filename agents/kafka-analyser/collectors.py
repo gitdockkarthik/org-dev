@@ -198,6 +198,9 @@ async def collect_broker_health(cluster_id: str = ""):
                             "isre": broker.get("isr_expands_per_sec", 0.0),
                             "data_gb_true": data_gb_true,
                         })
+                    # Restart capture: own savepoints, never raises, so the rows above are committed whatever happens.
+                    from broker_restarts import record_broker_restarts
+                    await record_broker_restarts(sess, int(cid), brokers, c["name"])
                     await sess.commit()
         except Exception as db_exc:
             logger.warning("broker upsert failed: %s", db_exc)

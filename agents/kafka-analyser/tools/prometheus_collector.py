@@ -5,6 +5,7 @@ Per-broker asyncio.wait_for timeout so slow brokers never block others.
 from __future__ import annotations
 import asyncio
 import logging
+import math
 import re
 import time
 from typing import Any
@@ -110,6 +111,7 @@ _FILTERED_METRICS = [
     "kafka_server_replicamanager_isrshrinks_total",
     "kafka_server_replicamanager_isrexpands_total",
     "kafka_network_requestmetrics_totaltimems",
+    "process_start_time_seconds",
 ]
 
 _THROUGHPUT_PREFIXES = [
@@ -162,6 +164,20 @@ def _get(metrics: dict, name: str, labels: dict | None = None,
     return 0.0
 
 
+_MIN_START_TIME = 1e9  # epoch seconds; anything lower is not a real process start
+
+
+def _process_start_time(metrics: dict) -> float | None:
+    """process_start_time_seconds as epoch seconds, or None when the metric is
+    absent (failed curl, filtered out, garbage) or not above _MIN_START_TIME.
+    Never 0.0: a missing value must not look like a start time."""
+    for entry in metrics.get("process_start_time_seconds", []):
+        value = entry["value"]
+        if math.isfinite(value) and value > _MIN_START_TIME:
+            return value
+    return None
+
+
 def _get_topic(metrics: dict, name: str, topic: str) -> float:
     return _get(metrics, name, {"topic": topic})
 
@@ -198,6 +214,7 @@ async def scrape_broker(host: str, port: int, cpu_cores: int | None = None) -> d
         "under_replicated_partitions": 0, "at_min_isr_partitions": 0,
         "partition_count": 0,
         "throughput_available": False,
+        "process_start_time": None,
     }
     state_key = f"{host}:{port}"
     try:
@@ -277,6 +294,7 @@ async def scrape_broker(host: str, port: int, cpu_cores: int | None = None) -> d
             "under_replicated_partitions": urp, "at_min_isr_partitions": at_min_isr,
             "partition_count": partition_count,
             "throughput_available": True,
+            "process_start_time": _process_start_time(metrics),
         }
     except Exception as exc:
         logger.warning("Prometheus scrape failed for %s:%s: %s", host, port, exc)
