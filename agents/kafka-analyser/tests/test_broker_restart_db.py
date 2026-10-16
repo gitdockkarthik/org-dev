@@ -101,8 +101,10 @@ async def state(bid="1"):
 
 
 async def events():
-    return (await sql("SELECT broker_id, EXTRACT(EPOCH FROM started_at) AS s, EXTRACT(EPOCH FROM previous_started_at) AS p "
+    rows = (await sql("SELECT broker_id, EXTRACT(EPOCH FROM started_at) AS s, EXTRACT(EPOCH FROM previous_started_at) AS p "
                       "FROM kafka_broker_restarts WHERE cluster_id = :c ORDER BY id", c=CID)).all()
+    # EXTRACT returns numeric (Decimal): compare as floats
+    return [type("Ev", (), {"broker_id": r.broker_id, "s": float(r.s), "p": None if r.p is None else float(r.p)}) for r in rows]
 
 
 async def main():

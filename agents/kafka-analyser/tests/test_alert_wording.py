@@ -67,6 +67,7 @@ CLUSTER_WIDE = (
     "cluster.urp_total", "cluster.rf_below_min", "cluster.leader_skew", "cluster.msg_rate_in", "cluster.data_gb_max",
     "cluster.data_spread_pct", "cluster.zk_ensemble", "cluster.connect_failed_connectors", "cluster.connect_failed_tasks",
     "cluster.connect_workers_down", "cluster.sr_nodes_down", "cluster.sr_soft_deleted", "cluster.slo_compliance",
+    "cluster.broker_restarted",
 )
 CASES = (  # alert_type, stored subject, expected Affected (None = row omitted)
     [("broker.cpu_pct", "3", "Broker 3"), ("broker.heap_pct", "12", "Broker 12"),
@@ -79,8 +80,8 @@ CASES = (  # alert_type, stored subject, expected Affected (None = row omitted)
 
 
 def main_builders():
-    check(f"cases cover all 19 known alert types plus an unknown one",
-          len({c[0] for c in CASES}) == 20)
+    check(f"cases cover all 20 known alert types plus an unknown one",
+          len({c[0] for c in CASES}) == 21)
     for alert_type, subject, want in CASES:
         got = affected_text(alert_type, subject)
         check(f"affected_text({alert_type!r}, {subject!r}) -> {want!r}", got == want, repr(got))

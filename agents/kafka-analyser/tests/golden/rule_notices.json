@@ -1,4 +1,210 @@
 {
+ "broker_restart check 1": [],
+ "broker_restart escalate": [
+  {
+   "channel": "email",
+   "html": "<html><body style=\"font-family:Segoe UI,Arial,sans-serif;font-size:14px\"><p><strong>Kafka Analyser alert escalated: Broker Restarts</strong></p><table style=\"border-collapse:collapse;font-size:13px\"><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Status</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#9d5d00\">ESCALATED</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Rule</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Broker restarts</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Severity</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#9d5d00\">WARNING</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Category</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Broker Restarts</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Cluster</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">prod-4</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Time</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">2026-10-15 06:45 UTC</td></tr></table><p>Broker 1 restarted at 2026-10-15 06:41:15 UTC after 13 d 2 h. 3 broker restarts in the last 30 min (warning, threshold 3) -- ESCALATED from info</p><p><em>Recommended action:</em> Check with the Kafka team why the broker restarted and confirm it is back in sync.</p></body></html>",
+   "subject": "[WARNING] Kafka Analyser - Broker Restarts - prod-4",
+   "text": "Kafka Analyser alert escalated: Broker Restarts\n\nStatus    ESCALATED\nRule      Broker restarts\nSeverity  WARNING\nCategory  Broker Restarts\nCluster   prod-4\nTime      2026-10-15 06:45 UTC\n\nBroker 1 restarted at 2026-10-15 06:41:15 UTC after 13 d 2 h. 3 broker restarts in the last 30 min (warning, threshold 3) -- ESCALATED from info\n\nRecommended action: Check with the Kafka team why the broker restarted and confirm it is back in sync.\n"
+  },
+  {
+   "card": {
+    "attachments": [
+     {
+      "content": {
+       "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+       "actions": [],
+       "body": [
+        {
+         "color": "warning",
+         "size": "Medium",
+         "text": "🟡 Operative Intelligence — Kafka Analyser",
+         "type": "TextBlock",
+         "weight": "Bolder"
+        },
+        {
+         "facts": [
+          {
+           "title": "Severity",
+           "value": "WARNING"
+          },
+          {
+           "title": "Category",
+           "value": "Broker Restarts"
+          },
+          {
+           "title": "Cluster",
+           "value": "prod-4"
+          },
+          {
+           "title": "Time",
+           "value": "2026-10-15 06:45 UTC"
+          }
+         ],
+         "type": "FactSet"
+        },
+        {
+         "spacing": "Medium",
+         "text": "Broker 1 restarted at 2026-10-15 06:41:15 UTC after 13 d 2 h. 3 broker restarts in the last 30 min (warning, threshold 3) -- ESCALATED from info",
+         "type": "TextBlock",
+         "wrap": true
+        },
+        {
+         "color": "accent",
+         "spacing": "Small",
+         "text": "💡 Check with the Kafka team why the broker restarted and confirm it is back in sync.",
+         "type": "TextBlock",
+         "wrap": true
+        }
+       ],
+       "type": "AdaptiveCard",
+       "version": "1.4"
+      },
+      "contentType": "application/vnd.microsoft.card.adaptive"
+     }
+    ],
+    "type": "message"
+   },
+   "channel": "teams"
+  }
+ ],
+ "broker_restart fire": [
+  {
+   "channel": "email",
+   "html": "<html><body style=\"font-family:Segoe UI,Arial,sans-serif;font-size:14px\"><p><strong>Kafka Analyser alert firing: Broker Restarts</strong></p><table style=\"border-collapse:collapse;font-size:13px\"><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Status</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">FIRING</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Rule</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Broker restarts</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Severity</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">INFO</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Category</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Broker Restarts</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Cluster</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">prod-4</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Time</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">2026-10-15 06:45 UTC</td></tr></table><p>Broker 2 restarted at 2026-10-15 06:34:15 UTC after 13 d 2 h. 1 broker restart in the last 30 min (info, threshold 1)</p><p><em>Recommended action:</em> Check with the Kafka team why the broker restarted and confirm it is back in sync.</p></body></html>",
+   "subject": "[INFO] Kafka Analyser - Broker Restarts - prod-4",
+   "text": "Kafka Analyser alert firing: Broker Restarts\n\nStatus    FIRING\nRule      Broker restarts\nSeverity  INFO\nCategory  Broker Restarts\nCluster   prod-4\nTime      2026-10-15 06:45 UTC\n\nBroker 2 restarted at 2026-10-15 06:34:15 UTC after 13 d 2 h. 1 broker restart in the last 30 min (info, threshold 1)\n\nRecommended action: Check with the Kafka team why the broker restarted and confirm it is back in sync.\n"
+  },
+  {
+   "card": {
+    "attachments": [
+     {
+      "content": {
+       "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+       "actions": [],
+       "body": [
+        {
+         "color": "good",
+         "size": "Medium",
+         "text": "🟢 Operative Intelligence — Kafka Analyser",
+         "type": "TextBlock",
+         "weight": "Bolder"
+        },
+        {
+         "facts": [
+          {
+           "title": "Severity",
+           "value": "INFO"
+          },
+          {
+           "title": "Category",
+           "value": "Broker Restarts"
+          },
+          {
+           "title": "Cluster",
+           "value": "prod-4"
+          },
+          {
+           "title": "Time",
+           "value": "2026-10-15 06:45 UTC"
+          }
+         ],
+         "type": "FactSet"
+        },
+        {
+         "spacing": "Medium",
+         "text": "Broker 2 restarted at 2026-10-15 06:34:15 UTC after 13 d 2 h. 1 broker restart in the last 30 min (info, threshold 1)",
+         "type": "TextBlock",
+         "wrap": true
+        },
+        {
+         "color": "accent",
+         "spacing": "Small",
+         "text": "💡 Check with the Kafka team why the broker restarted and confirm it is back in sync.",
+         "type": "TextBlock",
+         "wrap": true
+        }
+       ],
+       "type": "AdaptiveCard",
+       "version": "1.4"
+      },
+      "contentType": "application/vnd.microsoft.card.adaptive"
+     }
+    ],
+    "type": "message"
+   },
+   "channel": "teams"
+  }
+ ],
+ "broker_restart resolve": [
+  {
+   "channel": "email",
+   "html": "<html><body style=\"font-family:Segoe UI,Arial,sans-serif;font-size:14px\"><p><strong>Kafka Analyser alert resolved: Broker Restarts</strong></p><table style=\"border-collapse:collapse;font-size:13px\"><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Status</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;color:#107c10\">RESOLVED</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Rule</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Broker restarts</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Category</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">Broker Restarts</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Cluster</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">prod-4</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Was</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">WARNING</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Open for</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">35 min</td></tr><tr><th style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;background:#f3f3f3\">Time</th><td style=\"border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top;\">2026-10-15 06:45 UTC</td></tr></table><p>The condition that triggered this alert has cleared.</p></body></html>",
+   "subject": "[RESOLVED] Kafka Analyser - Broker Restarts - prod-4",
+   "text": "Kafka Analyser alert resolved: Broker Restarts\n\nStatus    RESOLVED\nRule      Broker restarts\nCategory  Broker Restarts\nCluster   prod-4\nWas       WARNING\nOpen for  35 min\nTime      2026-10-15 06:45 UTC\n\nThe condition that triggered this alert has cleared.\n"
+  },
+  {
+   "card": {
+    "attachments": [
+     {
+      "content": {
+       "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+       "actions": [],
+       "body": [
+        {
+         "color": "good",
+         "size": "Medium",
+         "text": "✅ Operative Intelligence — Kafka Analyser",
+         "type": "TextBlock",
+         "weight": "Bolder"
+        },
+        {
+         "facts": [
+          {
+           "title": "Status",
+           "value": "RESOLVED"
+          },
+          {
+           "title": "Rule",
+           "value": "Broker restarts"
+          },
+          {
+           "title": "Cluster",
+           "value": "prod-4"
+          },
+          {
+           "title": "Was",
+           "value": "WARNING"
+          },
+          {
+           "title": "Open for",
+           "value": "35 min"
+          },
+          {
+           "title": "Time",
+           "value": "2026-10-15 06:45 UTC"
+          }
+         ],
+         "type": "FactSet"
+        },
+        {
+         "spacing": "Medium",
+         "text": "The condition that triggered this alert has cleared.",
+         "type": "TextBlock",
+         "wrap": true
+        }
+       ],
+       "type": "AdaptiveCard",
+       "version": "1.4"
+      },
+      "contentType": "application/vnd.microsoft.card.adaptive"
+     }
+    ],
+    "type": "message"
+   },
+   "channel": "teams"
+  }
+ ],
  "broker_thresholds check 1": [],
  "broker_thresholds escalate": [
   {

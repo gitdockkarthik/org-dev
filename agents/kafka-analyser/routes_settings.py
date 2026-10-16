@@ -252,6 +252,10 @@ async def save_settings(request: Request) -> dict:
         data.pop("smtp_password")
     if "rule_teams_fallback" in data and not isinstance(data["rule_teams_fallback"], bool):
         raise HTTPException(status_code=422, detail="rule_teams_fallback must be true or false")
+    if "broker_restart_window_minutes" in data:
+        value = data["broker_restart_window_minutes"]
+        if isinstance(value, bool) or not isinstance(value, int) or not 15 <= value <= 240:
+            raise HTTPException(status_code=422, detail="broker_restart_window_minutes must be a whole number from 15 to 240")
     if "rule_outbox_evaluators" in data:
         import outbox
         value = data["rule_outbox_evaluators"]

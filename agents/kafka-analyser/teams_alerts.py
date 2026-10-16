@@ -1449,7 +1449,7 @@ CLUSTER_METRIC_TYPES = (
     "cluster.urp_total", "cluster.rf_below_min", "cluster.leader_skew", "cluster.msg_rate_in",
     "cluster.data_gb_max", "cluster.data_spread_pct", "cluster.zk_ensemble",
     "cluster.connect_failed_connectors", "cluster.connect_failed_tasks", "cluster.connect_workers_down",
-    "cluster.sr_nodes_down", "cluster.sr_soft_deleted", "cluster.slo_compliance",
+    "cluster.sr_nodes_down", "cluster.sr_soft_deleted", "cluster.slo_compliance", "cluster.broker_restarted",
 )
 _CLUSTER_METRIC_SUBJECT = "cluster"
 # A cluster is evaluated only if its topic-structure job succeeded this recently.
@@ -1615,6 +1615,67 @@ _SR_SUBJECT_NAMES_MAX = 5
 _SR_URL_SQL = text(
     "SELECT id, schema_registry_url FROM kafka_clusters WHERE id IN :cids"
 ).bindparams(bindparam("cids", expanding=True))
+# cluster.broker_restarted: number of kafka_broker_restarts rows of the cluster
+# (written by collect_broker_health when a broker reports a later
+# process_start_time, Alembic 0059) with detected_at at or after now minus the
+# window, the agent setting broker_restart_window_minutes (15 to 240, default
+# 30, read on every run). The card names the most recent restart and how long
+# that broker had been up. Own guard: a cluster is ignored unless its newest
+# kafka_broker_metrics row is within _BROKER_METRICS_MAX_AGE (the health job is
+# alive); a restarted broker that is still down does not hide the others. The
+# restart read runs in its own savepoint: if the table is missing (0059 not
+# applied) or the query fails, only this type is skipped for the run.
+_BROKER_RESTART_ALERT_TYPE = "cluster.broker_restarted"
+_BROKER_RESTART_WINDOW_DEFAULT = 30
+_BROKER_RESTART_WINDOW_RANGE = (15, 240)
+_BROKER_RESTARTS_SQL = text(
+    "SELECT cluster_id, broker_id, started_at, previous_started_at, detected_at "
+    "FROM kafka_broker_restarts WHERE cluster_id IN :cids AND detected_at >= :since"
+).bindparams(bindparam("cids", expanding=True))
+
+
+def _broker_restart_window_minutes(raw) -> int:
+    """The setting's value, or the default if it is missing or not a whole number in range."""
+    low, high = _BROKER_RESTART_WINDOW_RANGE
+    if isinstance(raw, int) and not isinstance(raw, bool) and low <= raw <= high:
+        return raw
+    if raw is not None:
+        logger.warning("broker_restart_window_minutes=%r is not a whole number from %d to %d; using %d",
+                       raw, low, high, _BROKER_RESTART_WINDOW_DEFAULT)
+    return _BROKER_RESTART_WINDOW_DEFAULT
+
+
+def _uptime_text(previous_started_at, started_at) -> str | None:
+    """How long the broker had been up before the restart ("13 d 2 h", "5 h 12 min", "7 min"), None if unknown."""
+    if previous_started_at is None or started_at is None:
+        return None
+    minutes = int((started_at - previous_started_at).total_seconds() // 60)
+    if minutes < 0:
+        return None
+    days, rest = divmod(minutes, 1440)
+    hours, mins = divmod(rest, 60)
+    if days:
+        return f"{days} d {hours} h"
+    return f"{hours} h {mins} min" if hours else f"{mins} min"
+
+
+def _broker_restart_value(rows: list) -> tuple[int, object | None]:
+    """(restart count, the most recent restart row) of one cluster's rows in the window."""
+    if not rows:
+        return 0, None
+    latest = max(rows, key=lambda r: (r.detected_at, r.started_at))
+    return len(rows), latest
+
+
+def _broker_restart_description(count: int, latest, window_minutes: int) -> str:
+    started = latest.started_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    uptime = _uptime_text(latest.previous_started_at, latest.started_at)
+    return (
+        f"Broker {latest.broker_id} restarted at {started} UTC" + (f" after {uptime}" if uptime else "") + ". "
+        f"{count} broker restart{'' if count == 1 else 's'} in the last {window_minutes} min"
+    )
+
+
 _CLUSTER_METRIC_ACTIONS = {
     "cluster.urp_total": "Check broker health and replica sync.",
     "cluster.rf_below_min": "Check the topic replication factors with the Kafka team.",
@@ -1629,6 +1690,7 @@ _CLUSTER_METRIC_ACTIONS = {
     "cluster.sr_nodes_down": "Check the Schema Registry nodes.",
     "cluster.sr_soft_deleted": "Check the soft-deleted subjects in Schema Registry.",
     "cluster.slo_compliance": "Check the SLI/SLO tab to see which component is below target.",
+    "cluster.broker_restarted": "Check with the Kafka team why the broker restarted and confirm it is back in sync.",
 }
 
 
@@ -1845,7 +1907,10 @@ async def _evaluate_cluster_metrics() -> None:
     whose subject lists cannot be read. cluster.slo_compliance fires when
     the latest hourly overall compliance is strictly BELOW a tier, with its
     own guard (row present, at most _SLO_MAX_AGE old, value not NULL), and
-    counts a breach only once per new hour_bucket."""
+    counts a breach only once per new hour_bucket. cluster.broker_restarted
+    counts the restarts recorded in kafka_broker_restarts within the window
+    (setting broker_restart_window_minutes), with its own guard (fresh broker
+    metrics) and an isolated read: a missing table skips only this type."""
     if SessionLocal is None:
         logger.info("evaluate_alerts: cluster metrics skipped: database not available")
         return
@@ -1908,7 +1973,7 @@ async def _evaluate_cluster_metrics() -> None:
                 and cfg.alert_type not in (
                     _LEADER_SKEW_ALERT_TYPE, _MSG_RATE_IN_ALERT_TYPE, *_DATA_GB_ALERT_TYPES, _ZK_ENSEMBLE_ALERT_TYPE,
                     *_CONNECT_SNAPSHOT_ALERT_TYPES, _CONNECT_WORKERS_ALERT_TYPE, *_SR_ALERT_TYPES,
-                    _SLO_COMPLIANCE_ALERT_TYPE,
+                    _SLO_COMPLIANCE_ALERT_TYPE, _BROKER_RESTART_ALERT_TYPE,
                 )
             }
             fresh_cluster_ids: set[int] = set()
@@ -2080,6 +2145,53 @@ async def _evaluate_cluster_metrics() -> None:
                         values[cfg.id] = round((hi_gb - lo_gb) / hi_gb * 100, 1)
                     else:
                         data_ignored.setdefault(cfg.cluster_id, f"spread skipped: largest broker {hi_broker} holds {hi_gb:g} GB")
+
+            restart_cluster_ids = {
+                cfg.cluster_id for cfg in configs
+                if cfg.alert_type == _BROKER_RESTART_ALERT_TYPE and cfg.cluster_id is not None
+            }
+            # cluster_id -> (restarts in the window, most recent restart row, window minutes)
+            restart_by_cluster: dict[int, tuple[int, object, int]] = {}
+            restart_ignored: dict[int, str] = {}  # cluster_id -> reason
+            if restart_cluster_ids:
+                try:
+                    async with session.begin_nested():  # a failed read must not poison the session for the other types
+                        restart_now = datetime.now(timezone.utc)
+                        window = _broker_restart_window_minutes(_config.get("broker_restart_window_minutes"))
+                        newest: dict[int, datetime] = {}
+                        for r in (await session.execute(_DATA_GB_SQL, {"cids": sorted(restart_cluster_ids)})).all():
+                            if r.time is not None and (r.cluster_id not in newest or r.time > newest[r.cluster_id]):
+                                newest[r.cluster_id] = r.time
+                        restart_fresh = set()
+                        for cid in sorted(restart_cluster_ids):
+                            if cid not in newest:
+                                restart_ignored[cid] = "no broker metrics rows"
+                            elif restart_now - newest[cid] > _BROKER_METRICS_MAX_AGE:
+                                restart_ignored[cid] = (
+                                    f"no broker metrics in the last {int(_BROKER_METRICS_MAX_AGE.total_seconds() // 60)} min "
+                                    f"(last {int((restart_now - newest[cid]).total_seconds() // 60)} min ago)"
+                                )
+                            else:
+                                restart_fresh.add(cid)
+                        restart_rows: dict[int, list] = {cid: [] for cid in restart_fresh}
+                        if restart_fresh:
+                            for r in (await session.execute(_BROKER_RESTARTS_SQL, {
+                                "cids": sorted(restart_fresh), "since": restart_now - timedelta(minutes=window),
+                            })).all():
+                                restart_rows[r.cluster_id].append(r)
+                        for cid in sorted(restart_fresh):
+                            count, latest = _broker_restart_value(restart_rows[cid])
+                            restart_by_cluster[cid] = (count, latest, window)
+                except Exception as exc:
+                    restart_by_cluster.clear()
+                    restart_ignored.clear()
+                    logger.warning(
+                        "_evaluate_cluster_metrics: broker restart read failed; %s rules skipped this run: %s",
+                        _BROKER_RESTART_ALERT_TYPE, exc,
+                    )
+                for cfg in configs:
+                    if cfg.alert_type == _BROKER_RESTART_ALERT_TYPE and cfg.cluster_id in restart_by_cluster:
+                        values[cfg.id] = restart_by_cluster[cfg.cluster_id][0]
 
             zk_cluster_ids = {
                 cfg.cluster_id for cfg in configs
@@ -2348,6 +2460,9 @@ async def _evaluate_cluster_metrics() -> None:
         elif config.alert_type == _SLO_COMPLIANCE_ALERT_TYPE:
             if cluster_id not in slo_by_cluster:
                 continue  # reason logged from slo_ignored
+        elif config.alert_type == _BROKER_RESTART_ALERT_TYPE:
+            if cluster_id not in restart_by_cluster:
+                continue  # reason logged from restart_ignored
         elif cluster_id not in fresh_cluster_ids:
             stale_cluster_ids.add(cluster_id)
             continue
@@ -2420,6 +2535,8 @@ async def _evaluate_cluster_metrics() -> None:
                 )
             elif config.alert_type == _SLO_COMPLIANCE_ALERT_TYPE:
                 description = f"SLO compliance is {value}% for the latest hour"
+            elif config.alert_type == _BROKER_RESTART_ALERT_TYPE:
+                description = _broker_restart_description(*restart_by_cluster[cluster_id])
             else:
                 description = (
                     f"{value} topics have replication factor below {tier_config['min_rf']} "
@@ -2503,6 +2620,11 @@ async def _evaluate_cluster_metrics() -> None:
         logger.info(
             "evaluate_alerts: data on disk ignored clusters: %s",
             "; ".join(f"{cid}: {reason}" for cid, reason in sorted(data_ignored.items())),
+        )
+    if restart_ignored:
+        logger.info(
+            "evaluate_alerts: broker restarts ignored clusters: %s",
+            "; ".join(f"{cid}: {reason}" for cid, reason in sorted(restart_ignored.items())),
         )
     if zk_ignored:
         logger.info(

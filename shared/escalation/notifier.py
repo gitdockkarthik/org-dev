@@ -40,6 +40,7 @@ CATEGORY_LABEL = {
     "cluster.connect_workers_down": "Connect Workers Down",
     "cluster.sr_nodes_down": "Schema Registry Nodes Down",
     "cluster.sr_soft_deleted": "Schema Registry Soft-Deleted Subjects",
+    "cluster.broker_restarted": "Broker Restarts",
     "cluster.consumer_lag": "Consumer Group Lag",
     "cluster.connector_lag": "Connector Lag",
     "cluster.slo_compliance": "SLO Compliance",

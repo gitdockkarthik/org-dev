@@ -44,6 +44,7 @@ class World:
         self.configs, self.triggers, self.next_id = [], {}, 100
         self.metrics, self.urp, self.fresh, self.lag = [], {}, set(), {}
         self.rate = {}  # cluster -> (collected_at, msgs, interval_seconds) of the latest inflow run
+        self.restarts, self.bm = [], []  # kafka_broker_restarts rows; kafka_broker_metrics (_DATA_GB_SQL) rows
 
 
 world = World()
@@ -93,6 +94,10 @@ class Session:
                     return Res([])
                 ENQUEUED.append(dict(params, payload=json.loads(params["payload"]), id=len(ENQUEUED) + 1))
                 return Res([len(ENQUEUED)])
+            if "FROM kafka_broker_restarts" in sql:  # _BROKER_RESTARTS_SQL
+                return Res([r for r in world.restarts if r.cluster_id in params["cids"] and r.detected_at >= params["since"]])
+            if "FROM kafka_broker_metrics" in sql:  # _DATA_GB_SQL (the restart guard)
+                return Res([r for r in world.bm if r.cluster_id in params["cids"]])
             if "kafka_job_runs" in sql:
                 return Res([j for j in params["job_ids"] if int(j.rsplit("-", 1)[1]) in world.fresh])
             if "urp_count" in sql:
@@ -262,6 +267,32 @@ async def msg_rate_steps(prefix, rate, stepper=None):
     await stepper(f"{prefix} resolve", ta._evaluate_cluster_metrics())
 
 
+async def restart_steps(prefix, stepper=None):
+    """cluster.broker_restarted: 1 restart fires at info, 3 escalate to warning, restarts aging out of the window resolve."""
+    stepper = stepper or step
+    world.reset()
+    ta._threshold_breach_counts.clear()
+    world.configs = [rule(7, "cluster.broker_restarted", 4, {"mode": "simple", "info": 1, "warning": 3, "critical": 5},
+                          name="Broker restarts")]
+    world.bm = [NS(cluster_id=4, broker_id="1", data_gb_true=1.0, time=FROZEN - timedelta(minutes=1))]
+
+    def restart(broker, minutes_ago):
+        detected = FROZEN - timedelta(minutes=minutes_ago)
+        started = detected - timedelta(seconds=45)
+        world.restarts.append(NS(cluster_id=4, broker_id=broker, started_at=started,
+                                 previous_started_at=started - timedelta(days=13, hours=2, minutes=5), detected_at=detected))
+    restart(2, 10)
+    await stepper(f"{prefix} check 1", ta._evaluate_cluster_metrics())
+    await stepper(f"{prefix} fire", ta._evaluate_cluster_metrics())
+    restart(3, 6)
+    restart(1, 3)
+    await stepper(f"{prefix} escalate", ta._evaluate_cluster_metrics())
+    age_triggers(35)
+    for r in world.restarts:
+        r.detected_at = FROZEN - timedelta(minutes=31)
+    await stepper(f"{prefix} resolve", ta._evaluate_cluster_metrics())
+
+
 def age_triggers(minutes):
     for t in world.triggers.values():
         if t.resolved_at is None:
@@ -347,6 +378,9 @@ async def scenarios():
     age_triggers(95)
     world.lag = {(4, "orders-app"): 1, (4, "billing"): 2, (4, "audit"): 3}
     await step("lag resolve", ta._evaluate_cluster_lag())
+
+    # Cluster metrics, broker restarts: rows of kafka_broker_restarts in the window.
+    await restart_steps("broker_restart")
 
 
 async def broker_thresholds_via_outbox():
@@ -437,6 +471,9 @@ async def cluster_metrics_via_outbox():
         await msg_rate_steps("msg_rate", rate, on)
         rate(5, 80.0)
         await on("msg_rate quiet", ta._evaluate_cluster_metrics())
+
+        await restart_steps("broker_restart", on)
+        await on("broker_restart quiet", ta._evaluate_cluster_metrics())
     finally:
         rs._config["rule_outbox_evaluators"] = []
         ta.outbox.enabled = lambda: False
@@ -491,7 +528,7 @@ def main():
     outbox_checks += 1
     print(f"[{'PASS' if ok else 'FAIL'}] switch on: nothing enqueued before the 2nd breach or when quiet; no shadow "
           f"record in any run")
-    for prefix in ("cluster_metrics", "msg_rate"):
+    for prefix in ("cluster_metrics", "msg_rate", "broker_restart"):
         for step_name, kind in (("fire", "rule_fire"), ("escalate", "rule_escalate"), ("resolve", "rule_resolve")):
             captured, enqueued, kicks = cm_outbox[f"{prefix} {step_name}"]
             gold = {c["channel"]: c for c in golden[f"{prefix} {step_name}"]}
