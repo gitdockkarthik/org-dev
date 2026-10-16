@@ -1180,6 +1180,56 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Alert rules rolled out by email, delivery and detection gaps (2026-10-16)
+DONE 2026-10-16: scripts/apply_rule_plan.py (commit 045b6dd) applied the Kafka head's
+returned thresholds at 06:16 UTC: 57 rules went to Email on and Teams off; rule 5
+(broker unreachable) has Email on and keeps Teams on for the first week; rule 3
+(CLOSE_WAIT) stays off; the seven lag rules were not in the run. Backup (full rule
+rows and the two settings): /home/backups/manual/rules-before-apply-20261016T061627Z.json;
+undo: python scripts/apply_rule_plan.py --revert <backup> [--run] (the file lives in
+the container unless copied out). Tiers applied from his file: broker CPU 90/95,
+heap 80/90, soft-deleted subjects on cluster 8 5/50. Not applied: his 1/1 tiers for RF
+below min, the three Connect types and Schema Registry nodes (17 rows), which the API
+refuses (warning must be below critical); those rules keep their live tiers (RF 1/10,
+Connect 1/5, 1/10 and 1/3, Schema Registry 1/2). His blank data-on-disk tiers: the
+live 5000/8000 GB stays. SLO set to 80/75 by us (his 90/80 would have fired on
+clusters 8, 9 and 10 at about 83%). Lag rules done by hand in the UI: critical 50000
+(consumer) and 30000 (connector), warning 10000, Email on, Teams off, blacklists
+(names only, one per line; no custom rows): rule 81 cluster 8 11 names, rule 82 cluster 9
+11, rule 83 cluster 10 2, rule 84 connector lag cluster 8 5; rules 80, 85 and 86 none.
+Rule 82's critical was first left at 100000 and corrected; verified through the export.
+FIRST DAY: the dry run forecast 9 rules; 11 triggers had fired by 07:00 UTC (also broker
+CPU critical on cluster 8 and message rate info on clusters 4 and 10); later a message
+rate escalation and resolve on cluster 4 (it flaps: low traffic) and a lag warning for
+'operative-datastream01' on cluster 8 (rule 81, not on the blacklist, so it alerts under
+the defaults) with its resolve. All delivered by email, Teams skipped on every rule row.
+DELIVERY GAP FOUND: the alert recipient was first set to Prod_Kafka_alerts@operative.com,
+which Outlook reports as not found. The delivery log showed those 17 notices as
+delivered because the mail relay accepts any address without checking it; bounces go to
+the sender mailbox ai_agent_alerts@sintecmedia.com, which the agent cannot see. Those 17
+emails (fires 06:25 to 06:50 UTC and their escalations and resolves) never reached
+anyone. At about 06:57 UTC the recipient became the operator's address, and at 07:19
+three addresses (the operator and two Kafka team members), comma separated; both new
+recipients confirmed receiving. The real address of the group list is still unknown;
+the Kafka team is checking. The plan: Kafka team only for a week or two to tune
+thresholds, then wider (TOC).
+GAPS (not fixed): 1. delivered in the delivery log means accepted by the relay; consider a
+different label and a way to see bounces. 2. A broker stop of under a minute is not seen:
+aos-prod-kafka02 was restarted 2026-10-15 19:31:03 to 19:31:48 UTC. The agent logged
+socket disconnects at 19:32 and 19:33, the message-rate job reported a describe_log_dirs
+failure, the connection watchdog counted 6 stale connections, kafka-consumer-lag-9 failed
+at 19:33:01 (so the 19:44 hourly summary was [ISSUE] and 19:54 [OK]); rule 5 never fired
+(it needs two failed checks five minutes apart; its checks ran at about 19:30 and 19:35);
+the SLO hour showed broker availability 100%; no trigger exists. Idea: a broker-restart
+alert from the exporter's process start time or ISR changes (not checked whether that
+metric is read). 3. kafka-broker-health-9 at 19:33:01 is recorded as success in 0.1 s
+while the log says collect_brokers_only failed: a failed collection can be recorded as
+success. 4. The message-rate rule flaps on low-traffic staging clusters 4 and 10.
+STILL OPEN: rule 5's Teams decision after a week (Email on, Teams on now); step 3 of
+rule notices through the outbox (lag, close-wait, reachability) and then removing the
+inline path; until then those three send inline and a failed rule email there is only
+logged; remove the scratch container applyplan-scratch-pg and its network.
+
 ### Rule notices through the outbox: steps 1 and 2 done, proven live (2026-10-16)
 DONE (commits 119818e, c6b5914, a9afa79, 70487e9, c2eb22b, e2508e1, 68d0903;
 chunks A and B deployed 2026-10-15 11:17 UTC, chunk C 2026-10-16 04:43 UTC, both
