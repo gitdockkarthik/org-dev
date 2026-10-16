@@ -1180,6 +1180,53 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Broker restart alert, live and proven (2026-10-16)
+DONE 2026-10-16 (commits 73bd61f, 24365e2, 8893f77): migration 0059 (applied to the
+live database 09:09 UTC after a dump of kafka_broker_metrics saved in
+/home/backups/manual) adds kafka_broker_metrics.process_start_time and the table
+kafka_broker_restarts (unique index on cluster, broker and started_at). STEP 1 capture:
+collect_broker_health (every 2 minutes) reads process_start_time_seconds from the same
+filtered pull, so no extra request (verified live: aos-prod-kafka02 reports
+2026-10-15 19:31:49 UTC, one second after the real restart); decide_restart in
+broker_restarts.py: a missing or implausible value (not above 1e9) keeps the stored one
+and raises no event; the first value is only a baseline; a start later than stored by
+more than 5 s records one event; an earlier start keeps the stored one and warns; the
+write uses its own savepoint, so a missing column cannot break the metrics upsert. STEP 2
+alert type cluster.broker_restarted (cluster-wide, tiers info 1, warning 3, critical 5
+suggested, whole numbers, direction above): the value is the number of restart events
+detected in the last N minutes, N = setting broker_restart_window_minutes (default 30,
+15 to 240, 422 outside it); guards: the newest kafka_broker_metrics row must be within 6
+minutes; a missing table or failed read skips only this type; resolves when events age
+out of the window. The notice names the latest restart with its uptime, no host names
+(no broker-to-host mapping exists); recommended action: check with the Kafka team why the
+broker restarted and confirm it is back in sync. Rules form: 'Broker restarts' entry after
+'Leader partition skew' (page tests pin other positions), a window field in Settings.
+Four rules created in the UI on 2026-10-16 (ids 109 cluster 8, 110 cluster 4, 111 cluster 9,
+112 cluster 10): info 1, warn 3, crit 5, cooldown 30, Email on, Teams off ('Create for
+every cluster' makes rules with both channels off, so the Email toggle has to be switched on
+by hand).
+LIVE PROOF (cluster 8, broker 6, staging): the stored start time was moved back one hour
+with an UPDATE; within 2 minutes the next run recorded exactly one event (and corrected the
+stored value); the first proof without a rule left one event, deleted afterwards; with rule
+109 on, the event detected 10:12:06 UTC fired trigger 97 as info at 10:20:02 after two
+checks, email sent and Teams skipped (the email named broker 6, its start time, the count
+and the window, with the recommended action), and resolved at 10:45:02 when the event left
+the window (25 min open; resolve email delivered). The test event was deleted. Do NOT edit
+a stored start time on a production broker again.
+GAPS: step 1 had no DB test until step 2's build session (test_broker_restart_db 18 checks,
+test_broker_restart_alert_db 18, test_eval_cluster_metrics_restart 39 passed on a scratch
+Postgres 16 built from a schema-only dump of the live schema); not run: test_apply_rule_plan,
+test_batch_test_rules, test_owner_notice_log; scripts/batch_test_rules.py does not know the
+new type (--only cluster.broker_restarted is rejected). The lag reminder clock is in memory,
+so each agent restart re-sends one lag reminder for open lag triggers (seen 09:15 UTC after
+the 09:10 restart). The kafka-analyser-restart.timer is disabled; if enabled it recreates the
+container every 4 hours. A rolling restart (cluster 10 on 2026-10-15: three brokers in 16 min,
+08:58, 09:08 and 09:14 UTC) would be a warning at tiers 1, 3, 5 in a 30 minute window.
+STILL OPEN: a restart in the middle of a collector outage is only seen on the next scrape
+that returns a start time; the broker-restart type is not in the batch script; the rules'
+tiers are the team's to tune; remove the scratch container applyplan-scratch-pg if it still
+exists.
+
 ### Alert rules rolled out by email, delivery and detection gaps (2026-10-16)
 DONE 2026-10-16: scripts/apply_rule_plan.py (commit 045b6dd) applied the Kafka head's
 returned thresholds at 06:16 UTC: 57 rules went to Email on and Teams off; rule 5
