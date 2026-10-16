@@ -330,6 +330,7 @@
             <div class="hint hidden" id="af-tiers-connect-workers-hint">Counts Connect worker nodes that do not answer a light request (GET /) within 3 seconds, checked live every 5 minutes and confirmed over two checks. The card names the workers. A worker with no connectors still counts as up.</div>
             <div class="hint hidden" id="af-tiers-sr-nodes-hint">Counts Schema Registry nodes that do not answer a light request (GET /) within 3 seconds, checked live every 5 minutes and confirmed over two checks. Any HTTP answer below 500 counts as up.</div>
             <div class="hint hidden" id="af-tiers-sr-soft-deleted-hint">Counts subjects that are soft-deleted but not purged (subjects listed with deleted=true minus live subjects). The card names up to 5. It does not count versions per subject. Clusters whose registry requires credentials (for example External Staging) are skipped.</div>
+            <div class="hint hidden" id="af-tiers-broker-restart-hint">Counts broker restarts of the cluster seen in the last N minutes (Settings, Alert rules: 30 by default), detected when a broker reports a later process start time. The card names the most recent one and how long it had been up. Resolves when the restarts age out of the window. Suggested tiers: info 1, warning 3, critical 5. Ignored while no broker of the cluster is reporting.</div>
             <div class="hint hidden" id="af-tiers-skew-hint">Ratio of the busiest broker's leader partitions to the cluster average (1.0 = balanced). Does not detect a broker that has lost all its leaders.</div>
           </div>
           <div class="field hidden" id="af-lag-field">
@@ -804,6 +805,7 @@
       { value: 'cluster.urp_total', label: 'Under-replicated partitions', group: 'Cluster', kind: 'tiers', unit: 'partitions', resolves: true },
       { value: 'cluster.rf_below_min', label: 'Topics below minimum RF', group: 'Cluster', kind: 'tiers', unit: 'topics', resolves: true, minRf: true },
       { value: 'cluster.leader_skew', label: 'Leader partition skew', group: 'Cluster', kind: 'tiers', unit: 'x average', resolves: true },
+      { value: 'cluster.broker_restarted', label: 'Broker restarts', group: 'Cluster', kind: 'tiers', unit: 'restarts', resolves: true },
       { value: 'cluster.msg_rate_in', label: 'Message rate in', group: 'Cluster', kind: 'tiers', unit: 'msgs/sec', resolves: true, below: true },
       { value: 'cluster.data_gb_max', label: 'Data on disk (max broker)', group: 'Cluster', kind: 'tiers', unit: 'GB', resolves: true },
       { value: 'cluster.data_spread_pct', label: 'Data spread between brokers', group: 'Cluster', kind: 'tiers', unit: '%', resolves: true },
@@ -958,6 +960,7 @@
       $('af-tiers-connect-workers-hint').classList.toggle('hidden', t.value !== 'cluster.connect_workers_down');
       $('af-tiers-sr-nodes-hint').classList.toggle('hidden', t.value !== 'cluster.sr_nodes_down');
       $('af-tiers-sr-soft-deleted-hint').classList.toggle('hidden', t.value !== 'cluster.sr_soft_deleted');
+      $('af-tiers-broker-restart-hint').classList.toggle('hidden', t.value !== 'cluster.broker_restarted');
       $('af-tiers-above-hint').classList.toggle('hidden', !!t.below);
       $('af-tiers-below-hint').classList.toggle('hidden', !t.below || t.value === 'cluster.slo_compliance');
       $('af-tiers-slo-hint').classList.toggle('hidden', t.value !== 'cluster.slo_compliance');

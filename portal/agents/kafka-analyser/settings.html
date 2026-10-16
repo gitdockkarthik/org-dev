@@ -640,6 +640,17 @@
 
       <div class="card">
         <div class="card-section">
+          <div class="card-section-title">Alert Rules</div>
+          <div class="field">
+            <label for="broker-restart-window">Broker restart window (minutes)</label>
+            <input type="number" id="broker-restart-window" min="15" max="240" step="1" value="30" style="max-width:120px" />
+            <div class="hint">The "Broker restarts" rule counts restarts seen in this window and resolves when they age out of it. 15 to 240, default 30.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-section">
           <div class="card-section-title">Test email</div>
           <div class="field">
             <label for="email-test-to">Send to</label>
@@ -856,6 +867,7 @@
         smtp_from_address: $('smtp-from-address') ? $('smtp-from-address').value.trim() : '',
         email_recipients: $('email-recipients') ? $('email-recipients').value.trim() : '',
         rule_teams_fallback: $('rule-teams-fallback') ? $('rule-teams-fallback').checked : true,
+        broker_restart_window_minutes: $('broker-restart-window') ? (parseInt($('broker-restart-window').value, 10) || 30) : 30,
         health_email_recipients: $('health-email-recipients') ? $('health-email-recipients').value.trim() : '',
       };
     }
@@ -1091,6 +1103,7 @@
         if ($('smtp-from-address')) $('smtp-from-address').value = cfg.smtp_from_address || '';
         if ($('email-recipients')) $('email-recipients').value = cfg.email_recipients || '';
         if ($('rule-teams-fallback')) $('rule-teams-fallback').checked = cfg.rule_teams_fallback !== false;
+        if ($('broker-restart-window')) $('broker-restart-window').value = cfg.broker_restart_window_minutes != null ? cfg.broker_restart_window_minutes : 30;
         if ($('health-email-recipients')) $('health-email-recipients').value = cfg.health_email_recipients || '';
 
         if ($('sync-status')) {
