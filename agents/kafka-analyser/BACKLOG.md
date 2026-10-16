@@ -1180,6 +1180,41 @@ click-through to the popup shows accurate partition-level detail.
 
 ## Pending
 
+### Database and backup baseline, 2026-10-16 (read-only check; nothing changed)
+SIZES: operative_db 9433 MB (3587 MB on 2026-08-13: most of the rise is the 7 day and
+30 day windows filling after clusters 8, 9 and 10 were onboarded; it will not repeat).
+Postgres container 4 GiB limit, OOMKilled false, 0 restarts, cache hit 99.18%, memory
+at 98.6% of the limit (mostly reclaimable cache; not proven). Root disk 63% (19G of 30G,
+12G free; 53% on 2026-08-13), /data 48% (29G of 60G, 32G free).
+TOP TABLES (size, rows): kafka_topic_message_rate_hourly_rollup 3513 MB 8.6M (oldest
+2026-10-09: 7 day retention); kafka_connector_snapshots 2550 MB 16.0M (oldest 2026-09-16:
+30 day retention); kafka_topic_message_rate_daily_rollup 1138 MB 2.8M (oldest 2026-07-31,
+newest 2026-10-09: no retention seen, about 15 to 20 MB a day); kafka_topic_message_rate_snapshots
+919 MB (today only: rolled up and deleted); incidents 294 MB; alert_sync_history 176 MB;
+kafka_topic_metrics_hourly 163 MB 688K (oldest 2026-07-28, about 3 MB a day);
+kafka_job_runs 154 MB 913K (oldest 2026-07-23, about 3 MB a day, no purge);
+kafka_consumer_group_rate_snapshots 112 MB (1 to 2 days). Jobs named purge or rollup
+that exist and are enabled: kafka-alert-trigger-purge, kafka-snapshot-rollup (windows not
+read yet).
+CORRECTION to earlier reads in this chat: the retention fix from the 2026-08-13 notes IS
+in place (the hourly rollup is bounded at 7 days and the connector snapshots at 30), so
+the August growth figures no longer apply; the unbounded tables are the daily rollup, job
+runs and topic metrics hourly, about 0.7 GB a month together.
+BLOAT: dead rows: hourly rollup 1.47M (17% of live), connector snapshots 1.99M (12%, last
+autovacuum 2026-10-11), daily rollup 0.45M, alert_sync_history 24K, job runs 16K.
+BACKUPS: /home/backups/postgres holds 5 daily custom-format dumps (.dump, about 345 MB
+each, 1.7 GB in total, 2026-10-12 to 2026-10-16, written about 02:01 UTC by
+postgres-backup.timer running /home/backups/postgres_backup.sh); /home/backups/manual 248K.
+Not read yet: the script itself (retention count, completion check, what happens on a full
+disk). A restore has never been tested.
+NEXT (Monday): read the backup script; restore the newest dump into a throwaway Postgres
+container and compare table row counts with the live database; read what the rollup and
+purge jobs delete and their windows; check which dashboards read the daily rollup, job runs
+and topic metrics hourly and how far back; then propose retention for those three (an age
+based delete in one transaction, tested on a scratch database first), VACUUM FULL in an
+announced window only if bloat needs it, and a higher Postgres memory limit if the cache
+hit falls (the host has about 17 GB free).
+
 ### Broker restart alert, live and proven (2026-10-16)
 DONE 2026-10-16 (commits 73bd61f, 24365e2, 8893f77): migration 0059 (applied to the
 live database 09:09 UTC after a dump of kafka_broker_metrics saved in
