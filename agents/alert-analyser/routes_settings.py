@@ -628,19 +628,11 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                                         {"incident_id": _new_ticket.id}
                                     )
                             elif row.status not in ("RESOLVED", "MANUAL"):
-                                await session.execute(
-                                    text("""
-                                        UPDATE incident_management.incidents
-                                        SET updated_at = now(), recurrence_count = recurrence_count + 1,
-                                            source_tool = :source_tool
-                                        WHERE id = :id
-                                    """),
-                                    {"id": row.id,
-                                     "source_tool": source_tool},
-                                )
-                                # commit now so this loop never holds an incident row lock while it works on the next alert (deadlock with zabbix-closure, 16 Oct 14:50 UTC)
-                                await session.commit()
-                                updated_count += 1
+                                # Still-open incident whose alert is being re-read inside the 4-hour history window. Nothing to write:
+                                # the old code bumped recurrence_count on every 2-minute cycle, so it counted cycles (open incidents
+                                # stopped at 120), not recurrences. A Zabbix recurrence gets a NEW alert_id and so a new incident.
+                                # Real recurrence counting is planned together with the New Relic work (17 Oct 2026).
+                                pass
                             else:
                                 # Zabbix (Email) Open alerts get a NEW alert_id for every real
                                 # occurrence, so a RESOLVED ticket for the SAME alert_id coming
