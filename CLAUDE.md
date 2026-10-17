@@ -74,9 +74,11 @@ shared/  ── common primitives imported across services
 - **`org-dev`** (this repo) — the rebranded **dev/test integration monorepo** where the full
   platform runs together.
 - **Org Bitbucket** (`bitbucket.operative.com/scm/ai/...`) — production delivery target. The model
-  is **one standalone repo per agent**; local clones for delivery live under `operative-bitbucket/`.
-  Note: the current state is transitional — the checked-out delivery clone points at a shared
-  `sre-agents` repo with the agent in a subfolder, while the target is a dedicated repo per agent.
+  is **one standalone repo per agent**. The old per-agent delivery clones under `operative-bitbucket/`
+  were deleted (their commits were already pushed); the Bitbucket repos themselves are unchanged.
+  Delivery needs a fresh clone made outside this box's shared checkout and a new token.
+  Note: the target is a dedicated repo per agent (the earlier state used a shared `sre-agents` repo
+  with the agent in a subfolder).
 
 ### Per-agent notes
 - **alert-analyser** — OpsGenie / JSM alert noise detection, classification, suppression advice.
@@ -97,16 +99,33 @@ code, consult the `claude-api` skill rather than relying on memory for model IDs
 2. **Test each standalone agent independently** before delivery — every agent is self-contained and
    serves its own `/invoke` + `/health` on its own port.
 3. **Deliver the agent to its own Bitbucket repo** (production). One standalone repo per agent is
-   the target model; delivery clones live under `operative-bitbucket/<agent>/`.
+   the target model; delivery needs a fresh clone made outside this box's shared checkout and a new
+   token.
 
 ### Sync & delivery scripts
 - **`sync-from-monorepo.sh`** syncs **inbound**: it copies `agents/`, `backend/`, `shared/`, and a
   selective `portal/` *from* the upstream `unified-agent-platform` monorepo (default
   `../unified-agent-platform`) *into* `org-dev`, strips Railway files, and re-applies OPERATIVE
-  branding. It does **not** touch Bitbucket — its final step is `git push origin main` on `org-dev`.
-- **Per-agent Bitbucket delivery has no script yet** — it is currently **manual**: work inside the
-  relevant `operative-bitbucket/<agent>/` clone, copy the validated agent folder over, commit, and
-  push to the agent's Bitbucket repo. (If you automate this, document it here.)
+  branding. It does **not** touch Bitbucket and does not push: its final step only prints the next
+  steps (commit on the box, then the laptop fetch / fast-forward merge / push described under
+  "Git workflow" below).
+- **Per-agent Bitbucket delivery has no script yet** — it is currently **manual**, and it
+  needs a fresh clone made outside this box's shared checkout and a new repo-scoped token (never
+  stored in a world-readable file). (If you automate this, document it here.)
+
+### Git workflow
+The KPI box has no git remote and no keys, so it cannot push or fetch. The laptop is the only machine
+that pushes (its own repo-scoped deploy key; remotes: `origin` = GitHub, `box` = the KPI box).
+
+1. Claude Code edits files in `/data/org-dev` and **does not commit**.
+2. A person commits **as root on the box**, with named files only: `git add <files>` — never
+   `git add -A` or `git add .`, because the working tree is shared by several chats.
+3. Then `chown -R karthikeyan.gopalan:karthikeyan.gopalan .git` on the box.
+4. On the laptop: `git fetch box && git merge --ff-only box/main && git push origin main`.
+
+The sync script needs the upstream monorepo copied to `../unified-agent-platform` by hand, because the box cannot fetch.
+
+**Run `git status` at the start of every session** to see what other chats have left in the tree.
 
 ### Deployment
 - **KPI box** (AL2023, Docker Compose) — the development and testing environment (this repo).
@@ -165,7 +184,7 @@ wizard at `http://<host>:3000/setup.html` → `up -d <agents>`.
 
 ## Database changes (Alembic)
 
-- **Chain:** `backend/migrations/versions/` (one file per change, numbered; head `0058` as of 2026-10-12),
+- **Chain:** `backend/migrations/versions/` (one file per change, numbered; head `0059` (kafka_broker_restarts, applied 2026-10-16); next is `0060` with `down_revision` 0059),
   config in `backend/alembic.ini`. All agents (alert, cur, kafka) use this one chain; the backend owns it.
 - **Coverage by agent:** Platform 0001-0007, 0019, 0038; CUR 0008-0010; Alert analyser 0005, 0011, 0041,
   0042, 0044-0048, 0057; Kafka analyser 0012-0018, 0023-0037, 0039-0040, 0043, 0049-0056, 0058.
