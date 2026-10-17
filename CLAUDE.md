@@ -116,14 +116,23 @@ code, consult the `claude-api` skill rather than relying on memory for model IDs
 ### Git workflow
 The KPI box has no git remote and no keys, so it cannot push or fetch. The laptop is the only machine
 that pushes the repository to its remote copy (its own repo-scoped deploy key, used on demand with a
-passphrase; the push command is held by the operator and is not stored here). The laptop's only remote
+passphrase; the push runs from one passphrase-encrypted file on the laptop, ~/.gitpush.enc, which holds the destination; it is unreadable without its passphrase). The laptop's only remote
 is `box`, the KPI box.
 
 1. Claude Code edits files in `/data/org-dev` and **does not commit**.
 2. A person commits **as root on the box**, with named files only: `git add <files>` — never
    `git add -A` or `git add .`, because the working tree is shared by several chats.
 3. Then `chown -R karthikeyan.gopalan:karthikeyan.gopalan .git` on the box.
-4. On the laptop: `git fetch box && git merge --ff-only box/main`, then run the push process (held by the operator).
+4. On the laptop: `git fetch box && git merge --ff-only box/main`
+5. On the laptop, run the push command below; it asks for the file passphrase, then the key passphrase.
+
+```
+cd ~/org-dev && u=$(openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -in ~/.gitpush.enc) && GIT_SSH_COMMAND="ssh -F /dev/null -o IdentitiesOnly=yes -o IdentityAgent=none -i $HOME/.ssh/id_orgdev_laptop" git push "$u" main 2>&1 | grep -v '^To ' | tail -3; unset u
+```
+
+Verify with the same prefix and `git ls-remote "$u" refs/heads/main 2>&1 | cut -c1-7`, compared with `git log --oneline -1`.
+
+Never paste the URL, or any ssh error that may contain it, into a chat or document.
 
 The sync script needs the upstream monorepo copied to `../unified-agent-platform` by hand, because the box cannot fetch.
 
