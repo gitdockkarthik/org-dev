@@ -550,3 +550,41 @@ NEXT (New Relic, in order; each step read-only until the switch-on)
 Still open and the owner's: the live stale job decision and the o1conf-umredis owners question (see part 16).
 
 (end of part 17)
+
+## Alert-analyser update 2026-10-17 (part 18): deadlock fix live, recurrence_count corrected, stale job first notes
+
+DEADLOCK AND ITS FIX (finding 66)
+- 16 Oct 14:50:02 UTC: the zabbix-closure run died with a Postgres deadlock: its UPDATE (status RESOLVED, resolution_type closure_alert_correlation) against the sync's UPDATE of recurrence_count on the same incident rows. The audit check Z6 fails for 24 hours after any failed run.
+- Fix faa39ae (sync commits after each recurrence update) was committed on 16 Oct and went live with the rebuild of 17 Oct 13:38 UTC. Startup clean, 4 schedules loaded. Z1 to Z5 and Z7 pass; Z6 should pass after about 14:50 UTC on 17 Oct (the failed run leaves the 24 hour window).
+- Finding 67, the 72 hour deadlock census (read from the Postgres log on 17 Oct): 16 deadlocks, only ONE on our table (the one above, old code). The others are the Kafka analyser (upserts into kafka_topic_metrics and kafka_broker_metrics, about 3 to 4 a day, the latest at 13:01 UTC on 17 Oct) and one on the hosts table (11:41 UTC on 16 Oct). Not ours; to be passed to the Kafka chat. Watch for any new deadlock on incident_management.
+- The SIGTERM fix (95888d2, exec in the alert-analyser Dockerfile CMD) is live: stop takes about 1 s with exit 0.
+
+RECURRENCE_COUNT (finding 68)
+- Found 17 Oct: the sync finds the incident by alert_id, and Zabbix gives every real occurrence a new alert_id, so the old UPDATE fired for every open incident on every 2 minute cycle while its alert was inside the 4 hour history window. recurrence_count therefore counted cycles, capped by the window: 12 of 13 open incidents at exactly 120 (one at 64); resolved incidents 4,887 between 101 and 190 (average 120).
+- Readers that were misled: the dashboard badge and sort, the top 10 recurrence signal (routes_dashboard.py), the escalation email (tools/escalation_notifier.py). No reader used incidents.updated_at of an open incident as a last seen time (checked).
+- Option A done: commit d0e81be, the still-open branch of the sync writes nothing (5 insertions, 13 deletions in routes_settings.py). Rebuilt by service name; the first sync cycle logged 0 created, 0 updated, no errors or deadlocks. It also removes a per-cycle row update that took part in the deadlock above.
+- NOT done: existing recurrence_count values are unchanged (the 13 open incidents keep 120 or 64 until they close; resolved ones keep their inflated counts). A one-time reset of old Zabbix counts would be a separate data change with a rehearsal; the owner has not decided.
+- Option B stays with the New Relic work: count real recurrences as Open notices for the same host and problem. The functional spec in the docs hub still describes the field as how many times an alert re-fired while the ticket stayed open; update it when B is designed.
+
+STALE JOB, FIRST NOTES (read from the database on 17 Oct; the container logs only reach back to the last rebuild)
+- zabbix-stale (id 6, 30 2 * * *, live since 12 Oct 04:08 UTC) closed 2 incidents on 13 Oct and 2 on 16 Oct (production ones, 14 day threshold); 17 Oct: 0.
+- Expected next: the 18 Oct run should close the o1pre incident awo1-pre-umsvr02; the production awo1-o1prod-ui04 from 8 Oct should close on the 23 Oct run unless a notice arrives.
+- Finding 69, a tally to check (low priority): 70 incidents carry closure_recovery_inferred with updated_at on 8 Oct, against the 68 recorded as relabelled by the history correction.
+
+OPEN QUESTIONS AND RESIDUAL RISKS
+- Finding 70: the reconciliation writer (routes_settings.py about lines 779 to 842) holds up to 1,000 row locks until one commit, and the closure job is one unordered transaction. Both could still deadlock, rarely.
+- Finding 71: do the dashboard resolution time figures treat stale closures (resolved_at = created_at, deliberately) as zero seconds?
+- Finding 72: two open Zabbix incidents carry the literal {$PRIMARY_HOSTGROUP1} instead of an [Env:...] tag (an unresolved template macro), so the stale job may apply the wrong threshold (7 instead of 14 days or the reverse).
+- Finding 73: the same sh -c CMD pattern as the fixed Dockerfile remains in the backend, cur-analyser, infra-health, agent-template and mock-agent Dockerfiles (not ours; cur-analyser lifespan needs a look by its owner first).
+
+PROCESS
+- Git on the box: from 17 Oct we edit files in /data/org-dev and give the operator one commit command naming every file; push is done from the laptop with the operator's saved push command (commits 68c319f and be0c8c4 updated CLAUDE.md and the sync script).
+- Alembic: the head is 0059 (kafka_broker_restarts, the Kafka chat's); our next revision would be 0060 with down_revision 0059; none is planned. The alembic command is not installed on the box host, so the head is checked from backend/migrations/versions.
+
+NEXT (in order)
+1. Re-run the audit after 14:50 UTC on 17 Oct: Z6 should pass; read the 18 Oct and 23 Oct stale runs.
+2. Owner decision: reset the old recurrence_count values for Zabbix, or leave them.
+3. Small patches: AS MATERIALIZED in tools/zabbix_stale.py (finding 59); the nothing to fetch shortcut of zabbix-detail; optionally start the closure job 2 to 3 minutes after the detail job (cron 3-59/5).
+4. New Relic, read-only until the switch-on. First settle whether the September alias based closure correlation and live status guard (commits 9275689 and 57416dc, routes_settings.py) still run behind the Zabbix only gate. Then the steps of part 17.
+
+(end of part 18)
