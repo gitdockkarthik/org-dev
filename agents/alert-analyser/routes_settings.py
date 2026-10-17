@@ -638,6 +638,8 @@ async def _run_opsgenie_sync(full_sync: bool = False) -> dict:
                                     {"id": row.id,
                                      "source_tool": source_tool},
                                 )
+                                # commit now so this loop never holds an incident row lock while it works on the next alert (deadlock with zabbix-closure, 16 Oct 14:50 UTC)
+                                await session.commit()
                                 updated_count += 1
                             else:
                                 # Zabbix (Email) Open alerts get a NEW alert_id for every real
